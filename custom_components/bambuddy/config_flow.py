@@ -49,6 +49,11 @@ class BamBuddyConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         errors: dict[str, str] = {}
 
         if user_input is not None:
+            _LOGGER.debug(
+                "Trying to connect to BamBuddy at %s:%s",
+                user_input[CONF_HOST],
+                user_input[CONF_PORT],
+            )
             session = async_get_clientsession(self.hass)
             client = BamBuddyClient(
                 user_input[CONF_HOST],
@@ -58,10 +63,13 @@ class BamBuddyConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             )
             try:
                 info = await client.get_system_info()
+                _LOGGER.debug("BamBuddy system info: %s", info)
                 await client.get_health()
-            except BamBuddyAuthError:
+            except BamBuddyAuthError as err:
+                _LOGGER.error("BamBuddy auth error: %s", err)
                 errors["base"] = "invalid_auth"
-            except BamBuddyApiError:
+            except BamBuddyApiError as err:
+                _LOGGER.error("BamBuddy connection error: %s", err)
                 errors["base"] = "cannot_connect"
             else:
                 unique_id = f"bambuddy_{user_input[CONF_HOST]}_{user_input[CONF_PORT]}"
@@ -80,7 +88,7 @@ class BamBuddyConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         return self.async_show_form(
             step_id="add_instance",
             data_schema=vol.Schema({
-                vol.Required(CONF_HOST, default="192.168.178.3"): str,
+                vol.Required(CONF_HOST): str,
                 vol.Required(CONF_PORT, default=DEFAULT_PORT): int,
                 vol.Required(CONF_API_KEY): str,
             }),
@@ -125,7 +133,9 @@ class BamBuddyConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             else:
                 try:
                     printer = await client.get_printer(printer_id)
-                except BamBuddyApiError:
+                    _LOGGER.debug("Got printer info: %s", printer)
+                except BamBuddyApiError as err:
+                    _LOGGER.error("Error fetching printer %s: %s", printer_id, err)
                     errors["base"] = "cannot_connect"
                 else:
                     unique_id = f"bambuddy_printer_{printer_id}"
@@ -147,7 +157,9 @@ class BamBuddyConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         # Fetch available printers for dropdown
         try:
             printers = await client.get_printers()
-        except BamBuddyApiError:
+            _LOGGER.debug("Available printers: %s", printers)
+        except BamBuddyApiError as err:
+            _LOGGER.error("Cannot fetch printers: %s", err)
             return self.async_abort(reason="cannot_connect")
 
         existing_ids = [
