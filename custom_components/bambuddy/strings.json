@@ -1,0 +1,39 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "BamBuddy",
+        "description": "What would you like to add?"
+      },
+      "add_instance": {
+        "title": "Add BamBuddy Instance",
+        "data": {
+          "host": "Host / IP Address",
+          "port": "Port",
+          "api_key": "API Key"
+        }
+      },
+      "add_printer": {
+        "title": "Add Printer",
+        "data": {
+          "printer_id": "Printer"
+        }
+      }
+    },
+    "menu_options": {
+      "add_instance": "Add BamBuddy Instance",
+      "add_printer": "Add Printer"
+    },
+    "error": {
+      "cannot_connect": "Cannot connect to BamBuddy. Check host and port.",
+      "invalid_auth": "Invalid API key.",
+      "printer_already_added": "This printer has already been added."
+    },
+    "abort": {
+      "already_configured": "Already configured.",
+      "no_instance": "Please add a BamBuddy instance first.",
+      "cannot_connect": "Cannot connect to BamBuddy.",
+      "all_printers_added": "All available printers have already been added."
+    }
+  }
+}

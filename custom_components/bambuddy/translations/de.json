@@ -1,0 +1,39 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "BamBuddy",
+        "description": "Was möchtest du hinzufügen?"
+      },
+      "add_instance": {
+        "title": "BamBuddy Instanz hinzufügen",
+        "data": {
+          "host": "Host / IP-Adresse",
+          "port": "Port",
+          "api_key": "API-Schlüssel"
+        }
+      },
+      "add_printer": {
+        "title": "Drucker hinzufügen",
+        "data": {
+          "printer_id": "Drucker"
+        }
+      }
+    },
+    "menu_options": {
+      "add_instance": "BamBuddy Instanz hinzufügen",
+      "add_printer": "Drucker hinzufügen"
+    },
+    "error": {
+      "cannot_connect": "Verbindung zu BamBuddy fehlgeschlagen. Host und Port prüfen.",
+      "invalid_auth": "Ungültiger API-Schlüssel.",
+      "printer_already_added": "Dieser Drucker wurde bereits hinzugefügt."
+    },
+    "abort": {
+      "already_configured": "Bereits konfiguriert.",
+      "no_instance": "Bitte zuerst eine BamBuddy Instanz hinzufügen.",
+      "cannot_connect": "Verbindung zu BamBuddy nicht möglich.",
+      "all_printers_added": "Alle verfügbaren Drucker wurden bereits hinzugefügt."
+    }
+  }
+}
