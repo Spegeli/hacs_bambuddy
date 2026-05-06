@@ -62,35 +62,45 @@ class BamBuddyConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         errors: dict[str, str] = {}
 
         if user_input is not None:
-            _LOGGER.debug(
-                "Trying to connect to BamBuddy at %s:%s",
-                user_input[CONF_HOST],
-                user_input[CONF_PORT],
-            )
+            host = user_input[CONF_HOST]
+            port = user_input[CONF_PORT]
+            _LOGGER.debug("Trying to connect to BamBuddy at %s:%s", host, port)
+
             session = async_get_clientsession(self.hass)
             client = BamBuddyClient(
-                user_input[CONF_HOST],
-                user_input[CONF_PORT],
+                host,
+                port,
                 user_input[CONF_API_KEY],
                 session,
             )
+
             try:
+                # health first — simplest endpoint, best indicator of connectivity
+                _LOGGER.debug("Testing /health endpoint at http://%s:%s/api/v1/health", host, port)
+                health = await client.get_health()
+                _LOGGER.debug("Health response: %s", health)
+
+                # then system info for version
+                _LOGGER.debug("Testing /system/info endpoint")
                 info = await client.get_system_info()
-                _LOGGER.debug("BamBuddy system info: %s", info)
-                await client.get_health()
+                _LOGGER.debug("System info response: %s", info)
+
             except BamBuddyAuthError as err:
                 _LOGGER.error("BamBuddy auth error: %s", err)
                 errors["base"] = "invalid_auth"
             except BamBuddyApiError as err:
-                _LOGGER.error("BamBuddy connection error: %s", err)
+                _LOGGER.error(
+                    "BamBuddy connection error at http://%s:%s/api/v1 — %s",
+                    host, port, err,
+                )
                 errors["base"] = "cannot_connect"
             else:
-                unique_id = f"bambuddy_{user_input[CONF_HOST]}_{user_input[CONF_PORT]}"
+                unique_id = f"bambuddy_{host}_{port}"
                 await self.async_set_unique_id(unique_id)
                 self._abort_if_unique_id_configured()
 
                 return self.async_create_entry(
-                    title=f"BamBuddy ({user_input[CONF_HOST]})",
+                    title=f"BamBuddy ({host})",
                     data={
                         **user_input,
                         "entry_type": ENTRY_TYPE_INSTANCE,
@@ -125,7 +135,6 @@ class BamBuddyConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         if not instance_entries:
             return self.async_abort(reason="no_instance")
 
-        # Use first instance (could be extended to support multiple)
         instance = instance_entries[0]
         session = async_get_clientsession(self.hass)
         client = BamBuddyClient(
@@ -138,7 +147,6 @@ class BamBuddyConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         if user_input is not None:
             printer_id = user_input[CONF_PRINTER_ID]
 
-            # Check if already added
             existing_printer_ids = [
                 e.data.get(CONF_PRINTER_ID)
                 for e in self.hass.config_entries.async_entries(DOMAIN)
@@ -170,7 +178,6 @@ class BamBuddyConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                         },
                     )
 
-        # Fetch available printers for dropdown
         try:
             printers = await client.get_printers()
             _LOGGER.debug("Available printers: %s", printers)
