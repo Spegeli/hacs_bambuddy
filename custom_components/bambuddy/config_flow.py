@@ -8,6 +8,7 @@ import aiohttp
 import voluptuous as vol
 
 from homeassistant import config_entries
+from homeassistant.components.network import async_get_source_ip
 from homeassistant.data_entry_flow import FlowResult
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
@@ -25,6 +26,18 @@ from .const import (
 )
 
 _LOGGER = logging.getLogger(__name__)
+
+
+async def _async_get_local_ip(hass) -> str:
+    """Try to get the local IP of this HA instance."""
+    try:
+        ip = await async_get_source_ip(hass)
+        if ip:
+            _LOGGER.debug("Auto-detected local IP: %s", ip)
+            return ip
+    except Exception as err:
+        _LOGGER.debug("Could not auto-detect local IP: %s", err)
+    return ""
 
 
 class BamBuddyConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
@@ -85,10 +98,13 @@ class BamBuddyConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     },
                 )
 
+        # Auto-detect local IP as default for BamBuddy (installed as HA Add-on)
+        default_host = await _async_get_local_ip(self.hass)
+
         return self.async_show_form(
             step_id="add_instance",
             data_schema=vol.Schema({
-                vol.Required(CONF_HOST): str,
+                vol.Required(CONF_HOST, default=default_host): str,
                 vol.Required(CONF_PORT, default=DEFAULT_PORT): int,
                 vol.Required(CONF_API_KEY): str,
             }),
