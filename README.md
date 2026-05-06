@@ -13,7 +13,7 @@ Home Assistant integration for [BamBuddy](https://github.com/maziggy/bambuddy) �
 
 1. Open HACS in Home Assistant
 2. Go to **Integrations** → **⋮** → **Custom Repositories**
-3. Add `https://github.com/Spegeli/homeassistant-bambuddy-integration` as **Integration**
+3. Add `https://github.com/Spegeli/hacs_bambuddy` as **Integration**
 4. Click **BamBuddy** → **Download**
 5. Restart Home Assistant
 
