@@ -4,11 +4,10 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-import aiohttp
 import voluptuous as vol
 
 from homeassistant import config_entries
-from homeassistant.components.network import async_get_source_ip
+from homeassistant.core import callback
 from homeassistant.data_entry_flow import FlowResult
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
@@ -21,23 +20,9 @@ from .const import (
     CONF_PRINTER_NAME,
     DEFAULT_PORT,
     DOMAIN,
-    ENTRY_TYPE_INSTANCE,
-    ENTRY_TYPE_PRINTER,
 )
 
 _LOGGER = logging.getLogger(__name__)
-
-
-async def _async_get_local_ip(hass) -> str:
-    """Try to get the local IP of this HA instance."""
-    try:
-        ip = await async_get_source_ip(hass)
-        if ip:
-            _LOGGER.debug("Auto-detected local IP: %s", ip)
-            return ip
-    except Exception as err:
-        _LOGGER.debug("Could not auto-detect local IP: %s", err)
-    return ""
 
 
 class BamBuddyConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
@@ -45,156 +30,115 @@ class BamBuddyConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
     VERSION = 1
 
-    def __init__(self) -> None:
-        self._instance_data: dict = {}
-        self._available_printers: list[dict] = []
+    @staticmethod
+    @callback
+    def async_get_options_flow(config_entry: config_entries.ConfigEntry) -> BamBuddyOptionsFlow:
+        """Return the options flow."""
+        return BamBuddyOptionsFlow(config_entry)
 
     async def async_step_user(self, user_input: dict[str, Any] | None = None) -> FlowResult:
-        """Choose what to add."""
-        return self.async_show_menu(
-            step_id="user",
-            menu_options=["add_instance", "add_printer"],
-        )
-
-    # ── BamBuddy Instance ──────────────────────────────────────────────────
-
-    async def async_step_add_instance(self, user_input: dict[str, Any] | None = None) -> FlowResult:
+        """Add a BamBuddy instance."""
         errors: dict[str, str] = {}
 
         if user_input is not None:
             host = user_input[CONF_HOST]
             port = user_input[CONF_PORT]
-            _LOGGER.debug("Trying to connect to BamBuddy at %s:%s", host, port)
 
             session = async_get_clientsession(self.hass)
-            client = BamBuddyClient(
-                host,
-                port,
-                user_input[CONF_API_KEY],
-                session,
-            )
+            client = BamBuddyClient(host, port, user_input[CONF_API_KEY], session)
 
             try:
-                # health first — simplest endpoint, best indicator of connectivity
-                _LOGGER.debug("Testing /health endpoint at http://%s:%s/api/v1/health", host, port)
-                health = await client.get_health()
-                _LOGGER.debug("Health response: %s", health)
-
-                # then system info for version
-                _LOGGER.debug("Testing /system/info endpoint")
+                await client.get_health()
                 info = await client.get_system_info()
-                _LOGGER.debug("System info response: %s", info)
-
-            except BamBuddyAuthError as err:
-                _LOGGER.error("BamBuddy auth error: %s", err)
+            except BamBuddyAuthError:
                 errors["base"] = "invalid_auth"
-            except BamBuddyApiError as err:
-                _LOGGER.error(
-                    "BamBuddy connection error at http://%s:%s/api/v1 — %s",
-                    host, port, err,
-                )
+            except BamBuddyApiError:
                 errors["base"] = "cannot_connect"
             else:
-                unique_id = f"bambuddy_{host}_{port}"
-                await self.async_set_unique_id(unique_id)
+                await self.async_set_unique_id(f"bambuddy_{host}_{port}")
                 self._abort_if_unique_id_configured()
 
                 return self.async_create_entry(
                     title=f"BamBuddy ({host})",
                     data={
                         **user_input,
-                        "entry_type": ENTRY_TYPE_INSTANCE,
-                        "version": info.get("version", "unknown"),
+                        "version": info.get("app", {}).get("version", "unknown"),
                     },
                 )
 
-        # Auto-detect local IP as default for BamBuddy (installed as HA Add-on)
-        default_host = await _async_get_local_ip(self.hass)
-
         return self.async_show_form(
-            step_id="add_instance",
+            step_id="user",
             data_schema=vol.Schema({
-                vol.Required(CONF_HOST, default=default_host): str,
+                vol.Required(CONF_HOST): str,
                 vol.Required(CONF_PORT, default=DEFAULT_PORT): int,
                 vol.Required(CONF_API_KEY): str,
             }),
             errors=errors,
         )
 
-    # ── Printer ────────────────────────────────────────────────────────────
+
+class BamBuddyOptionsFlow(config_entries.OptionsFlow):
+    """Handle BamBuddy options (add / remove printers)."""
+
+    def __init__(self, config_entry: config_entries.ConfigEntry) -> None:
+        self._printers: list[dict] = list(config_entry.options.get("printers", []))
+        self._entry = config_entry
+
+    async def async_step_init(self, user_input: dict[str, Any] | None = None) -> FlowResult:
+        """Show menu."""
+        menu_options = ["add_printer"]
+        if self._printers:
+            menu_options.append("remove_printer")
+        return self.async_show_menu(step_id="init", menu_options=menu_options)
+
+    # ── Add printer ────────────────────────────────────────────────────────
 
     async def async_step_add_printer(self, user_input: dict[str, Any] | None = None) -> FlowResult:
+        """Select a printer to add."""
         errors: dict[str, str] = {}
 
-        # Find existing instance entries to get connection details
-        instance_entries = [
-            e for e in self.hass.config_entries.async_entries(DOMAIN)
-            if e.data.get("entry_type") == ENTRY_TYPE_INSTANCE
-        ]
-
-        if not instance_entries:
-            return self.async_abort(reason="no_instance")
-
-        instance = instance_entries[0]
         session = async_get_clientsession(self.hass)
         client = BamBuddyClient(
-            instance.data[CONF_HOST],
-            instance.data[CONF_PORT],
-            instance.data[CONF_API_KEY],
+            self._entry.data[CONF_HOST],
+            self._entry.data[CONF_PORT],
+            self._entry.data[CONF_API_KEY],
             session,
         )
 
         if user_input is not None:
             printer_id = user_input[CONF_PRINTER_ID]
-
-            existing_printer_ids = [
-                e.data.get(CONF_PRINTER_ID)
-                for e in self.hass.config_entries.async_entries(DOMAIN)
-                if e.data.get("entry_type") == ENTRY_TYPE_PRINTER
-            ]
-            if printer_id in existing_printer_ids:
-                errors["base"] = "printer_already_added"
+            try:
+                printer = await client.get_printer(printer_id)
+            except BamBuddyApiError:
+                errors["base"] = "cannot_connect"
             else:
-                try:
-                    printer = await client.get_printer(printer_id)
-                    _LOGGER.debug("Got printer info: %s", printer)
-                except BamBuddyApiError as err:
-                    _LOGGER.error("Error fetching printer %s: %s", printer_id, err)
-                    errors["base"] = "cannot_connect"
-                else:
-                    unique_id = f"bambuddy_printer_{printer_id}"
-                    await self.async_set_unique_id(unique_id)
-                    self._abort_if_unique_id_configured()
+                model = printer.get("model", f"Printer {printer_id}")
+                serial = printer.get("serial_number")
+                display_name = f"{model} ({serial})" if serial else model
 
-                    return self.async_create_entry(
-                        title=f"BamBuddy Printer: {printer.get('name', f'Printer {printer_id}')}",
-                        data={
-                            CONF_HOST: instance.data[CONF_HOST],
-                            CONF_PORT: instance.data[CONF_PORT],
-                            CONF_API_KEY: instance.data[CONF_API_KEY],
-                            CONF_PRINTER_ID: printer_id,
-                            CONF_PRINTER_NAME: printer.get("name", f"Printer {printer_id}"),
-                            "entry_type": ENTRY_TYPE_PRINTER,
-                        },
-                    )
+                self._printers.append({
+                    "printer_id": printer_id,
+                    "printer_name": display_name,
+                })
+                return self.async_create_entry(title="", data={"printers": self._printers})
 
         try:
             printers = await client.get_printers()
-            _LOGGER.debug("Available printers: %s", printers)
-        except BamBuddyApiError as err:
-            _LOGGER.error("Cannot fetch printers: %s", err)
+        except BamBuddyApiError:
             return self.async_abort(reason="cannot_connect")
 
-        existing_ids = [
-            e.data.get(CONF_PRINTER_ID)
-            for e in self.hass.config_entries.async_entries(DOMAIN)
-            if e.data.get("entry_type") == ENTRY_TYPE_PRINTER
-        ]
-        available = {
-            p["id"]: p["name"]
-            for p in printers
-            if p["id"] not in existing_ids
-        }
+        existing_ids = {p["printer_id"] for p in self._printers}
+        available = {}
+        for p in printers:
+            if p["id"] not in existing_ids:
+                name = p.get("name", "")
+                model = p.get("model", "")
+                serial = p.get("serial_number", "")
+                if name and name != model:
+                    label = f"{name} ({model}) · {serial}" if serial else f"{name} ({model})"
+                else:
+                    label = f"{model} · {serial}" if serial else model
+                available[p["id"]] = label
 
         if not available:
             return self.async_abort(reason="all_printers_added")
@@ -205,4 +149,21 @@ class BamBuddyConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 vol.Required(CONF_PRINTER_ID): vol.In(available),
             }),
             errors=errors,
+        )
+
+    # ── Remove printer ─────────────────────────────────────────────────────
+
+    async def async_step_remove_printer(self, user_input: dict[str, Any] | None = None) -> FlowResult:
+        """Select a printer to remove."""
+        if user_input is not None:
+            printer_id = user_input[CONF_PRINTER_ID]
+            self._printers = [p for p in self._printers if p["printer_id"] != printer_id]
+            return self.async_create_entry(title="", data={"printers": self._printers})
+
+        current = {p["printer_id"]: p["printer_name"] for p in self._printers}
+        return self.async_show_form(
+            step_id="remove_printer",
+            data_schema=vol.Schema({
+                vol.Required(CONF_PRINTER_ID): vol.In(current),
+            }),
         )

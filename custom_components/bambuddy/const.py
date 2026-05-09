@@ -11,9 +11,6 @@ CONF_PRINTER_NAME = "printer_name"
 DEFAULT_PORT = 8000
 DEFAULT_SCAN_INTERVAL = 10  # seconds
 
-ENTRY_TYPE_INSTANCE = "instance"
-ENTRY_TYPE_PRINTER = "printer"
-
 PRINTER_STATES = {
     "idle": "Idle",
     "printing": "Printing",

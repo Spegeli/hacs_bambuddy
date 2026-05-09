@@ -30,6 +30,9 @@ class BamBuddyInstanceCoordinator(DataUpdateCoordinator):
             health = await self.client.get_health()
             system_info = await self.client.get_system_info()
             statistics = await self.client.get_statistics()
+            _LOGGER.debug("Instance data — health: %s", health)
+            _LOGGER.debug("Instance data — system_info: %s", system_info)
+            _LOGGER.debug("Instance data — statistics: %s", statistics)
             return {
                 "health": health,
                 "system_info": system_info,
@@ -56,6 +59,8 @@ class BamBuddyPrinterCoordinator(DataUpdateCoordinator):
         try:
             printer = await self.client.get_printer(self.printer_id)
             status = await self.client.get_printer_status(self.printer_id)
+            _LOGGER.debug("Printer %s data — printer: %s", self.printer_id, printer)
+            _LOGGER.debug("Printer %s data — status: %s", self.printer_id, status)
             return {
                 "printer": printer,
                 "status": status,

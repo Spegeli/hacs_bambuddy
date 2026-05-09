@@ -2,36 +2,53 @@
   "config": {
     "step": {
       "user": {
-        "title": "BamBuddy",
-        "description": "What would you like to add?"
-      },
-      "add_instance": {
         "title": "Add BamBuddy Instance",
         "data": {
           "host": "Host / IP Address",
           "port": "Port",
           "api_key": "API Key"
         }
+      }
+    },
+    "error": {
+      "cannot_connect": "Cannot connect to BamBuddy. Check host and port.",
+      "invalid_auth": "Invalid API key."
+    },
+    "abort": {
+      "already_configured": "Already configured."
+    }
+  },
+  "exceptions": {
+    "cannot_delete_instance": {
+      "message": "The BamBuddy instance cannot be deleted here. To remove it, delete the entire integration entry via the three-dot menu on the integration card."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "menu_options": {
+          "add_printer": "Add Printer",
+          "remove_printer": "Remove Printer"
+        }
       },
       "add_printer": {
         "title": "Add Printer",
+        "description": "Select a printer to add from the chosen BamBuddy instance.",
+        "data": {
+          "printer_id": "Printer"
+        }
+      },
+      "remove_printer": {
+        "title": "Remove Printer",
         "data": {
           "printer_id": "Printer"
         }
       }
     },
-    "menu_options": {
-      "add_instance": "Add BamBuddy Instance",
-      "add_printer": "Add Printer"
-    },
     "error": {
-      "cannot_connect": "Cannot connect to BamBuddy. Check host and port.",
-      "invalid_auth": "Invalid API key.",
-      "printer_already_added": "This printer has already been added."
+      "cannot_connect": "Cannot connect to BamBuddy."
     },
     "abort": {
-      "already_configured": "Already configured.",
-      "no_instance": "Please add a BamBuddy instance first.",
       "cannot_connect": "Cannot connect to BamBuddy.",
       "all_printers_added": "All available printers have already been added."
     }
