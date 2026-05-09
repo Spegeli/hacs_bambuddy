@@ -2,7 +2,7 @@
   <img src="https://github.com/Spegeli/hacs_bambuddy/blob/main/logo.png?raw=true" alt="BamBuddy Logo" width="300">
 </p>
 
-# 🖨️ BamBuddy – Home Assistant Integration
+# 🚀 BamBuddy – Home Assistant Integration
 
 <p align="center">
   A custom <a href="https://www.home-assistant.io/">Home Assistant</a> integration for <a href="https://github.com/maziggy/bambuddy">BamBuddy</a> — a self-hosted print archive and management system for Bambu Lab 3D printers.
