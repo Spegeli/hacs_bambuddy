@@ -2,7 +2,7 @@
   "name": "BamBuddy",
   "domain": "bambuddy",
   "documentation": "https://wiki.bambuddy.cool/reference/api/",
-  "issue_tracker": "https://github.com/Spegeli/homeassistant-app-bambuddy/issues",
+  "issue_tracker": "https://github.com/Spegeli/hacs_bambuddy/issues"
   "codeowners": ["@Spegeli"],
   "iot_class": "local_polling",
   "homeassistant": "2024.1.0"
