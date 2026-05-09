@@ -60,16 +60,11 @@ class BamBuddyClient:
 
     # Health — lives at /health, not /api/v1/health
     async def get_health(self) -> dict:
-        url = self._health_url
-        _LOGGER.debug("API request: GET %s", url)
         try:
             async with self._session.get(
-                url, timeout=aiohttp.ClientTimeout(total=10)
+                self._health_url, timeout=aiohttp.ClientTimeout(total=10)
             ) as resp:
-                _LOGGER.debug("API response: GET %s → HTTP %s", url, resp.status)
                 if resp.status >= 400:
-                    body = await resp.text()
-                    _LOGGER.error("Health check error %s — body: %s", resp.status, body[:500])
                     raise BamBuddyApiError(f"API error {resp.status}")
                 return await resp.json()
         except aiohttp.ClientConnectorError as err:
@@ -133,6 +128,3 @@ class BamBuddyClient:
     def stream_url(self, printer_id: int, token: str, fps: int = 5) -> str:
         return f"{self._base_url}/printers/{printer_id}/camera/stream?token={token}&fps={fps}"
 
-    # Queue
-    async def get_queue(self) -> list[dict]:
-        return await self._request("GET", "/queue/")

@@ -2,20 +2,20 @@
 from __future__ import annotations
 
 from homeassistant.components.button import ButtonEntity, ButtonEntityDescription
-from homeassistant.helpers.entity import EntityCategory
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
-from homeassistant.helpers.entity import DeviceInfo
+from homeassistant.helpers.entity import EntityCategory
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from .api import BamBuddyClient
 from .const import DOMAIN
+from .entity import BamBuddyPrinterEntityMixin
 
 PRINTER_BUTTONS: list[ButtonEntityDescription] = [
     ButtonEntityDescription(key="pause", name="Pause Print", icon="mdi:pause", entity_category=EntityCategory.CONFIG),
     ButtonEntityDescription(key="resume", name="Resume Print", icon="mdi:play", entity_category=EntityCategory.CONFIG),
     ButtonEntityDescription(key="stop", name="Stop Print", icon="mdi:stop", entity_category=EntityCategory.CONFIG),
-    ButtonEntityDescription(key="clear_hms", name="Clear HMS Errors", icon="mdi:alert-circle-check"),
+    ButtonEntityDescription(key="clear_hms", name="Clear HMS Errors", icon="mdi:alert-circle-check", entity_category=EntityCategory.DIAGNOSTIC),
     ButtonEntityDescription(key="clear_plate", name="Clear Plate", icon="mdi:tray-remove"),
     ButtonEntityDescription(key="refresh_status", name="Refresh Status", icon="mdi:refresh"),
 ]
@@ -35,7 +35,7 @@ async def async_setup_entry(
     async_add_entities(entities)
 
 
-class BamBuddyPrinterButton(ButtonEntity):
+class BamBuddyPrinterButton(BamBuddyPrinterEntityMixin, ButtonEntity):
     """BamBuddy printer button."""
 
     def __init__(
@@ -55,22 +55,8 @@ class BamBuddyPrinterButton(ButtonEntity):
         self._printer_data = printer_data
         self._attr_unique_id = f"{entry.entry_id}_p{printer_data['printer_id']}_{description.key}"
 
-    @property
-    def device_info(self) -> DeviceInfo:
-        data = self._printer_data["coordinator"].data or {}
-        printer_info = data.get("printer", {})
-        status_info = data.get("status", {})
-        printer_id = self._printer_data["printer_id"]
-        return DeviceInfo(
-            identifiers={(DOMAIN, f"{self._entry_id}_printer_{printer_id}")},
-            name=self._printer_data["printer_name"],
-            manufacturer="BamBuddy",
-            model=f"BamBuddy Printer ({printer_info['model']})" if printer_info.get("model") else "BamBuddy Printer",
-            serial_number=printer_info.get("serial_number"),
-            sw_version=status_info.get("firmware_version"),
-            configuration_url=self._instance_url,
-            via_device=(DOMAIN, self._entry_id),
-        )
+    def _coordinator_data(self) -> dict:
+        return self._printer_data["coordinator"].data or {}
 
     async def async_press(self) -> None:
         printer_id = self._printer_data["printer_id"]

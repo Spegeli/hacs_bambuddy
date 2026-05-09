@@ -8,11 +8,12 @@ from homeassistant.components.binary_sensor import (
 )
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
-from homeassistant.helpers.entity import DeviceInfo, EntityCategory
+from homeassistant.helpers.entity import EntityCategory
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .const import DOMAIN
+from .entity import BamBuddyPrinterEntityMixin
 
 PRINTER_BINARY_SENSORS: list[BinarySensorEntityDescription] = [
     BinarySensorEntityDescription(
@@ -31,6 +32,7 @@ PRINTER_BINARY_SENSORS: list[BinarySensorEntityDescription] = [
         key="hms_errors",
         name="HMS Errors",
         device_class=BinarySensorDeviceClass.PROBLEM,
+        entity_category=EntityCategory.DIAGNOSTIC,
     ),
     BinarySensorEntityDescription(
         key="wired_network",
@@ -61,7 +63,7 @@ async def async_setup_entry(
     async_add_entities(entities)
 
 
-class BamBuddyPrinterBinarySensor(CoordinatorEntity, BinarySensorEntity):
+class BamBuddyPrinterBinarySensor(BamBuddyPrinterEntityMixin, CoordinatorEntity, BinarySensorEntity):
     """BamBuddy printer binary sensor."""
 
     def __init__(
@@ -77,22 +79,6 @@ class BamBuddyPrinterBinarySensor(CoordinatorEntity, BinarySensorEntity):
         self._entry_id = entry.entry_id
         self._instance_url = f"http://{entry.data.get('host')}:{entry.data.get('port', 8000)}"
         self._attr_unique_id = f"{entry.entry_id}_p{printer_data['printer_id']}_{description.key}"
-
-    @property
-    def device_info(self) -> DeviceInfo:
-        printer_info = (self.coordinator.data or {}).get("printer", {})
-        status_info = (self.coordinator.data or {}).get("status", {})
-        printer_id = self._printer_data["printer_id"]
-        return DeviceInfo(
-            identifiers={(DOMAIN, f"{self._entry_id}_printer_{printer_id}")},
-            name=self._printer_data["printer_name"],
-            manufacturer="BamBuddy",
-            model=f"BamBuddy Printer ({printer_info['model']})" if printer_info.get("model") else "BamBuddy Printer",
-            serial_number=printer_info.get("serial_number"),
-            sw_version=status_info.get("firmware_version"),
-            configuration_url=self._instance_url,
-            via_device=(DOMAIN, self._entry_id),
-        )
 
     @property
     def is_on(self) -> bool | None:

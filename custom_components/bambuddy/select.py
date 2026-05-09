@@ -4,12 +4,12 @@ from __future__ import annotations
 from homeassistant.components.select import SelectEntity
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
-from homeassistant.helpers.entity import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .api import BamBuddyClient
 from .const import DOMAIN, PRINT_SPEED_MODES
+from .entity import BamBuddyPrinterEntityMixin
 
 
 async def async_setup_entry(
@@ -23,7 +23,7 @@ async def async_setup_entry(
     )
 
 
-class BamBuddyPrintSpeedSelect(CoordinatorEntity, SelectEntity):
+class BamBuddyPrintSpeedSelect(BamBuddyPrinterEntityMixin, CoordinatorEntity, SelectEntity):
     """Select entity for print speed."""
 
     _attr_name = "Print Speed"
@@ -47,24 +47,9 @@ class BamBuddyPrintSpeedSelect(CoordinatorEntity, SelectEntity):
         self._attr_unique_id = f"{entry.entry_id}_p{printer_data['printer_id']}_print_speed"
 
     @property
-    def device_info(self) -> DeviceInfo:
-        printer_info = (self.coordinator.data or {}).get("printer", {})
-        status_info = (self.coordinator.data or {}).get("status", {})
-        printer_id = self._printer_data["printer_id"]
-        return DeviceInfo(
-            identifiers={(DOMAIN, f"{self._entry_id}_printer_{printer_id}")},
-            name=self._printer_data["printer_name"],
-            manufacturer="BamBuddy",
-            model=f"BamBuddy Printer ({printer_info['model']})" if printer_info.get("model") else "BamBuddy Printer",
-            serial_number=printer_info.get("serial_number"),
-            sw_version=status_info.get("firmware_version"),
-            configuration_url=self._instance_url,
-            via_device=(DOMAIN, self._entry_id),
-        )
-
-    @property
     def current_option(self) -> str | None:
-        return PRINT_SPEED_MODES.get(2)
+        mode = self._coordinator_data().get("status", {}).get("speed_level")
+        return PRINT_SPEED_MODES.get(mode)
 
     async def async_select_option(self, option: str) -> None:
         mode = next((k for k, v in PRINT_SPEED_MODES.items() if v == option), None)

@@ -19,6 +19,7 @@ from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .const import DOMAIN
+from .entity import BamBuddyPrinterEntityMixin
 
 # ── Instance Sensors ───────────────────────────────────────────────────────
 
@@ -48,9 +49,11 @@ PRINTER_SENSORS: list[SensorEntityDescription] = [
     SensorEntityDescription(key="current_layer", name="Current Layer", icon="mdi:layers"),
     SensorEntityDescription(key="total_layers", name="Total Layers", icon="mdi:layers-triple"),
     SensorEntityDescription(key="nozzle_temp", name="Nozzle Temperature", icon="mdi:thermometer", native_unit_of_measurement=UnitOfTemperature.CELSIUS, device_class=SensorDeviceClass.TEMPERATURE, state_class=SensorStateClass.MEASUREMENT, suggested_display_precision=0),
+    SensorEntityDescription(key="nozzle_target", name="Nozzle Target Temperature", icon="mdi:thermometer-chevron-up", native_unit_of_measurement=UnitOfTemperature.CELSIUS, device_class=SensorDeviceClass.TEMPERATURE, state_class=SensorStateClass.MEASUREMENT, suggested_display_precision=0),
     SensorEntityDescription(key="bed_temp", name="Bed Temperature", icon="mdi:thermometer", native_unit_of_measurement=UnitOfTemperature.CELSIUS, device_class=SensorDeviceClass.TEMPERATURE, state_class=SensorStateClass.MEASUREMENT, suggested_display_precision=0),
+    SensorEntityDescription(key="bed_target", name="Bed Target Temperature", icon="mdi:thermometer-chevron-up", native_unit_of_measurement=UnitOfTemperature.CELSIUS, device_class=SensorDeviceClass.TEMPERATURE, state_class=SensorStateClass.MEASUREMENT, suggested_display_precision=0),
     SensorEntityDescription(key="chamber_temp", name="Chamber Temperature", icon="mdi:thermometer", native_unit_of_measurement=UnitOfTemperature.CELSIUS, device_class=SensorDeviceClass.TEMPERATURE, state_class=SensorStateClass.MEASUREMENT),
-    SensorEntityDescription(key="hms_status", name="HMS Status", icon="mdi:alert-circle-outline"),
+    SensorEntityDescription(key="hms_status", name="HMS Status", icon="mdi:alert-circle-outline", entity_category=EntityCategory.DIAGNOSTIC),
     SensorEntityDescription(key="subtask_name", name="Subtask", icon="mdi:file-cad"),
     SensorEntityDescription(key="gcode_file", name="GCode File", icon="mdi:file-code"),
     SensorEntityDescription(key="cooling_fan_speed", name="Cooling Fan", icon="mdi:fan", native_unit_of_measurement=PERCENTAGE, state_class=SensorStateClass.MEASUREMENT),
@@ -150,7 +153,7 @@ class BamBuddyInstanceSensor(CoordinatorEntity, SensorEntity):
 
 # ── Printer Sensor Entity ──────────────────────────────────────────────────
 
-class BamBuddyPrinterSensor(CoordinatorEntity, SensorEntity):
+class BamBuddyPrinterSensor(BamBuddyPrinterEntityMixin, CoordinatorEntity, SensorEntity):
     """BamBuddy printer sensor."""
 
     def __init__(self, coordinator, entry: ConfigEntry, printer_data: dict, description: SensorEntityDescription) -> None:
@@ -160,22 +163,6 @@ class BamBuddyPrinterSensor(CoordinatorEntity, SensorEntity):
         self._entry_id = entry.entry_id
         self._instance_url = f"http://{entry.data.get('host')}:{entry.data.get('port', 8000)}"
         self._attr_unique_id = f"{entry.entry_id}_p{printer_data['printer_id']}_{description.key}"
-
-    @property
-    def device_info(self) -> DeviceInfo:
-        printer_info = (self.coordinator.data or {}).get("printer", {})
-        status_info = (self.coordinator.data or {}).get("status", {})
-        printer_id = self._printer_data["printer_id"]
-        return DeviceInfo(
-            identifiers={(DOMAIN, f"{self._entry_id}_printer_{printer_id}")},
-            name=self._printer_data["printer_name"],
-            manufacturer="BamBuddy",
-            model=f"BamBuddy Printer ({printer_info['model']})" if printer_info.get("model") else "BamBuddy Printer",
-            serial_number=printer_info.get("serial_number"),
-            sw_version=status_info.get("firmware_version"),
-            configuration_url=self._instance_url,
-            via_device=(DOMAIN, self._entry_id),
-        )
 
     @property
     def native_value(self):
@@ -203,8 +190,12 @@ class BamBuddyPrinterSensor(CoordinatorEntity, SensorEntity):
             return status.get("total_layers")
         if key == "nozzle_temp":
             return status.get("temperatures", {}).get("nozzle")
+        if key == "nozzle_target":
+            return status.get("temperatures", {}).get("nozzle_target")
         if key == "bed_temp":
             return status.get("temperatures", {}).get("bed")
+        if key == "bed_target":
+            return status.get("temperatures", {}).get("bed_target")
         if key == "chamber_temp":
             return status.get("temperatures", {}).get("chamber")
         if key == "hms_status":

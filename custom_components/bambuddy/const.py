@@ -11,16 +11,6 @@ CONF_PRINTER_NAME = "printer_name"
 DEFAULT_PORT = 8000
 DEFAULT_SCAN_INTERVAL = 10  # seconds
 
-PRINTER_STATES = {
-    "idle": "Idle",
-    "printing": "Printing",
-    "paused": "Paused",
-    "error": "Error",
-    "offline": "Offline",
-    "finish": "Finished",
-    "failed": "Failed",
-}
-
 PRINT_SPEED_MODES = {
     1: "Silent (50%)",
     2: "Standard (100%)",
