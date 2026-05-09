@@ -1,20 +1,26 @@
-# BamBuddy Home Assistant Integration
+<p align="center">
+  <img src="https://github.com/Spegeli/homeassistant-app-bambuddy/blob/main/logo.png?raw=true" alt="BamBuddy Logo" width="300">
+</p>
 
-[![hacs_badge](https://img.shields.io/badge/HACS-Custom-orange.svg)](https://github.com/hacs/integration)
-[![GitHub release](https://img.shields.io/github/release/Spegeli/hacs_bambuddy.svg)](https://github.com/Spegeli/hacs_bambuddy/releases)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+# 🖨️ BamBuddy – Home Assistant Integration
+
+<p align="center">
+  A custom <a href="https://www.home-assistant.io/">Home Assistant</a> integration for <a href="https://github.com/maziggy/bambuddy">BamBuddy</a> — a self-hosted print archive and management system for Bambu Lab 3D printers.
+</p>
+
+<p align="center">
+  <a href="https://github.com/hacs/integration"><img src="https://img.shields.io/badge/HACS-Custom-orange.svg"></a>
+  <img src="https://img.shields.io/github/release/Spegeli/hacs_bambuddy.svg">
+  <img src="https://img.shields.io/badge/License-MIT-yellow.svg">
+</p>
 
 > [!WARNING]
 > **This integration is currently under active development and is not intended for production use.**
 > Expect breaking changes, incomplete features, and potential instability. Use at your own risk.
 
-A custom [Home Assistant](https://www.home-assistant.io/) integration for [BamBuddy](https://bambuddy.cool) — a management application for Bambu Lab 3D printers.
-
-This integration connects to your BamBuddy instance via its REST API and exposes your printers as devices in Home Assistant, including live status sensors, temperature monitoring, camera feeds, and print controls.
-
 ---
 
-## Features
+## ✨ Features
 
 - **Multiple printers** — manage any number of printers from one BamBuddy instance
 - **Live status** — print progress, layer count, remaining time, current job name
@@ -29,15 +35,15 @@ This integration connects to your BamBuddy instance via its REST API and exposes
 
 ---
 
-## Requirements
+## 📋 Requirements
 
 - Home Assistant 2023.7 or newer
-- A running [BamBuddy](https://bambuddy.cool) instance reachable from your HA server
+- A running [BamBuddy](https://github.com/maziggy/bambuddy) instance reachable from your HA server
 - A BamBuddy API key
 
 ---
 
-## Installation
+## 📦 Installation
 
 ### Via HACS (recommended)
 
@@ -54,22 +60,22 @@ This integration connects to your BamBuddy instance via its REST API and exposes
 
 ---
 
-## Configuration
+## ⚙️ Configuration
 
 1. Go to **Settings → Devices & Services → Add Integration**
 2. Search for **BamBuddy**
 3. Enter your BamBuddy host, port (default: `8000`), and API key
 4. After setup, click the **Configure** button (wrench icon) on the integration card to add your printers
 
-### Adding printers
+### Adding & removing printers
 
-Open the integration options (wrench icon) and select **Add Printer**. BamBuddy will list all available printers. Select one to create a device in Home Assistant.
+Open the integration options (wrench icon) and select **Add Printer**. BamBuddy will list all available printers — select one to create a device in Home Assistant.
 
 Printers can be removed either via the options menu or by deleting the device directly from the device page.
 
 ---
 
-## Entities
+## 📊 Entities
 
 ### Per printer
 
@@ -94,6 +100,7 @@ Printers can be removed either via the options menu or by deleting the device di
 | Clear Plate | Button | Clear the build plate |
 | Refresh Status | Button | Force a status update |
 | Online | Binary Sensor | Printer connectivity |
+| SD Card | Binary Sensor | SD card presence *(Diagnostic)* |
 | HMS Errors | Binary Sensor | Active HMS errors *(Diagnostic)* |
 | HMS Status / Clear HMS Errors | Sensor / Button | HMS error info *(Diagnostic)* |
 | Firmware Version | Sensor | *(Diagnostic)* |
@@ -118,12 +125,24 @@ Printers can be removed either via the options menu or by deleting the device di
 
 ---
 
-## Update Interval
+## 🔄 Update Interval
 
 Status is polled every **10 seconds**.
 
 ---
 
-## License
+## ℹ️ Disclaimer
+
+This is **not** an official release by the BamBuddy developer. This project provides a custom Home Assistant integration that connects to [BamBuddy](https://github.com/maziggy/bambuddy) via its REST API.
+
+I am not affiliated with or the developer of BamBuddy itself — therefore I am unable to provide support for BamBuddy-related issues, bugs, or feature requests. For anything related to BamBuddy, please refer to the original project:
+
+👉 **[github.com/maziggy/bambuddy](https://github.com/maziggy/bambuddy)**
+
+Support provided here is limited to the **Home Assistant integration** only.
+
+---
+
+## 📄 License
 
 MIT — see [LICENSE](LICENSE)
