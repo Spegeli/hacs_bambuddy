@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="https://github.com/Spegeli/homeassistant-app-bambuddy/blob/main/logo.png?raw=true" alt="BamBuddy Logo" width="300">
+  <img src="https://github.com/Spegeli/hacs_bambuddy/blob/main/logo.png?raw=true" alt="BamBuddy Logo" width="300">
 </p>
 
 # 🖨️ BamBuddy – Home Assistant Integration
@@ -46,6 +46,12 @@
 ## 📦 Installation
 
 ### Via HACS (recommended)
+
+Click the button below to automatically add the repository to HACS:
+
+[![Open your Home Assistant instance and open a repository inside the Home Assistant Community Store.](https://my.home-assistant.io/badges/hacs_repository.svg)](https://my.home-assistant.io/redirect/hacs_repository/?owner=Spegeli&repository=hacs_bambuddy&category=Integration)
+
+Or add it manually:
 
 1. Open HACS in Home Assistant
 2. Go to **Integrations** → click the three-dot menu → **Custom repositories**
