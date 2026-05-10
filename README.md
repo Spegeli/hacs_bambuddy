@@ -5,7 +5,7 @@
 # 🚀 BamBuddy – Home Assistant Integration
 
 <p align="center">
-  A custom <a href="https://www.home-assistant.io/">Home Assistant</a> integration for <a href="https://github.com/maziggy/bambuddy">BamBuddy</a> — a self-hosted command center for Bambu Lab — from one A1 to a 40-printer farm.<br>
+  A custom <a href="https://www.home-assistant.io/">Home Assistant</a> integration for <a href="https://github.com/maziggy/bambuddy">BamBuddy</a> — a self-hosted command center for Bambu Lab — from one A1 to a 40-printer farm.<br><br>
   <strong>Your printers. No cloud. Your rules.</strong>
 </p>
 
