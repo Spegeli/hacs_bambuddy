@@ -1,9 +1,9 @@
 {
   "domain": "bambuddy",
   "name": "BamBuddy",
-  "version": "1.0.0",
-  "documentation": "https://wiki.bambuddy.cool/reference/api/",
-  "issue_tracker": "https://github.com/Spegeli/homeassistant-app-bambuddy/issues",
+  "version": "0.0.1b2",
+  "documentation": "https://github.com/Spegeli/hacs_bambuddy",
+  "issue_tracker": "https://github.com/Spegeli/hacs_bambuddy/issues",
   "dependencies": ["network"],
   "codeowners": ["@Spegeli"],
   "requirements": ["aiohttp>=3.8.0"],
