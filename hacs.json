@@ -1,7 +1,7 @@
 {
   "name": "BamBuddy",
   "domain": "bambuddy",
-  "documentation": "https://wiki.bambuddy.cool/reference/api/",
+  "documentation": "https://github.com/Spegeli/hacs_bambuddy",
   "issue_tracker": "https://github.com/Spegeli/hacs_bambuddy/issues",
   "codeowners": ["@Spegeli"],
   "iot_class": "local_polling",
