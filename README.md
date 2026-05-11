@@ -12,7 +12,7 @@
 <p align="center">
   <a href="https://github.com/hacs/integration"><img src="https://img.shields.io/badge/HACS-Custom-orange.svg"></a>
   <img src="https://img.shields.io/github/v/release/Spegeli/hacs_bambuddy?label=release&color=blue">
-  <img src="https://img.shields.io/github/v/release/Spegeli/hacs_bambuddy?include_prereleases&label=pre-release&color=orange">
+  <!--<img src="https://img.shields.io/github/v/release/Spegeli/hacs_bambuddy?include_prereleases&label=pre-release&color=orange">-->
   <img src="https://img.shields.io/badge/License-MIT-yellow.svg">
 </p>
 
