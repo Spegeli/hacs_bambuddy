@@ -5,15 +5,14 @@
 # 🚀 BamBuddy – Home Assistant Integration
 
 <p align="center">
-  A custom <a href="https://www.home-assistant.io/">Home Assistant</a> integration for <a href="https://github.com/maziggy/bambuddy">BamBuddy</a> — a self-hosted command center for Bambu Lab.<br><br>
-  <strong>Your printers. No cloud. Your rules.</strong>
+  <a href="https://github.com/hacs/integration"><img src="https://img.shields.io/badge/HACS-Custom-orange.svg"></a>
+  <img src="https://img.shields.io/github/v/release/Spegeli/hacs_bambuddy?label=release&color=blue">
+  <img src="https://img.shields.io/badge/License-MIT-green.svg">
 </p>
 
 <p align="center">
-  <a href="https://github.com/hacs/integration"><img src="https://img.shields.io/badge/HACS-Custom-orange.svg"></a>
-  <img src="https://img.shields.io/github/v/release/Spegeli/hacs_bambuddy?label=release&color=blue">
-  <!--<img src="https://img.shields.io/github/v/release/Spegeli/hacs_bambuddy?include_prereleases&label=pre-release&color=orange">-->
-  <img src="https://img.shields.io/badge/License-MIT-green.svg">
+  A custom <a href="https://www.home-assistant.io/">Home Assistant</a> integration for <a href="https://github.com/maziggy/bambuddy">BamBuddy</a> — a self-hosted command center for Bambu Lab.<br><br>
+  <strong>Your printers. No cloud. Your rules.</strong>
 </p>
 
 > [!WARNING]
