@@ -139,7 +139,7 @@ Status is polled every **10 seconds**.
 
 ---
 
-## ℹ️ Disclaimer
+## ⚖️ Disclaimer
 
 This is **not** an official release by the BamBuddy developer. This project provides a custom Home Assistant integration that connects to [BamBuddy](https://github.com/maziggy/bambuddy) via its REST API.
 
@@ -151,6 +151,6 @@ Support provided here is limited to the **Home Assistant integration** only.
 
 ---
 
-## 📄 License
+## 📜 License
 
-MIT — see [LICENSE](LICENSE)
+This project is licensed under the **MIT License** — see the [LICENSE](LICENSE) file for details.
