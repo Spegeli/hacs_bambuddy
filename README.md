@@ -38,7 +38,7 @@
 
 ## 📋 Requirements
 
-- Home Assistant 2023.7 or newer
+- Home Assistant 2025.1 or newer
 - A running [BamBuddy](https://github.com/maziggy/bambuddy) instance reachable from your HA server
 - A BamBuddy API key
 
