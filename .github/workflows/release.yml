@@ -2,12 +2,26 @@ name: Create Release
 
 on:
   workflow_dispatch:
+    inputs:
+      draft:
+        description: "Create as draft (review before publishing)"
+        required: false
+        default: true
+        type: boolean
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+env:
+  MANIFEST: custom_components/bambuddy/manifest.json
 
 jobs:
   release:
     runs-on: ubuntu-latest
-    permissions:
-      contents: write
 
     steps:
       - name: Checkout
@@ -21,10 +35,8 @@ jobs:
           TODAY=$(date -u +"%Y.%m.%d")
           BASE_TAG="v${TODAY}"
 
-          # Fetch all existing tags
           git fetch --tags
 
-          # Check if base tag already exists, add suffix if needed
           if ! git tag -l "${BASE_TAG}" | grep -q "^${BASE_TAG}$"; then
             VERSION="${TODAY}"
             TAG="${BASE_TAG}"
@@ -44,15 +56,15 @@ jobs:
       - name: Update manifest.json
         run: |
           jq --arg v "${{ steps.version.outputs.version }}" '.version = $v' \
-            custom_components/bambuddy/manifest.json > tmp.json
-          mv tmp.json custom_components/bambuddy/manifest.json
+            ${{ env.MANIFEST }} > tmp.json
+          mv tmp.json ${{ env.MANIFEST }}
           echo "manifest.json updated to ${{ steps.version.outputs.version }}"
 
       - name: Commit updated manifest.json
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add custom_components/bambuddy/manifest.json
+          git add ${{ env.MANIFEST }}
           git diff --staged --quiet || git commit -m "chore: bump version to ${{ steps.version.outputs.version }}"
 
       - name: Push commit and tag
@@ -65,5 +77,6 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ steps.version.outputs.tag }}
-          name: "v${{ steps.version.outputs.version }}"
+          name: "${{ steps.version.outputs.tag }}"
           generate_release_notes: true
+          draft: ${{ inputs.draft }}
