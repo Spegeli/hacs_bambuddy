@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="logo.png?raw=true" alt="BamBuddy Logo" width="300">
+  <img src="https://raw.githubusercontent.com/Spegeli/hacs_bambuddy/main/logo.png" alt="BamBuddy Logo" width="300">
 </p>
 
 # 🚀 BamBuddy – Home Assistant Integration
