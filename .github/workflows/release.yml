@@ -1,0 +1,69 @@
+name: Create Release
+
+on:
+  workflow_dispatch:
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Determine version and tag
+        id: version
+        run: |
+          TODAY=$(date -u +"%Y.%m.%d")
+          BASE_TAG="v${TODAY}"
+
+          # Fetch all existing tags
+          git fetch --tags
+
+          # Check if base tag already exists, add suffix if needed
+          if ! git tag -l "${BASE_TAG}" | grep -q "^${BASE_TAG}$"; then
+            VERSION="${TODAY}"
+            TAG="${BASE_TAG}"
+          else
+            SUFFIX=1
+            while git tag -l "${BASE_TAG}-${SUFFIX}" | grep -q "^${BASE_TAG}-${SUFFIX}$"; do
+              SUFFIX=$((SUFFIX + 1))
+            done
+            VERSION="${TODAY}-${SUFFIX}"
+            TAG="${BASE_TAG}-${SUFFIX}"
+          fi
+
+          echo "version=${VERSION}" >> $GITHUB_OUTPUT
+          echo "tag=${TAG}" >> $GITHUB_OUTPUT
+          echo "Determined version: ${VERSION} / tag: ${TAG}"
+
+      - name: Update manifest.json
+        run: |
+          jq --arg v "${{ steps.version.outputs.version }}" '.version = $v' \
+            custom_components/bambuddy/manifest.json > tmp.json
+          mv tmp.json custom_components/bambuddy/manifest.json
+          echo "manifest.json updated to ${{ steps.version.outputs.version }}"
+
+      - name: Commit updated manifest.json
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add custom_components/bambuddy/manifest.json
+          git diff --staged --quiet || git commit -m "chore: bump version to ${{ steps.version.outputs.version }}"
+
+      - name: Push commit and tag
+        run: |
+          git push origin HEAD
+          git tag ${{ steps.version.outputs.tag }}
+          git push origin ${{ steps.version.outputs.tag }}
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.version.outputs.tag }}
+          name: "v${{ steps.version.outputs.version }}"
+          generate_release_notes: true

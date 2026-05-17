@@ -1,9 +1,5 @@
 {
   "name": "BamBuddy",
-  "domain": "bambuddy",
-  "documentation": "https://github.com/Spegeli/hacs_bambuddy",
-  "issue_tracker": "https://github.com/Spegeli/hacs_bambuddy/issues",
-  "codeowners": ["@Spegeli"],
-  "iot_class": "local_polling",
-  "homeassistant": "2024.1.0"
+  "render_readme": true,
+  "homeassistant": "2025.1.0"
 }

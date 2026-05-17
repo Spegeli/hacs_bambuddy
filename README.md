@@ -5,15 +5,14 @@
 # 🚀 BamBuddy – Home Assistant Integration
 
 <p align="center">
-  A custom <a href="https://www.home-assistant.io/">Home Assistant</a> integration for <a href="https://github.com/maziggy/bambuddy">BamBuddy</a> — a self-hosted command center for Bambu Lab.<br><br>
-  <strong>Your printers. No cloud. Your rules.</strong>
+  <a href="https://github.com/hacs/integration"><img src="https://img.shields.io/badge/HACS-Custom-orange.svg"></a>
+  <a href="https://github.com/Spegeli/hacs_bambuddy/releases"><img src="https://img.shields.io/github/v/release/Spegeli/hacs_bambuddy?label=release&color=blue"></a>
+  <img src="https://img.shields.io/badge/License-MIT-green.svg">
 </p>
 
 <p align="center">
-  <a href="https://github.com/hacs/integration"><img src="https://img.shields.io/badge/HACS-Custom-orange.svg"></a>
-  <img src="https://img.shields.io/github/v/release/Spegeli/hacs_bambuddy?label=release&color=blue">
-  <img src="https://img.shields.io/github/v/release/Spegeli/hacs_bambuddy?include_prereleases&label=pre-release&color=orange">
-  <img src="https://img.shields.io/badge/License-MIT-yellow.svg">
+  A custom <a href="https://www.home-assistant.io/">Home Assistant</a> integration for <a href="https://github.com/maziggy/bambuddy">BamBuddy</a> — a self-hosted command center for Bambu Lab.<br><br>
+  <strong>Your printers. No cloud. Your rules.</strong>
 </p>
 
 > [!WARNING]
@@ -39,7 +38,7 @@
 
 ## 📋 Requirements
 
-- Home Assistant 2023.7 or newer
+- Home Assistant **2025.1** or newer
 - A running [BamBuddy](https://github.com/maziggy/bambuddy) instance reachable from your HA server
 - A BamBuddy API key
 
@@ -139,7 +138,7 @@ Status is polled every **10 seconds**.
 
 ---
 
-## ℹ️ Disclaimer
+## ⚖️ Disclaimer
 
 This is **not** an official release by the BamBuddy developer. This project provides a custom Home Assistant integration that connects to [BamBuddy](https://github.com/maziggy/bambuddy) via its REST API.
 
@@ -151,6 +150,6 @@ Support provided here is limited to the **Home Assistant integration** only.
 
 ---
 
-## 📄 License
+## 📜 License
 
-MIT — see [LICENSE](LICENSE)
+This project is licensed under the **MIT License** — see the [LICENSE](LICENSE) file for details.
