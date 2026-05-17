@@ -1,12 +1,12 @@
 {
   "domain": "bambuddy",
   "name": "BamBuddy",
-  "version": "2026.5.1",
-  "documentation": "https://github.com/Spegeli/hacs_bambuddy",
-  "issue_tracker": "https://github.com/Spegeli/hacs_bambuddy/issues",
-  "dependencies": ["network"],
   "codeowners": ["@Spegeli"],
-  "requirements": ["aiohttp>=3.8.0"],
   "config_flow": true,
-  "iot_class": "local_polling"
+  "dependencies": ["network"],
+  "documentation": "https://github.com/Spegeli/hacs_bambuddy",
+  "iot_class": "local_polling",
+  "issue_tracker": "https://github.com/Spegeli/hacs_bambuddy/issues",
+  "requirements": ["aiohttp>=3.8.0"],
+  "version": "2026.5.1"
 }
