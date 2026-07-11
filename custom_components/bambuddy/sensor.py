@@ -199,7 +199,10 @@ class BamBuddyPrinterSensor(BamBuddyPrinterEntityMixin, CoordinatorEntity, Senso
         if key == "chamber_temp":
             return status.get("temperatures", {}).get("chamber")
         if key == "hms_status":
-            return status.get("hms_status")
+            errors = status.get("hms_errors", [])
+            if not errors:
+                return "None"
+            return ", ".join(e.get("code", "unknown") for e in errors)
         if key == "subtask_name":
             return status.get("subtask_name")
         if key == "gcode_file":
