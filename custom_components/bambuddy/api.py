@@ -113,7 +113,7 @@ class BamBuddyClient:
 
     # Chamber light
     async def set_chamber_light(self, printer_id: int, on: bool) -> dict:
-        return await self._request("POST", f"/printers/{printer_id}/chamber-light", params={"on": on})
+        return await self._request("POST", f"/printers/{printer_id}/chamber-light", params={"on": str(on).lower()})
 
     # Camera
     async def get_stream_token(self) -> str:
