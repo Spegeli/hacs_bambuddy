@@ -5,8 +5,13 @@ DOMAIN = "bambuddy"
 CONF_HOST = "host"
 CONF_PORT = "port"
 CONF_API_KEY = "api_key"
+CONF_BASE_URL = "base_url"
+CONF_CONNECTION_METHOD = "connection_method"
 CONF_PRINTER_ID = "printer_id"
 CONF_PRINTER_NAME = "printer_name"
+
+CONN_METHOD_HOST_PORT = "host_port"
+CONN_METHOD_URL = "url"
 
 DEFAULT_PORT = 8000
 DEFAULT_SCAN_INTERVAL = 10  # seconds

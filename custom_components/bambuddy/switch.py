@@ -10,7 +10,7 @@ from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .api import BamBuddyClient
-from .const import DOMAIN
+from .const import DOMAIN, CONF_BASE_URL
 from .entity import BamBuddyPrinterEntityMixin
 
 _LOGGER = logging.getLogger(__name__)
@@ -44,7 +44,7 @@ class BamBuddyChamberLightSwitch(BamBuddyPrinterEntityMixin, CoordinatorEntity, 
         self._client = client
         self._printer_data = printer_data
         self._entry_id = entry.entry_id
-        self._instance_url = f"http://{entry.data.get('host')}:{entry.data.get('port', 8000)}"
+        self._instance_url = entry.data.get(CONF_BASE_URL, "")
         self._attr_unique_id = f"{entry.entry_id}_p{printer_data['printer_id']}_chamber_light"
 
     @property

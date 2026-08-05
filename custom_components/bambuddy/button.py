@@ -8,7 +8,7 @@ from homeassistant.helpers.entity import EntityCategory
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from .api import BamBuddyClient
-from .const import DOMAIN
+from .const import CONF_BASE_URL, DOMAIN
 from .entity import BamBuddyPrinterEntityMixin
 
 PRINTER_BUTTONS: list[ButtonEntityDescription] = [
@@ -50,7 +50,7 @@ class BamBuddyPrinterButton(BamBuddyPrinterEntityMixin, ButtonEntity):
         self.entity_description = description
         self._entry = entry
         self._entry_id = entry.entry_id
-        self._instance_url = f"http://{entry.data.get('host')}:{entry.data.get('port', 8000)}"
+        self._instance_url = entry.data.get(CONF_BASE_URL, "")
         self._client = client
         self._printer_data = printer_data
         self._attr_unique_id = f"{entry.entry_id}_p{printer_data['printer_id']}_{description.key}"

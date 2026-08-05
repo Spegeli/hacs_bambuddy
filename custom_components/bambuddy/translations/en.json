@@ -1,17 +1,30 @@
 {
   "config": {
     "step": {
-      "user": {
-        "title": "Add BamBuddy Instance",
+      "connection_method": {
+        "title": "Connection Method",
+        "data": {
+          "connection_method": "How do you connect to BamBuddy?"
+        }
+      },
+      "host_port": {
+        "title": "Host + Port",
         "data": {
           "host": "Host / IP Address",
           "port": "Port",
           "api_key": "API Key"
         }
+      },
+      "url": {
+        "title": "URL",
+        "data": {
+          "base_url": "Base URL",
+          "api_key": "API Key"
+        }
       }
     },
     "error": {
-      "cannot_connect": "Cannot connect to BamBuddy. Check host and port.",
+      "cannot_connect": "Cannot connect to BamBuddy. Check your connection details.",
       "invalid_auth": "Invalid API key."
     },
     "abort": {

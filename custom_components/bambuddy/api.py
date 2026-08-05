@@ -20,12 +20,22 @@ class BamBuddyAuthError(BamBuddyApiError):
 class BamBuddyClient:
     """BamBuddy REST API client."""
 
-    def __init__(self, host: str, port: int, api_key: str, session: aiohttp.ClientSession) -> None:
-        self._base_url = f"http://{host}:{port}/api/v1"
-        self._health_url = f"http://{host}:{port}/health"
+    def __init__(self, base_url: str, api_key: str, session: aiohttp.ClientSession) -> None:
+        root = base_url.rstrip("/")
+        self._root = root
+        self._base_url = f"{root}/api/v1"
+        self._health_url = f"{root}/health"
         self._api_key = api_key
         self._session = session
         _LOGGER.debug("BamBuddyClient initialized with base URL: %s", self._base_url)
+
+    @property
+    def base_url(self) -> str:
+        return self._root
+
+    @classmethod
+    def build_base_url(cls, host: str, port: int, scheme: str = "http") -> str:
+        return f"{scheme}://{host}:{port}"
 
     @property
     def _headers(self) -> dict[str, str]:

@@ -16,7 +16,7 @@ from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .api import BamBuddyClient, BamBuddyApiError
-from .const import DOMAIN
+from .const import CONF_BASE_URL, DOMAIN
 from .entity import BamBuddyPrinterEntityMixin
 
 _LOGGER = logging.getLogger(__name__)
@@ -55,7 +55,7 @@ class BamBuddyCamera(BamBuddyPrinterEntityMixin, CoordinatorEntity, Camera):
         self._client = client
         self._printer_data = printer_data
         self._entry_id = entry.entry_id
-        self._instance_url = f"http://{entry.data.get('host')}:{entry.data.get('port', 8000)}"
+        self._instance_url = entry.data.get(CONF_BASE_URL, "")
         self._session = session
         self._token: str | None = None
         self._token_expires: datetime | None = None
