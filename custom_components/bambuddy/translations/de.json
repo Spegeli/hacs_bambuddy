@@ -1,17 +1,30 @@
 {
   "config": {
     "step": {
-      "user": {
-        "title": "BamBuddy Instanz hinzufügen",
+      "connection_method": {
+        "title": "Verbindungsmethode",
+        "data": {
+          "connection_method": "Wie verbindest du dich mit BamBuddy?"
+        }
+      },
+      "host_port": {
+        "title": "Host + Port",
         "data": {
           "host": "Host / IP-Adresse",
           "port": "Port",
           "api_key": "API-Schlüssel"
         }
+      },
+      "url": {
+        "title": "URL",
+        "data": {
+          "base_url": "Basis-URL",
+          "api_key": "API-Schlüssel"
+        }
       }
     },
     "error": {
-      "cannot_connect": "Verbindung zu BamBuddy fehlgeschlagen. Host und Port prüfen.",
+      "cannot_connect": "Verbindung zu BamBuddy fehlgeschlagen. Verbindungsdetails prüfen.",
       "invalid_auth": "Ungültiger API-Schlüssel."
     },
     "abort": {

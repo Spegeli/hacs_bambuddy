@@ -14,10 +14,14 @@ from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from .api import BamBuddyClient, BamBuddyApiError, BamBuddyAuthError
 from .const import (
     CONF_API_KEY,
+    CONF_BASE_URL,
+    CONF_CONNECTION_METHOD,
     CONF_HOST,
-    CONF_PORT,
     CONF_PRINTER_ID,
     CONF_PRINTER_NAME,
+    CONF_PORT,
+    CONN_METHOD_HOST_PORT,
+    CONN_METHOD_URL,
     DEFAULT_PORT,
     DOMAIN,
 )
@@ -28,7 +32,7 @@ _LOGGER = logging.getLogger(__name__)
 class BamBuddyConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     """Handle BamBuddy config flow."""
 
-    VERSION = 1
+    VERSION = 2
 
     @staticmethod
     @callback
@@ -36,16 +40,52 @@ class BamBuddyConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         """Return the options flow."""
         return BamBuddyOptionsFlow(config_entry)
 
-    async def async_step_user(self, user_input: dict[str, Any] | None = None) -> FlowResult:
+    async def async_step_user(
+        self, user_input: dict[str, Any] | None = None
+    ) -> FlowResult:
         """Add a BamBuddy instance."""
+        return await self.async_step_connection_method(user_input)
+
+    async def async_step_connection_method(
+        self, user_input: dict[str, Any] | None = None
+    ) -> FlowResult:
+        """Select connection method."""
+        errors: dict[str, str] = {}
+
+        if user_input is not None:
+            method = user_input[CONF_CONNECTION_METHOD]
+            if method == CONN_METHOD_HOST_PORT:
+                return await self.async_step_host_port()
+            return await self.async_step_url()
+
+        return self.async_show_form(
+            step_id="connection_method",
+            data_schema=vol.Schema(
+                {
+                    vol.Required(CONF_CONNECTION_METHOD): vol.In(
+                        {
+                            CONN_METHOD_HOST_PORT: "Host + Port",
+                            CONN_METHOD_URL: "URL",
+                        }
+                    )
+                }
+            ),
+            errors=errors,
+        )
+
+    async def async_step_host_port(
+        self, user_input: dict[str, Any] | None = None
+    ) -> FlowResult:
+        """Configure BamBuddy via host and port."""
         errors: dict[str, str] = {}
 
         if user_input is not None:
             host = user_input[CONF_HOST]
             port = user_input[CONF_PORT]
+            base_url = BamBuddyClient.build_base_url(host, port, "http")
 
             session = async_get_clientsession(self.hass)
-            client = BamBuddyClient(host, port, user_input[CONF_API_KEY], session)
+            client = BamBuddyClient(base_url, user_input[CONF_API_KEY], session)
 
             try:
                 await client.get_health()
@@ -55,24 +95,72 @@ class BamBuddyConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             except BamBuddyApiError:
                 errors["base"] = "cannot_connect"
             else:
-                await self.async_set_unique_id(f"bambuddy_{host}_{port}")
+                await self.async_set_unique_id(f"bambuddy_{base_url}")
                 self._abort_if_unique_id_configured()
 
                 return self.async_create_entry(
                     title=f"BamBuddy ({host})",
                     data={
                         **user_input,
+                        CONF_BASE_URL: base_url,
+                        CONF_CONNECTION_METHOD: CONN_METHOD_HOST_PORT,
                         "version": info.get("app", {}).get("version", "unknown"),
                     },
                 )
 
         return self.async_show_form(
-            step_id="user",
-            data_schema=vol.Schema({
-                vol.Required(CONF_HOST): str,
-                vol.Required(CONF_PORT, default=DEFAULT_PORT): int,
-                vol.Required(CONF_API_KEY): str,
-            }),
+            step_id="host_port",
+            data_schema=vol.Schema(
+                {
+                    vol.Required(CONF_HOST): str,
+                    vol.Required(CONF_PORT, default=DEFAULT_PORT): int,
+                    vol.Required(CONF_API_KEY): str,
+                }
+            ),
+            errors=errors,
+        )
+
+    async def async_step_url(
+        self, user_input: dict[str, Any] | None = None
+    ) -> FlowResult:
+        """Configure BamBuddy via URL."""
+        errors: dict[str, str] = {}
+
+        if user_input is not None:
+            base_url = user_input[CONF_BASE_URL].rstrip("/")
+
+            session = async_get_clientsession(self.hass)
+            client = BamBuddyClient(base_url, user_input[CONF_API_KEY], session)
+
+            try:
+                await client.get_health()
+                info = await client.get_system_info()
+            except BamBuddyAuthError:
+                errors["base"] = "invalid_auth"
+            except BamBuddyApiError:
+                errors["base"] = "cannot_connect"
+            else:
+                await self.async_set_unique_id(f"bambuddy_{base_url}")
+                self._abort_if_unique_id_configured()
+
+                return self.async_create_entry(
+                    title=f"BamBuddy ({base_url})",
+                    data={
+                        **user_input,
+                        CONF_BASE_URL: base_url,
+                        CONF_CONNECTION_METHOD: CONN_METHOD_URL,
+                        "version": info.get("app", {}).get("version", "unknown"),
+                    },
+                )
+
+        return self.async_show_form(
+            step_id="url",
+            data_schema=vol.Schema(
+                {
+                    vol.Required(CONF_BASE_URL): str,
+                    vol.Required(CONF_API_KEY): str,
+                }
+            ),
             errors=errors,
         )
 
@@ -91,16 +179,17 @@ class BamBuddyOptionsFlow(config_entries.OptionsFlow):
             menu_options.append("remove_printer")
         return self.async_show_menu(step_id="init", menu_options=menu_options)
 
-    # ── Add printer ────────────────────────────────────────────────────────
+    # ── Add printer ────────────────────────────────────────────────
 
-    async def async_step_add_printer(self, user_input: dict[str, Any] | None = None) -> FlowResult:
+    async def async_step_add_printer(
+        self, user_input: dict[str, Any] | None = None
+    ) -> FlowResult:
         """Select a printer to add."""
         errors: dict[str, str] = {}
 
         session = async_get_clientsession(self.hass)
         client = BamBuddyClient(
-            self._entry.data[CONF_HOST],
-            self._entry.data[CONF_PORT],
+            self._entry.data[CONF_BASE_URL],
             self._entry.data[CONF_API_KEY],
             session,
         )
@@ -116,10 +205,12 @@ class BamBuddyOptionsFlow(config_entries.OptionsFlow):
                 serial = printer.get("serial_number")
                 display_name = f"{model} ({serial})" if serial else model
 
-                self._printers.append({
-                    "printer_id": printer_id,
-                    "printer_name": display_name,
-                })
+                self._printers.append(
+                    {
+                        "printer_id": printer_id,
+                        "printer_name": display_name,
+                    }
+                )
                 return self.async_create_entry(title="", data={"printers": self._printers})
 
         try:
@@ -145,25 +236,33 @@ class BamBuddyOptionsFlow(config_entries.OptionsFlow):
 
         return self.async_show_form(
             step_id="add_printer",
-            data_schema=vol.Schema({
-                vol.Required(CONF_PRINTER_ID): vol.In(available),
-            }),
+            data_schema=vol.Schema(
+                {
+                    vol.Required(CONF_PRINTER_ID): vol.In(available),
+                }
+            ),
             errors=errors,
         )
 
-    # ── Remove printer ─────────────────────────────────────────────────────
+    # ── Remove printer ─────────────────────────────────────────────
 
-    async def async_step_remove_printer(self, user_input: dict[str, Any] | None = None) -> FlowResult:
+    async def async_step_remove_printer(
+        self, user_input: dict[str, Any] | None = None
+    ) -> FlowResult:
         """Select a printer to remove."""
         if user_input is not None:
             printer_id = user_input[CONF_PRINTER_ID]
-            self._printers = [p for p in self._printers if p["printer_id"] != printer_id]
+            self._printers = [
+                p for p in self._printers if p["printer_id"] != printer_id
+            ]
             return self.async_create_entry(title="", data={"printers": self._printers})
 
         current = {p["printer_id"]: p["printer_name"] for p in self._printers}
         return self.async_show_form(
             step_id="remove_printer",
-            data_schema=vol.Schema({
-                vol.Required(CONF_PRINTER_ID): vol.In(current),
-            }),
+            data_schema=vol.Schema(
+                {
+                    vol.Required(CONF_PRINTER_ID): vol.In(current),
+                }
+            ),
         )

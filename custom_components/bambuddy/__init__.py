@@ -13,10 +13,14 @@ from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from .api import BamBuddyClient
 from .const import (
     CONF_API_KEY,
+    CONF_BASE_URL,
+    CONF_CONNECTION_METHOD,
     CONF_HOST,
     CONF_PORT,
     CONF_PRINTER_ID,
     CONF_PRINTER_NAME,
+    CONN_METHOD_HOST_PORT,
+    DEFAULT_PORT,
     DOMAIN,
 )
 from .coordinator import BamBuddyInstanceCoordinator, BamBuddyPrinterCoordinator
@@ -24,6 +28,20 @@ from .coordinator import BamBuddyInstanceCoordinator, BamBuddyPrinterCoordinator
 _LOGGER = logging.getLogger(__name__)
 
 PLATFORMS = [Platform.SENSOR, Platform.BINARY_SENSOR, Platform.BUTTON, Platform.SELECT, Platform.SWITCH, Platform.CAMERA, Platform.IMAGE]
+
+
+async def async_migrate_entry(hass: HomeAssistant, config_entry: ConfigEntry) -> bool:
+    """Migrate old config entry."""
+    if config_entry.version == 1:
+        data = {**config_entry.data}
+        if CONF_BASE_URL not in data:
+            host = data.get(CONF_HOST, "")
+            port = data.get(CONF_PORT, DEFAULT_PORT)
+            data[CONF_BASE_URL] = BamBuddyClient.build_base_url(host, port, "http")
+        data[CONF_CONNECTION_METHOD] = CONN_METHOD_HOST_PORT
+        data[CONF_BASE_URL] = data[CONF_BASE_URL].rstrip("/")
+        hass.config_entries.async_update_entry(config_entry, data=data, version=2)
+    return True
 
 
 async def _async_reload_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
@@ -37,8 +55,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
     session = async_get_clientsession(hass)
     client = BamBuddyClient(
-        entry.data[CONF_HOST],
-        entry.data[CONF_PORT],
+        entry.data[CONF_BASE_URL],
         entry.data[CONF_API_KEY],
         session,
     )

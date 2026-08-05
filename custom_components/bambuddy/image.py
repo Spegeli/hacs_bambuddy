@@ -13,7 +13,7 @@ from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
-from .const import CONF_API_KEY, DOMAIN
+from .const import CONF_API_KEY, CONF_BASE_URL, DOMAIN
 from .entity import BamBuddyPrinterEntityMixin
 
 _LOGGER = logging.getLogger(__name__)
@@ -51,7 +51,7 @@ class BamBuddyCoverImage(BamBuddyPrinterEntityMixin, CoordinatorEntity, ImageEnt
         ImageEntity.__init__(self, hass)
         self._printer_data = printer_data
         self._entry_id = entry.entry_id
-        self._instance_url = f"http://{entry.data.get('host')}:{entry.data.get('port', 8000)}"
+        self._instance_url = entry.data.get(CONF_BASE_URL, "")
         self._api_key = entry.data.get(CONF_API_KEY, "")
         self._session = session
         self._last_job: str | None = None

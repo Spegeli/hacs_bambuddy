@@ -1,6 +1,8 @@
 """BamBuddy sensors."""
 from __future__ import annotations
 
+from urllib.parse import urlparse
+
 from homeassistant.components.sensor import (
     SensorDeviceClass,
     SensorEntity,
@@ -18,8 +20,15 @@ from homeassistant.helpers.entity import DeviceInfo, EntityCategory
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
-from .const import DOMAIN
+from .const import CONF_BASE_URL, DOMAIN
 from .entity import BamBuddyPrinterEntityMixin
+
+
+def _host_from_base_url(base_url: str) -> str:
+    """Extract the host from a base URL like https://example.com:8000."""
+    parsed = urlparse(base_url)
+    return parsed.hostname or base_url
+
 
 # ── Instance Sensors ───────────────────────────────────────────────────────
 
@@ -103,10 +112,10 @@ class BamBuddyInstanceSensor(CoordinatorEntity, SensorEntity):
         self._attr_unique_id = f"{entry.entry_id}_{description.key}"
         self._attr_device_info = DeviceInfo(
             identifiers={(DOMAIN, entry.entry_id)},
-            name=f"BamBuddy ({entry.data['host']})",
+            name=f"BamBuddy ({_host_from_base_url(entry.data.get(CONF_BASE_URL, ''))})",
             manufacturer="BamBuddy",
             model="BamBuddy Instance",
-            configuration_url=f"http://{entry.data['host']}:{entry.data['port']}",
+            configuration_url=entry.data.get(CONF_BASE_URL, ""),
         )
 
     @property
@@ -161,7 +170,7 @@ class BamBuddyPrinterSensor(BamBuddyPrinterEntityMixin, CoordinatorEntity, Senso
         self.entity_description = description
         self._printer_data = printer_data
         self._entry_id = entry.entry_id
-        self._instance_url = f"http://{entry.data.get('host')}:{entry.data.get('port', 8000)}"
+        self._instance_url = entry.data.get(CONF_BASE_URL, "")
         self._attr_unique_id = f"{entry.entry_id}_p{printer_data['printer_id']}_{description.key}"
 
     @property

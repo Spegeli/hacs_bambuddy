@@ -8,7 +8,7 @@ from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .api import BamBuddyClient
-from .const import DOMAIN, PRINT_SPEED_MODES
+from .const import DOMAIN, PRINT_SPEED_MODES, CONF_BASE_URL
 from .entity import BamBuddyPrinterEntityMixin
 
 
@@ -43,7 +43,7 @@ class BamBuddyPrintSpeedSelect(BamBuddyPrinterEntityMixin, CoordinatorEntity, Se
         self._client = client
         self._printer_data = printer_data
         self._entry_id = entry.entry_id
-        self._instance_url = f"http://{entry.data.get('host')}:{entry.data.get('port', 8000)}"
+        self._instance_url = entry.data.get(CONF_BASE_URL, "")
         self._attr_unique_id = f"{entry.entry_id}_p{printer_data['printer_id']}_print_speed"
 
     @property
