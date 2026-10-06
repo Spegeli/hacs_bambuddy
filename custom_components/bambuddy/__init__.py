@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import logging
+from typing import Any
 
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import Platform
@@ -46,7 +47,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     instance_coordinator = BamBuddyInstanceCoordinator(hass, client)
     await instance_coordinator.async_config_entry_first_refresh()
 
-    printers: dict[int, dict] = {}
+    printers: dict[int, dict[str, Any]] = {}
     for printer_conf in entry.options.get("printers", []):
         printer_id = printer_conf[CONF_PRINTER_ID]
         coordinator = BamBuddyPrinterCoordinator(hass, client, printer_id)

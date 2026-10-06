@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import logging
 from datetime import timedelta
+from typing import Any
 
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
@@ -13,7 +14,7 @@ from .const import DEFAULT_SCAN_INTERVAL, DOMAIN
 _LOGGER = logging.getLogger(__name__)
 
 
-class BamBuddyInstanceCoordinator(DataUpdateCoordinator):
+class BamBuddyInstanceCoordinator(DataUpdateCoordinator[dict[str, Any]]):
     """Coordinator for BamBuddy instance data."""
 
     def __init__(self, hass: HomeAssistant, client: BamBuddyClient) -> None:
@@ -25,7 +26,7 @@ class BamBuddyInstanceCoordinator(DataUpdateCoordinator):
         )
         self.client = client
 
-    async def _async_update_data(self) -> dict:
+    async def _async_update_data(self) -> dict[str, Any]:
         try:
             health = await self.client.get_health()
             system_info = await self.client.get_system_info()
@@ -42,7 +43,7 @@ class BamBuddyInstanceCoordinator(DataUpdateCoordinator):
             raise UpdateFailed(f"Error fetching BamBuddy data: {err}") from err
 
 
-class BamBuddyPrinterCoordinator(DataUpdateCoordinator):
+class BamBuddyPrinterCoordinator(DataUpdateCoordinator[dict[str, Any]]):
     """Coordinator for a single BamBuddy printer."""
 
     def __init__(self, hass: HomeAssistant, client: BamBuddyClient, printer_id: int) -> None:
@@ -55,7 +56,7 @@ class BamBuddyPrinterCoordinator(DataUpdateCoordinator):
         self.client = client
         self.printer_id = printer_id
 
-    async def _async_update_data(self) -> dict:
+    async def _async_update_data(self) -> dict[str, Any]:
         try:
             printer = await self.client.get_printer(self.printer_id)
             status = await self.client.get_printer_status(self.printer_id)
