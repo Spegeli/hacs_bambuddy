@@ -4,6 +4,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from datetime import datetime, timedelta
+from typing import Any
 
 import aiohttp
 from aiohttp import web
@@ -17,6 +18,7 @@ from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .api import BamBuddyClient, BamBuddyApiError
 from .const import DOMAIN
+from .coordinator import BamBuddyPrinterCoordinator
 from .entity import BamBuddyPrinterEntityMixin
 
 _LOGGER = logging.getLogger(__name__)
@@ -36,7 +38,9 @@ async def async_setup_entry(
     )
 
 
-class BamBuddyCamera(BamBuddyPrinterEntityMixin, CoordinatorEntity, Camera):
+class BamBuddyCamera(
+    BamBuddyPrinterEntityMixin, CoordinatorEntity[BamBuddyPrinterCoordinator], Camera
+):
     """Camera entity streaming from the BamBuddy camera proxy."""
 
     _attr_name = "Camera"
@@ -44,9 +48,9 @@ class BamBuddyCamera(BamBuddyPrinterEntityMixin, CoordinatorEntity, Camera):
 
     def __init__(
         self,
-        coordinator,
+        coordinator: BamBuddyPrinterCoordinator,
         client: BamBuddyClient,
-        printer_data: dict,
+        printer_data: dict[str, Any],
         entry: ConfigEntry,
         session: aiohttp.ClientSession,
     ) -> None:
