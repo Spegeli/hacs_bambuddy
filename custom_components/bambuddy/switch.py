@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import logging
+from typing import Any
 
 from homeassistant.components.switch import SwitchEntity
 from homeassistant.config_entries import ConfigEntry
@@ -11,6 +12,7 @@ from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .api import BamBuddyClient
 from .const import DOMAIN
+from .coordinator import BamBuddyPrinterCoordinator
 from .entity import BamBuddyPrinterEntityMixin
 
 _LOGGER = logging.getLogger(__name__)
@@ -27,7 +29,9 @@ async def async_setup_entry(
     )
 
 
-class BamBuddyChamberLightSwitch(BamBuddyPrinterEntityMixin, CoordinatorEntity, SwitchEntity):
+class BamBuddyChamberLightSwitch(
+    BamBuddyPrinterEntityMixin, CoordinatorEntity[BamBuddyPrinterCoordinator], SwitchEntity
+):
     """Switch for the printer chamber light."""
 
     _attr_name = "Chamber Light"
@@ -35,9 +39,9 @@ class BamBuddyChamberLightSwitch(BamBuddyPrinterEntityMixin, CoordinatorEntity, 
 
     def __init__(
         self,
-        coordinator,
+        coordinator: BamBuddyPrinterCoordinator,
         client: BamBuddyClient,
-        printer_data: dict,
+        printer_data: dict[str, Any],
         entry: ConfigEntry,
     ) -> None:
         super().__init__(coordinator)
@@ -52,12 +56,13 @@ class BamBuddyChamberLightSwitch(BamBuddyPrinterEntityMixin, CoordinatorEntity, 
         data = self.coordinator.data
         if not data:
             return None
-        return data.get("status", {}).get("chamber_light")
+        light: bool | None = data.get("status", {}).get("chamber_light")
+        return light
 
-    async def async_turn_on(self, **kwargs) -> None:
+    async def async_turn_on(self, **kwargs: Any) -> None:
         await self._client.set_chamber_light(self._printer_data["printer_id"], True)
         await self.coordinator.async_request_refresh()
 
-    async def async_turn_off(self, **kwargs) -> None:
+    async def async_turn_off(self, **kwargs: Any) -> None:
         await self._client.set_chamber_light(self._printer_data["printer_id"], False)
         await self.coordinator.async_request_refresh()
