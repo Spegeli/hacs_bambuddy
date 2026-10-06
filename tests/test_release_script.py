@@ -307,8 +307,7 @@ def test_prerelease_after_a_stable_targets_the_next_stable():
 def test_prerelease_numbering_ignores_betas_of_a_different_target():
     """Existing betas that target a different stable (2.1.0) must not
     affect the count for this one (3.0.0, from a major bump) -- otherwise
-    a stray 2.1.0-beta.* would push 3.0.0's own numbering ahead. Review
-    Important 3 (named risk 2)."""
+    a stray 2.1.0-beta.* would push 3.0.0's own numbering ahead."""
     tags = ["v2.0.0_redesign", "v2.1.0-beta.1", "v2.1.0-beta.2"]
     assert next_prerelease_version(tags, "major") == (Version(3, 0, 0), 1)
 
