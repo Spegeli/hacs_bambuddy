@@ -10,7 +10,7 @@
   "remaining_time": 37,
   "layer_num": 120,
   "total_layers": 250,
-  "temperatures": {"nozzle": 220.0, "nozzle_target": 220.0, "bed": 60.0, "bed_target": 60.0, "chamber": 32.0},
+  "temperatures": {"nozzle": 218.5, "nozzle_target": 220.0, "bed": 59.5, "bed_target": 60.0, "chamber": 32.0},
   "hms_errors": [],
   "sdcard": true,
   "wired_network": false,
@@ -22,6 +22,6 @@
   "cooling_fan_speed": 100,
   "big_fan1_speed": 50,
   "big_fan2_speed": 30,
-  "heatbreak_fan_speed": 100,
+  "heatbreak_fan_speed": 90,
   "firmware_version": "01.08.02.00"
 }
