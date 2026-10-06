@@ -1,28 +1,105 @@
 name: Validate
 
+# Checks a change without publishing anything, in three groups, each a
+# reusable workflow of its own and a group of its own in the run's list of
+# jobs (the run's graph shows all their checks in one card: GitHub draws
+# jobs with the same needs and the same dependents as one):
+#   Newest HA  - hassfest, the tests (their coverage reported, no gate yet)
+#                and mypy --strict (the release scripts for now), against
+#                the newest stable Home Assistant (_validate_newest.yml)
+#   Minimum HA - the Python 3.13 checks and the tests, against the minimum
+#                Home Assistant in hacs.json (_validate_minimum.yml)
+#   Repository - HACS and the release script on Python 3.12
+#                (_validate_repository.yml)
+# Every run runs every check; none can be switched off:
+#   push to any branch but main - on every topic branch and dev; summed up
+#                                 as "Validation summary"
+#   pull request to main        - summed up as "Validation result": the check
+#                                 main's ruleset requires, so nothing merges
+#                                 unvalidated
+#   pull request to dev         - so a contribution is checked before it
+#                                 merges; summed up as "Validation summary",
+#                                 so that it never answers for main's check
+#                                 on the same commit
+#   either pull request runs a contributor's code from a fork with a
+#   read-only token and no secrets: pull_request, never pull_request_target
+#   manual                      - on any branch; summed up as "Validation
+#                                 summary"
+# main itself needs no run: changes only arrive through a validated pull
+# request, or as the release's version commit, validated just before.
+# No schedule: GitHub disables a workflow that has one after 60 days without
+# repository activity, and then it runs on no push either.
+
+run-name: >-
+  ${{ github.event_name == 'pull_request'
+      && format('Validate PR #{0}: {1}', github.event.pull_request.number, github.event.pull_request.title)
+      || format('Validate {0}', github.ref_name) }}
+
 on:
   push:
+    branches-ignore: [main]
   pull_request:
-  schedule:
-    - cron: "0 0 * * *"
+    branches: [main, dev]
   workflow_dispatch:
+
+# A newer push or pull request update makes the running validation obsolete.
+concurrency:
+  group: validate-${{ github.ref }}
+  cancel-in-progress: true
 
 permissions:
   contents: read
 
 jobs:
-  validate-hassfest:
-    name: Hassfest validation
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: home-assistant/actions/hassfest@master
+  # GitHub shows each check as "<group> / <check>", "Newest HA / Tests".
+  newest:
+    name: Newest HA
+    uses: ./.github/workflows/_validate_newest.yml
 
-  validate-hacs:
-    name: HACS validation
-    runs-on: ubuntu-latest
+  minimum:
+    name: Minimum HA
+    uses: ./.github/workflows/_validate_minimum.yml
+
+  repository:
+    name: Repository
+    uses: ./.github/workflows/_validate_repository.yml
+
+  # The one check main's ruleset requires; a fixed name stays valid when the
+  # jobs above change. Only the run of a pull request to main reports under
+  # that name; push and manual runs, and the run of a pull request to dev,
+  # report as "Validation summary": the ruleset matches the check by name on
+  # the pull request's head commit, and any other run there counts as well.
+  # So only the pull request's own run, which validates the merge result
+  # into main, can satisfy it, and a push's run that a manual one cancelled
+  # leaves no red "Validation result" beside it. always(), not
+  # !cancelled(): a skipped job counts as passed for a required check, so a
+  # failed or cancelled validation must still run this job and fail it. It
+  # needs every other job, or one could fail and leave it green.
+  result:
+    name: ${{ github.event_name == 'pull_request' && github.base_ref == 'main' && 'Validation result' || 'Validation summary' }}
+    needs: [newest, minimum, repository]
+    if: always()
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
     steps:
-      - uses: actions/checkout@v4
-      - uses: hacs/action@main
-        with:
-          category: integration
+      # Anything but success -- a check that failed or timed out, a
+      # cancelled run -- fails the check. It reads the result of every job
+      # it needs, whichever they are, so a job added to needs is checked
+      # too; no result at all fails as well.
+      - name: Summarize
+        env:
+          RESULTS: ${{ join(needs.*.result, ' ') }}
+        run: |
+          echo "Results: ${RESULTS}"
+          passed=0
+          for result in ${RESULTS}; do
+            if [ "${result}" != "success" ]; then
+              echo "::error::Validation did not pass"
+              exit 1
+            fi
+            passed=$((passed + 1))
+          done
+          if [ "${passed}" -eq 0 ]; then
+            echo "::error::No check reported a result"
+            exit 1
+          fi

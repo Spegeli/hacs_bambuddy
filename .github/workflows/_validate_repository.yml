@@ -1,0 +1,48 @@
+name: Validate the repository (internal)
+
+# Reusable workflow (workflow_call), one of three groups of checks that
+# validate.yml and release.yml each call: the checks that depend on no Home
+# Assistant release.
+#   HACS validation - the repository against HACS's own rules
+#   Release script  - .github/scripts/release.py on the Python a release
+#                     runs it with
+# The other groups: _validate_newest.yml and _validate_minimum.yml.
+# Every check runs every time; no caller can switch one off.
+# Callers set permissions: contents: read.
+
+on:
+  workflow_call:
+
+jobs:
+  hacs:
+    name: HACS validation
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+      - uses: hacs/action@main
+        with:
+          category: integration
+
+  # The release's key job runs .github/scripts/release.py on the runner's own
+  # python3 -- 3.12 on ubuntu-24.04 -- because it may run no action but
+  # actions/checkout (CONTRIBUTING.md, "Releases"). The tests run on 3.14 and 3.13 and
+  # mypy on 3.14, so a change that needs a Python newer than 3.12 would
+  # otherwise show only at release time. This job compiles it with 3.12 and
+  # plans a release from the whole history and its tags, which the plan
+  # refuses to do without.
+  release-script:
+    name: Release script
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+      - name: Compile the release script with Python 3.12
+        run: python -m py_compile .github/scripts/release.py
+      - name: Plan a stable release with Python 3.12
+        run: python .github/scripts/release.py plan --type stable --bump auto

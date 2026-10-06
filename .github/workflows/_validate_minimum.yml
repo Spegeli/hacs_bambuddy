@@ -1,0 +1,80 @@
+name: Validate on the minimum Home Assistant (internal)
+
+# Reusable workflow (workflow_call), one of three groups of checks that
+# validate.yml and release.yml each call: the checks against the minimum
+# Home Assistant this integration supports, "homeassistant" in hacs.json --
+# so that a change or a test that works only on newer releases turns the
+# run red.
+#   Python 3.13 - a compile with the minimum's Python, and the
+#                 from __future__ import every module needs there
+#   Tests       - the suite against that release (tests/requirements-floor.txt),
+#                 without the coverage gate
+# The other groups: _validate_newest.yml and _validate_repository.yml.
+# Every check runs every time; no caller can switch one off.
+# Callers set permissions: contents: read.
+
+on:
+  workflow_call:
+
+jobs:
+  # Home Assistant 2025.5, the floor (hacs.json), runs on Python 3.13; the
+  # newest group's tests and mypy run on 3.14. Compiling needs no Home
+  # Assistant and fails on any syntax newer than 3.13; CONTRIBUTING.md names
+  # what else the floor's Python asks of the code.
+  python-floor:
+    name: Python 3.13
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.13"
+      - name: Compile the integration with Python 3.13
+        run: python -m compileall -q custom_components/bambuddy
+      # 3.13 evaluates annotations as it defines a class or function, so a
+      # name defined further down fails the import there -- which compiling
+      # cannot catch. This import defers them, in every module.
+      - name: Check that every module imports annotations from __future__
+        run: |
+          missing=$(grep -L '^from __future__ import annotations' custom_components/bambuddy/*.py || true)
+          if [ -n "$missing" ]; then
+            echo "Missing 'from __future__ import annotations':"
+            echo "$missing"
+            exit 1
+          fi
+
+  pytest-minimum:
+    name: Tests
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.13"
+          cache: pip
+          cache-dependency-path: tests/requirements-floor.txt
+      - name: Install the test requirements of the minimum Home Assistant
+        run: python -m pip install -r tests/requirements-floor.txt
+      # The package in tests/requirements-floor.txt pins one release; it must
+      # be the one hacs.json promises, or this job tests another minimum.
+      - name: Check that this is the minimum Home Assistant in hacs.json
+        run: |
+          python - <<'PY'
+          import json
+          from homeassistant.const import __version__ as installed
+          with open("hacs.json", encoding="utf-8") as file:
+              minimum = json.load(file)["homeassistant"]
+          if installed != minimum:
+              # On stdout: GitHub reads workflow commands such as ::error:: there.
+              print(
+                  f"::error::tests/requirements-floor.txt installs Home Assistant {installed}, "
+                  f"but hacs.json names {minimum} as the minimum: pin the test package of "
+                  f"{minimum} there, or raise both together."
+              )
+              raise SystemExit(1)
+          print(f"Home Assistant {installed}, the minimum in hacs.json")
+          PY
+      - name: Run the tests
+        run: python -m pytest tests/ -q

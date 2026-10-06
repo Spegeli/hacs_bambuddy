@@ -1,0 +1,84 @@
+name: Validate on the newest Home Assistant (internal)
+
+# Reusable workflow (workflow_call), one of three groups of checks that
+# validate.yml and release.yml each call: the checks against the newest
+# stable Home Assistant with a pytest-homeassistant-custom-component release,
+# never a beta. Each job finds that release first
+# (.github/scripts/ha_version.py), so a new stable release reaches them
+# without a change here -- and can turn a run red without one.
+#   Hassfest      - Home Assistant's own checks, as that very release
+#   Tests         - the suite, its coverage reported (no gate yet)
+#   Strict typing - mypy --strict against that release's types, the
+#                   release scripts for now
+# The other groups: _validate_minimum.yml (the minimum Home Assistant in
+# hacs.json) and _validate_repository.yml (checks without Home Assistant).
+# Every check runs every time; no caller can switch one off.
+# Callers set permissions: contents: read.
+
+on:
+  workflow_call:
+
+jobs:
+  hassfest:
+    name: Hassfest
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+      - name: Find the newest stable Home Assistant
+        id: ha
+        run: python3 .github/scripts/ha_version.py >> "$GITHUB_OUTPUT"
+      # hassfest as exactly that release, not the newest image, which follows
+      # betas too; the matcher makes an annotation of each finding.
+      - name: Run hassfest
+        env:
+          HOME_ASSISTANT: ${{ steps.ha.outputs.home_assistant }}
+        run: |
+          echo "::add-matcher::${GITHUB_WORKSPACE}/.github/hassfest-matcher.json"
+          docker run --rm -v "${GITHUB_WORKSPACE}:/github/workspace" "ghcr.io/home-assistant/hassfest:${HOME_ASSISTANT}"
+
+  pytest:
+    name: Tests
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.14"
+          cache: pip
+          cache-dependency-path: tests/requirements.txt
+      - name: Find the newest stable Home Assistant
+        id: ha
+        run: python3 .github/scripts/ha_version.py >> "$GITHUB_OUTPUT"
+      - name: Install the test requirements
+        env:
+          PLUGIN: ${{ steps.ha.outputs.plugin }}
+        run: python -m pip install -r tests/requirements.txt "pytest-homeassistant-custom-component==${PLUGIN}"
+      - name: Run the tests
+        run: >-
+          python -m pytest tests/ -q
+          --cov=custom_components.bambuddy
+          --cov-report=term-missing
+
+  mypy:
+    name: Strict typing
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.14"
+          cache: pip
+          cache-dependency-path: tests/requirements.txt
+      - name: Find the newest stable Home Assistant
+        id: ha
+        run: python3 .github/scripts/ha_version.py >> "$GITHUB_OUTPUT"
+      # Home Assistant included: mypy checks the integration against its types.
+      - name: Install the test requirements
+        env:
+          PLUGIN: ${{ steps.ha.outputs.plugin }}
+        run: python -m pip install -r tests/requirements.txt "pytest-homeassistant-custom-component==${PLUGIN}"
+      - name: Run mypy --strict
+        run: python -m mypy --strict
