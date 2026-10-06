@@ -8,7 +8,6 @@ import voluptuous as vol
 
 from homeassistant import config_entries
 from homeassistant.core import callback
-from homeassistant.data_entry_flow import FlowResult
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
 from .api import BamBuddyClient, BamBuddyApiError, BamBuddyAuthError
@@ -36,7 +35,7 @@ class BamBuddyConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         """Return the options flow."""
         return BamBuddyOptionsFlow(config_entry)
 
-    async def async_step_user(self, user_input: dict[str, Any] | None = None) -> FlowResult:
+    async def async_step_user(self, user_input: dict[str, Any] | None = None) -> config_entries.ConfigFlowResult:
         """Add a BamBuddy instance."""
         errors: dict[str, str] = {}
 
@@ -81,10 +80,10 @@ class BamBuddyOptionsFlow(config_entries.OptionsFlow):
     """Handle BamBuddy options (add / remove printers)."""
 
     def __init__(self, config_entry: config_entries.ConfigEntry) -> None:
-        self._printers: list[dict] = list(config_entry.options.get("printers", []))
+        self._printers: list[dict[str, Any]] = list(config_entry.options.get("printers", []))
         self._entry = config_entry
 
-    async def async_step_init(self, user_input: dict[str, Any] | None = None) -> FlowResult:
+    async def async_step_init(self, user_input: dict[str, Any] | None = None) -> config_entries.ConfigFlowResult:
         """Show menu."""
         menu_options = ["add_printer"]
         if self._printers:
@@ -93,7 +92,7 @@ class BamBuddyOptionsFlow(config_entries.OptionsFlow):
 
     # ── Add printer ────────────────────────────────────────────────────────
 
-    async def async_step_add_printer(self, user_input: dict[str, Any] | None = None) -> FlowResult:
+    async def async_step_add_printer(self, user_input: dict[str, Any] | None = None) -> config_entries.ConfigFlowResult:
         """Select a printer to add."""
         errors: dict[str, str] = {}
 
@@ -153,7 +152,7 @@ class BamBuddyOptionsFlow(config_entries.OptionsFlow):
 
     # ── Remove printer ─────────────────────────────────────────────────────
 
-    async def async_step_remove_printer(self, user_input: dict[str, Any] | None = None) -> FlowResult:
+    async def async_step_remove_printer(self, user_input: dict[str, Any] | None = None) -> config_entries.ConfigFlowResult:
         """Select a printer to remove."""
         if user_input is not None:
             printer_id = user_input[CONF_PRINTER_ID]
