@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import logging
 from datetime import datetime
+from typing import Any
 
 import aiohttp
 
@@ -14,6 +15,7 @@ from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .const import CONF_API_KEY, DOMAIN
+from .coordinator import BamBuddyPrinterCoordinator
 from .entity import BamBuddyPrinterEntityMixin
 
 _LOGGER = logging.getLogger(__name__)
@@ -33,7 +35,9 @@ async def async_setup_entry(
     async_add_entities(entities)
 
 
-class BamBuddyCoverImage(BamBuddyPrinterEntityMixin, CoordinatorEntity, ImageEntity):
+class BamBuddyCoverImage(
+    BamBuddyPrinterEntityMixin, CoordinatorEntity[BamBuddyPrinterCoordinator], ImageEntity
+):
     """Cover image of the current print job."""
 
     _attr_name = "Cover"
@@ -42,9 +46,9 @@ class BamBuddyCoverImage(BamBuddyPrinterEntityMixin, CoordinatorEntity, ImageEnt
     def __init__(
         self,
         hass: HomeAssistant,
-        coordinator,
+        coordinator: BamBuddyPrinterCoordinator,
         entry: ConfigEntry,
-        printer_data: dict,
+        printer_data: dict[str, Any],
         session: aiohttp.ClientSession,
     ) -> None:
         CoordinatorEntity.__init__(self, coordinator)
@@ -59,7 +63,8 @@ class BamBuddyCoverImage(BamBuddyPrinterEntityMixin, CoordinatorEntity, ImageEnt
 
     def _get_current_job(self) -> str | None:
         status = (self.coordinator.data or {}).get("status", {})
-        return status.get("current_print") or status.get("subtask_name")
+        job: str | None = status.get("current_print") or status.get("subtask_name")
+        return job
 
     def _handle_coordinator_update(self) -> None:
         """Refresh image timestamp when a new print job starts."""
