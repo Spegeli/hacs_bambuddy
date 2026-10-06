@@ -1,0 +1,151 @@
+name: Bug Report
+description: Report a bug or unexpected behavior
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to report a bug.
+
+        The more precise the versions and logs you give, the faster this gets fixed.
+
+  - type: checkboxes
+    id: preflight
+    attributes:
+      label: Before you start
+      options:
+        - label: I read the [Troubleshooting](https://github.com/Spegeli/hacs_bambuddy#-troubleshooting) section.
+          required: true
+        - label: I searched [existing issues](https://github.com/Spegeli/hacs_bambuddy/issues?q=is%3Aissue) and this is not a duplicate.
+          required: true
+        - label: I am running the [latest release](https://github.com/Spegeli/hacs_bambuddy/releases) of this integration.
+          required: true
+        - label: The problem lies in this integration, not in BamBuddy itself — those go to [BamBuddy's issue tracker](https://github.com/maziggy/bambuddy/issues).
+          required: true
+
+  - type: dropdown
+    id: area
+    attributes:
+      label: Affected area
+      options:
+        - Setup (host, port, API key)
+        - Printers (add, remove)
+        - Printer sensors and binary sensors
+        - Camera or cover image
+        - Print controls (buttons, print speed, chamber light)
+        - BamBuddy instance sensors
+        - Documentation
+        - Other
+    validations:
+      required: true
+
+  - type: input
+    id: integration_version
+    attributes:
+      label: Integration version
+      description: HACS → BamBuddy, or the `version` field in `manifest.json`.
+      placeholder: e.g. 2026.05.17
+    validations:
+      required: true
+
+  - type: dropdown
+    id: install_method
+    attributes:
+      label: Installation method
+      options:
+        - HACS
+        - Manual
+    validations:
+      required: true
+
+  - type: input
+    id: ha_version
+    attributes:
+      label: Home Assistant version
+      description: Settings → About.
+      placeholder: e.g. 2026.9.4
+    validations:
+      required: true
+
+  - type: input
+    id: bambuddy_version
+    attributes:
+      label: BamBuddy version
+      description: The BamBuddy instance's **Version** sensor, or BamBuddy's own interface.
+      placeholder: e.g. 1.2.5.7
+    validations:
+      required: true
+
+  - type: input
+    id: printer_model
+    attributes:
+      label: Printer model
+      description: Which printer shows the problem? Leave empty if it does not concern a printer.
+      placeholder: e.g. A1 Mini, P1S, X1C
+    validations:
+      required: false
+
+  - type: dropdown
+    id: key_permissions
+    attributes:
+      label: API key permissions
+      description: Which permissions does the key have, and is authentication on in BamBuddy? See the README's [Create an API key](https://github.com/Spegeli/hacs_bambuddy#create-an-api-key).
+      options:
+        - Read Status, authentication on
+        - Read Status and Control Printer, authentication on
+        - Authentication off in BamBuddy
+        - Not sure
+    validations:
+      required: false
+
+  - type: textarea
+    id: description
+    attributes:
+      label: What happened?
+      description: Describe the actual behavior. Include the exact value an entity shows, if a value is wrong.
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: What did you expect instead?
+      description: If a value is wrong, give the correct one and where you read it — BamBuddy's interface or the printer's display.
+    validations:
+      required: true
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. Go to...
+        2. Click on...
+        3. See error
+    validations:
+      required: false
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant log output
+      description: |
+        Settings → System → Logs → filter for `bambuddy`.
+        For more detail: on the BamBuddy integration page, ⋮ → **Enable debug logging**, reproduce the problem, then disable it — the log downloads.
+        Or add this to `configuration.yaml`, restart, and reproduce:
+
+        ```yaml
+        logger:
+          logs:
+            custom_components.bambuddy: debug
+        ```
+      render: text
+    validations:
+      required: false
+
+  - type: markdown
+    attributes:
+      value: |
+        > [!WARNING]
+        > **Never paste your BamBuddy API key**, and remove the camera's stream token from logs before you paste them.
+        > If you posted a key by accident, delete it in BamBuddy (**Settings → API Keys**) at once and create a new one.

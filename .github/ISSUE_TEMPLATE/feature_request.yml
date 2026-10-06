@@ -1,0 +1,66 @@
+name: Feature Request
+description: Suggest a new feature or improvement
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Have an idea to improve this integration? Fill out the form below.
+
+  - type: checkboxes
+    id: preflight
+    attributes:
+      label: Before you start
+      options:
+        - label: I searched [existing issues](https://github.com/Spegeli/hacs_bambuddy/issues?q=is%3Aissue) and this is not a duplicate.
+          required: true
+        - label: I know the integration can only show and do what BamBuddy's [API](https://wiki.bambuddy.cool/reference/api/) offers — wishes for BamBuddy itself go to [its issue tracker](https://github.com/maziggy/bambuddy/issues).
+          required: true
+
+  - type: dropdown
+    id: area
+    attributes:
+      label: Which area does this affect?
+      options:
+        - Setup (host, port, API key)
+        - Printers (add, remove)
+        - Printer sensors and binary sensors
+        - Camera or cover image
+        - Print controls (buttons, print speed, chamber light)
+        - BamBuddy instance sensors
+        - Documentation
+        - Other
+    validations:
+      required: true
+
+  - type: textarea
+    id: use_case
+    attributes:
+      label: What problem does this solve?
+      description: Describe the concrete situation where the integration falls short today.
+    validations:
+      required: true
+
+  - type: textarea
+    id: solution
+    attributes:
+      label: Proposed solution
+      description: What should the integration do instead? Name the entity, attribute or option you have in mind.
+    validations:
+      required: true
+
+  - type: textarea
+    id: api_reference
+    attributes:
+      label: BamBuddy API reference
+      description: If this needs data or an action from BamBuddy, name the endpoint — see BamBuddy's [API reference](https://wiki.bambuddy.cool/reference/api/).
+    validations:
+      required: false
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: Template sensors, automations or other workarounds you already tried.
+    validations:
+      required: false
