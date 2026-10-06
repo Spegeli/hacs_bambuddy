@@ -1,6 +1,8 @@
 """BamBuddy sensors."""
 from __future__ import annotations
 
+from typing import Any
+
 from homeassistant.components.sensor import (
     SensorDeviceClass,
     SensorEntity,
@@ -10,15 +12,18 @@ from homeassistant.components.sensor import (
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import (
     PERCENTAGE,
+    EntityCategory,
     UnitOfTemperature,
     UnitOfTime,
 )
 from homeassistant.core import HomeAssistant
-from homeassistant.helpers.entity import DeviceInfo, EntityCategory
+from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
+from homeassistant.helpers.typing import StateType
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .const import DOMAIN
+from .coordinator import BamBuddyInstanceCoordinator, BamBuddyPrinterCoordinator
 from .entity import BamBuddyPrinterEntityMixin
 
 # ── Instance Sensors ───────────────────────────────────────────────────────
@@ -73,7 +78,7 @@ async def async_setup_entry(
 ) -> None:
     """Set up BamBuddy sensors."""
     data = hass.data[DOMAIN][entry.entry_id]
-    entities = []
+    entities: list[SensorEntity] = []
 
     entities.extend(
         BamBuddyInstanceSensor(data["coordinator"], entry, description)
@@ -96,10 +101,15 @@ async def async_setup_entry(
 
 # ── Instance Sensor Entity ─────────────────────────────────────────────────
 
-class BamBuddyInstanceSensor(CoordinatorEntity, SensorEntity):
+class BamBuddyInstanceSensor(CoordinatorEntity[BamBuddyInstanceCoordinator], SensorEntity):
     """BamBuddy instance sensor."""
 
-    def __init__(self, coordinator, entry: ConfigEntry, description: SensorEntityDescription) -> None:
+    def __init__(
+        self,
+        coordinator: BamBuddyInstanceCoordinator,
+        entry: ConfigEntry,
+        description: SensorEntityDescription,
+    ) -> None:
         super().__init__(coordinator)
         self.entity_description = description
         self._attr_unique_id = f"{entry.entry_id}_{description.key}"
@@ -112,7 +122,12 @@ class BamBuddyInstanceSensor(CoordinatorEntity, SensorEntity):
         )
 
     @property
-    def native_value(self):
+    def native_value(self) -> StateType:
+        """BamBuddy's value for this sensor, passed on as BamBuddy sent it."""
+        value: StateType = self._value()
+        return value
+
+    def _value(self) -> Any:
         data = self.coordinator.data
         if not data:
             return None
@@ -155,10 +170,18 @@ class BamBuddyInstanceSensor(CoordinatorEntity, SensorEntity):
 
 # ── Printer Sensor Entity ──────────────────────────────────────────────────
 
-class BamBuddyPrinterSensor(BamBuddyPrinterEntityMixin, CoordinatorEntity, SensorEntity):
+class BamBuddyPrinterSensor(
+    BamBuddyPrinterEntityMixin, CoordinatorEntity[BamBuddyPrinterCoordinator], SensorEntity
+):
     """BamBuddy printer sensor."""
 
-    def __init__(self, coordinator, entry: ConfigEntry, printer_data: dict, description: SensorEntityDescription) -> None:
+    def __init__(
+        self,
+        coordinator: BamBuddyPrinterCoordinator,
+        entry: ConfigEntry,
+        printer_data: dict[str, Any],
+        description: SensorEntityDescription,
+    ) -> None:
         super().__init__(coordinator)
         self.entity_description = description
         self._printer_data = printer_data
@@ -167,7 +190,12 @@ class BamBuddyPrinterSensor(BamBuddyPrinterEntityMixin, CoordinatorEntity, Senso
         self._attr_unique_id = f"{entry.entry_id}_p{printer_data['printer_id']}_{description.key}"
 
     @property
-    def native_value(self):
+    def native_value(self) -> StateType:
+        """BamBuddy's value for this sensor, passed on as BamBuddy sent it."""
+        value: StateType = self._value()
+        return value
+
+    def _value(self) -> Any:
         data = self.coordinator.data
         if not data:
             return None
