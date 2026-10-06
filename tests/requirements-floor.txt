@@ -1,0 +1,12 @@
+# The tests' requirements on the minimum Home Assistant release this
+# integration supports: "homeassistant" in hacs.json, 2025.5.0. The CI job
+# "Minimum HA / Tests" (.github/workflows/_validate_minimum.yml) installs
+# this file instead of tests/requirements.txt and checks that the release it
+# gets is the one hacs.json names: raise both together.
+#
+# Each release of the package pins one Home Assistant release exactly; this
+# one pins 2025.5.0. It brings the pytest plugins of its time, which
+# tests/requirements.txt's floors would not install beside it -- and needs
+# neither pytest-cov (no coverage here) nor mypy (typing is checked against
+# the newest release only).
+pytest-homeassistant-custom-component==0.13.243

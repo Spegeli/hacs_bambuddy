@@ -1,0 +1,39 @@
+# Tool configuration only: this repository is not a Python package (it
+# ships a Home Assistant integration under custom_components/bambuddy/,
+# installed through HACS or copied by hand) and declares no [project]
+# table.
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+# Set explicitly: pytest-asyncio before 1.0 -- the minimum Home Assistant's
+# test package brings 0.26 -- warns while it is unset.
+asyncio_default_fixture_loop_scope = "function"
+
+# Strict typing (quality scale rule strict-typing): `mypy --strict`, run
+# from the repository root -- by CI (.github/workflows/_validate_newest.yml)
+# and locally alike:
+#   python -m mypy --strict
+# For now it checks the scripts in .github/scripts only; the integration,
+# custom_components.bambuddy, joins once it is typed (as `packages`, see the
+# CI issue). The tests are not type-checked.
+#
+# No python_version: mypy checks for the Python it runs on, 3.14, which the
+# Home Assistant it checks against needs -- its own source does not parse
+# as 3.13. The
+# code must still run on 3.13, the Python of the 2025.5 floor: CI compiles
+# it with 3.13, and CONTRIBUTING.md ("Home Assistant 2025.5 is the floor")
+# names the rules the compile cannot check.
+#
+# modules + mypy_path add the scripts in .github/scripts: mypy refuses to
+# mix `packages`/`modules` with `files` in one run ("May only specify one
+# of: module/package, files, or command"), so they join as the top-level
+# modules `release` and `ha_version`, found via mypy_path since
+# `.github/scripts` is not itself a package (the workflows run them by
+# path, never import them -- see their own docstrings). Both must also run
+# on 3.12 (the release's key job and the hassfest job use the runner's own
+# Python), one more reason they stay plain stdlib.
+[tool.mypy]
+modules = ["release", "ha_version"]
+mypy_path = [".github/scripts"]
+strict = true

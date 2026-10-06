@@ -1,0 +1,26 @@
+pytest>=8.0.0
+pytest-asyncio>=0.24.0
+# pytest-homeassistant-custom-component is not listed here: each release of
+# it pins one Home Assistant release, and CI installs the one for the newest
+# stable Home Assistant -- never a beta -- which .github/scripts/ha_version.py
+# names, so that the suite, mypy and hassfest check the release users update
+# to (CONTRIBUTING.md, "Tests and typing"). Install it with this file:
+#   pip install -r tests/requirements.txt \
+#     "pytest-homeassistant-custom-component==$(python .github/scripts/ha_version.py --plugin)"
+# It pins pytest and its plugins exactly as well, so the ">=" lines here are
+# floors only. The suite mocks HTTP through homeassistant's own
+# AiohttpClientMocker, which ships inside that package, so there is no
+# separate mocking library to keep in step with aiohttp.
+# The tests on the minimum Home Assistant in hacs.json install
+# tests/requirements-floor.txt instead.
+# Line coverage, measured with
+#   pytest tests/ --cov=custom_components.bambuddy --cov-report=term-missing
+# CI reports it, without a gate yet (.github/workflows/_validate_newest.yml).
+pytest-cov>=6.0.0
+# Strict typing, `mypy --strict` as configured in pyproject.toml (quality
+# scale rule strict-typing). Pinned: a new mypy release can find new errors
+# in unchanged code, so it moves only on purpose, with any local test image
+# rebuilt along with it. It checks the scripts in .github/scripts, and the
+# integration once it is typed, against the types of the Home Assistant
+# release installed beside it.
+mypy==2.3.1
