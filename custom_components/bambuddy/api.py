@@ -34,7 +34,7 @@ class BamBuddyClient:
             "Content-Type": "application/json",
         }
 
-    async def _request(self, method: str, path: str, **kwargs) -> Any:
+    async def _request(self, method: str, path: str, **kwargs: Any) -> Any:
         url = f"{self._base_url}{path}"
         _LOGGER.debug("API request: %s %s", method, url)
         try:
@@ -58,67 +58,74 @@ class BamBuddyClient:
             _LOGGER.error("Timeout connecting to BamBuddy at %s", url)
             raise BamBuddyApiError("Connection timeout") from err
 
+    async def _object(self, method: str, path: str, **kwargs: Any) -> dict[str, Any]:
+        """A request whose answer is a JSON object."""
+        answer: dict[str, Any] = await self._request(method, path, **kwargs)
+        return answer
+
     # Health — lives at /health, not /api/v1/health
-    async def get_health(self) -> dict:
+    async def get_health(self) -> dict[str, Any]:
         try:
             async with self._session.get(
                 self._health_url, timeout=aiohttp.ClientTimeout(total=10)
             ) as resp:
                 if resp.status >= 400:
                     raise BamBuddyApiError(f"API error {resp.status}")
-                return await resp.json()
+                health: dict[str, Any] = await resp.json()
+                return health
         except aiohttp.ClientConnectorError as err:
             raise BamBuddyApiError(f"Cannot connect to BamBuddy: {err}") from err
         except asyncio.TimeoutError as err:
             raise BamBuddyApiError("Connection timeout") from err
 
     # System
-    async def get_system_info(self) -> dict:
-        return await self._request("GET", "/system/info")
+    async def get_system_info(self) -> dict[str, Any]:
+        return await self._object("GET", "/system/info")
 
     # Printers
-    async def get_printers(self) -> list[dict]:
-        return await self._request("GET", "/printers/")
+    async def get_printers(self) -> list[dict[str, Any]]:
+        printers: list[dict[str, Any]] = await self._request("GET", "/printers/")
+        return printers
 
-    async def get_printer(self, printer_id: int) -> dict:
-        return await self._request("GET", f"/printers/{printer_id}")
+    async def get_printer(self, printer_id: int) -> dict[str, Any]:
+        return await self._object("GET", f"/printers/{printer_id}")
 
-    async def get_printer_status(self, printer_id: int) -> dict:
-        return await self._request("GET", f"/printers/{printer_id}/status")
+    async def get_printer_status(self, printer_id: int) -> dict[str, Any]:
+        return await self._object("GET", f"/printers/{printer_id}/status")
 
-    async def set_print_speed(self, printer_id: int, mode: int) -> dict:
-        return await self._request("POST", f"/printers/{printer_id}/print-speed", params={"mode": mode})
+    async def set_print_speed(self, printer_id: int, mode: int) -> dict[str, Any]:
+        return await self._object("POST", f"/printers/{printer_id}/print-speed", params={"mode": mode})
 
-    async def clear_hms_errors(self, printer_id: int) -> dict:
-        return await self._request("POST", f"/printers/{printer_id}/hms/clear")
+    async def clear_hms_errors(self, printer_id: int) -> dict[str, Any]:
+        return await self._object("POST", f"/printers/{printer_id}/hms/clear")
 
-    async def clear_plate(self, printer_id: int) -> dict:
-        return await self._request("POST", f"/printers/{printer_id}/clear-plate")
+    async def clear_plate(self, printer_id: int) -> dict[str, Any]:
+        return await self._object("POST", f"/printers/{printer_id}/clear-plate")
 
-    async def refresh_printer_status(self, printer_id: int) -> dict:
-        return await self._request("POST", f"/printers/{printer_id}/refresh-status")
+    async def refresh_printer_status(self, printer_id: int) -> dict[str, Any]:
+        return await self._object("POST", f"/printers/{printer_id}/refresh-status")
 
-    async def pause_print(self, printer_id: int) -> dict:
-        return await self._request("POST", f"/printers/{printer_id}/print/pause")
+    async def pause_print(self, printer_id: int) -> dict[str, Any]:
+        return await self._object("POST", f"/printers/{printer_id}/print/pause")
 
-    async def resume_print(self, printer_id: int) -> dict:
-        return await self._request("POST", f"/printers/{printer_id}/print/resume")
+    async def resume_print(self, printer_id: int) -> dict[str, Any]:
+        return await self._object("POST", f"/printers/{printer_id}/print/resume")
 
-    async def stop_print(self, printer_id: int) -> dict:
-        return await self._request("POST", f"/printers/{printer_id}/print/stop")
+    async def stop_print(self, printer_id: int) -> dict[str, Any]:
+        return await self._object("POST", f"/printers/{printer_id}/print/stop")
 
     # Statistics — correct endpoint is /archives/stats
-    async def get_statistics(self) -> dict:
-        return await self._request("GET", "/archives/stats")
+    async def get_statistics(self) -> dict[str, Any]:
+        return await self._object("GET", "/archives/stats")
 
     # Chamber light
-    async def set_chamber_light(self, printer_id: int, on: bool) -> dict:
-        return await self._request("POST", f"/printers/{printer_id}/chamber-light", params={"on": on})
+    async def set_chamber_light(self, printer_id: int, on: bool) -> dict[str, Any]:
+        return await self._object("POST", f"/printers/{printer_id}/chamber-light", params={"on": on})
 
     # Camera
     async def get_stream_token(self) -> str:
-        result = await self._request("POST", "/printers/camera/stream-token")
-        token = result.get("token") or result.get("access_token") or result.get("stream_token") or ""
+        result = await self._object("POST", "/printers/camera/stream-token")
+        token: str = result.get("token") or result.get("access_token") or result.get("stream_token") or ""
         return token
 
     def snapshot_url(self, printer_id: int, token: str) -> str:
