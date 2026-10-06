@@ -13,6 +13,12 @@ pytest-asyncio>=0.24.0
 # separate mocking library to keep in step with aiohttp.
 # The tests on the minimum Home Assistant in hacs.json install
 # tests/requirements-floor.txt instead.
+# Home Assistant's camera component, which camera.py builds on, imports
+# PyTurboJPEG, and Home Assistant installs a component's requirements only
+# when it loads the component: every test that sets the integration up
+# loads its camera platform, so it must be installed. The tests only
+# import it -- none scales an image -- so a floor suffices.
+PyTurboJPEG>=1.7.5
 # Line coverage, measured with
 #   pytest tests/ --cov=custom_components.bambuddy --cov-report=term-missing
 # CI reports it, without a gate yet (.github/workflows/_validate_newest.yml).

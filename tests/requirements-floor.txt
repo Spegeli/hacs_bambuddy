@@ -10,3 +10,7 @@
 # neither pytest-cov (no coverage here) nor mypy (typing is checked against
 # the newest release only).
 pytest-homeassistant-custom-component==0.13.243
+# Declared explicitly, as in tests/requirements.txt: every test that sets the
+# integration up imports Home Assistant's camera component, which imports it.
+# Unpinned: the package above pins it.
+PyTurboJPEG
