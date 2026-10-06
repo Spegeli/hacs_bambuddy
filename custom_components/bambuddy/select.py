@@ -1,6 +1,8 @@
 """BamBuddy select entities."""
 from __future__ import annotations
 
+from typing import Any
+
 from homeassistant.components.select import SelectEntity
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
@@ -9,6 +11,7 @@ from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .api import BamBuddyClient
 from .const import DOMAIN, PRINT_SPEED_MODES
+from .coordinator import BamBuddyPrinterCoordinator
 from .entity import BamBuddyPrinterEntityMixin
 
 
@@ -23,7 +26,9 @@ async def async_setup_entry(
     )
 
 
-class BamBuddyPrintSpeedSelect(BamBuddyPrinterEntityMixin, CoordinatorEntity, SelectEntity):
+class BamBuddyPrintSpeedSelect(
+    BamBuddyPrinterEntityMixin, CoordinatorEntity[BamBuddyPrinterCoordinator], SelectEntity
+):
     """Select entity for print speed."""
 
     _attr_name = "Print Speed"
@@ -33,9 +38,9 @@ class BamBuddyPrintSpeedSelect(BamBuddyPrinterEntityMixin, CoordinatorEntity, Se
     def __init__(
         self,
         hass: HomeAssistant,
-        coordinator,
+        coordinator: BamBuddyPrinterCoordinator,
         client: BamBuddyClient,
-        printer_data: dict,
+        printer_data: dict[str, Any],
         entry: ConfigEntry,
     ) -> None:
         super().__init__(coordinator)
