@@ -143,9 +143,18 @@ body:
     validations:
       required: false
 
+  - type: textarea
+    id: diagnostics
+    attributes:
+      label: Diagnostics
+      description: Settings → Devices & services → BamBuddy → ⋮ on your BamBuddy entry (**BamBuddy (<host>)**) → Download diagnostics. The API key is left out automatically.
+      render: json
+    validations:
+      required: false
+
   - type: markdown
     attributes:
       value: |
         > [!WARNING]
-        > **Never paste your BamBuddy API key**, and remove the camera's stream token from logs before you paste them.
+        > **Never paste your BamBuddy API key**, and remove the camera's stream token from logs before you paste them. Diagnostics leave both out for you; raw logs and screenshots may not.
         > If you posted a key by accident, delete it in BamBuddy (**Settings → API Keys**) at once and create a new one.
