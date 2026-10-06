@@ -21,7 +21,9 @@ pytest-asyncio>=0.24.0
 PyTurboJPEG>=1.7.5
 # Line coverage, measured with
 #   pytest tests/ --cov=custom_components.bambuddy --cov-report=term-missing
-# CI reports it, without a gate yet (.github/workflows/_validate_newest.yml).
+# CI fails under 95 % overall (.github/workflows/_validate_newest.yml);
+# config_flow.py stays at 100 % (quality scale rules
+# config-flow-test-coverage and test-coverage).
 pytest-cov>=6.0.0
 # Strict typing of the integration, `mypy --strict` as configured in
 # pyproject.toml (quality scale rule strict-typing). Pinned: a new mypy

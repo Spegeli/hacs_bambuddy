@@ -7,9 +7,8 @@ name: Validate on the newest Home Assistant (internal)
 # (.github/scripts/ha_version.py), so a new stable release reaches them
 # without a change here -- and can turn a run red without one.
 #   Hassfest      - Home Assistant's own checks, as that very release
-#   Tests         - the suite, its coverage reported (no gate yet)
-#   Strict typing - mypy --strict against that release's types, the
-#                   release scripts for now
+#   Tests         - the suite with its coverage gate
+#   Strict typing - mypy --strict against that release's types
 # The other groups: _validate_minimum.yml (the minimum Home Assistant in
 # hacs.json) and _validate_repository.yml (checks without Home Assistant).
 # Every check runs every time; no caller can switch one off.
@@ -60,6 +59,7 @@ jobs:
           python -m pytest tests/ -q
           --cov=custom_components.bambuddy
           --cov-report=term-missing
+          --cov-fail-under=95
 
   mypy:
     name: Strict typing
@@ -75,8 +75,7 @@ jobs:
       - name: Find the newest stable Home Assistant
         id: ha
         run: python3 .github/scripts/ha_version.py >> "$GITHUB_OUTPUT"
-      # Home Assistant included: mypy checks against its types (the release
-      # scripts for now, the integration once it is typed).
+      # Home Assistant included: mypy checks the integration against its types.
       - name: Install the test requirements
         env:
           PLUGIN: ${{ steps.ha.outputs.plugin }}

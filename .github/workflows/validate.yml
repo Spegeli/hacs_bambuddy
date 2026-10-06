@@ -4,9 +4,9 @@ name: Validate
 # reusable workflow of its own and a group of its own in the run's list of
 # jobs (the run's graph shows all their checks in one card: GitHub draws
 # jobs with the same needs and the same dependents as one):
-#   Newest HA  - hassfest, the tests (their coverage reported, no gate yet)
-#                and mypy --strict (the release scripts for now), against
-#                the newest stable Home Assistant (_validate_newest.yml)
+#   Newest HA  - hassfest, the tests with their coverage and mypy --strict,
+#                against the newest stable Home Assistant
+#                (_validate_newest.yml)
 #   Minimum HA - the Python 3.13 checks and the tests, against the minimum
 #                Home Assistant in hacs.json (_validate_minimum.yml)
 #   Repository - HACS and the release script on Python 3.12

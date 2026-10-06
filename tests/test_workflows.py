@@ -236,8 +236,7 @@ def test_internal_validation_checks_the_commit_its_caller_runs_for():
 
 
 def test_the_checks_run_what_ci_promises():
-    """The gates and commands CONTRIBUTING.md names; no coverage gate yet (the
-    CI issue tracks it: adding one means changing this test). The tests with coverage
+    """The gates and commands CONTRIBUTING.md names. The tests with coverage
     and mypy run on 3.14, which the newest Home Assistant needs, and install from
     tests/requirements.txt -- another mypy release can find errors in
     unchanged code -- with the test package of the Home Assistant release
@@ -273,7 +272,7 @@ def test_the_checks_run_what_ci_promises():
         ) in _script(job), job["name"]
     assert "python -m pytest tests/" in _script(tests)
     assert "--cov=custom_components.bambuddy" in _script(tests)
-    assert "--cov-fail-under" not in _script(tests)
+    assert "--cov-fail-under=95" in _script(tests)
     assert "python -m mypy --strict" in _script(typing)
     assert _python(floor) == "3.13"
     assert "python -m compileall" in _script(floor)
