@@ -30,4 +30,4 @@ Only the latest release receives security fixes. Update through HACS.
 | Version | Security fixes |
 |---|---|
 | Latest release | ✅ |
-| Older releases | ❌ |
+| Older releases, including the date versions (2026.05.17 or older) | ❌ |
