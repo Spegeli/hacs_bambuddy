@@ -1,18 +1,21 @@
 """BamBuddy binary sensor entities."""
 from __future__ import annotations
 
+from typing import Any
+
 from homeassistant.components.binary_sensor import (
     BinarySensorDeviceClass,
     BinarySensorEntity,
     BinarySensorEntityDescription,
 )
 from homeassistant.config_entries import ConfigEntry
+from homeassistant.const import EntityCategory
 from homeassistant.core import HomeAssistant
-from homeassistant.helpers.entity import EntityCategory
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .const import DOMAIN
+from .coordinator import BamBuddyPrinterCoordinator
 from .entity import BamBuddyPrinterEntityMixin
 
 PRINTER_BINARY_SENSORS: list[BinarySensorEntityDescription] = [
@@ -54,7 +57,7 @@ async def async_setup_entry(
 ) -> None:
     """Set up BamBuddy binary sensors."""
     data = hass.data[DOMAIN][entry.entry_id]
-    entities = []
+    entities: list[BinarySensorEntity] = []
     for printer_data in data["printers"].values():
         entities.extend(
             BamBuddyPrinterBinarySensor(printer_data["coordinator"], entry, printer_data, description)
@@ -63,14 +66,16 @@ async def async_setup_entry(
     async_add_entities(entities)
 
 
-class BamBuddyPrinterBinarySensor(BamBuddyPrinterEntityMixin, CoordinatorEntity, BinarySensorEntity):
+class BamBuddyPrinterBinarySensor(
+    BamBuddyPrinterEntityMixin, CoordinatorEntity[BamBuddyPrinterCoordinator], BinarySensorEntity
+):
     """BamBuddy printer binary sensor."""
 
     def __init__(
         self,
-        coordinator,
+        coordinator: BamBuddyPrinterCoordinator,
         entry: ConfigEntry,
-        printer_data: dict,
+        printer_data: dict[str, Any],
         description: BinarySensorEntityDescription,
     ) -> None:
         super().__init__(coordinator)
@@ -82,6 +87,11 @@ class BamBuddyPrinterBinarySensor(BamBuddyPrinterEntityMixin, CoordinatorEntity,
 
     @property
     def is_on(self) -> bool | None:
+        """BamBuddy's value for this sensor, passed on as BamBuddy sent it."""
+        value: bool | None = self._value()
+        return value
+
+    def _value(self) -> Any:
         data = self.coordinator.data
         if not data:
             return None
