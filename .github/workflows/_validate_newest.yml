@@ -75,7 +75,8 @@ jobs:
       - name: Find the newest stable Home Assistant
         id: ha
         run: python3 .github/scripts/ha_version.py >> "$GITHUB_OUTPUT"
-      # Home Assistant included: mypy checks the integration against its types.
+      # Home Assistant included: mypy checks against its types (the release
+      # scripts for now, the integration once it is typed).
       - name: Install the test requirements
         env:
           PLUGIN: ${{ steps.ha.outputs.plugin }}

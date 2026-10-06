@@ -8,7 +8,7 @@ name: Validate on the minimum Home Assistant (internal)
 #   Python 3.13 - a compile with the minimum's Python, and the
 #                 from __future__ import every module needs there
 #   Tests       - the suite against that release (tests/requirements-floor.txt),
-#                 without the coverage gate
+#                 without coverage
 # The other groups: _validate_newest.yml and _validate_repository.yml.
 # Every check runs every time; no caller can switch one off.
 # Callers set permissions: contents: read.

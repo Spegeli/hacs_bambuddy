@@ -346,8 +346,8 @@ def test_previous_ref_stable_with_no_tags_at_all_is_none():
 
 
 def test_previous_ref_prerelease_is_the_newest_of_either_semver_kind():
-    # A pre-release of the next stable outranks the current stable (spec
-    # 12.4's verified ordering: 2.1.0-beta.1 > 2.0.0).
+    # A pre-release of the next stable outranks the current stable
+    # (2.1.0-beta.1 > 2.0.0, as CONTRIBUTING.md "Releases" describes).
     assert previous_ref(["v2.0.0_redesign", "v2.1.0-beta.1"], "prerelease") == "v2.1.0-beta.1"
     # A published stable outranks a pre-release of that same version.
     assert previous_ref(["v2.1.0-beta.1", "v2.1.0"], "prerelease") == "v2.1.0"

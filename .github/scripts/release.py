@@ -17,9 +17,9 @@ below (CONTRIBUTING.md, "Releases").
 Standard library only, and 3.12-compatible: `actions/setup-python` is
 GitHub's own action, but the key job goes without it -- the release allows
 that job only `actions/checkout` and shell (CONTRIBUTING.md, "Releases") --
-so this runs on the
-Python `ubuntu-24.04` ships, 3.12. `_validate_repository.yml`'s "Release
-script" job compiles and runs it there on every change.
+so this runs on the Python `ubuntu-24.04` ships, 3.12.
+`_validate_repository.yml`'s "Release script" job compiles and runs it
+there on every change.
 """
 from __future__ import annotations
 
@@ -141,8 +141,8 @@ def apply_bump(base: Version, bump: Bump) -> Version:
 def compute_bump(commits: Sequence[Commit], override: str) -> Bump:
     """The SemVer bump: `override` wins when it names one; otherwise
     ("auto") it comes from the Conventional Commits: any breaking commit
-    makes it major, else any `feat` makes it minor, else patch (spec
-    12.4)."""
+    makes it major, else any `feat` makes it minor, else patch
+    (CONTRIBUTING.md, "Releases")."""
     if override == "major":
         return "major"
     if override == "minor":
