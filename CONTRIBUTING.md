@@ -67,7 +67,7 @@ The same in Docker, on any system, with the Python version and the requirements 
 docker run --rm -v "${PWD}:/workspace" -w /workspace python:3.14 sh -c 'pip install -q -r tests/requirements.txt "pytest-homeassistant-custom-component==$(python .github/scripts/ha_version.py --plugin)" && python -m pytest tests/ -q --cov=custom_components.bambuddy --cov-report=term-missing --cov-fail-under=95 && python -m mypy --strict'
 ```
 
-On the minimum Home Assistant in `hacs.json`, as CI's second test job runs it:
+On the minimum Home Assistant in `hacs.json`, as CI's second test job runs it (no coverage gate):
 
 ```bash
 docker run --rm -v "${PWD}:/workspace" -w /workspace python:3.13 sh -c 'pip install -q -r tests/requirements-floor.txt && python -m pytest tests/ -q'
@@ -132,7 +132,7 @@ Write the files as UTF-8 without a BOM, formatted like the others (`json.dumps(.
 
 Follow the [Home Assistant developer guidelines](https://developers.home-assistant.io/docs/development_guidelines). In short:
 
-- Type hints on everything new.
+- Complete type hints: `mypy --strict` must pass (see [Tests and typing](#tests-and-typing)).
 - Docstrings on modules, classes and public functions.
 - `async`/`await` for anything touching the network.
 - Constants in `const.py`, not inline.
