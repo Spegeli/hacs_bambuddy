@@ -36,9 +36,9 @@ Never try the print controls on a printer that is printing.
 
 <!--
 A pull request to dev or main is validated by CI: hassfest, HACS validation,
-the tests (on the newest and on the minimum Home Assistant), mypy --strict
-(the release scripts), the Python 3.13 checks and the release script on
-Python 3.12. A pull request to dev merges once that run is green; one to
-main merges only with a green "Validation result".
+the tests (≥ 95 % coverage, and on the minimum Home Assistant), mypy --strict,
+the Python 3.13 checks and the release script on Python 3.12. A pull request
+to dev merges once that run is green; one to main merges only with a green
+"Validation result".
 Do NOT bump the version in manifest.json — the release workflow sets it.
 -->

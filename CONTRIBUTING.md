@@ -55,16 +55,16 @@ Tests use `pytest-homeassistant-custom-component`, whose harness does not run on
 
 ```bash
 pip install -r tests/requirements.txt "pytest-homeassistant-custom-component==$(python .github/scripts/ha_version.py --plugin)"
-python -m pytest tests/ -q --cov=custom_components.bambuddy --cov-report=term-missing
+python -m pytest tests/ -q --cov=custom_components.bambuddy --cov-report=term-missing --cov-fail-under=95
 python -m mypy --strict
 ```
 
-`pytest` runs the suite and reports the line coverage of each file, as CI does; there is no coverage gate yet. `mypy` checks the scripts in `.github/scripts` in strict mode, as `pyproject.toml` configures it; the integration joins once it is typed. The tests are not type-checked.
+`pytest` runs the suite and reports the line coverage of each file, and fails under 95 % overall, as CI does; `mypy` checks the types of the integration and of the scripts in `.github/scripts` in strict mode, as `pyproject.toml` configures it — the tests are not type-checked.
 
 The same in Docker, on any system, with the Python version and the requirements CI uses; each run installs them afresh, which takes a few minutes. On Windows, run it from PowerShell: Git Bash rewrites the mount path.
 
 ```bash
-docker run --rm -v "${PWD}:/workspace" -w /workspace python:3.14 sh -c 'pip install -q -r tests/requirements.txt "pytest-homeassistant-custom-component==$(python .github/scripts/ha_version.py --plugin)" && python -m pytest tests/ -q --cov=custom_components.bambuddy --cov-report=term-missing && python -m mypy --strict'
+docker run --rm -v "${PWD}:/workspace" -w /workspace python:3.14 sh -c 'pip install -q -r tests/requirements.txt "pytest-homeassistant-custom-component==$(python .github/scripts/ha_version.py --plugin)" && python -m pytest tests/ -q --cov=custom_components.bambuddy --cov-report=term-missing --cov-fail-under=95 && python -m mypy --strict'
 ```
 
 On the minimum Home Assistant in `hacs.json`, as CI's second test job runs it:
@@ -73,7 +73,7 @@ On the minimum Home Assistant in `hacs.json`, as CI's second test job runs it:
 docker run --rm -v "${PWD}:/workspace" -w /workspace python:3.13 sh -c 'pip install -q -r tests/requirements-floor.txt && python -m pytest tests/ -q'
 ```
 
-CI runs both (see [Continuous integration](#continuous-integration)): the suite must pass on both Home Assistant releases, and `mypy --strict` must report no error.
+CI runs both (see [Continuous integration](#continuous-integration)): the suite must pass on both Home Assistant releases, with at least 95 % line coverage on the newest, and `mypy --strict` must report no error. `config_flow.py` stays at 100 %, and every test that shows an error in a dialog goes on to finish that dialog.
 
 ## Project layout
 
@@ -144,8 +144,8 @@ One workflow, **Validate** (`.github/workflows/validate.yml`), checks every chan
 | Check | What it runs |
 |---|---|
 | Newest HA / Hassfest | Home Assistant's own checks of the integration (`hassfest`), as the Home Assistant release below |
-| Newest HA / Tests | the suite on Python 3.14, as under [Tests and typing](#tests-and-typing); reports the line coverage, without a gate yet |
-| Newest HA / Strict typing | `python -m mypy --strict` on Python 3.14 — the release scripts for now |
+| Newest HA / Tests | the suite on Python 3.14, as under [Tests and typing](#tests-and-typing); fails under 95 % line coverage |
+| Newest HA / Strict typing | `python -m mypy --strict` on Python 3.14 |
 | Minimum HA / Python 3.13 | a compile of the integration with Python 3.13, the Python of the 2025.5 floor, and a check that every module keeps `from __future__ import annotations` |
 | Minimum HA / Tests | the suite on Python 3.13 against the minimum release in `hacs.json` (`tests/requirements-floor.txt`), after a check that the installed release is that one |
 | Repository / HACS validation | HACS's checks of the repository |
