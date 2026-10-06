@@ -85,7 +85,9 @@ async def async_setup_entry(
         status_data = (coordinator.data or {}).get("status", {})
         for description in PRINTER_SENSORS:
             if description.key == "chamber_temp":
-                if status_data.get("temperatures", {}).get("chamber") is None:
+                # BamBuddy sends null temperatures for a printer it holds no
+                # live state for.
+                if (status_data.get("temperatures") or {}).get("chamber") is None:
                     continue
             entities.append(BamBuddyPrinterSensor(coordinator, entry, printer_data, description))
 
@@ -172,6 +174,8 @@ class BamBuddyPrinterSensor(BamBuddyPrinterEntityMixin, CoordinatorEntity, Senso
 
         printer = data.get("printer", {})
         status = data.get("status", {})
+        # Null for a printer BamBuddy holds no live state for.
+        temperatures = status.get("temperatures") or {}
         key = self.entity_description.key
 
         if key == "status":
@@ -189,15 +193,15 @@ class BamBuddyPrinterSensor(BamBuddyPrinterEntityMixin, CoordinatorEntity, Senso
         if key == "total_layers":
             return status.get("total_layers")
         if key == "nozzle_temp":
-            return status.get("temperatures", {}).get("nozzle")
+            return temperatures.get("nozzle")
         if key == "nozzle_target":
-            return status.get("temperatures", {}).get("nozzle_target")
+            return temperatures.get("nozzle_target")
         if key == "bed_temp":
-            return status.get("temperatures", {}).get("bed")
+            return temperatures.get("bed")
         if key == "bed_target":
-            return status.get("temperatures", {}).get("bed_target")
+            return temperatures.get("bed_target")
         if key == "chamber_temp":
-            return status.get("temperatures", {}).get("chamber")
+            return temperatures.get("chamber")
         if key == "hms_status":
             return status.get("hms_status")
         if key == "subtask_name":
