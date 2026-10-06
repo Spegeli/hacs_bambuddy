@@ -1,14 +1,17 @@
 """BamBuddy buttons."""
 from __future__ import annotations
 
+from typing import Any
+
 from homeassistant.components.button import ButtonEntity, ButtonEntityDescription
 from homeassistant.config_entries import ConfigEntry
+from homeassistant.const import EntityCategory
 from homeassistant.core import HomeAssistant
-from homeassistant.helpers.entity import EntityCategory
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from .api import BamBuddyClient
 from .const import DOMAIN
+from .coordinator import BamBuddyPrinterCoordinator
 from .entity import BamBuddyPrinterEntityMixin
 
 PRINTER_BUTTONS: list[ButtonEntityDescription] = [
@@ -26,7 +29,7 @@ async def async_setup_entry(
 ) -> None:
     """Set up BamBuddy buttons."""
     data = hass.data[DOMAIN][entry.entry_id]
-    entities = []
+    entities: list[ButtonEntity] = []
     for printer_data in data["printers"].values():
         entities.extend(
             BamBuddyPrinterButton(hass, entry, data["client"], printer_data, description)
@@ -43,7 +46,7 @@ class BamBuddyPrinterButton(BamBuddyPrinterEntityMixin, ButtonEntity):
         hass: HomeAssistant,
         entry: ConfigEntry,
         client: BamBuddyClient,
-        printer_data: dict,
+        printer_data: dict[str, Any],
         description: ButtonEntityDescription,
     ) -> None:
         self.hass = hass
@@ -55,8 +58,9 @@ class BamBuddyPrinterButton(BamBuddyPrinterEntityMixin, ButtonEntity):
         self._printer_data = printer_data
         self._attr_unique_id = f"{entry.entry_id}_p{printer_data['printer_id']}_{description.key}"
 
-    def _coordinator_data(self) -> dict:
-        return self._printer_data["coordinator"].data or {}
+    def _coordinator_data(self) -> dict[str, Any]:
+        coordinator: BamBuddyPrinterCoordinator = self._printer_data["coordinator"]
+        return coordinator.data or {}
 
     async def async_press(self) -> None:
         printer_id = self._printer_data["printer_id"]
