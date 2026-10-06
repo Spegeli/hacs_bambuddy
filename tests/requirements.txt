@@ -23,10 +23,10 @@ PyTurboJPEG>=1.7.5
 #   pytest tests/ --cov=custom_components.bambuddy --cov-report=term-missing
 # CI reports it, without a gate yet (.github/workflows/_validate_newest.yml).
 pytest-cov>=6.0.0
-# Strict typing, `mypy --strict` as configured in pyproject.toml (quality
-# scale rule strict-typing). Pinned: a new mypy release can find new errors
-# in unchanged code, so it moves only on purpose, with any local test image
-# rebuilt along with it. It checks the scripts in .github/scripts, and the
-# integration once it is typed, against the types of the Home Assistant
-# release installed beside it.
+# Strict typing of the integration, `mypy --strict` as configured in
+# pyproject.toml (quality scale rule strict-typing). Pinned: a new mypy
+# release can find new errors in unchanged code, so it moves only on
+# purpose, with any local test image rebuilt along with it. It checks the
+# integration against the types of the Home Assistant release installed
+# beside it.
 mypy==2.3.1
