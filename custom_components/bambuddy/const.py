@@ -1,4 +1,5 @@
 """Constants for BamBuddy integration."""
+from __future__ import annotations
 
 DOMAIN = "bambuddy"
 
