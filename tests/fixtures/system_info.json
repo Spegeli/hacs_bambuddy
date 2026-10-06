@@ -1,0 +1,7 @@
+{
+  "app": {"version": "0.2.4.5"},
+  "system": {"uptime_seconds": 90000},
+  "database": {"archives": 42},
+  "printers": {"total": 2, "connected": 1},
+  "storage": {"disk_free_bytes": 53687091200, "disk_percent_used": 37.5}
+}

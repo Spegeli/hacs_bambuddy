@@ -1,0 +1,8 @@
+{
+  "total_prints": 40,
+  "successful_prints": 36,
+  "failed_prints": 3,
+  "cancelled_prints": 1,
+  "total_print_time_hours": 123.4,
+  "total_filament_grams": 2345.6
+}
