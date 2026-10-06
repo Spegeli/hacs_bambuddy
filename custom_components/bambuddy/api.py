@@ -118,7 +118,6 @@ class BamBuddyClient:
     # Camera
     async def get_stream_token(self) -> str:
         result = await self._request("POST", "/printers/camera/stream-token")
-        _LOGGER.debug("Stream token response: %s", result)
         token = result.get("token") or result.get("access_token") or result.get("stream_token") or ""
         return token
 
