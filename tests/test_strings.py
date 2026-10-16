@@ -134,14 +134,24 @@ def test_english_translation_is_the_strings_file():
     assert strings == english
 
 
+# The ways the modules name an exception's text: an error raised with
+# translation_domain=DOMAIN and its key, an action's refusal
+# (services._refuse), and a command's refusal (entity.async_run_command).
+_RAISED = (
+    re.compile(r'translation_domain=DOMAIN,\s*translation_key="([a-z0-9_]+)"'),
+    re.compile(r'_refuse\(\s*"([a-z0-9_]+)"'),
+    re.compile(r'refusal(?::\s*str\s*)?=\s*"([a-z0-9_]+)"'),
+)
+
+
 def test_every_exception_text_is_one_the_code_raises():
     """An exception the code raises without a text shows its bare key; a
-    text no code raises is dead. The keys as the modules raise them:
-    `translation_key="..."`."""
+    text no code raises is dead."""
     raised = {
         key
         for module in _DIR.glob("*.py")
-        for key in re.findall(r'translation_key="([a-z0-9_]+)"', module.read_text(encoding="utf-8"))
+        for pattern in _RAISED
+        for key in pattern.findall(module.read_text(encoding="utf-8"))
     }
     assert raised
     assert raised == set(_load("strings.json")["exceptions"])

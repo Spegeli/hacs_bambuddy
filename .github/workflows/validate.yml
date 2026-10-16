@@ -9,8 +9,8 @@ name: Validate
 #                (_validate_newest.yml)
 #   Minimum HA - the Python 3.13 checks and the tests, against the minimum
 #                Home Assistant in hacs.json (_validate_minimum.yml)
-#   Repository - HACS and the release script on Python 3.12
-#                (_validate_repository.yml)
+#   Repository - HACS, the release script on Python 3.12 and the dashboard
+#                card on Node 24 (_validate_repository.yml)
 # Every run runs every check; none can be switched off:
 #   push to any branch but main - on every topic branch and dev; summed up
 #                                 as "Validation summary"

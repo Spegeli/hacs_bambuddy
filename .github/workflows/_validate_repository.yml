@@ -6,6 +6,9 @@ name: Validate the repository (internal)
 #   HACS validation - the repository against HACS's own rules
 #   Release script  - .github/scripts/release.py on the Python a release
 #                     runs it with
+#   Cards           - the dashboard card in cards/: type check, tests with
+#                     their coverage, and the committed bundle against a
+#                     fresh build
 # The other groups: _validate_newest.yml and _validate_minimum.yml.
 # Every check runs every time; no caller can switch one off.
 # Callers set permissions: contents: read.
@@ -46,3 +49,34 @@ jobs:
         run: python -m py_compile .github/scripts/release.py
       - name: Plan a stable release with Python 3.12
         run: python .github/scripts/release.py plan --type stable --bump auto
+
+  # The dashboard card is TypeScript in cards/, shipped as one built file,
+  # custom_components/bambuddy/frontend/bambuddy-card.js, because HACS
+  # installs nothing else. npm ci installs exactly what package-lock.json
+  # locks; the last step fails when the committed bundle is not what the
+  # sources build (CONTRIBUTING.md, "Dashboard card").
+  cards:
+    name: Cards
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: cards/package-lock.json
+      - name: Install the locked packages
+        working-directory: cards
+        run: npm ci
+      - name: Type check
+        working-directory: cards
+        run: npm run typecheck
+      - name: Tests with coverage
+        working-directory: cards
+        run: npm test
+      - name: Build the bundle
+        working-directory: cards
+        run: npm run build
+      - name: Compare the committed bundle with the build
+        run: git diff --exit-code -- custom_components/bambuddy/frontend/bambuddy-card.js

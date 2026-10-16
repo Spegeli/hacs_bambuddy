@@ -1,12 +1,18 @@
 """Shared fixtures for the BamBuddy tests.
 
-BamBuddy's answers come from tests/fixtures/, one file per answer. The field
-names are BamBuddy's own; the values are invented -- addresses from the
-documentation range 192.0.2.0/24, made-up serial numbers.
+BamBuddy's answers come from tests/fixtures/, one file per answer, built
+from the shapes BamBuddy 1.2.5.7 returns. The field names are BamBuddy's own;
+the values are invented -- addresses from the documentation range
+192.0.2.0/24, made-up serial numbers. Five printers: an X1C printing with an
+AMS (1), an A1 Mini idle with an AMS Lite (2), a P1S paused with HMS errors
+(3), an H2D with two nozzles, an AMS 2 Pro and an AMS HT (4), and an X1E
+BamBuddy never reached (5).
 """
 from __future__ import annotations
 
 from collections.abc import Iterator, Mapping
+import copy
+from datetime import timedelta
 import json
 from pathlib import Path
 import string
@@ -14,6 +20,7 @@ from types import SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock, patch
 
+from freezegun.api import FrozenDateTimeFactory
 from homeassistant.config_entries import (
     ConfigEntriesFlowManager,
     ConfigEntryState,
@@ -21,19 +28,26 @@ from homeassistant.config_entries import (
 )
 from homeassistant.core import HomeAssistant
 from homeassistant.data_entry_flow import FlowManager, FlowResultType
+from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers import entity_registry as er
 import pytest
-from pytest_homeassistant_custom_component.common import MockConfigEntry
+from pytest_homeassistant_custom_component.common import MockConfigEntry, async_fire_time_changed
 
 from custom_components.bambuddy.api import BamBuddyClient
 from custom_components.bambuddy.const import DOMAIN
 
-HOST = "bambuddy.local"
-PORT = 8000
-API_KEY = "test-key"
-PRINTER_ID = 1
-PRINTER_NAME = "X1C (00M00A000000001)"
+URL = "http://bambuddy.local:8000"
+API_KEY = "bb_test_key"
 STREAM_TOKEN = "stream-token-123"
+
+X1C, A1_MINI, P1S, H2D, X1E = 1, 2, 3, 4, 5
+_STATUSES = {
+    X1C: "status_x1c.json",
+    A1_MINI: "status_a1mini.json",
+    P1S: "status_p1s.json",
+    H2D: "status_h2d.json",
+    X1E: "status_never.json",
+}
 
 _FIXTURES = Path(__file__).parent / "fixtures"
 _INTEGRATION = Path(__file__).parent.parent / "custom_components" / "bambuddy"
@@ -49,17 +63,65 @@ def load_fixture(name: str) -> Any:
     return json.loads((_FIXTURES / name).read_text(encoding="utf-8"))
 
 
-# The methods of BamBuddyClient that send a request to BamBuddy and only
-# report success: the print controls and the like.
-_ACTIONS = (
+def printer_serial(printer_id: int) -> str:
+    """A printer's serial number, as BamBuddy lists it."""
+    printer = next(p for p in load_fixture("printers.json") if p["id"] == printer_id)
+    return str(printer.get("serial_number") or "")
+
+
+def printer_key(printer_id: int) -> str:
+    """What the integration knows a printer by: its serial number."""
+    return printer_serial(printer_id) or f"id{printer_id}"
+
+
+def ams_key(printer_id: int, ams_id: int) -> str:
+    """What the integration knows an AMS unit by: its serial number, else
+    its place."""
+    units = load_fixture(_STATUSES[printer_id]).get("ams") or []
+    unit = next((u for u in units if u["id"] == ams_id), {})
+    return str(unit.get("serial_number") or ams_id)
+
+
+def printer_entry(printer_id: int) -> dict[str, Any]:
+    """A printer as the entry's options store it."""
+    return {"printer_id": printer_id, "printer_name": printer_name(printer_id), "serial_number": printer_serial(printer_id)}
+
+
+def printer_name(printer_id: int) -> str:
+    """The device name a printer gets: its name in BamBuddy, then model and
+    serial."""
+    printer = next(p for p in load_fixture("printers.json") if p["id"] == printer_id)
+    return f"{printer['name']} ({printer['model']} / {printer['serial_number']})"
+
+
+# The methods of BamBuddyClient that send a command and only report success.
+CONTROLS = (
+    "pause",
+    "resume",
+    "stop",
     "set_print_speed",
-    "clear_hms_errors",
-    "clear_plate",
-    "refresh_printer_status",
-    "pause_print",
-    "resume_print",
-    "stop_print",
     "set_chamber_light",
+    "set_nozzle_temperature",
+    "set_bed_temperature",
+    "set_chamber_temperature",
+    "set_fan_speed",
+    "set_airduct_mode",
+    "jog_xy",
+    "jog_z",
+    "jog_extruder",
+    "home_axes",
+    "clear_hms",
+    "clear_plate",
+    "refresh_status",
+    "load_filament",
+    "unload_filament",
+    "start_drying",
+    "stop_drying",
+    "select_extruder",
+    "set_ams_backup",
+    "configure_slot",
+    "set_print_option",
+    "skip_objects",
 )
 
 
@@ -68,35 +130,56 @@ def bambuddy_api() -> Iterator[SimpleNamespace]:
     """BamBuddyClient's requests, answered from the fixtures without a
     network: one AsyncMock per method that talks to BamBuddy. The mocks
     replace the methods on the class, so a call carries no `self`:
-    `assert_awaited_once_with(PRINTER_ID, ...)`. A test changes an answer,
-    or makes a method raise, through its mock."""
+    `assert_awaited_once_with(X1C, ...)`. A test changes a printer's status
+    through `statuses` (read again on every refresh), any other answer
+    through its mock."""
+    statuses = {printer_id: load_fixture(name) for printer_id, name in _STATUSES.items()}
     mocks = {
-        "get_health": AsyncMock(return_value=load_fixture("health.json")),
+        "get_version": AsyncMock(return_value="1.2.5.7"),
+        "get_auth_status": AsyncMock(return_value=load_fixture("auth_status.json")),
+        "get_auth_me": AsyncMock(return_value=load_fixture("auth_me_control.json")),
         "get_system_info": AsyncMock(return_value=load_fixture("system_info.json")),
         "get_statistics": AsyncMock(return_value=load_fixture("archives_stats.json")),
+        "get_update_check": AsyncMock(return_value=load_fixture("update_check.json")),
+        "get_firmware_updates": AsyncMock(return_value=load_fixture("firmware_updates.json")),
         "get_printers": AsyncMock(return_value=load_fixture("printers.json")),
-        "get_printer": AsyncMock(return_value=load_fixture("printer.json")),
-        "get_printer_status": AsyncMock(return_value=load_fixture("printer_status.json")),
+        "get_printer": AsyncMock(
+            side_effect=lambda printer_id: next(p for p in load_fixture("printers.json") if p["id"] == printer_id)
+        ),
+        "get_status": AsyncMock(side_effect=lambda printer_id: copy.deepcopy(statuses[printer_id])),
         "get_stream_token": AsyncMock(return_value=STREAM_TOKEN),
-        **{name: AsyncMock(return_value={}) for name in _ACTIONS},
+        "get_snapshot": AsyncMock(return_value=b"jpeg"),
+        "get_cover": AsyncMock(return_value=b"png"),
+        "get_print_objects": AsyncMock(return_value=load_fixture("print_objects.json")),
+        "get_runtime": AsyncMock(return_value={"runtime_hours": 547.5, "print_hours_offset": 12.0, "total_hours": 559.5}),
+        **{name: AsyncMock(return_value=None) for name in CONTROLS},
     }
     with patch.multiple(BamBuddyClient, **mocks):
-        yield SimpleNamespace(**mocks)
+        yield SimpleNamespace(statuses=statuses, **mocks)
+
+
+def make_entry(hass: HomeAssistant, *printer_ids: int) -> MockConfigEntry:
+    """A BamBuddy entry as the config flow creates it, with these printers;
+    added to Home Assistant, not set up."""
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        title="BamBuddy (bambuddy.local)",
+        data={"url": URL, "api_key": API_KEY, "verify_ssl": True},
+        options={
+            "printers": [printer_entry(printer_id) for printer_id in printer_ids]
+        },
+        unique_id=URL,
+        version=2,
+        minor_version=2,
+    )
+    entry.add_to_hass(hass)
+    return entry
 
 
 @pytest.fixture
 def config_entry(hass: HomeAssistant) -> MockConfigEntry:
-    """A BamBuddy entry as the config flow creates it, with one printer
-    added through Configure; added to Home Assistant, not set up."""
-    entry = MockConfigEntry(
-        domain=DOMAIN,
-        title=f"BamBuddy ({HOST})",
-        data={"host": HOST, "port": PORT, "api_key": API_KEY, "version": "0.2.4.5"},
-        options={"printers": [{"printer_id": PRINTER_ID, "printer_name": PRINTER_NAME}]},
-        unique_id=f"bambuddy_{HOST}_{PORT}",
-    )
-    entry.add_to_hass(hass)
-    return entry
+    """An entry with the printing X1C."""
+    return make_entry(hass, X1C)
 
 
 async def setup_integration(hass: HomeAssistant, entry: MockConfigEntry) -> None:
@@ -106,23 +189,62 @@ async def setup_integration(hass: HomeAssistant, entry: MockConfigEntry) -> None
     assert entry.state is ConfigEntryState.LOADED
 
 
+async def next_refresh(hass: HomeAssistant, freezer: FrozenDateTimeFactory) -> None:
+    """Past the printers' next poll: a coordinator's next refresh comes 9 to
+    10.5 seconds after the last."""
+    freezer.tick(timedelta(seconds=11))
+    async_fire_time_changed(hass)
+    # The coordinators refresh in background tasks.
+    await hass.async_block_till_done(wait_background_tasks=True)
+
+
 def entity_id(hass: HomeAssistant, platform: str, unique_id: str) -> str:
     """The entity ID Home Assistant gave the entity `unique_id` of
-    `platform` -- looked up, never spelled: today's entity IDs come from
-    the English names, which the feature work may change."""
+    `platform` -- looked up, never spelled."""
     found = er.async_get(hass).async_get_entity_id(platform, DOMAIN, unique_id)
     assert found is not None, (platform, unique_id)
     return found
 
 
-def printer_uid(entry: MockConfigEntry, key: str, printer_id: int = PRINTER_ID) -> str:
+def printer_uid(entry: MockConfigEntry, key: str, printer_id: int = X1C) -> str:
     """The unique ID of a printer's entity `key`."""
-    return f"{entry.entry_id}_p{printer_id}_{key}"
+    return f"{entry.entry_id}_p{printer_key(printer_id)}_{key}"
+
+
+def ams_uid(entry: MockConfigEntry, ams_id: int, key: str, printer_id: int = X1C) -> str:
+    """The unique ID of an AMS unit's entity `key`."""
+    return f"{entry.entry_id}_p{printer_key(printer_id)}_ams{ams_key(printer_id, ams_id)}_{key}"
+
+
+def printer_device(entry: MockConfigEntry, printer_id: int) -> str:
+    """BamBuddy's identifier of a printer's device."""
+    return f"{entry.entry_id}_printer_{printer_key(printer_id)}"
+
+
+def ams_device(entry: MockConfigEntry, printer_id: int, ams_id: int) -> str:
+    """BamBuddy's identifier of an AMS unit's device."""
+    return f"{printer_device(entry, printer_id)}_ams_{ams_key(printer_id, ams_id)}"
 
 
 def instance_uid(entry: MockConfigEntry, key: str) -> str:
-    """The unique ID of the instance's sensor `key`."""
+    """The unique ID of the instance's entity `key`."""
     return f"{entry.entry_id}_{key}"
+
+
+def device_id(hass: HomeAssistant, entry: MockConfigEntry, identifier: str) -> str:
+    """The registry ID of the entry's device with BamBuddy's `identifier`
+    (async_get_device by identifiers is deprecated from 2026.8 on)."""
+    for device in dr.async_entries_for_config_entry(dr.async_get(hass), entry.entry_id):
+        if (DOMAIN, identifier) in device.identifiers:
+            return device.id
+    raise AssertionError(identifier)
+
+
+def state_of(hass: HomeAssistant, platform: str, unique_id: str) -> Any:
+    """The state object of an entity found by its unique ID."""
+    state = hass.states.get(entity_id(hass, platform, unique_id))
+    assert state is not None, unique_id
+    return state
 
 
 def _placeholders(template: str) -> frozenset[str]:

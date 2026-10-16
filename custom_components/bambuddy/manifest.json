@@ -1,12 +1,15 @@
 {
   "domain": "bambuddy",
   "name": "BamBuddy",
+  "after_dependencies": [
+    "frontend"
+  ],
   "codeowners": [
     "@Spegeli"
   ],
   "config_flow": true,
   "dependencies": [
-    "network"
+    "http"
   ],
   "documentation": "https://github.com/Spegeli/hacs_bambuddy",
   "iot_class": "local_polling",

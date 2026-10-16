@@ -1,0 +1,13 @@
+{
+  "id": 0,
+  "username": "api-key:bb_read...",
+  "is_admin": false,
+  "role": "user",
+  "groups": [],
+  "permissions": [
+    "printers:read",
+    "camera:view",
+    "stats:read",
+    "system:read"
+  ]
+}

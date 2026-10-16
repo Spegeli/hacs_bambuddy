@@ -1,8 +1,32 @@
 {
-  "total_prints": 40,
-  "successful_prints": 36,
-  "failed_prints": 3,
-  "cancelled_prints": 1,
-  "total_print_time_hours": 123.4,
-  "total_filament_grams": 2345.6
+  "total_prints": 812,
+  "successful_prints": 741,
+  "failed_prints": 52,
+  "cancelled_prints": 19,
+  "total_print_time_hours": 960.25,
+  "total_filament_grams": 51234.7,
+  "total_cost": 1024.5,
+  "prints_by_filament_type": {
+    "PLA": 600,
+    "PETG": 180,
+    "ABS": 40
+  },
+  "prints_by_printer": {
+    "1": 500,
+    "2": 250,
+    "3": 62
+  },
+  "printer_names": {
+    "1": "X1C",
+    "2": "A1 mini",
+    "3": "P1S"
+  },
+  "average_time_accuracy": 97.4,
+  "time_accuracy_by_printer": {
+    "1": 98.1,
+    "2": 96.2
+  },
+  "total_energy_kwh": 120.4,
+  "total_energy_cost": 36.1,
+  "energy_data_warming_up": false
 }

@@ -20,6 +20,10 @@ docs/
 # Agent workspace — plan ledgers, briefs, reports, review packages
 .superpowers/
 
+# Dashboard card (cards/): installed packages and coverage reports
+cards/node_modules/
+cards/coverage/
+
 # Python
 __pycache__/
 .pytest_cache/

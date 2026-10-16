@@ -1,84 +1,128 @@
-"""The binary sensors of a printer."""
+"""The binary sensors: BamBuddy's connection, each printer's connection,
+door, plate and the AMS units drying."""
 from __future__ import annotations
 
 from types import SimpleNamespace
 
+from freezegun.api import FrozenDateTimeFactory
 import pytest
-from homeassistant.const import STATE_OFF, STATE_ON, STATE_UNKNOWN
+from homeassistant.const import STATE_OFF, STATE_ON, STATE_UNAVAILABLE
 from homeassistant.core import HomeAssistant
-from pytest_homeassistant_custom_component.common import MockConfigEntry
+from homeassistant.helpers import entity_registry as er
 
-from tests.conftest import entity_id, load_fixture, printer_uid, setup_integration
+from custom_components.bambuddy.api import BamBuddyConnectionError
+from custom_components.bambuddy.const import DOMAIN
 
-# The binary sensors that show a field of BamBuddy's status as it is.
-_FIELDS = ("connected", "sdcard", "wired_network", "developer_mode")
-
-# One active fault as BamBuddy lists it in `hms_errors` (HMSErrorResponse in
-# backend/app/schemas/printer.py); the values are invented.
-_HMS_ERROR = {
-    "code": "0C00_0300",
-    "attr": 201326592,
-    "module": 12,
-    "severity": 2,
-    "actions": [],
-    "job_id": None,
-    "full_code": "0C00030000020001",
-    "description": None,
-}
+from tests.conftest import (
+    A1_MINI,
+    H2D,
+    X1C,
+    ams_uid,
+    instance_uid,
+    make_entry,
+    next_refresh,
+    printer_uid,
+    setup_integration,
+    state_of,
+)
 
 
-def _state(hass: HomeAssistant, entry: MockConfigEntry, key: str) -> str:
-    return hass.states.get(entity_id(hass, "binary_sensor", printer_uid(entry, key))).state
+@pytest.mark.parametrize(
+    ("key", "state"),
+    [
+        ("connected", STATE_ON),
+        ("door", STATE_OFF),
+        ("awaiting_plate_clear", STATE_OFF),
+        ("sdcard", STATE_ON),
+        ("developer_mode", STATE_ON),
+    ],
+)
+async def test_the_x1c(hass: HomeAssistant, bambuddy_api: SimpleNamespace, key: str, state: str) -> None:
+    entry = make_entry(hass, X1C)
+    await setup_integration(hass, entry)
+
+    assert state_of(hass, "binary_sensor", printer_uid(entry, key)).state == state
 
 
-@pytest.mark.parametrize("on", [True, False])
-@pytest.mark.parametrize("key", _FIELDS)
-async def test_each_binary_sensor_shows_its_own_field(
-    hass: HomeAssistant,
-    bambuddy_api: SimpleNamespace,
-    config_entry: MockConfigEntry,
-    key: str,
-    on: bool,
+async def test_the_plate_waiting_to_be_cleared(
+    hass: HomeAssistant, bambuddy_api: SimpleNamespace, freezer: FrozenDateTimeFactory
 ) -> None:
-    """Its field one way, every other field the other way: a sensor that
-    read a neighbour's field would show the opposite."""
-    status = load_fixture("printer_status.json")
-    status.update({field: not on for field in _FIELDS})
-    status[key] = on
-    bambuddy_api.get_printer_status.return_value = status
+    entry = make_entry(hass, X1C)
+    await setup_integration(hass, entry)
+    bambuddy_api.statuses[X1C].update({"state": "FINISH", "awaiting_plate_clear": True})
 
-    await setup_integration(hass, config_entry)
+    await next_refresh(hass, freezer)
 
-    assert _state(hass, config_entry, key) == (STATE_ON if on else STATE_OFF)
+    state = state_of(hass, "binary_sensor", printer_uid(entry, "awaiting_plate_clear"))
+    assert (state.state, state.attributes["friendly_name"]) == (STATE_ON, "Workshop (X1C / 00M00A000000001) Build plate")
+    # A problem: BamBuddy's queue starts no print until the plate is clear.
+    assert state.attributes["device_class"] == "problem"
 
 
-@pytest.mark.parametrize(("errors", "state"), [([], STATE_OFF), ([_HMS_ERROR], STATE_ON)])
-async def test_the_hms_sensor_is_on_while_a_fault_is_active(
-    hass: HomeAssistant,
-    bambuddy_api: SimpleNamespace,
-    config_entry: MockConfigEntry,
-    errors: list[dict[str, object]],
-    state: str,
+async def test_an_a1_mini_has_no_door_and_no_sd_card(hass: HomeAssistant, bambuddy_api: SimpleNamespace) -> None:
+    entry = make_entry(hass, A1_MINI)
+    await setup_integration(hass, entry)
+    registry = er.async_get(hass)
+
+    for key in ("door", "sdcard", "wired_network"):
+        assert registry.async_get_entity_id("binary_sensor", DOMAIN, printer_uid(entry, key, A1_MINI)) is None, key
+
+
+async def test_an_ams_unit_drying(hass: HomeAssistant, bambuddy_api: SimpleNamespace) -> None:
+    """BamBuddy's REST status leaves the drying phase at 0: the minutes left
+    tell."""
+    entry = make_entry(hass, H2D)
+    await setup_integration(hass, entry)
+
+    assert state_of(hass, "binary_sensor", ams_uid(entry, 128, "drying", H2D)).state == STATE_ON
+    assert state_of(hass, "binary_sensor", ams_uid(entry, 0, "drying", H2D)).state == STATE_OFF
+
+
+async def test_a_stalled_countdown_is_no_drying(
+    hass: HomeAssistant, bambuddy_api: SimpleNamespace, freezer: FrozenDateTimeFactory
 ) -> None:
-    bambuddy_api.get_printer_status.return_value = {
-        **load_fixture("printer_status.json"),
-        "hms_errors": errors,
-    }
+    entry = make_entry(hass, H2D)
+    await setup_integration(hass, entry)
+    bambuddy_api.statuses[H2D]["ams"][1]["dry_countdown_stalled"] = True
 
-    await setup_integration(hass, config_entry)
+    await next_refresh(hass, freezer)
 
-    assert _state(hass, config_entry, "hms_errors") == state
+    assert state_of(hass, "binary_sensor", ams_uid(entry, 128, "drying", H2D)).state == STATE_OFF
 
 
-async def test_an_offline_printer(
-    hass: HomeAssistant, bambuddy_api: SimpleNamespace, config_entry: MockConfigEntry
+async def test_bambuddy_unreachable_is_told_not_hidden(
+    hass: HomeAssistant, bambuddy_api: SimpleNamespace, freezer: FrozenDateTimeFactory
 ) -> None:
-    """A printer BamBuddy holds no live state for: not online, no SD card,
-    and whether developer mode is on is unknown."""
-    bambuddy_api.get_printer_status.return_value = load_fixture("printer_status_offline.json")
+    """The connection sensor stays available when BamBuddy stops answering,
+    so that an automation can react."""
+    entry = make_entry(hass, X1C)
+    await setup_integration(hass, entry)
+    assert state_of(hass, "binary_sensor", instance_uid(entry, "connected")).state == STATE_ON
+    bambuddy_api.get_system_info.side_effect = BamBuddyConnectionError("refused")
 
-    await setup_integration(hass, config_entry)
+    freezer.tick(61)
+    await next_refresh(hass, freezer)
 
-    assert _state(hass, config_entry, "connected") == STATE_OFF
-    assert _state(hass, config_entry, "sdcard") == STATE_OFF
-    assert _state(hass, config_entry, "developer_mode") == STATE_UNKNOWN
+    assert state_of(hass, "binary_sensor", instance_uid(entry, "connected")).state == STATE_OFF
+    assert state_of(hass, "sensor", instance_uid(entry, "total_prints")).state == STATE_UNAVAILABLE
+
+
+async def test_the_sd_card_is_plugged_in(hass: HomeAssistant, bambuddy_api: SimpleNamespace) -> None:
+    """Presence would read "home" or "away"."""
+    entry = make_entry(hass, X1C)
+    await setup_integration(hass, entry)
+
+    assert state_of(hass, "binary_sensor", printer_uid(entry, "sdcard")).attributes["device_class"] == "plug"
+
+
+async def test_a_wired_printer_says_so(
+    hass: HomeAssistant, bambuddy_api: SimpleNamespace, freezer: FrozenDateTimeFactory
+) -> None:
+    """On a cable the Wi-Fi signal is empty; this sensor tells why."""
+    entry = make_entry(hass, X1C)
+    await setup_integration(hass, entry)
+    bambuddy_api.statuses[X1C]["wired_network"] = True
+
+    await next_refresh(hass, freezer)
+
+    assert state_of(hass, "binary_sensor", printer_uid(entry, "wired_network")).state == STATE_ON

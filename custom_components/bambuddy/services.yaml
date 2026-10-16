@@ -1,0 +1,192 @@
+move_axis:
+  fields:
+    device_id:
+      required: true
+      selector:
+        device:
+          filter:
+            integration: bambuddy
+          # Printers only: AMS units and BamBuddy itself have no enum sensor.
+          entity:
+            integration: bambuddy
+            domain: sensor
+            device_class: enum
+    axis:
+      required: true
+      selector:
+        select:
+          options:
+            - value: "x"
+              label: "X"
+            - value: "y"
+              label: "Y"
+            - value: "z"
+              label: "Z"
+    distance:
+      required: true
+      default: 1
+      selector:
+        number:
+          min: -200
+          max: 200
+          step: 0.1
+          unit_of_measurement: mm
+          mode: box
+home_axes:
+  fields:
+    device_id:
+      required: true
+      selector:
+        device:
+          filter:
+            integration: bambuddy
+          # Printers only: AMS units and BamBuddy itself have no enum sensor.
+          entity:
+            integration: bambuddy
+            domain: sensor
+            device_class: enum
+extrude:
+  fields:
+    device_id:
+      required: true
+      selector:
+        device:
+          filter:
+            integration: bambuddy
+          # Printers only: AMS units and BamBuddy itself have no enum sensor.
+          entity:
+            integration: bambuddy
+            domain: sensor
+            device_class: enum
+    distance:
+      required: true
+      default: 10
+      selector:
+        number:
+          min: -100
+          max: 100
+          step: 1
+          unit_of_measurement: mm
+          mode: box
+load_filament:
+  fields:
+    entity_id:
+      required: true
+      selector:
+        entity:
+          filter:
+            integration: bambuddy
+            domain: sensor
+unload_filament:
+  fields:
+    device_id:
+      required: true
+      selector:
+        device:
+          filter:
+            integration: bambuddy
+          # Printers only: AMS units and BamBuddy itself have no enum sensor.
+          entity:
+            integration: bambuddy
+            domain: sensor
+            device_class: enum
+start_drying:
+  fields:
+    device_id:
+      required: true
+      selector:
+        device:
+          filter:
+            - integration: bambuddy
+              model: AMS 2 Pro
+            - integration: bambuddy
+              model: AMS HT
+    temperature:
+      required: true
+      default: 55
+      selector:
+        number:
+          min: 45
+          max: 85
+          step: 1
+          unit_of_measurement: °C
+    duration:
+      required: true
+      default: 8
+      selector:
+        number:
+          min: 1
+          max: 24
+          step: 1
+          unit_of_measurement: h
+stop_drying:
+  fields:
+    device_id:
+      required: true
+      selector:
+        device:
+          filter:
+            - integration: bambuddy
+              model: AMS 2 Pro
+            - integration: bambuddy
+              model: AMS HT
+get_print_objects:
+  fields:
+    device_id:
+      required: true
+      selector:
+        device:
+          filter:
+            integration: bambuddy
+          # Printers only: AMS units and BamBuddy itself have no enum sensor.
+          entity:
+            integration: bambuddy
+            domain: sensor
+            device_class: enum
+skip_objects:
+  fields:
+    device_id:
+      required: true
+      selector:
+        device:
+          filter:
+            integration: bambuddy
+          # Printers only: AMS units and BamBuddy itself have no enum sensor.
+          entity:
+            integration: bambuddy
+            domain: sensor
+            device_class: enum
+    objects:
+      required: true
+      example: "[87, 121]"
+      selector:
+        object:
+set_filament:
+  fields:
+    entity_id:
+      required: true
+      selector:
+        entity:
+          filter:
+            integration: bambuddy
+            domain: sensor
+    material:
+      selector:
+        select:
+          options:
+            - "PLA"
+            - "PLA Silk"
+            - "PLA-CF"
+            - "PETG"
+            - "PETG HF"
+            - "PETG-CF"
+            - "PCTG"
+            - "ABS"
+            - "ASA"
+            - "PC"
+            - "PA"
+            - "PA-CF"
+            - "TPU"
+    color:
+      selector:
+        color_rgb:

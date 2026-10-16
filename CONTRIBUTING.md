@@ -32,7 +32,7 @@ Problems with BamBuddy itself — its web interface, its printer connection — 
 
 ## Development setup
 
-No build step and no dependencies beyond Home Assistant itself.
+The integration needs no build step and no dependencies beyond Home Assistant itself: the dashboard card's bundle is committed, built from `cards/` (see [Dashboard card](#dashboard-card)).
 
 1. Fork and clone the repository.
 2. Copy `custom_components/bambuddy/` into your Home Assistant `config/custom_components/` directory — or symlink it, so edits apply without copying again.
@@ -75,9 +75,26 @@ docker run --rm -v "${PWD}:/workspace" -w /workspace python:3.13 sh -c 'pip inst
 
 CI runs both (see [Continuous integration](#continuous-integration)): the suite must pass on both Home Assistant releases, with at least 95 % line coverage on the newest, and `mypy --strict` must report no error. `config_flow.py` stays at 100 %, and every test that shows an error in a dialog goes on to finish that dialog.
 
+## Dashboard card
+
+The dashboard card, BamBuddy printer, is TypeScript and Lit in `cards/`. esbuild bundles it into one file, `custom_components/bambuddy/frontend/bambuddy-card.js`, because HACS installs only the integration's folder; the integration serves that file and adds it to every dashboard. With Node 24, in `cards/`:
+
+```bash
+npm ci              # exactly the packages package-lock.json locks
+npm run typecheck   # tsc --noEmit, strict
+npm test            # Vitest with coverage; fails under 95 %
+npm run build       # writes the bundle
+```
+
+To see a change in Home Assistant, run `npm run build` and restart Home Assistant: the integration reads the bundle's hash for its URL once per run (`cards.py`), and browsers keep the file they loaded under the old URL.
+
+The card finds a printer's entities by their translation keys, and its AMS units as the devices connected through the printer (`cards/src/discovery.ts`). A translation key, a state or an attribute the card reads is an interface: change the card in the same pull request. Its editor is Home Assistant's own form, described by `getConfigForm` (`cards/src/forms.ts`). Its texts are English and German, `cards/src/translations/en.ts` as the source and `de.ts`, with the same keys and placeholders (`cards/test/i18n.test.ts`); entity states come translated from the integration.
+
+Every change that can alter the build — under `cards/src`, or to `build.mjs`, `tsconfig.json` or `package-lock.json` — commits the rebuilt bundle with it, and nothing else ever changes the bundle: the check "Repository / Cards" rebuilds it and fails when the committed file differs. Pin every package to an exact version.
+
 ## Project layout
 
-Everything lives in `custom_components/bambuddy/`:
+The integration lives in `custom_components/bambuddy/`; the dashboard card's sources live in `cards/` (see [Dashboard card](#dashboard-card)):
 
 | File | Responsibility |
 |---|---|
@@ -91,6 +108,7 @@ Everything lives in `custom_components/bambuddy/`:
 | `const.py` | Domain, config keys, default port, update interval, print speed modes |
 | `coordinator.py` | The instance coordinator (`/health`, `/system/info`, `/archives/stats`) and one coordinator per printer (`/printers/{id}`, `/printers/{id}/status`) |
 | `entity.py` | `BamBuddyPrinterEntityMixin` — the printer device's info, shared by every printer entity |
+| `frontend/bambuddy-card.js` | The dashboard card, built from `cards/` — never edited by hand |
 | `image.py` | The cover image of the current print job |
 | `select.py` | Print speed |
 | `sensor.py` | Instance and printer sensors |
@@ -150,14 +168,15 @@ One workflow, **Validate** (`.github/workflows/validate.yml`), checks every chan
 | Minimum HA / Tests | the suite on Python 3.13 against the minimum release in `hacs.json` (`tests/requirements-floor.txt`), after a check that the installed release is that one |
 | Repository / HACS validation | HACS's checks of the repository |
 | Repository / Release script | a compile of `.github/scripts/release.py` with Python 3.12 — the release runs it on the runner's own Python — and a stable release planned from the whole history |
+| Repository / Cards | the dashboard card on Node 24: `npm ci`, the type check, the tests with their coverage gate, a build, and a comparison of the committed bundle with that build (see [Dashboard card](#dashboard-card)) |
 
 **Which Home Assistant.** Hassfest, the tests and mypy check against one release: the newest stable Home Assistant that `pytest-homeassistant-custom-component` has been released for, never a beta. Each of the three jobs finds it first with `.github/scripts/ha_version.py` and names it in its log. So a new stable release reaches CI without a change in this repository, and it can turn a run red although nothing changed here: then the integration needs an update for that release, before the next release goes out. The tests also run against the minimum Home Assistant release in `hacs.json` (`tests/requirements-floor.txt`): raise both together. That job can turn red without a change here as well: the dependencies of the minimum's packages are not all pinned. HACS validation depends on no Home Assistant release: it checks the repository against HACS's own rules.
 
 When Validate runs:
 
-- **A push to any branch but `main`** — all seven checks.
-- **A pull request to `main` or `dev`** — all seven checks.
-- **By hand** — all seven checks as well: Actions → Validate → Run workflow, on any branch.
+- **A push to any branch but `main`** — all eight checks.
+- **A pull request to `main` or `dev`** — all eight checks.
+- **By hand** — all eight checks as well: Actions → Validate → Run workflow, on any branch.
 
 Validate does not run on `main` itself: changes reach it only through a validated pull request, or as a release's version commit, validated just before. A newer push to the same branch, or a new commit in the same pull request, cancels the run it makes obsolete. A run started by hand and a push's run on the same branch cancel each other as well, whichever starts later cancelling the other: start one by hand only after the push's run has finished, or that run is cancelled and its Validation summary turns red.
 

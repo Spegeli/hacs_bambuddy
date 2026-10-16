@@ -1,0 +1,4 @@
+custom_components/bambuddy/frontend/bambuddy-card.js -text linguist-generated=true
+# The bundle is built from these files on Windows and on Linux alike: the
+# same line endings everywhere, or template literals would differ.
+cards/** text eol=lf

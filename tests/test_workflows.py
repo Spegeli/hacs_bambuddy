@@ -88,6 +88,7 @@ def test_every_job_runs_on_the_pinned_runner_with_a_timeout():
 
 _CURRENT_MAJORS = {
     "actions/checkout": "v7",
+    "actions/setup-node": "v7",
     "actions/setup-python": "v7",
     "softprops/action-gh-release": "v3",
 }
@@ -206,6 +207,7 @@ def test_the_checks_are_grouped_by_the_home_assistant_they_check_and_always_run(
         "Newest HA / Hassfest",
         "Newest HA / Strict typing",
         "Newest HA / Tests",
+        "Repository / Cards",
         "Repository / HACS validation",
         "Repository / Release script",
     ]
@@ -283,6 +285,29 @@ def test_the_checks_run_what_ci_promises():
     assert "tests/requirements.txt" not in _script(minimum)
     assert "python -m pytest tests/" in _script(minimum)
     assert "--cov" not in _script(minimum)
+
+
+def test_the_cards_check_builds_and_compares_the_bundle():
+    """The dashboard card is TypeScript in cards/, shipped as one built
+    file in the integration (CONTRIBUTING.md, "Dashboard card"). The check
+    installs exactly the locked packages on Node 24, type-checks, runs the
+    tests with their coverage gate, builds -- and fails when the committed
+    bundle is not what the sources build."""
+    job = _checks()["Repository / Cards"]
+    [node] = [step for step in job["steps"] if step.get("uses", "").startswith("actions/setup-node@")]
+    assert node["with"] == {
+        "node-version": "24",
+        "cache": "npm",
+        "cache-dependency-path": "cards/package-lock.json",
+    }
+    runs = [(step.get("working-directory"), step["run"]) for step in job["steps"] if "run" in step]
+    assert runs == [
+        ("cards", "npm ci"),
+        ("cards", "npm run typecheck"),
+        ("cards", "npm test"),
+        ("cards", "npm run build"),
+        (None, "git diff --exit-code -- custom_components/bambuddy/frontend/bambuddy-card.js"),
+    ]
 
 
 # The step every job that depends on Home Assistant starts with: it names the
