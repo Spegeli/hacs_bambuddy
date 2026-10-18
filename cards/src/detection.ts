@@ -1,10 +1,10 @@
 // The print options of the control view: a switch for each detection the
 // printer has. On, the printer pauses the print when it sees the problem;
 // they switch during a print too -- that is when a false alarm happens.
-// Folded at first, its head says what is off ("All on", "1 off", "All off"),
-// so one switched off shows without opening it. Only the switch itself taps, so a scroll over the list
-// never switches one; a tap shows the new state at once (see card.ts,
-// toggleSwitch).
+// Folded at first, its head says what is off ("All on", "1 off", "All
+// off"), so one switched off shows without opening it. Only the switch
+// itself taps, so a scroll over the list never switches one; a tap shows
+// the new state at once (see card.ts, toggleSwitch).
 import { html, nothing, type TemplateResult } from "lit";
 
 import { hasValue } from "./format";
@@ -21,7 +21,7 @@ function subLine(ctx: CardContext, key: DetectorKey): string | undefined {
 
 function detectionRow(ctx: CardContext, key: DetectorKey, entityId: string): TemplateResult {
   const { hass } = ctx;
-  const label = entityName(ctx, entityId, t(hass, `detection_${key}` as TextKey));
+  const label = entityName(ctx, entityId, `detection_${key}` as TextKey);
   const sub = subLine(ctx, key);
   const subId = `det-sub-${key}`;
   const text = html`<span class="det-text">
@@ -30,6 +30,8 @@ function detectionRow(ctx: CardContext, key: DetectorKey, entityId: string): Tem
   </span>`;
   // Without a state the switch is neither on nor off: a line to read.
   if (!hasValue(hass, entityId)) return html`<div class="det-row unknown">${text}<span class="det-state">${t(hass, "unknown")}</span></div>`;
+  // Hide controls: its state in words, nothing to switch.
+  if (ctx.viewOnly) return html`<div class="det-row">${text}<span class="det-state">${t(hass, ctx.switchOn(entityId) ? "on" : "off")}</span></div>`;
   const on = ctx.switchOn(entityId);
   const pending = ctx.isPending(`switch_${entityId}`);
   return html`<div class="det-row">
@@ -62,7 +64,7 @@ export function detectionSection(ctx: CardContext): TemplateResult | typeof noth
     <button class="det-head" aria-expanded=${open ? "true" : "false"} aria-controls=${open ? "det-body" : nothing} @click=${() => ctx.toggleOptions()}>
       <span class="section-label" id="det-title">${icon("eye")}${t(hass, "detection")}</span>
       ${known.length
-        ? html`<span class="det-summary ${off ? "warn" : ""}">${summary}</span>`
+        ? html`<span class="det-summary">${summary}</span>`
         : nothing}
       <span class="det-chevron ${open ? "open" : ""}" aria-hidden="true">${icon("chevronDown")}</span>
     </button>

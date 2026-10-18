@@ -9,6 +9,8 @@
     "printers:control",
     "camera:view",
     "stats:read",
-    "system:read"
+    "system:read",
+    "smart_plugs:read",
+    "smart_plugs:control"
   ]
 }

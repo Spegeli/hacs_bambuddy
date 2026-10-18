@@ -10,9 +10,8 @@ import pytest
 import voluptuous as vol
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError, ServiceValidationError
-from homeassistant.helpers import entity_registry as er
 
-from custom_components.bambuddy.api import BamBuddyApiError
+from custom_components.bambuddy.api import BamBuddyApiError, BamBuddyConnectionError
 from custom_components.bambuddy.const import DOMAIN
 
 from tests.conftest import (
@@ -28,7 +27,9 @@ from tests.conftest import (
     make_entry,
     next_refresh,
     printer_device,
+    printer_name,
     printer_uid,
+    set_up,
     setup_integration,
 )
 
@@ -52,8 +53,7 @@ async def _act(hass: HomeAssistant, action: str, **data: Any) -> None:
 async def test_moving_an_axis(
     hass: HomeAssistant, bambuddy_api: SimpleNamespace, axis: str, method: str, args: tuple[Any, ...]
 ) -> None:
-    entry = make_entry(hass, A1_MINI)
-    await setup_integration(hass, entry)
+    entry = await set_up(hass, A1_MINI)
 
     await _act(hass, "move_axis", device_id=_printer(hass, entry, A1_MINI), axis=axis, distance=10)
 
@@ -77,28 +77,24 @@ async def test_nothing_moves_during_a_print(hass: HomeAssistant, bambuddy_api: S
 
 
 async def test_homing(hass: HomeAssistant, bambuddy_api: SimpleNamespace) -> None:
-    entry = make_entry(hass, A1_MINI)
-    await setup_integration(hass, entry)
+    entry = await set_up(hass, A1_MINI)
 
     await _act(hass, "home_axes", device_id=_printer(hass, entry, A1_MINI))
 
     bambuddy_api.home_axes.assert_awaited_once_with(A1_MINI)
 
 
-async def test_a_zero_or_too_long_move_is_refused(hass: HomeAssistant, bambuddy_api: SimpleNamespace) -> None:
-    entry = make_entry(hass, A1_MINI)
-    await setup_integration(hass, entry)
+async def test_a_too_long_move_is_refused(hass: HomeAssistant, bambuddy_api: SimpleNamespace) -> None:
+    entry = await set_up(hass, A1_MINI)
 
-    for distance in (0, 250):
-        with pytest.raises(vol.Invalid):
-            await _act(hass, "move_axis", device_id=_printer(hass, entry, A1_MINI), axis="z", distance=distance)
+    with pytest.raises(vol.Invalid):
+        await _act(hass, "move_axis", device_id=_printer(hass, entry, A1_MINI), axis="z", distance=250)
 
 
 async def test_extruding_needs_a_hot_nozzle(
     hass: HomeAssistant, bambuddy_api: SimpleNamespace, freezer: FrozenDateTimeFactory
 ) -> None:
-    entry = make_entry(hass, A1_MINI)
-    await setup_integration(hass, entry)
+    entry = await set_up(hass, A1_MINI)
     device = _printer(hass, entry, A1_MINI)
 
     with pytest.raises(ServiceValidationError) as raised:
@@ -116,8 +112,7 @@ async def test_a_two_nozzle_printer_extrudes_with_the_active_nozzle(
     hass: HomeAssistant, bambuddy_api: SimpleNamespace, freezer: FrozenDateTimeFactory
 ) -> None:
     """BamBuddy's `nozzle_2` is the right nozzle, extruder 0."""
-    entry = make_entry(hass, H2D)
-    await setup_integration(hass, entry)
+    entry = await set_up(hass, H2D)
     status = bambuddy_api.statuses[H2D]
     status.update({"state": "IDLE", "active_extruder": 0})
     status["temperatures"].update({"nozzle": 30.0, "nozzle_2": 230.0})
@@ -130,9 +125,8 @@ async def test_a_two_nozzle_printer_extrudes_with_the_active_nozzle(
 
 async def test_loading_a_slot(hass: HomeAssistant, bambuddy_api: SimpleNamespace) -> None:
     """The slot's sensor names the slot; BamBuddy's tray id goes along."""
-    entry = make_entry(hass, A1_MINI)
-    await setup_integration(hass, entry)
-    slot = er.async_get(hass).async_get_entity_id("sensor", DOMAIN, ams_uid(entry, 0, "slot_3", A1_MINI))
+    entry = await set_up(hass, A1_MINI)
+    slot = entity_id(hass, "sensor", ams_uid(entry, 0, "slot_3", A1_MINI))
 
     await _act(hass, "load_filament", entity_id=slot)
 
@@ -143,9 +137,8 @@ async def test_loading_a_slot(hass: HomeAssistant, bambuddy_api: SimpleNamespace
 async def test_an_empty_slot_is_refused(
     hass: HomeAssistant, bambuddy_api: SimpleNamespace, key: str, refusal: str
 ) -> None:
-    entry = make_entry(hass, A1_MINI)
-    await setup_integration(hass, entry)
-    slot = er.async_get(hass).async_get_entity_id("sensor", DOMAIN, ams_uid(entry, 0, key, A1_MINI))
+    entry = await set_up(hass, A1_MINI)
+    slot = entity_id(hass, "sensor", ams_uid(entry, 0, key, A1_MINI))
 
     with pytest.raises(ServiceValidationError) as raised:
         await _act(hass, "load_filament", entity_id=slot)
@@ -156,11 +149,10 @@ async def test_an_empty_slot_is_refused(
 async def test_an_ams_ht_cannot_load(
     hass: HomeAssistant, bambuddy_api: SimpleNamespace, freezer: FrozenDateTimeFactory
 ) -> None:
-    entry = make_entry(hass, H2D)
-    await setup_integration(hass, entry)
+    entry = await set_up(hass, H2D)
     bambuddy_api.statuses[H2D]["state"] = "IDLE"
     await next_refresh(hass, freezer)
-    slot = er.async_get(hass).async_get_entity_id("sensor", DOMAIN, ams_uid(entry, 128, "slot_1", H2D))
+    slot = entity_id(hass, "sensor", ams_uid(entry, 128, "slot_1", H2D))
 
     with pytest.raises(ServiceValidationError) as raised:
         await _act(hass, "load_filament", entity_id=slot)
@@ -169,9 +161,8 @@ async def test_an_ams_ht_cannot_load(
 
 
 async def test_something_else_is_no_slot(hass: HomeAssistant, bambuddy_api: SimpleNamespace) -> None:
-    entry = make_entry(hass, A1_MINI)
-    await setup_integration(hass, entry)
-    other = er.async_get(hass).async_get_entity_id("sensor", DOMAIN, printer_uid(entry, "progress", A1_MINI))
+    entry = await set_up(hass, A1_MINI)
+    other = entity_id(hass, "sensor", printer_uid(entry, "progress", A1_MINI))
 
     with pytest.raises(ServiceValidationError) as raised:
         await _act(hass, "load_filament", entity_id=other)
@@ -180,8 +171,7 @@ async def test_something_else_is_no_slot(hass: HomeAssistant, bambuddy_api: Simp
 
 
 async def test_unloading(hass: HomeAssistant, bambuddy_api: SimpleNamespace) -> None:
-    entry = make_entry(hass, A1_MINI)
-    await setup_integration(hass, entry)
+    entry = await set_up(hass, A1_MINI)
 
     await _act(hass, "unload_filament", device_id=_printer(hass, entry, A1_MINI))
 
@@ -189,8 +179,7 @@ async def test_unloading(hass: HomeAssistant, bambuddy_api: SimpleNamespace) -> 
 
 
 async def test_drying(hass: HomeAssistant, bambuddy_api: SimpleNamespace) -> None:
-    entry = make_entry(hass, H2D)
-    await setup_integration(hass, entry)
+    entry = await set_up(hass, H2D)
     ams = device_id(hass, entry, ams_device(entry, H2D, 0))
 
     await _act(hass, "start_drying", device_id=ams, temperature=55, duration=8)
@@ -200,9 +189,36 @@ async def test_drying(hass: HomeAssistant, bambuddy_api: SimpleNamespace) -> Non
     bambuddy_api.stop_drying.assert_awaited_once_with(H2D, 0)
 
 
+async def test_drying_only_where_and_as_hot_as_a_unit_can(hass: HomeAssistant, bambuddy_api: SimpleNamespace) -> None:
+    """A first AMS has no heater; the AMS 2 Pro dries at 65 °C at most."""
+    entry = await set_up(hass, X1C, H2D)
+
+    with pytest.raises(ServiceValidationError) as raised:
+        await _act(hass, "start_drying", device_id=device_id(hass, entry, ams_device(entry, X1C, 0)), temperature=55, duration=8)
+    assert raised.value.translation_key == "cannot_dry"
+
+    with pytest.raises(ServiceValidationError) as raised:
+        await _act(hass, "start_drying", device_id=device_id(hass, entry, ams_device(entry, H2D, 0)), temperature=80, duration=8)
+    assert (raised.value.translation_key, raised.value.translation_placeholders) == (
+        "drying_too_hot",
+        {"model": "AMS 2 Pro", "maximum": "65"},
+    )
+    bambuddy_api.start_drying.assert_not_awaited()
+
+
+@pytest.mark.parametrize("action", ["move_axis", "extrude"])
+async def test_a_distance_of_0_is_refused_in_words(hass: HomeAssistant, bambuddy_api: SimpleNamespace, action: str) -> None:
+    entry = await set_up(hass, A1_MINI)
+    data = {"device_id": _printer(hass, entry, A1_MINI), "distance": 0, **({"axis": "x"} if action == "move_axis" else {})}
+
+    with pytest.raises(ServiceValidationError) as raised:
+        await hass.services.async_call(DOMAIN, action, data, blocking=True)
+
+    assert raised.value.translation_key == "zero_distance"
+
+
 async def test_a_printer_is_no_ams(hass: HomeAssistant, bambuddy_api: SimpleNamespace) -> None:
-    entry = make_entry(hass, H2D)
-    await setup_integration(hass, entry)
+    entry = await set_up(hass, H2D)
 
     with pytest.raises(ServiceValidationError) as raised:
         await _act(hass, "stop_drying", device_id=_printer(hass, entry, H2D))
@@ -211,8 +227,7 @@ async def test_a_printer_is_no_ams(hass: HomeAssistant, bambuddy_api: SimpleName
 
 
 async def test_an_ams_is_no_printer(hass: HomeAssistant, bambuddy_api: SimpleNamespace) -> None:
-    entry = make_entry(hass, A1_MINI)
-    await setup_integration(hass, entry)
+    entry = await set_up(hass, A1_MINI)
 
     with pytest.raises(ServiceValidationError) as raised:
         await _act(hass, "home_axes", device_id=device_id(hass, entry, ams_device(entry, A1_MINI, 0)))
@@ -220,10 +235,292 @@ async def test_an_ams_is_no_printer(hass: HomeAssistant, bambuddy_api: SimpleNam
     assert raised.value.translation_key == "not_a_printer"
 
 
+async def test_answering_an_hms_message(hass: HomeAssistant, bambuddy_api: SimpleNamespace) -> None:
+    """As on the printer's screen: an answer the printer offers for the
+    message, sent with its full code and its job."""
+    entry = await set_up(hass, P1S)
+    sensor = hass.states.get(entity_id(hass, "sensor", printer_uid(entry, "hms_status", P1S)))
+    assert sensor is not None
+    assert [error["actions"] for error in sensor.attributes["errors"]] == [["RESUME_PRINTING"], []]
+
+    await hass.services.async_call(
+        DOMAIN,
+        "answer_hms",
+        {"device_id": _printer(hass, entry, P1S), "code": "0700_2000_0002_0012", "action": "RESUME_PRINTING"},
+        blocking=True,
+    )
+
+    bambuddy_api.execute_hms_action.assert_awaited_once_with(P1S, "0700200000020012", "RESUME_PRINTING", "498765432")
+
+
+@pytest.mark.parametrize(
+    ("code", "action", "key"),
+    [
+        ("0700_2000_0002_0099", "RESUME_PRINTING", "hms_not_current"),
+        ("0700_2000_0002_0012", "STOP_PRINTING", "hms_answer_not_offered"),
+        # A button of Bambu's own screen that sends nothing, though listed.
+        ("0700_2000_0002_0012", "CHECK_ASSISTANT", "hms_answer_not_offered"),
+    ],
+)
+async def test_an_hms_answer_the_printer_does_not_offer_is_refused(
+    hass: HomeAssistant, bambuddy_api: SimpleNamespace, code: str, action: str, key: str
+) -> None:
+    bambuddy_api.statuses[P1S]["hms_errors"][0]["actions"] = ["CHECK_ASSISTANT", "RESUME_PRINTING"]
+    entry = await set_up(hass, P1S)
+
+    with pytest.raises(ServiceValidationError) as raised:
+        await hass.services.async_call(
+            DOMAIN, "answer_hms", {"device_id": _printer(hass, entry, P1S), "code": code, "action": action}, blocking=True
+        )
+
+    assert raised.value.translation_key == key
+    bambuddy_api.execute_hms_action.assert_not_awaited()
+
+
+async def test_only_answers_that_send_something_are_listed(hass: HomeAssistant, bambuddy_api: SimpleNamespace) -> None:
+    """Bambu's catalogue also names buttons of its own screen (the
+    assistant, the live view) that send the printer nothing."""
+    status = load_fixture("status_p1s.json")
+    status["hms_errors"][0]["actions"] = ["CHECK_ASSISTANT", "RESUME_PRINTING", "JUMP_TO_LIVEVIEW", "STOP_PRINTING"]
+    bambuddy_api.statuses[P1S] = status
+    entry = await set_up(hass, P1S)
+
+    sensor = hass.states.get(entity_id(hass, "sensor", printer_uid(entry, "hms_status", P1S)))
+    assert sensor is not None and sensor.attributes["errors"][0]["actions"] == ["RESUME_PRINTING", "STOP_PRINTING"]
+
+
+async def test_more_materials(hass: HomeAssistant, bambuddy_api: SimpleNamespace) -> None:
+    """Bambu's generic profiles, with Bambu Studio's nozzle ranges (his
+    word: the more, the better -- the external spool needs them too)."""
+    entry = await set_up(hass, A1_MINI)
+
+    await _set_filament(hass, ams_uid(entry, 0, "slot_2", A1_MINI), material="PPS-CF")
+
+    kwargs = bambuddy_api.configure_slot.await_args.kwargs
+    assert {key: kwargs[key] for key in ("tray_type", "name", "tray_info_idx", "temp_min", "temp_max")} == {
+        "tray_type": "PPS-CF",
+        "name": "Generic PPS-CF",
+        "tray_info_idx": "GFT98",
+        "temp_min": 310,
+        "temp_max": 340,
+    }
+
+
+async def test_a_slots_k_profiles(hass: HomeAssistant, bambuddy_api: SimpleNamespace) -> None:
+    """The printer's calibrations for the nozzle that feeds the slot, which
+    Read Status may see; the slot's own one named."""
+    bambuddy_api.get_auth_me.return_value = load_fixture("auth_me_read.json")
+    entry = await set_up(hass, X1C)
+
+    response = await hass.services.async_call(
+        DOMAIN, "get_k_profiles", {"entity_id": entity_id(hass, "sensor", ams_uid(entry, 0, "slot_2"))}, blocking=True, return_response=True
+    )
+
+    bambuddy_api.get_kprofiles.assert_awaited_once_with(X1C, "0.4")
+    assert response == {
+        "nozzle_diameter": "0.4",
+        "current": 3,
+        "profiles": [
+            {"index": 1, "name": "Generic PLA", "k_value": 0.02, "filament_id": "GFL99", "nozzle": None},
+            {"index": 2, "name": "Generic PETG", "k_value": 0.035, "filament_id": "GFG99", "nozzle": None},
+            {"index": 3, "name": "Grey PLA matte", "k_value": 0.018, "filament_id": "GFL99", "nozzle": None},
+        ],
+    }
+
+
+async def test_a_two_nozzle_printers_k_profiles_are_its_nozzles(hass: HomeAssistant, bambuddy_api: SimpleNamespace) -> None:
+    """The H2D's AMS HT feeds the left nozzle: its calibrations only."""
+    entry = await set_up(hass, H2D)
+
+    response = await hass.services.async_call(
+        DOMAIN, "get_k_profiles", {"entity_id": entity_id(hass, "sensor", ams_uid(entry, 128, "slot_1", H2D))}, blocking=True, return_response=True
+    )
+
+    assert response["profiles"] == [  # type: ignore[index]
+        {"index": 1, "name": "Generic ABS", "k_value": 0.024, "filament_id": "GFB99", "nozzle": "left"}
+    ]
+
+
+async def test_a_k_profile_for_a_slot(hass: HomeAssistant, bambuddy_api: SimpleNamespace) -> None:
+    """Chosen with a material or alone; sent with its filament, so BamBuddy
+    selects it where the printer files it."""
+    entry = await set_up(hass, A1_MINI)
+    slot = ams_uid(entry, 0, "slot_2", A1_MINI)
+
+    await _set_filament(hass, slot, material="PLA", k_profile=3)
+    kwargs = bambuddy_api.configure_slot.await_args.kwargs
+    assert {key: kwargs[key] for key in ("tray_type", "cali_idx", "kprofile_filament_id", "kprofile_setting_id", "k_value")} == {
+        "tray_type": "PLA",
+        "cali_idx": 3,
+        "kprofile_filament_id": "GFL99",
+        "kprofile_setting_id": None,
+        "k_value": 0.018,
+    }
+
+    await _set_filament(hass, slot, k_profile=2)
+    kwargs = bambuddy_api.configure_slot.await_args.kwargs
+    assert (kwargs["tray_type"], kwargs["cali_idx"], kwargs["kprofile_filament_id"]) == ("PETG", 2, "GFG99")
+
+    # The printer's default K.
+    await _set_filament(hass, slot, k_profile=-1)
+    kwargs = bambuddy_api.configure_slot.await_args.kwargs
+    assert (kwargs["cali_idx"], "kprofile_filament_id" in kwargs) == (-1, False)
+
+
+async def test_a_k_profile_the_printer_does_not_have_is_refused(hass: HomeAssistant, bambuddy_api: SimpleNamespace) -> None:
+    entry = await set_up(hass, A1_MINI)
+
+    with pytest.raises(ServiceValidationError) as raised:
+        await _set_filament(hass, ams_uid(entry, 0, "slot_2", A1_MINI), k_profile=99)
+
+    assert raised.value.translation_key == "k_profile_unknown"
+    bambuddy_api.configure_slot.assert_not_awaited()
+
+
+async def _slot_action(hass: HomeAssistant, action: str, unique_id: str) -> None:
+    await hass.services.async_call(DOMAIN, action, {"entity_id": entity_id(hass, "sensor", unique_id)}, blocking=True)
+
+
+async def test_resetting_a_slot(hass: HomeAssistant, bambuddy_api: SimpleNamespace) -> None:
+    """Material and colour go, as Reset on the printer's screen; the
+    external spool too."""
+    entry = await set_up(hass, A1_MINI, P1S)
+
+    await _slot_action(hass, "reset_slot", ams_uid(entry, 0, "slot_2", A1_MINI))
+    bambuddy_api.reset_slot.assert_awaited_with(A1_MINI, 0, 1)
+    await _slot_action(hass, "reset_slot", printer_uid(entry, "external_spool", A1_MINI))
+    bambuddy_api.reset_slot.assert_awaited_with(A1_MINI, 255, 0)
+    # A paused print may have a spool swapped by hand.
+    await _slot_action(hass, "reset_slot", ams_uid(entry, 0, "slot_2", P1S))
+    bambuddy_api.reset_slot.assert_awaited_with(P1S, 0, 1)
+
+
+@pytest.mark.parametrize(("printer_id", "slot", "key"), [(X1C, "slot_3", "slot_pause_first"), (A1_MINI, "slot_4", "slot_empty")])
+async def test_a_slot_is_not_reset_during_a_print_or_empty(
+    hass: HomeAssistant, bambuddy_api: SimpleNamespace, printer_id: int, slot: str, key: str
+) -> None:
+    entry = await set_up(hass, printer_id)
+
+    with pytest.raises(ServiceValidationError) as raised:
+        await _slot_action(hass, "reset_slot", ams_uid(entry, 0, slot, printer_id))
+
+    assert raised.value.translation_key == key
+    bambuddy_api.reset_slot.assert_not_awaited()
+
+
+async def test_reading_a_spools_chip_again(hass: HomeAssistant, bambuddy_api: SimpleNamespace) -> None:
+    entry = await set_up(hass, A1_MINI)
+
+    await _slot_action(hass, "refresh_rfid", ams_uid(entry, 0, "slot_2", A1_MINI))
+
+    bambuddy_api.refresh_rfid.assert_awaited_once_with(A1_MINI, 0, 1)
+
+
+@pytest.mark.parametrize(
+    ("printer_id", "unique_id", "key"),
+    [
+        # BamBuddy refuses while any filament is loaded.
+        (P1S, "slot_2", "rfid_unload_first"),
+        (A1_MINI, "external_spool", "rfid_not_external"),
+    ],
+)
+async def test_a_chip_is_read_again_only_unloaded_and_in_an_ams(
+    hass: HomeAssistant, bambuddy_api: SimpleNamespace, printer_id: int, unique_id: str, key: str
+) -> None:
+    entry = await set_up(hass, printer_id)
+    target = printer_uid(entry, unique_id, printer_id) if unique_id == "external_spool" else ams_uid(entry, 0, unique_id, printer_id)
+
+    with pytest.raises(ServiceValidationError) as raised:
+        await _slot_action(hass, "refresh_rfid", target)
+
+    assert raised.value.translation_key == key
+    bambuddy_api.refresh_rfid.assert_not_awaited()
+
+
+async def test_a_unit_on_both_nozzles_gets_every_k_profile(hass: HomeAssistant, bambuddy_api: SimpleNamespace) -> None:
+    """Review I1: not narrowed to a nozzle the unit may not feed."""
+    bambuddy_api.statuses[H2D]["ams_extruder_map"] = {}
+    entry = await set_up(hass, H2D)
+
+    response = await hass.services.async_call(
+        DOMAIN, "get_k_profiles", {"entity_id": entity_id(hass, "sensor", ams_uid(entry, 0, "slot_1", H2D))}, blocking=True, return_response=True
+    )
+
+    assert [item["nozzle"] for item in response["profiles"]] == [None, None, None, None]  # type: ignore[index,union-attr]
+
+
+async def test_a_k_profile_just_listed_is_set_without_asking_again(hass: HomeAssistant, bambuddy_api: SimpleNamespace) -> None:
+    """Review I2: the printer may not answer a second time (BamBuddy then
+    gives an empty list after 16 s); the list the card showed holds."""
+    entry = await set_up(hass, A1_MINI)
+    slot = entity_id(hass, "sensor", ams_uid(entry, 0, "slot_2", A1_MINI))
+    await hass.services.async_call(DOMAIN, "get_k_profiles", {"entity_id": slot}, blocking=True, return_response=True)
+    bambuddy_api.get_kprofiles.return_value = []
+
+    await _set_filament(hass, ams_uid(entry, 0, "slot_2", A1_MINI), k_profile=3)
+
+    assert bambuddy_api.get_kprofiles.await_count == 1
+    assert bambuddy_api.configure_slot.await_args.kwargs["cali_idx"] == 3
+
+
+async def test_a_printer_that_lists_no_k_profiles_says_so(hass: HomeAssistant, bambuddy_api: SimpleNamespace) -> None:
+    bambuddy_api.get_kprofiles.return_value = []
+    entry = await set_up(hass, A1_MINI)
+
+    with pytest.raises(ServiceValidationError) as raised:
+        await _set_filament(hass, ams_uid(entry, 0, "slot_2", A1_MINI), k_profile=3)
+
+    assert raised.value.translation_key == "k_profiles_no_answer"
+
+
+async def test_a_chip_is_read_in_a_pause_with_nothing_loaded(hass: HomeAssistant, bambuddy_api: SimpleNamespace) -> None:
+    """Review M4: as the card says -- pause first."""
+    bambuddy_api.statuses[P1S]["tray_now"] = 255
+    entry = await set_up(hass, P1S)
+
+    await _slot_action(hass, "refresh_rfid", ams_uid(entry, 0, "slot_2", P1S))
+
+    bambuddy_api.refresh_rfid.assert_awaited_once_with(P1S, 0, 1)
+
+
+async def test_an_hms_answer_the_printer_does_not_take_says_so(hass: HomeAssistant, bambuddy_api: SimpleNamespace) -> None:
+    """BamBuddy's 400 in words (review U4): the printer did not take it."""
+    entry = await set_up(hass, P1S)
+    bambuddy_api.execute_hms_action.side_effect = BamBuddyApiError(400, "Failed to execute HMS action")
+
+    with pytest.raises(ServiceValidationError) as raised:
+        await hass.services.async_call(
+            DOMAIN,
+            "answer_hms",
+            {"device_id": _printer(hass, entry, P1S), "code": "0700_2000_0002_0012", "action": "RESUME_PRINTING"},
+            blocking=True,
+        )
+
+    assert raised.value.translation_key == "hms_answer_not_taken"
+
+
+async def test_stopping_through_an_hms_answer_reads_the_printer_first(hass: HomeAssistant, bambuddy_api: SimpleNamespace) -> None:
+    """Review N10: a message cleared at the printer meanwhile stops nothing."""
+    status = bambuddy_api.statuses[P1S]
+    status["hms_errors"][0]["actions"] = ["RESUME_PRINTING", "STOP_PRINTING"]
+    entry = await set_up(hass, P1S)
+    status["hms_errors"] = []
+
+    with pytest.raises(ServiceValidationError) as raised:
+        await hass.services.async_call(
+            DOMAIN,
+            "answer_hms",
+            {"device_id": _printer(hass, entry, P1S), "code": "0700_2000_0002_0012", "action": "STOP_PRINTING"},
+            blocking=True,
+        )
+
+    assert raised.value.translation_key == "hms_not_current"
+    bambuddy_api.execute_hms_action.assert_not_awaited()
+
+
 async def test_actions_refuse_without_control_permission(hass: HomeAssistant, bambuddy_api: SimpleNamespace) -> None:
     bambuddy_api.get_auth_me.return_value = load_fixture("auth_me_read.json")
-    entry = make_entry(hass, A1_MINI)
-    await setup_integration(hass, entry)
+    entry = await set_up(hass, A1_MINI)
 
     with pytest.raises(ServiceValidationError) as raised:
         await _act(hass, "home_axes", device_id=_printer(hass, entry, A1_MINI))
@@ -234,8 +531,7 @@ async def test_actions_refuse_without_control_permission(hass: HomeAssistant, ba
 async def test_a_read_only_key_lists_the_print_objects(hass: HomeAssistant, bambuddy_api: SimpleNamespace) -> None:
     """BamBuddy lists them for Read Status."""
     bambuddy_api.get_auth_me.return_value = load_fixture("auth_me_read.json")
-    entry = make_entry(hass, X1C)
-    await setup_integration(hass, entry)
+    entry = await set_up(hass, X1C)
 
     response = await hass.services.async_call(
         DOMAIN, "get_print_objects", {"device_id": _printer(hass, entry, X1C)}, blocking=True, return_response=True
@@ -247,8 +543,7 @@ async def test_a_read_only_key_lists_the_print_objects(hass: HomeAssistant, bamb
 async def test_an_offline_printer_takes_no_action(
     hass: HomeAssistant, bambuddy_api: SimpleNamespace, freezer: FrozenDateTimeFactory
 ) -> None:
-    entry = make_entry(hass, X1C)
-    await setup_integration(hass, entry)
+    entry = await set_up(hass, X1C)
     bambuddy_api.statuses[X1C] = load_fixture("status_offline.json")
     await next_refresh(hass, freezer)
 
@@ -262,11 +557,10 @@ async def test_loading_on_an_offline_printer_says_offline(
     hass: HomeAssistant, bambuddy_api: SimpleNamespace, freezer: FrozenDateTimeFactory
 ) -> None:
     """Its slot sensors are unavailable; the action still names the reason."""
-    entry = make_entry(hass, A1_MINI)
-    await setup_integration(hass, entry)
+    entry = await set_up(hass, A1_MINI)
     bambuddy_api.statuses[A1_MINI]["connected"] = False
     await next_refresh(hass, freezer)
-    slot = er.async_get(hass).async_get_entity_id("sensor", DOMAIN, ams_uid(entry, 0, "slot_1", A1_MINI))
+    slot = entity_id(hass, "sensor", ams_uid(entry, 0, "slot_1", A1_MINI))
 
     with pytest.raises(ServiceValidationError) as raised:
         await _act(hass, "load_filament", entity_id=slot)
@@ -275,11 +569,10 @@ async def test_loading_on_an_offline_printer_says_offline(
 
 
 async def test_loading_the_external_spool(hass: HomeAssistant, bambuddy_api: SimpleNamespace, freezer: FrozenDateTimeFactory) -> None:
-    entry = make_entry(hass, A1_MINI)
-    await setup_integration(hass, entry)
+    entry = await set_up(hass, A1_MINI)
     bambuddy_api.statuses[A1_MINI]["vt_tray"][0].update({"tray_type": "PLA", "exists": True})
     await next_refresh(hass, freezer)
-    spool = er.async_get(hass).async_get_entity_id("sensor", DOMAIN, printer_uid(entry, "external_spool", A1_MINI))
+    spool = entity_id(hass, "sensor", printer_uid(entry, "external_spool", A1_MINI))
 
     await _act(hass, "load_filament", entity_id=spool)
 
@@ -289,8 +582,7 @@ async def test_loading_the_external_spool(hass: HomeAssistant, bambuddy_api: Sim
 async def test_the_objects_of_the_running_print(hass: HomeAssistant, bambuddy_api: SimpleNamespace) -> None:
     """For the dashboard card and for scripts: which objects there are, and
     which are skipped already."""
-    entry = make_entry(hass, X1C)
-    await setup_integration(hass, entry)
+    entry = await set_up(hass, X1C)
 
     response = await hass.services.async_call(
         DOMAIN, "get_print_objects", {"device_id": _printer(hass, entry, X1C)}, blocking=True, return_response=True
@@ -306,8 +598,7 @@ async def test_the_objects_of_the_running_print(hass: HomeAssistant, bambuddy_ap
 
 
 async def test_skipping_objects(hass: HomeAssistant, bambuddy_api: SimpleNamespace) -> None:
-    entry = make_entry(hass, X1C)
-    await setup_integration(hass, entry)
+    entry = await set_up(hass, X1C)
 
     await _act(hass, "skip_objects", device_id=_printer(hass, entry, X1C), objects=[87, 121])
 
@@ -315,8 +606,7 @@ async def test_skipping_objects(hass: HomeAssistant, bambuddy_api: SimpleNamespa
 
 
 async def test_skipping_needs_a_print(hass: HomeAssistant, bambuddy_api: SimpleNamespace) -> None:
-    entry = make_entry(hass, A1_MINI)
-    await setup_integration(hass, entry)
+    entry = await set_up(hass, A1_MINI)
 
     with pytest.raises(ServiceValidationError) as raised:
         await _act(hass, "skip_objects", device_id=_printer(hass, entry, A1_MINI), objects=[87])
@@ -335,8 +625,7 @@ async def test_skipping_needs_a_print(hass: HomeAssistant, bambuddy_api: SimpleN
 
 async def test_objects_bambuddy_cannot_read(hass: HomeAssistant, bambuddy_api: SimpleNamespace) -> None:
     """The job lies where BamBuddy cannot reach it."""
-    entry = make_entry(hass, X1C)
-    await setup_integration(hass, entry)
+    entry = await set_up(hass, X1C)
     bambuddy_api.get_print_objects.side_effect = BamBuddyApiError(500, "Could not download 3MF file")
 
     with pytest.raises(HomeAssistantError) as raised:
@@ -344,7 +633,8 @@ async def test_objects_bambuddy_cannot_read(hass: HomeAssistant, bambuddy_api: S
             DOMAIN, "get_print_objects", {"device_id": _printer(hass, entry, X1C)}, blocking=True, return_response=True
         )
 
-    assert raised.value.translation_key == "command_failed"
+    # A read, not a command BamBuddy refused.
+    assert raised.value.translation_key == "read_failed"
 
 
 @pytest.mark.parametrize(
@@ -360,8 +650,7 @@ async def test_no_action_during_a_filament_change(
     hass: HomeAssistant, bambuddy_api: SimpleNamespace, freezer: FrozenDateTimeFactory, action: str, data: dict[str, Any]
 ) -> None:
     """BamBuddy sends it anyway: it would collide with the change."""
-    entry = make_entry(hass, A1_MINI)
-    await setup_integration(hass, entry)
+    entry = await set_up(hass, A1_MINI)
     bambuddy_api.statuses[A1_MINI].update({"ams_status_main": 1, "ams_status_sub": 3})
     await next_refresh(hass, freezer)
 
@@ -374,8 +663,7 @@ async def test_no_action_during_a_filament_change(
 async def test_a_paused_print_can_change_filament(hass: HomeAssistant, bambuddy_api: SimpleNamespace) -> None:
     """A colour change by hand: pause, unload, load, resume. Moving stays
     locked: the print would shift."""
-    entry = make_entry(hass, P1S)
-    await setup_integration(hass, entry)
+    entry = await set_up(hass, P1S)
     printer = _printer(hass, entry, P1S)
 
     await _act(hass, "unload_filament", device_id=printer)
@@ -391,8 +679,7 @@ async def test_a_paused_print_can_change_filament(hass: HomeAssistant, bambuddy_
 
 
 async def test_a_running_print_keeps_its_filament(hass: HomeAssistant, bambuddy_api: SimpleNamespace) -> None:
-    entry = make_entry(hass, X1C)
-    await setup_integration(hass, entry)
+    entry = await set_up(hass, X1C)
 
     with pytest.raises(ServiceValidationError) as raised:
         await _act(hass, "unload_filament", device_id=_printer(hass, entry, X1C))
@@ -410,8 +697,7 @@ async def _set_filament(hass: HomeAssistant, slot: str, **data: Any) -> None:
 async def test_a_new_colour_keeps_the_slot_s_filament(hass: HomeAssistant, bambuddy_api: SimpleNamespace) -> None:
     """Only the colour: BamBuddy keeps the slot's preset, and its K value
     stays."""
-    entry = make_entry(hass, A1_MINI)
-    await setup_integration(hass, entry)
+    entry = await set_up(hass, A1_MINI)
 
     await _set_filament(hass, ams_uid(entry, 0, "slot_2", A1_MINI), color=[193, 46, 31])
 
@@ -426,15 +712,14 @@ async def test_a_new_material_takes_its_generic_profile(
 ) -> None:
     """Bambu's generic profile of the material; the K value goes back to
     the default, as on the printer's screen."""
-    entry = make_entry(hass, X1C)
-    await setup_integration(hass, entry)
+    entry = await set_up(hass, X1C)
     bambuddy_api.statuses[X1C]["ams"][0]["tray"][2]["cali_idx"] = 4
     await next_refresh(hass, freezer)
 
     await _set_filament(hass, ams_uid(entry, 0, "slot_3"), material="PETG HF")
 
     bambuddy_api.configure_slot.assert_awaited_once_with(
-        X1C, 0, 2, tray_type="PETG", name="Generic PETG HF", color="FFFFFFFF", temp_min=220, temp_max=260,
+        X1C, 0, 2, tray_type="PETG", name="Generic PETG HF", color="FFFFFFFF", temp_min=220, temp_max=270,
         tray_info_idx="GFG96", cali_idx=-1, nozzle_diameter="0.4",
     )
 
@@ -442,8 +727,7 @@ async def test_a_new_material_takes_its_generic_profile(
 async def test_the_colour_alone_keeps_the_k_value(
     hass: HomeAssistant, bambuddy_api: SimpleNamespace, freezer: FrozenDateTimeFactory
 ) -> None:
-    entry = make_entry(hass, X1C)
-    await setup_integration(hass, entry)
+    entry = await set_up(hass, X1C)
     tray = bambuddy_api.statuses[X1C]["ams"][0]["tray"][2]
     tray.update({"cali_idx": 4, "nozzle_temp_min": 200, "nozzle_temp_max": 220})
     bambuddy_api.statuses[X1C]["nozzles"][0]["nozzle_diameter"] = "0.6"
@@ -460,15 +744,14 @@ async def test_the_colour_alone_keeps_the_k_value(
 async def test_a_slot_without_a_nozzle_range_takes_its_material_s(
     hass: HomeAssistant, bambuddy_api: SimpleNamespace, freezer: FrozenDateTimeFactory
 ) -> None:
-    entry = make_entry(hass, X1C)
-    await setup_integration(hass, entry)
+    entry = await set_up(hass, X1C)
     bambuddy_api.statuses[X1C]["ams"][0]["tray"][2].update({"nozzle_temp_min": 0, "nozzle_temp_max": 0})
     await next_refresh(hass, freezer)
 
     await _set_filament(hass, ams_uid(entry, 0, "slot_3"), color=[0, 0, 0])
 
     kwargs = bambuddy_api.configure_slot.await_args.kwargs
-    assert (kwargs["temp_min"], kwargs["temp_max"]) == (190, 230)
+    assert (kwargs["temp_min"], kwargs["temp_max"]) == (190, 240)
 
 
 @pytest.mark.parametrize(("printer_id", "tray", "diameter"), [(X1C, 0, "0.4"), (H2D, 0, "0.6"), (H2D, 1, "0.4")])
@@ -489,7 +772,7 @@ async def test_the_external_spool_gets_its_filament(
     await _set_filament(hass, printer_uid(entry, external, printer_id), material="PLA", color=[255, 106, 19])
 
     bambuddy_api.configure_slot.assert_awaited_once_with(
-        printer_id, 255, tray, tray_type="PLA", name="Generic PLA", color="FF6A13FF", temp_min=190, temp_max=230,
+        printer_id, 255, tray, tray_type="PLA", name="Generic PLA", color="FF6A13FF", temp_min=190, temp_max=240,
         tray_info_idx="GFL99", cali_idx=-1, nozzle_diameter=diameter,
     )
 
@@ -531,8 +814,7 @@ async def test_a_paused_print_may_relabel_its_slot(
     hass: HomeAssistant, bambuddy_api: SimpleNamespace, freezer: FrozenDateTimeFactory
 ) -> None:
     """Paused for a colour change by hand: the new spool gets its colour."""
-    entry = make_entry(hass, A1_MINI)
-    await setup_integration(hass, entry)
+    entry = await set_up(hass, A1_MINI)
     bambuddy_api.statuses[A1_MINI].update({"state": "PAUSE", "tray_now": 1})
     await next_refresh(hass, freezer)
 
@@ -544,8 +826,7 @@ async def test_a_paused_print_may_relabel_its_slot(
 async def test_an_unknown_material_needs_a_choice(hass: HomeAssistant, bambuddy_api: SimpleNamespace) -> None:
     """The external spool holds nothing the printer knows: a colour alone
     does not say what it is."""
-    entry = make_entry(hass, X1C)
-    await setup_integration(hass, entry)
+    entry = await set_up(hass, X1C)
 
     with pytest.raises(ServiceValidationError) as raised:
         await _set_filament(hass, printer_uid(entry, "external_spool"), color=[0, 0, 0])
@@ -554,8 +835,7 @@ async def test_an_unknown_material_needs_a_choice(hass: HomeAssistant, bambuddy_
 
 
 async def test_set_filament_needs_a_material_or_a_colour(hass: HomeAssistant, bambuddy_api: SimpleNamespace) -> None:
-    entry = make_entry(hass, X1C)
-    await setup_integration(hass, entry)
+    entry = await set_up(hass, X1C)
 
     with pytest.raises(ServiceValidationError) as raised:
         await _set_filament(hass, ams_uid(entry, 0, "slot_3"))
@@ -576,8 +856,7 @@ async def test_an_ams_slot_names_the_nozzle_it_feeds(
     """The H2D's AMS 2 Pro feeds the right nozzle, its AMS HT the left one
     (BamBuddy's ams_extruder_map): the printer keeps a K value per nozzle
     diameter."""
-    entry = make_entry(hass, H2D)
-    await setup_integration(hass, entry)
+    entry = await set_up(hass, H2D)
     status = bambuddy_api.statuses[H2D]
     status["nozzles"][1]["nozzle_diameter"] = "0.6"
     status["state"] = "IDLE"
@@ -595,8 +874,7 @@ async def test_the_slot_feeding_the_other_nozzle_is_in_use(
 ) -> None:
     """Two nozzles, two slots in use: BamBuddy's tray_now names one, its
     extruder_slots both."""
-    entry = make_entry(hass, H2D)
-    await setup_integration(hass, entry)
+    entry = await set_up(hass, H2D)
     bambuddy_api.statuses[H2D]["ams"][0]["tray"][2].update({"tag_uid": None, "tray_uuid": None})
     await next_refresh(hass, freezer)
 
@@ -611,24 +889,38 @@ async def test_a_material_without_a_colour_is_opaque(
 ) -> None:
     """A slot BamBuddy reset carries a transparent black: the new filament
     keeps the colour, not the transparency."""
-    entry = make_entry(hass, X1C)
-    await setup_integration(hass, entry)
+    entry = await set_up(hass, X1C)
     bambuddy_api.statuses[X1C]["ams"][0]["tray"][2]["tray_color"] = "00000000"
     await next_refresh(hass, freezer)
 
     await _set_filament(hass, ams_uid(entry, 0, "slot_3"), material="PLA-CF")
 
     kwargs = bambuddy_api.configure_slot.await_args.kwargs
-    assert (kwargs["color"], kwargs["temp_min"], kwargs["temp_max"]) == ("000000FF", 210, 240)
+    assert (kwargs["color"], kwargs["temp_min"], kwargs["temp_max"]) == ("000000FF", 190, 240)
 
+
+async def test_a_new_material_keeps_a_translucent_colour(
+    hass: HomeAssistant, bambuddy_api: SimpleNamespace, freezer: FrozenDateTimeFactory
+) -> None:
+    """A translucent filament's colour carries its transparency: a new
+    material keeps it. Only a colour chosen anew is opaque -- Home
+    Assistant's colour picker has no transparency."""
+    entry = await set_up(hass, X1C)
+    bambuddy_api.statuses[X1C]["ams"][0]["tray"][2]["tray_color"] = "00ae42cc"
+    await next_refresh(hass, freezer)
+
+    await _set_filament(hass, ams_uid(entry, 0, "slot_3"), material="PETG HF")
+    assert bambuddy_api.configure_slot.await_args.kwargs["color"] == "00AE42CC"
+
+    await _set_filament(hass, ams_uid(entry, 0, "slot_3"), color=[255, 0, 0])
+    assert bambuddy_api.configure_slot.await_args.kwargs["color"] == "FF0000FF"
 
 
 async def test_an_unknown_nozzle_counts_as_0_4_mm(
     hass: HomeAssistant, bambuddy_api: SimpleNamespace, freezer: FrozenDateTimeFactory
 ) -> None:
     """Bambu's standard nozzle, as BamBuddy's own default."""
-    entry = make_entry(hass, A1_MINI)
-    await setup_integration(hass, entry)
+    entry = await set_up(hass, A1_MINI)
     bambuddy_api.statuses[A1_MINI]["nozzles"] = []
     await next_refresh(hass, freezer)
 
@@ -643,8 +935,7 @@ async def test_the_external_spool_feeding_a_nozzle_is_in_use(
 ) -> None:
     """The printer names the external spools 254 (left) and 255 (right) in
     extruder_slots -- not BamBuddy's AMS 255 with slot 0 or 1."""
-    entry = make_entry(hass, H2D)
-    await setup_integration(hass, entry)
+    entry = await set_up(hass, H2D)
     bambuddy_api.statuses[H2D]["extruder_slots"]["0"] = {"ams_id": feed, "slot_id": 0, "has_filament": True}
     await next_refresh(hass, freezer)
 
@@ -658,8 +949,7 @@ async def test_a_slot_of_an_ams_plugged_in_elsewhere(
     hass: HomeAssistant, bambuddy_api: SimpleNamespace, freezer: FrozenDateTimeFactory
 ) -> None:
     """The slot follows its unit: plugged in as AMS B, it loads from there."""
-    entry = make_entry(hass, A1_MINI)
-    await setup_integration(hass, entry)
+    entry = await set_up(hass, A1_MINI)
     slot = entity_id(hass, "sensor", ams_uid(entry, 0, "slot_1", A1_MINI))
     bambuddy_api.statuses[A1_MINI]["ams"][0]["id"] = 1
     await next_refresh(hass, freezer)
@@ -672,21 +962,147 @@ async def test_a_slot_of_an_ams_plugged_in_elsewhere(
 async def test_a_slot_of_an_unplugged_ams(
     hass: HomeAssistant, bambuddy_api: SimpleNamespace, freezer: FrozenDateTimeFactory
 ) -> None:
-    """A unit the printer no longer reports holds nothing while the printer
-    is online -- not the filament of another unit plugged in at its place;
+    """A unit the printer no longer reports is named so while the printer is
+    online -- never the filament of another unit plugged in at its place;
     offline, the action says that first."""
-    entry = make_entry(hass, A1_MINI)
-    await setup_integration(hass, entry)
-    slot = er.async_get(hass).async_get_entity_id("sensor", DOMAIN, ams_uid(entry, 0, "slot_1", A1_MINI))
+    entry = await set_up(hass, A1_MINI)
+    slot = entity_id(hass, "sensor", ams_uid(entry, 0, "slot_1", A1_MINI))
     bambuddy_api.statuses[A1_MINI]["ams"][0]["serial_number"] = "03C00A000000099"
     await next_refresh(hass, freezer)
 
     with pytest.raises(ServiceValidationError) as raised:
         await _act(hass, "load_filament", entity_id=slot)
-    assert raised.value.translation_key == "slot_empty"
+    assert raised.value.translation_key == "ams_not_reported"
 
     bambuddy_api.statuses[A1_MINI]["connected"] = False
     await next_refresh(hass, freezer)
     with pytest.raises(ServiceValidationError) as raised:
         await _act(hass, "load_filament", entity_id=slot)
     assert raised.value.translation_key == "printer_offline"
+
+
+async def test_a_printer_bambuddy_does_not_list_now_points_to_its_repair(
+    hass: HomeAssistant, bambuddy_api: SimpleNamespace
+) -> None:
+    """Its device waits under Repairs: an action on it, or on one of its AMS
+    units, says so -- not that it is no printer."""
+    entry = await set_up(hass, X1C, A1_MINI)
+    printer = device_id(hass, entry, printer_device(entry, A1_MINI))
+    unit = device_id(hass, entry, ams_device(entry, A1_MINI, 0))
+    bambuddy_api.get_printers.return_value = [item for item in load_fixture("printers.json") if item["id"] != A1_MINI]
+    await hass.config_entries.async_reload(entry.entry_id)
+    await hass.async_block_till_done()
+
+    for service, device in (("home_axes", printer), ("stop_drying", unit)):
+        with pytest.raises(ServiceValidationError) as raised:
+            await hass.services.async_call(DOMAIN, service, {"device_id": device}, blocking=True)
+        assert raised.value.translation_key == "printer_not_listed"
+        assert raised.value.translation_placeholders == {"printer": printer_name(A1_MINI)}
+
+
+async def test_an_unplugged_unit_is_named_as_such(
+    hass: HomeAssistant, bambuddy_api: SimpleNamespace, freezer: FrozenDateTimeFactory
+) -> None:
+    """Its device stays (settled); an action on it says the printer does not
+    report it now -- not that it is a printer."""
+    entry = await set_up(hass, X1C)
+    unit = device_id(hass, entry, ams_device(entry, X1C, 0))
+    bambuddy_api.statuses[X1C]["ams"] = []
+    await next_refresh(hass, freezer)
+
+    with pytest.raises(ServiceValidationError) as raised:
+        await hass.services.async_call(DOMAIN, "stop_drying", {"device_id": unit}, blocking=True)
+
+    assert raised.value.translation_key == "ams_not_reported"
+    assert raised.value.translation_placeholders == {"printer": "Workshop"}
+
+
+async def test_a_slot_of_a_printer_bambuddy_does_not_list_now_points_to_its_repair(
+    hass: HomeAssistant, bambuddy_api: SimpleNamespace
+) -> None:
+    entry = await set_up(hass, X1C, A1_MINI)
+    slot = entity_id(hass, "sensor", ams_uid(entry, 0, "slot_1", A1_MINI))
+    bambuddy_api.get_printers.return_value = [item for item in load_fixture("printers.json") if item["id"] != A1_MINI]
+    await hass.config_entries.async_reload(entry.entry_id)
+    await hass.async_block_till_done()
+
+    for action, data in (("load_filament", {}), ("set_filament", {"material": "PLA"})):
+        with pytest.raises(ServiceValidationError) as raised:
+            await hass.services.async_call(DOMAIN, action, {"entity_id": slot, **data}, blocking=True)
+        assert raised.value.translation_key == "printer_not_listed"
+
+
+async def test_a_read_that_times_out_is_no_command(hass: HomeAssistant, bambuddy_api: SimpleNamespace) -> None:
+    """Nothing may still reach the printer: it was a read."""
+    entry = await set_up(hass, X1C)
+    timeout = BamBuddyConnectionError("GET /printers/1/print/objects: TimeoutError")
+    timeout.__cause__ = TimeoutError()
+    bambuddy_api.get_print_objects.side_effect = timeout
+
+    with pytest.raises(HomeAssistantError) as raised:
+        await hass.services.async_call(
+            DOMAIN, "get_print_objects", {"device_id": _printer(hass, entry, X1C)}, blocking=True, return_response=True
+        )
+
+    assert raised.value.translation_key == "update_timeout"
+
+
+async def test_drying_started_on_the_screen_stops_there(hass: HomeAssistant, bambuddy_api: SimpleNamespace) -> None:
+    """A P1S dries an AMS 2 Pro from its own screen only: Home Assistant
+    shows it drying, and says where to stop it."""
+    status = bambuddy_api.statuses[P1S]
+    status["ams"][0]["module_type"] = "n3f"
+    status["ams"][0]["dry_time"] = 120
+    status["supports_drying"] = False
+    status["drying_screen_only"] = True
+    entry = await set_up(hass, P1S)
+
+    with pytest.raises(ServiceValidationError) as raised:
+        await hass.services.async_call(DOMAIN, "stop_drying", {"device_id": device_id(hass, entry, ams_device(entry, P1S, 0))}, blocking=True)
+
+    assert raised.value.translation_key == "dry_stop_on_screen"
+    bambuddy_api.stop_drying.assert_not_awaited()
+
+
+async def test_checking_the_connection(hass: HomeAssistant, bambuddy_api: SimpleNamespace, freezer: FrozenDateTimeFactory) -> None:
+    """BamBuddy's verdict and checks as it gives them -- for an offline
+    printer too, and with Read Status alone: it reads, it sends nothing."""
+    bambuddy_api.get_auth_me.return_value = load_fixture("auth_me_read.json")
+    entry = await set_up(hass, X1C)
+    bambuddy_api.statuses[X1C] = load_fixture("status_offline.json")
+    await next_refresh(hass, freezer)
+
+    response = await hass.services.async_call(
+        DOMAIN, "run_diagnostic", {"device_id": _printer(hass, entry, X1C)}, blocking=True, return_response=True
+    )
+
+    assert response is not None
+    assert response["overall"] == "problems"
+    assert response["checks"][0] == {"id": "port_mqtt", "status": "fail", "params": {}}
+    assert response["checks"][2] == {"id": "port_rtsps", "status": "warn", "params": {"port": 322, "protocol": "RTSPS"}}
+    assert len(response["checks"]) == 9  # type: ignore[arg-type]
+    bambuddy_api.get_diagnostic.assert_awaited_once_with(X1C)
+
+
+async def test_a_connection_check_bambuddy_cannot_run(hass: HomeAssistant, bambuddy_api: SimpleNamespace) -> None:
+    entry = await set_up(hass, X1C)
+    bambuddy_api.get_diagnostic.side_effect = BamBuddyConnectionError("refused")
+
+    with pytest.raises(HomeAssistantError):
+        await hass.services.async_call(
+            DOMAIN, "run_diagnostic", {"device_id": _printer(hass, entry, X1C)}, blocking=True, return_response=True
+        )
+
+
+async def test_a_connection_check_bambuddy_fails(hass: HomeAssistant, bambuddy_api: SimpleNamespace) -> None:
+    """A check is no command: BamBuddy reported an error."""
+    entry = await set_up(hass, X1C)
+    bambuddy_api.get_diagnostic.side_effect = BamBuddyApiError(500, "Simulated failure")
+
+    with pytest.raises(HomeAssistantError) as raised:
+        await hass.services.async_call(
+            DOMAIN, "run_diagnostic", {"device_id": _printer(hass, entry, X1C)}, blocking=True, return_response=True
+        )
+
+    assert (raised.value.translation_key, raised.value.translation_placeholders) == ("read_failed", {"error": "Simulated failure"})
+

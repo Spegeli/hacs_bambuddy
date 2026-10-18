@@ -24,18 +24,32 @@ MIN_BAMBUDDY_VERSION = "1.2.5.7"
 # ask GitHub and Bambu Lab each time.
 PRINTER_INTERVAL = timedelta(seconds=10)
 INSTANCE_INTERVAL = timedelta(seconds=60)
+# For the system information BamBuddy walks through its whole archive.
+SYSTEM_INTERVAL = timedelta(minutes=5)
 UPDATE_INTERVAL = timedelta(hours=6)
-# BamBuddy only publishes a command; the printer reports back about a
-# second later.
-# The print hours change slowly: read once a minute, not with every status.
+# The print hours, BamBuddy's name and details of a printer change slowly:
+# read once a minute, not with every status.
 RUNTIME_INTERVAL = 60.0
+# Maintenance: every ten minutes (and after a print) -- a read can write to
+# BamBuddy's database.
+MAINTENANCE_INTERVAL = 600.0
 # How long an AMS unit without a serial number waits for one: BamBuddy
 # reports it a moment after it connects.
 AMS_SERIAL_WAIT = 60.0
+# BamBuddy only publishes a command; the printer reports back about a
+# second later.
 REFRESH_AFTER_COMMAND = 1.5
+# Smart plugs: BamBuddy's list (from its database) once a minute; each
+# plug's state every 15 s -- BamBuddy asks the plug itself each time --,
+# and 2 s after a switch.
+PLUG_INTERVAL = timedelta(seconds=15)
+PLUG_LIST_INTERVAL = 60.0
+# A printer BamBuddy no longer lists: its list read so often until it is back.
+MISSING_INTERVAL = timedelta(seconds=60)
+REFRESH_AFTER_PLUG = 2.0
+# The printer's K profiles, once listed: what Set filament picks from for so
+# long -- a printer may not answer the same question twice in a row.
+K_PROFILES_KEEP = 600.0
 
 # BamBuddy's print speed modes.
 PRINT_SPEEDS = {1: "silent", 2: "standard", 3: "sport", 4: "ludicrous"}
-
-# BamBuddy's permission for the printer controls.
-CONTROL_PERMISSION = "printers:control"

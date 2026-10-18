@@ -13,8 +13,8 @@ from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 
 from .api import BamBuddyClient
 from .const import PRINT_SPEEDS
-from .coordinator import BamBuddyConfigEntry, BamBuddyPrinterCoordinator
-from .entity import BamBuddyPrinterEntity, async_run_command
+from .coordinator import BamBuddyConfigEntry
+from .entity import BamBuddyDescribedEntity, async_run_command
 from .models import JOB_STATES, PrinterData
 
 PARALLEL_UPDATES = 1
@@ -36,17 +36,13 @@ class BamBuddySelectDescription(SelectEntityDescription):
     idle_only: bool = False
 
 
-async def _set_speed(client: BamBuddyClient, printer_id: int, option: str) -> None:
-    await client.set_print_speed(printer_id, _SPEED_MODES[option])
-
-
 SELECTS: tuple[BamBuddySelectDescription, ...] = (
     BamBuddySelectDescription(
         key="print_speed",
         translation_key="print_speed",
         options=list(PRINT_SPEEDS.values()),
         value_fn=lambda data: PRINT_SPEEDS.get(data.status.get("speed_level")),  # type: ignore[arg-type]
-        select_fn=_set_speed,
+        select_fn=lambda client, printer, option: client.set_print_speed(printer, _SPEED_MODES[option]),
         # The speed belongs to the running job; the printer forgets it after.
         allowed=lambda data: data.state in JOB_STATES,
         refusal="not_printing",
@@ -59,6 +55,9 @@ SELECTS: tuple[BamBuddySelectDescription, ...] = (
         exists_fn=lambda data: data.has_airduct(),
         value_fn=lambda data: _AIRDUCT_MODES.get(data.status.get("airduct_mode")),  # type: ignore[arg-type]
         select_fn=lambda client, printer, mode: client.set_airduct_mode(printer, mode),
+        # The print sets it at its start (Bambu Studio refuses a change
+        # during one).
+        idle_only=True,
     ),
     BamBuddySelectDescription(
         key="active_nozzle",
@@ -88,13 +87,8 @@ async def async_setup_entry(
     )
 
 
-class BamBuddySelect(BamBuddyPrinterEntity, SelectEntity):
+class BamBuddySelect(BamBuddyDescribedEntity, SelectEntity):
     entity_description: BamBuddySelectDescription
-
-    def __init__(self, coordinator: BamBuddyPrinterCoordinator, description: BamBuddySelectDescription) -> None:
-        # First: the entity ID is made from its translation key.
-        self.entity_description = description
-        super().__init__(coordinator, description.key)
 
     @property
     def current_option(self) -> str | None:

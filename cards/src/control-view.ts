@@ -1,21 +1,24 @@
-// The control view: the heaters, the AI detections, moving the axes, homing
-// and the extruder. Every move waits while a print is on the printer, the
-// AMS changes filament or the printer is offline; homing asks first.
+// The control view: its sections in the user's order -- the heaters, the
+// print options, moving the axes, homing and the extruder. Every move waits
+// while a print is on the printer or the AMS changes filament; homing asks
+// first. The card offers the view only where it may control the printer; an
+// offline printer's tab shows the offline view instead (card.ts).
 import { html, nothing, type TemplateResult } from "lit";
 
-import { formatNumber, formatState, numericState, stateOf } from "./format";
+import { formatNumber, formatState, listedOptions, numericState, stateOf } from "./format";
 import { detectionSection } from "./detection";
 import { heatingSection } from "./heating";
 import { type IconName } from "./icons";
 import { t, type TextKey } from "./i18n";
-import { actionButton, activeNozzleIndex, developerHint, note, NOZZLE_SIDES, type CardContext } from "./parts";
-import type { Heater } from "./types";
+import { actionButton, activeNozzleIndex, developerHint, note, NOZZLE_SIDES, radioKeys, radioStop, type CardContext } from "./parts";
+import type { ControlSection, Heater, PrinterRefs } from "./types";
 
-export const STEPS = [1, 10] as const;
+// His word (2026-10-18): 0.1 mm too, for fine steps of the bed.
+const STEPS = [0.1, 1, 10] as const;
 export type Step = (typeof STEPS)[number];
 
 /** The filament length one tap extrudes or retracts. */
-export const EXTRUDE_LENGTH = 10;
+const EXTRUDE_LENGTH = 10;
 
 /** Below this, the printer refuses to extrude. */
 const MIN_EXTRUDE_TEMPERATURE = 170;
@@ -29,16 +32,17 @@ function activeNozzle(ctx: CardContext, disabled: boolean): TemplateResult | typ
   const { hass, refs } = ctx;
   const state = stateOf(hass, refs.activeNozzle);
   if (!state) return nothing;
-  const listed = state.attributes["options"];
-  const options = Array.isArray(listed) && listed.length && listed.every((option) => typeof option === "string") ? (listed as string[]) : NOZZLE_SIDES;
+  const options = listedOptions(state, NOZZLE_SIDES, false);
   const pending = ctx.isPending("active_nozzle");
+  const stop = radioStop(options, state.state);
   return html`<div class="nozzle-row">
     <span class="step-label">${t(hass, "active_nozzle")}</span>
-    <div class="seg" role="radiogroup" aria-label=${t(hass, "active_nozzle")}>
+    <div class="seg" role="radiogroup" aria-label=${t(hass, "active_nozzle")} @keydown=${radioKeys}>
       ${options.map(
-        (option) => html`<button
+        (option, index) => html`<button
           role="radio"
           aria-checked=${option === state.state ? "true" : "false"}
+          tabindex=${index === stop ? 0 : -1}
           ?disabled=${disabled || pending || state.state === "unavailable"}
           @click=${() => ctx.run("active_nozzle", "select", "select_option", { entity_id: refs.activeNozzle, option })}
         >
@@ -59,12 +63,13 @@ function extrudingNozzle(ctx: CardContext): number | undefined {
   return temperatures.length ? Math.max(...temperatures) : undefined;
 }
 
-export function controlView(ctx: CardContext, step: Step, setStep: (step: Step) => void): TemplateResult {
+/** Moving: the active nozzle, the jog pad with its step, homing, the bed
+ * and the extruder. */
+function motionSection(ctx: CardContext, step: Step, setStep: (step: Step) => void): TemplateResult {
   const { hass, refs } = ctx;
-  if (!ctx.canControl) return note(t(hass, "read_only"));
   const disabled = !ctx.online || ctx.busy || ctx.changing;
   const device = refs.deviceId;
-  const signed = (value: number): string => `${value > 0 ? "+" : "−"}${formatNumber(hass, Math.abs(value))}`;
+  const signed = (value: number): string => `${value > 0 ? "+" : "−"}${formatNumber(hass, Math.abs(value), 1)}`;
 
   const jog = (axis: "x" | "y", direction: 1 | -1, iconName: IconName, area: string): TemplateResult => {
     const distance = direction * step;
@@ -82,7 +87,7 @@ export function controlView(ctx: CardContext, step: Step, setStep: (step: Step) 
   const bed = (direction: 1 | -1): TemplateResult =>
     actionButton({
       label: t(hass, direction > 0 ? "bed_away" : "bed_closer"),
-      aria: t(hass, direction > 0 ? "bed_away_aria" : "bed_closer_aria", { step }),
+      aria: t(hass, direction > 0 ? "bed_away_aria" : "bed_closer_aria", { step: formatNumber(hass, step, 1) }),
       iconName: direction > 0 ? "down" : "up",
       disabled,
       pending: ctx.isPending("move_z"),
@@ -125,23 +130,27 @@ export function controlView(ctx: CardContext, step: Step, setStep: (step: Step) 
       }),
   });
 
-  // Offline stops everything; a print or a filament change stops what
-  // moves (the heaters stay).
+  // A print or a filament change stops what moves (the heaters stay); a
+  // change is a wait, said as a note.
   // The step applies to X, Y and the bed; the extruder always moves 10 mm.
-  return html`${developerHint(ctx)}${ctx.online ? nothing : note(t(hass, "offline_reason"), "warning")} ${heatingSection(ctx)} ${detectionSection(ctx)}
-    ${ctx.online && ctx.busy ? note(t(hass, "busy_reason"), "warning") : ctx.changing ? note(t(hass, "changing_reason"), "warning") : nothing}
+  return html`${ctx.online && ctx.busy ? note(t(hass, "busy_reason"), "warning") : ctx.changing ? note(t(hass, "changing_reason")) : nothing}
     ${activeNozzle(ctx, disabled)}
     <div class="control">
       <div class="step-row">
         <span class="step-label">${t(hass, "step")}</span>
-        <div class="seg" role="radiogroup" aria-label=${t(hass, "step")}>
+        <div class="seg" role="radiogroup" aria-label=${t(hass, "step")} @keydown=${radioKeys}>
           ${STEPS.map(
-            (value) => html`<button role="radio" aria-checked=${value === step ? "true" : "false"} @click=${() => setStep(value)}>
-              ${formatNumber(hass, value)} mm
+            (value) => html`<button
+              role="radio"
+              aria-checked=${value === step ? "true" : "false"}
+              tabindex=${value === step ? 0 : -1}
+              @click=${() => setStep(value)}
+            >
+              ${formatNumber(hass, value, 1)} mm
             </button>`,
           )}
         </div>
-        ${ctx.startLive ? actionButton({ label: t(hass, "live"), iconName: "video", iconOnly: true, onClick: ctx.startLive }) : nothing}
+        ${ctx.startLive ? actionButton({ label: t(hass, "live"), iconName: "video", iconOnly: true, className: "live-btn", onClick: ctx.startLive }) : nothing}
       </div>
       <div class="pad">
         ${jog("y", 1, "up", "n")}${jog("x", -1, "left", "w")}${home}${jog("x", 1, "right", "e")}${jog("y", -1, "down", "s")}
@@ -157,4 +166,19 @@ export function controlView(ctx: CardContext, step: Step, setStep: (step: Step) 
     </div>
     ${cold && !disabled ? note(t(hass, coldHint)) : nothing}
     <p class="hint">${t(hass, "jog_note")}</p>`;
+}
+
+/** Whether a section has something to show: heating a heater whose target
+ * the card can set, the print options a detection switch; moving always --
+ * but with Hide controls (`viewOnly`), which shows states only. */
+export function sectionShown(refs: PrinterRefs, name: ControlSection, viewOnly = false): boolean {
+  if (name === "heating") return [...refs.nozzles, refs.bed, refs.chamber].some((heater) => heater.target !== undefined);
+  if (name === "motion") return !viewOnly;
+  return refs.detectors.length > 0;
+}
+
+export function controlView(ctx: CardContext, step: Step, setStep: (step: Step) => void): TemplateResult {
+  const section = (name: ControlSection): TemplateResult | typeof nothing =>
+    name === "heating" ? heatingSection(ctx) : name === "options" ? detectionSection(ctx) : ctx.viewOnly ? nothing : motionSection(ctx, step, setStep);
+  return html`${developerHint(ctx)}${ctx.settings.sections.map(section)}`;
 }

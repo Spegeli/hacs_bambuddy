@@ -10,10 +10,29 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 
 from .const import DOMAIN
-from .coordinator import BamBuddyConfigEntry, BamBuddyPrinterCoordinator, BamBuddyUpdateCoordinator, printer_identifier
+from .coordinator import BamBuddyConfigEntry, BamBuddyPrinterCoordinator, BamBuddyUpdateCoordinator
 from .entity import BamBuddyUpdatesEntity, suggest_entity_id, suggest_instance_entity_id
 
 PARALLEL_UPDATES = 0
+
+
+class _BamBuddyUpdate(BamBuddyUpdatesEntity, UpdateEntity):
+    """What both checks report the same way: the latest version and its notes."""
+
+    _attr_supported_features = UpdateEntityFeature.RELEASE_NOTES
+
+    @property
+    def _check(self) -> dict[str, Any]:
+        raise NotImplementedError
+
+    @property
+    def latest_version(self) -> str | None:
+        # None while BamBuddy's own checks are off or GitHub refused it.
+        return self._check.get("latest_version")
+
+    async def async_release_notes(self) -> str | None:
+        notes = self._check.get("release_notes")
+        return str(notes) if notes else None
 
 
 async def async_setup_entry(
@@ -25,11 +44,10 @@ async def async_setup_entry(
     async_add_entities(entities)
 
 
-class BamBuddyUpdate(BamBuddyUpdatesEntity, UpdateEntity):
+class BamBuddyUpdate(_BamBuddyUpdate):
     """BamBuddy's own check against its GitHub releases."""
 
     _attr_translation_key = "bambuddy_update"
-    _attr_supported_features = UpdateEntityFeature.RELEASE_NOTES
 
     def __init__(self, coordinator: BamBuddyUpdateCoordinator) -> None:
         entry_id = coordinator.config_entry.entry_id
@@ -45,32 +63,22 @@ class BamBuddyUpdate(BamBuddyUpdatesEntity, UpdateEntity):
         return self._check.get("current_version")
 
     @property
-    def latest_version(self) -> str | None:
-        """None while BamBuddy's own checks are off or GitHub refused it."""
-        return self._check.get("latest_version")
-
-    @property
     def release_url(self) -> str | None:
         return self._check.get("release_url")
 
-    async def async_release_notes(self) -> str | None:
-        notes = self._check.get("release_notes")
-        return str(notes) if notes else None
 
-
-class FirmwareUpdate(BamBuddyUpdatesEntity, UpdateEntity):
+class FirmwareUpdate(_BamBuddyUpdate):
     """A printer's firmware as BamBuddy compares it with Bambu Lab's."""
 
     _attr_translation_key = "firmware"
     _attr_entity_category = EntityCategory.DIAGNOSTIC
-    _attr_supported_features = UpdateEntityFeature.RELEASE_NOTES
 
     def __init__(self, coordinator: BamBuddyUpdateCoordinator, printer: BamBuddyPrinterCoordinator) -> None:
         entry_id = coordinator.config_entry.entry_id
         super().__init__(
             coordinator,
             f"{entry_id}_p{printer.key}_firmware",
-            printer_identifier(entry_id, printer.key),
+            printer.identifier,
         )
         self.printer = printer
         suggest_entity_id(self, printer, "firmware")
@@ -79,14 +87,12 @@ class FirmwareUpdate(BamBuddyUpdatesEntity, UpdateEntity):
     def _check(self) -> dict[str, Any]:
         return ((self.coordinator.data or {}).get("firmware") or {}).get(self.printer.printer_id) or {}
 
+    async def async_added_to_hass(self) -> None:
+        """The printer reports a new firmware within a poll, BamBuddy's
+        check hours later: the entity follows the printer too."""
+        await super().async_added_to_hass()
+        self.async_on_remove(self.printer.async_add_listener(self.async_write_ha_state))
+
     @property
     def installed_version(self) -> str | None:
-        return self._check.get("current_version") or self.printer.data.status.get("firmware_version")
-
-    @property
-    def latest_version(self) -> str | None:
-        return self._check.get("latest_version")
-
-    async def async_release_notes(self) -> str | None:
-        notes = self._check.get("release_notes")
-        return str(notes) if notes else None
+        return self.printer.data.status.get("firmware_version") or self._check.get("current_version")

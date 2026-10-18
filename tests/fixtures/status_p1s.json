@@ -1,6 +1,6 @@
 {
   "id": 3,
-  "name": "P1S",
+  "name": "Garage",
   "connected": true,
   "state": "PAUSE",
   "current_print": "Gridfinity_Bins",

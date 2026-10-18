@@ -18,17 +18,19 @@ from custom_components.bambuddy.api import (
     BamBuddyConnectionError,
     BamBuddyPermissionError,
 )
-from custom_components.bambuddy.const import DOMAIN
 
 from tests.conftest import (
     A1_MINI,
     H2D,
     P1S,
     X1C,
+    entity_id,
     load_fixture,
     make_entry,
     next_refresh,
+    no_entity,
     printer_uid,
+    set_up,
     setup_integration,
     state_of,
 )
@@ -36,12 +38,6 @@ from tests.conftest import (
 
 async def _call(hass: HomeAssistant, domain: str, service: str, entity_id: str, **data: Any) -> None:
     await hass.services.async_call(domain, service, {"entity_id": entity_id, **data}, blocking=True)
-
-
-def _entity(hass: HomeAssistant, platform: str, unique_id: str) -> str:
-    found = er.async_get(hass).async_get_entity_id(platform, DOMAIN, unique_id)
-    assert found is not None, unique_id
-    return found
 
 
 @pytest.mark.parametrize(
@@ -61,7 +57,7 @@ async def test_each_button_sends_its_command(
     entry = make_entry(hass, printer)
     await setup_integration(hass, entry)
 
-    await _call(hass, "button", "press", _entity(hass, "button", printer_uid(entry, key, printer)))
+    await _call(hass, "button", "press", entity_id(hass, "button", printer_uid(entry, key, printer)))
 
     getattr(bambuddy_api, method).assert_awaited_once_with(printer)
 
@@ -70,7 +66,8 @@ async def test_each_button_sends_its_command(
     ("printer", "key", "refusal"),
     [
         (A1_MINI, "pause", "not_printing"),
-        (P1S, "pause", "not_printing"),
+        # Paused already: it says so.
+        (P1S, "pause", "already_paused"),
         (X1C, "resume", "not_paused"),
         (A1_MINI, "stop", "no_print"),
         (X1C, "clear_plate", "plate_not_waiting"),
@@ -83,26 +80,43 @@ async def test_a_button_at_the_wrong_time_says_why(
     it stays available -- an unavailable Pause would look broken."""
     entry = make_entry(hass, printer)
     await setup_integration(hass, entry)
-    entity = _entity(hass, "button", printer_uid(entry, key, printer))
+    entity = entity_id(hass, "button", printer_uid(entry, key, printer))
 
     with pytest.raises(ServiceValidationError) as raised:
         await _call(hass, "button", "press", entity)
 
     assert raised.value.translation_key == refusal
-    assert raised.value.translation_placeholders == {"printer": entry.options["printers"][0]["printer_name"]}
+    # BamBuddy's name, short enough for a phone's toast.
+    assert raised.value.translation_placeholders == {"printer": entry.options["printers"][0]["printer_name"].rsplit(" (", 1)[0]}
     for method in ("pause", "resume", "stop", "clear_plate"):
         getattr(bambuddy_api, method).assert_not_awaited()
+
+
+async def test_resume_waits_for_a_filament_change(
+    hass: HomeAssistant, bambuddy_api: SimpleNamespace, freezer: FrozenDateTimeFactory
+) -> None:
+    """Paused, the AMS loading new filament: resuming now would print on
+    while it still feeds or purges."""
+    entry = await set_up(hass, P1S)
+    bambuddy_api.statuses[P1S]["ams_status_main"] = 1
+    bambuddy_api.statuses[P1S]["ams_status_sub"] = 7
+    await next_refresh(hass, freezer)
+
+    with pytest.raises(ServiceValidationError) as raised:
+        await _call(hass, "button", "press", entity_id(hass, "button", printer_uid(entry, "resume", P1S)))
+
+    assert raised.value.translation_key == "filament_change"
+    bambuddy_api.resume.assert_not_awaited()
 
 
 async def test_the_plate_is_cleared_after_a_print(
     hass: HomeAssistant, bambuddy_api: SimpleNamespace, freezer: FrozenDateTimeFactory
 ) -> None:
-    entry = make_entry(hass, X1C)
-    await setup_integration(hass, entry)
+    entry = await set_up(hass, X1C)
     bambuddy_api.statuses[X1C].update({"state": "FINISH", "awaiting_plate_clear": True})
     await next_refresh(hass, freezer)
 
-    await _call(hass, "button", "press", _entity(hass, "button", printer_uid(entry, "clear_plate")))
+    await _call(hass, "button", "press", entity_id(hass, "button", printer_uid(entry, "clear_plate")))
 
     bambuddy_api.clear_plate.assert_awaited_once_with(X1C)
 
@@ -112,16 +126,26 @@ async def test_a_command_reads_the_status_again_soon(
 ) -> None:
     """BamBuddy answers as soon as it passed the command on: the result
     shows after the printer reported back, not ten seconds later."""
-    entry = make_entry(hass, X1C)
-    await setup_integration(hass, entry)
+    entry = await set_up(hass, X1C)
     calls = bambuddy_api.get_status.await_count
 
-    await _call(hass, "button", "press", _entity(hass, "button", printer_uid(entry, "pause")))
+    await _call(hass, "button", "press", entity_id(hass, "button", printer_uid(entry, "pause")))
     freezer.tick(2)
     async_fire_time_changed(hass)
     await hass.async_block_till_done()
 
     assert bambuddy_api.get_status.await_count == calls + 1
+
+    # A second command right after: read again too, not ten seconds later
+    # (Home Assistant's refresh request waits that long after the last).
+    bambuddy_api.statuses[X1C]["chamber_light"] = False
+    await _call(hass, "light", "turn_off", entity_id(hass, "light", printer_uid(entry, "chamber_light")))
+    freezer.tick(2)
+    async_fire_time_changed(hass)
+    await hass.async_block_till_done()
+
+    assert bambuddy_api.get_status.await_count == calls + 2
+    assert state_of(hass, "light", printer_uid(entry, "chamber_light")).state == "off"
 
 
 @pytest.mark.parametrize(
@@ -136,12 +160,11 @@ async def test_a_command_reads_the_status_again_soon(
 async def test_bambuddys_refusals(
     hass: HomeAssistant, bambuddy_api: SimpleNamespace, failure: Exception, key: str
 ) -> None:
-    entry = make_entry(hass, X1C)
-    await setup_integration(hass, entry)
+    entry = await set_up(hass, X1C)
     bambuddy_api.pause.side_effect = failure
 
     with pytest.raises(HomeAssistantError) as raised:
-        await _call(hass, "button", "press", _entity(hass, "button", printer_uid(entry, "pause")))
+        await _call(hass, "button", "press", entity_id(hass, "button", printer_uid(entry, "pause")))
 
     assert raised.value.translation_key == key
     if key == "command_failed":
@@ -155,22 +178,20 @@ async def test_nothing_reaches_an_offline_printer(
     hass: HomeAssistant, bambuddy_api: SimpleNamespace, freezer: FrozenDateTimeFactory
 ) -> None:
     """Its entities are unavailable: Home Assistant skips them."""
-    entry = make_entry(hass, X1C)
-    await setup_integration(hass, entry)
+    entry = await set_up(hass, X1C)
     bambuddy_api.statuses[X1C] = load_fixture("status_offline.json")
     await next_refresh(hass, freezer)
 
-    await _call(hass, "light", "turn_on", _entity(hass, "light", printer_uid(entry, "chamber_light")))
-    await _call(hass, "button", "press", _entity(hass, "button", printer_uid(entry, "pause")))
+    await _call(hass, "light", "turn_on", entity_id(hass, "light", printer_uid(entry, "chamber_light")))
+    await _call(hass, "button", "press", entity_id(hass, "button", printer_uid(entry, "pause")))
 
     bambuddy_api.set_chamber_light.assert_not_awaited()
     bambuddy_api.pause.assert_not_awaited()
 
 
 async def test_the_print_speed(hass: HomeAssistant, bambuddy_api: SimpleNamespace) -> None:
-    entry = make_entry(hass, X1C)
-    await setup_integration(hass, entry)
-    entity = _entity(hass, "select", printer_uid(entry, "print_speed"))
+    entry = await set_up(hass, X1C)
+    entity = entity_id(hass, "select", printer_uid(entry, "print_speed"))
     assert hass.states.get(entity).state == "standard"  # type: ignore[union-attr]
 
     await _call(hass, "select", "select_option", entity, option="sport")
@@ -179,21 +200,35 @@ async def test_the_print_speed(hass: HomeAssistant, bambuddy_api: SimpleNamespac
 
 
 async def test_the_print_speed_needs_a_print(hass: HomeAssistant, bambuddy_api: SimpleNamespace) -> None:
-    entry = make_entry(hass, A1_MINI)
-    await setup_integration(hass, entry)
+    entry = await set_up(hass, A1_MINI)
 
     with pytest.raises(ServiceValidationError):
-        await _call(hass, "select", "select_option", _entity(hass, "select", printer_uid(entry, "print_speed", A1_MINI)), option="silent")
+        await _call(hass, "select", "select_option", entity_id(hass, "select", printer_uid(entry, "print_speed", A1_MINI)), option="silent")
 
 
-async def test_the_airduct_mode(hass: HomeAssistant, bambuddy_api: SimpleNamespace) -> None:
-    """Only printers that have one; any time."""
-    entry = make_entry(hass, H2D, X1C)
-    await setup_integration(hass, entry)
-    entity = _entity(hass, "select", printer_uid(entry, "airduct_mode", H2D))
+async def test_the_airduct_mode(
+    hass: HomeAssistant, bambuddy_api: SimpleNamespace, freezer: FrozenDateTimeFactory
+) -> None:
+    """Only printers that have one; not during a print or a filament change
+    -- the print sets it at its start, as Bambu Studio says."""
+    entry = await set_up(hass, H2D, X1C)
+    entity = entity_id(hass, "select", printer_uid(entry, "airduct_mode", H2D))
     assert hass.states.get(entity).state == "heating"  # type: ignore[union-attr]
-    assert er.async_get(hass).async_get_entity_id("select", DOMAIN, printer_uid(entry, "airduct_mode")) is None
+    assert no_entity(hass, "select", printer_uid(entry, "airduct_mode"))
 
+    with pytest.raises(ServiceValidationError) as raised:
+        await _call(hass, "select", "select_option", entity, option="cooling")
+    assert raised.value.translation_key == "job_running"
+
+    bambuddy_api.statuses[H2D].update({"state": "IDLE", "ams_status_main": 1, "ams_status_sub": 2})
+    await next_refresh(hass, freezer)
+    with pytest.raises(ServiceValidationError) as raised:
+        await _call(hass, "select", "select_option", entity, option="cooling")
+    assert raised.value.translation_key == "filament_change"
+    bambuddy_api.set_airduct_mode.assert_not_awaited()
+
+    bambuddy_api.statuses[H2D].update({"ams_status_main": 0, "ams_status_sub": 0})
+    await next_refresh(hass, freezer)
     await _call(hass, "select", "select_option", entity, option="cooling")
 
     bambuddy_api.set_airduct_mode.assert_awaited_once_with(H2D, "cooling")
@@ -221,7 +256,7 @@ async def test_the_target_temperatures(
 ) -> None:
     entry = make_entry(hass, printer)
     await setup_integration(hass, entry)
-    entity = _entity(hass, "number", printer_uid(entry, key, printer))
+    entity = entity_id(hass, "number", printer_uid(entry, key, printer))
 
     await _call(hass, "number", "set_value", entity, value=value)
 
@@ -229,8 +264,7 @@ async def test_the_target_temperatures(
 
 
 async def test_the_targets_show_bambuddys_values(hass: HomeAssistant, bambuddy_api: SimpleNamespace) -> None:
-    entry = make_entry(hass, H2D)
-    await setup_integration(hass, entry)
+    entry = await set_up(hass, H2D)
     temperatures = bambuddy_api.statuses[H2D]["temperatures"]
 
     left = state_of(hass, "number", printer_uid(entry, "nozzle_target", H2D))
@@ -241,10 +275,9 @@ async def test_the_targets_show_bambuddys_values(hass: HomeAssistant, bambuddy_a
 
 async def test_only_a_chamber_heater_gets_a_chamber_target(hass: HomeAssistant, bambuddy_api: SimpleNamespace) -> None:
     """The X1C has a chamber sensor but no heater."""
-    entry = make_entry(hass, X1C)
-    await setup_integration(hass, entry)
+    entry = await set_up(hass, X1C)
 
-    assert er.async_get(hass).async_get_entity_id("number", DOMAIN, printer_uid(entry, "chamber_target")) is None
+    assert no_entity(hass, "number", printer_uid(entry, "chamber_target"))
 
 
 @pytest.mark.parametrize(
@@ -259,17 +292,15 @@ async def test_only_a_chamber_heater_gets_a_chamber_target(hass: HomeAssistant, 
 async def test_the_fans(
     hass: HomeAssistant, bambuddy_api: SimpleNamespace, service: str, data: dict[str, Any], speed: int
 ) -> None:
-    entry = make_entry(hass, X1C)
-    await setup_integration(hass, entry)
+    entry = await set_up(hass, X1C)
 
-    await _call(hass, "fan", service, _entity(hass, "fan", printer_uid(entry, "aux_fan")), **data)
+    await _call(hass, "fan", service, entity_id(hass, "fan", printer_uid(entry, "aux_fan")), **data)
 
     bambuddy_api.set_fan_speed.assert_awaited_once_with(X1C, "aux", speed)
 
 
 async def test_the_fans_show_bambuddys_speeds(hass: HomeAssistant, bambuddy_api: SimpleNamespace) -> None:
-    entry = make_entry(hass, X1C)
-    await setup_integration(hass, entry)
+    entry = await set_up(hass, X1C)
     status = bambuddy_api.statuses[X1C]
 
     for key, field in (("part_cooling_fan", "cooling_fan_speed"), ("aux_fan", "big_fan1_speed"), ("chamber_fan", "big_fan2_speed")):
@@ -278,8 +309,7 @@ async def test_the_fans_show_bambuddys_speeds(hass: HomeAssistant, bambuddy_api:
 
 
 async def test_an_a1_mini_has_only_the_part_cooling_fan(hass: HomeAssistant, bambuddy_api: SimpleNamespace) -> None:
-    entry = make_entry(hass, A1_MINI)
-    await setup_integration(hass, entry)
+    entry = await set_up(hass, A1_MINI)
 
     fans = {e.unique_id for e in er.async_entries_for_config_entry(er.async_get(hass), entry.entry_id) if e.domain == "fan"}
     assert fans == {printer_uid(entry, "part_cooling_fan", A1_MINI)}
@@ -288,17 +318,15 @@ async def test_an_a1_mini_has_only_the_part_cooling_fan(hass: HomeAssistant, bam
 async def test_an_h2d_has_an_exhaust_fan_name_only_where_bambu_uses_it(
     hass: HomeAssistant, bambuddy_api: SimpleNamespace
 ) -> None:
-    entry = make_entry(hass, H2D)
-    await setup_integration(hass, entry)
+    entry = await set_up(hass, H2D)
 
     assert state_of(hass, "fan", printer_uid(entry, "chamber_fan", H2D)).attributes["friendly_name"].endswith("Chamber fan")
 
 
 @pytest.mark.parametrize(("service", "on"), [("turn_on", True), ("turn_off", False)])
 async def test_the_chamber_light(hass: HomeAssistant, bambuddy_api: SimpleNamespace, service: str, on: bool) -> None:
-    entry = make_entry(hass, X1C)
-    await setup_integration(hass, entry)
-    entity = _entity(hass, "light", printer_uid(entry, "chamber_light"))
+    entry = await set_up(hass, X1C)
+    entity = entity_id(hass, "light", printer_uid(entry, "chamber_light"))
     assert hass.states.get(entity).state == "on"  # type: ignore[union-attr]
 
     await _call(hass, "light", service, entity)
@@ -312,15 +340,14 @@ async def test_the_plate_can_be_cleared_with_the_printer_off(
     """A finished print, the printer switched off, BamBuddy's queue waiting:
     BamBuddy takes the plate as cleared without the printer (it sends it
     nothing), so Home Assistant offers it too."""
-    entry = make_entry(hass, X1C)
-    await setup_integration(hass, entry)
+    entry = await set_up(hass, X1C)
     offline = load_fixture("status_offline.json")
     offline.update({"state": "FINISH", "awaiting_plate_clear": True})
     bambuddy_api.statuses[X1C] = offline
     await next_refresh(hass, freezer)
 
     assert state_of(hass, "binary_sensor", printer_uid(entry, "awaiting_plate_clear")).state == "on"
-    await _call(hass, "button", "press", _entity(hass, "button", printer_uid(entry, "clear_plate")))
+    await _call(hass, "button", "press", entity_id(hass, "button", printer_uid(entry, "clear_plate")))
 
     bambuddy_api.clear_plate.assert_awaited_once_with(X1C)
 
@@ -330,11 +357,10 @@ async def test_the_active_nozzle(
 ) -> None:
     """Two-nozzle printers: BamBuddy's extruder 0 is the right nozzle, 1 the
     left one. Not while a print runs: the job decides then."""
-    entry = make_entry(hass, H2D, X1C)
-    await setup_integration(hass, entry)
-    entity = _entity(hass, "select", printer_uid(entry, "active_nozzle", H2D))
+    entry = await set_up(hass, H2D, X1C)
+    entity = entity_id(hass, "select", printer_uid(entry, "active_nozzle", H2D))
     assert hass.states.get(entity).state == "left"  # type: ignore[union-attr]
-    assert er.async_get(hass).async_get_entity_id("select", DOMAIN, printer_uid(entry, "active_nozzle")) is None
+    assert no_entity(hass, "select", printer_uid(entry, "active_nozzle"))
 
     with pytest.raises(ServiceValidationError) as raised:
         await _call(hass, "select", "select_option", entity, option="right")
@@ -353,9 +379,8 @@ async def test_the_ams_filament_backup(
 ) -> None:
     """With it on, the printer switches to a slot with the same filament
     when one runs out."""
-    entry = make_entry(hass, X1C)
-    await setup_integration(hass, entry)
-    entity = _entity(hass, "switch", printer_uid(entry, "ams_filament_backup"))
+    entry = await set_up(hass, X1C)
+    entity = entity_id(hass, "switch", printer_uid(entry, "ams_filament_backup"))
     assert hass.states.get(entity).state == "on"  # type: ignore[union-attr]
 
     await _call(hass, "switch", service, entity)
@@ -363,24 +388,47 @@ async def test_the_ams_filament_backup(
     bambuddy_api.set_ams_backup.assert_awaited_once_with(X1C, enabled)
 
 
-async def test_no_filament_backup_where_bambuddy_has_none(hass: HomeAssistant, bambuddy_api: SimpleNamespace) -> None:
-    """The A1 series reports no filament backup setting."""
-    entry = make_entry(hass, A1_MINI)
-    await setup_integration(hass, entry)
+async def test_the_filament_backup_unknown_to_bambuddy(hass: HomeAssistant, bambuddy_api: SimpleNamespace) -> None:
+    """With an AMS every printer has the setting; BamBuddy 1.2.5.7 cannot
+    read it from the A1 and P1 series -- unknown then, and it still
+    switches."""
+    entry = await set_up(hass, A1_MINI)
+    entity = entity_id(hass, "switch", printer_uid(entry, "ams_filament_backup", A1_MINI))
+    state = hass.states.get(entity)
+    assert state is not None
+    assert (state.state, state.attributes.get("assumed_state")) == ("unknown", True)
 
-    assert er.async_get(hass).async_get_entity_id("switch", DOMAIN, printer_uid(entry, "ams_filament_backup", A1_MINI)) is None
+    await _call(hass, "switch", "turn_on", entity)
+
+    bambuddy_api.set_ams_backup.assert_awaited_once_with(A1_MINI, True)
+
+
+async def test_the_filament_backup_comes_with_an_ams(
+    hass: HomeAssistant, bambuddy_api: SimpleNamespace, freezer: FrozenDateTimeFactory
+) -> None:
+    """Without an AMS there is nothing to back up -- the external spool takes
+    no part; a unit plugged in later brings the switch."""
+    units = bambuddy_api.statuses[X1C]["ams"]
+    bambuddy_api.statuses[X1C]["ams"] = []
+    entry = await set_up(hass, X1C)
+    assert no_entity(hass, "switch", printer_uid(entry, "ams_filament_backup"))
+
+    bambuddy_api.statuses[X1C]["ams"] = units
+    await next_refresh(hass, freezer)
+
+    state = state_of(hass, "switch", printer_uid(entry, "ams_filament_backup"))
+    assert (state.state, state.attributes.get("assumed_state")) == ("on", None)
 
 
 async def test_no_nozzle_switch_during_a_filament_change(
     hass: HomeAssistant, bambuddy_api: SimpleNamespace, freezer: FrozenDateTimeFactory
 ) -> None:
-    entry = make_entry(hass, H2D)
-    await setup_integration(hass, entry)
+    entry = await set_up(hass, H2D)
     bambuddy_api.statuses[H2D].update({"state": "IDLE", "ams_status_main": 1, "ams_status_sub": 2})
     await next_refresh(hass, freezer)
 
     with pytest.raises(ServiceValidationError) as raised:
-        await _call(hass, "select", "select_option", _entity(hass, "select", printer_uid(entry, "active_nozzle", H2D)), option="right")
+        await _call(hass, "select", "select_option", entity_id(hass, "select", printer_uid(entry, "active_nozzle", H2D)), option="right")
 
     assert raised.value.translation_key == "filament_change"
     bambuddy_api.select_extruder.assert_not_awaited()
@@ -389,17 +437,15 @@ async def test_no_nozzle_switch_during_a_filament_change(
 async def test_the_ai_detection(hass: HomeAssistant, bambuddy_api: SimpleNamespace) -> None:
     """Only what the model has: BamBuddy reads a detector a printer lacks
     as on. Switchable during a print -- a false alarm is when it matters."""
-    entry = make_entry(hass, X1C, P1S)
-    await setup_integration(hass, entry)
-    registry = er.async_get(hass)
+    entry = await set_up(hass, X1C, P1S)
     for key in ("ai_monitoring", "first_layer_inspection", "build_plate_detection"):
-        assert hass.states.get(_entity(hass, "switch", printer_uid(entry, key))).state == "on"  # type: ignore[union-attr]
+        assert hass.states.get(entity_id(hass, "switch", printer_uid(entry, key))).state == "on"  # type: ignore[union-attr]
     for key in ("spaghetti_detection", "clumping_detection"):
-        assert registry.async_get_entity_id("switch", DOMAIN, printer_uid(entry, key)) is None, key
+        assert no_entity(hass, "switch", printer_uid(entry, key)), key
     for key in ("ai_monitoring", "build_plate_detection", "spaghetti_detection"):
-        assert registry.async_get_entity_id("switch", DOMAIN, printer_uid(entry, key, P1S)) is None, key
+        assert no_entity(hass, "switch", printer_uid(entry, key, P1S)), key
 
-    await _call(hass, "switch", "turn_off", _entity(hass, "switch", printer_uid(entry, "first_layer_inspection")))
+    await _call(hass, "switch", "turn_off", entity_id(hass, "switch", printer_uid(entry, "first_layer_inspection")))
 
     bambuddy_api.set_print_option.assert_awaited_once_with(X1C, "first_layer_inspector", False)
 
@@ -409,12 +455,11 @@ async def test_the_build_plate_detection_is_named_as_in_bambu_studio(
 ) -> None:
     """The X1 and A series detect the plate's position only, the others its
     type and position: Bambu Studio names the two apart."""
-    entry = make_entry(hass, X1C, H2D)
-    await setup_integration(hass, entry)
+    entry = await set_up(hass, X1C, H2D)
     registry = er.async_get(hass)
 
-    x1c = registry.async_get(_entity(hass, "switch", printer_uid(entry, "build_plate_detection")))
-    h2d = registry.async_get(_entity(hass, "switch", printer_uid(entry, "build_plate_detection", H2D)))
+    x1c = registry.async_get(entity_id(hass, "switch", printer_uid(entry, "build_plate_detection")))
+    h2d = registry.async_get(entity_id(hass, "switch", printer_uid(entry, "build_plate_detection", H2D)))
 
     assert x1c is not None and h2d is not None
     assert (x1c.translation_key, x1c.entity_id) == (
@@ -427,9 +472,8 @@ async def test_the_build_plate_detection_is_named_as_in_bambu_studio(
 async def test_the_single_detectors_of_an_h2d(
     hass: HomeAssistant, bambuddy_api: SimpleNamespace, freezer: FrozenDateTimeFactory
 ) -> None:
-    entry = make_entry(hass, H2D)
-    await setup_integration(hass, entry)
-    clumping = _entity(hass, "switch", printer_uid(entry, "clumping_detection", H2D))
+    entry = await set_up(hass, H2D)
+    clumping = entity_id(hass, "switch", printer_uid(entry, "clumping_detection", H2D))
     bambuddy_api.statuses[H2D]["print_options"]["nozzle_clumping_detector"] = False
     await next_refresh(hass, freezer)
     assert hass.states.get(clumping).state == "off"  # type: ignore[union-attr]
@@ -437,4 +481,4 @@ async def test_the_single_detectors_of_an_h2d(
     await _call(hass, "switch", "turn_on", clumping)
 
     bambuddy_api.set_print_option.assert_awaited_once_with(H2D, "clump_detector", True)
-    assert er.async_get(hass).async_get_entity_id("switch", DOMAIN, printer_uid(entry, "ai_monitoring", H2D)) is None
+    assert no_entity(hass, "switch", printer_uid(entry, "ai_monitoring", H2D))

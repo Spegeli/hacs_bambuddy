@@ -14,6 +14,7 @@ if TYPE_CHECKING:
     from homeassistant.components.repairs import RepairsFlowResult
 
 from .const import CONF_PRINTER_NAME, CONF_PRINTERS
+from .coordinator import async_remove_printer
 from .models import stored_key
 
 
@@ -35,9 +36,7 @@ class RemoveMissingPrinter(RepairsFlow):
         if entry is None or printer is None:
             return self.async_abort(reason="already_removed")
         if user_input is not None:
-            self.hass.config_entries.async_update_entry(
-                entry, options={**entry.options, CONF_PRINTERS: [item for item in printers if item is not printer]}
-            )
+            async_remove_printer(self.hass, entry, printer)
             return self.async_create_entry(data={})
         return self.async_show_form(
             step_id="confirm",

@@ -103,6 +103,8 @@ def test_the_flow_text_check_reports_what_a_shown_text_lacks(result, problems):
 # backend/app/api/routes/system.py, updates.py, firmware.py).
 _STATUS = [
     "connected",
+    "name",
+    "drying_screen_only",
     "state",
     "current_print",
     "subtask_name",
@@ -226,7 +228,9 @@ def test_the_list_names_every_status_field_the_code_reads():
     integration's modules read is in `_STATUS`, so the fixtures carry it
     under BamBuddy's name."""
     modules = {module.name: module.read_text(encoding="utf-8") for module in _INTEGRATION.glob("*.py")}
-    code = "\n".join(modules.values())
+    # A smart plug's status is another answer, with fields of its own.
+    del modules["plugs.py"]
+    code ="\n".join(modules.values())
     # Read directly, through the sensors' and binary sensors' helpers, and as the fans' fields.
     read = set(re.findall(r'(?:status(?:\.get\(|\[)|_status\(|_text\(|_flag\()"([a-z0-9_]+)"', code))
     read |= set(re.findall(r'field="([a-z0-9_]+)"', modules["fan.py"]))

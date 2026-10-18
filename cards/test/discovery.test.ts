@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
-import { findPrinter, isPrinter, printerDevices } from "../src/discovery";
+import { findPrinter, isPrinter, printerDevices, shownUnits } from "../src/discovery";
+import type { PrinterRefs } from "../src/types";
 import { a1mini, amsDevice, h2d, instanceDevice, makeHass, offlineP1s, readOnlyX1c, x1c, type FakeDevice } from "./fixtures";
 
 describe("finding a printer's entities", () => {
@@ -92,6 +93,18 @@ describe("finding a printer's entities", () => {
     expect(serial?.ams[0]?.name).toBe("AMS B");
   });
 
+  it("knows a printer has two nozzles also where the user disabled a nozzle's sensor", () => {
+    const [printer, ...units] = h2d() as [FakeDevice, ...FakeDevice[]];
+    const bare = { ...printer, entities: printer.entities.filter((entity) => entity.key !== "left_nozzle_temperature") };
+    const refs = findPrinter(makeHass({ devices: [bare, ...units] }), "dev-h2d");
+    expect(refs?.dual).toBe(true);
+    expect(refs?.nozzles).toEqual([
+      { sensor: undefined, target: "number.h2d_left_nozzle_target_temperature" },
+      { sensor: "sensor.h2d_right_nozzle_temperature", target: "number.h2d_right_nozzle_target_temperature" },
+    ]);
+    expect(refs?.externalSpools).toEqual(["sensor.h2d_left_external_spool", "sensor.h2d_right_external_spool"]);
+  });
+
   it("finds no controls with a key that lacks Control Printer", () => {
     const refs = findPrinter(makeHass({ devices: readOnlyX1c() }), "dev-x1c");
     expect(refs).toMatchObject({ pause: undefined, stop: undefined, speed: undefined, light: undefined, fans: [] });
@@ -116,15 +129,17 @@ describe("finding a printer's entities", () => {
     expect(refs?.ams[0]?.slots).toEqual(["sensor.dev-x1c_ams_1_slot_2", "sensor.dev-x1c_ams_1_slot_1"]);
   });
 
-  it("hides a unit no longer plugged in while the printer is online, but keeps watching it", () => {
+  it("shows no unit that is no longer plugged in while the printer is online, but keeps it and watches it", () => {
     const [printer, ams] = x1c() as [FakeDevice, FakeDevice];
     const gone = amsDevice({ printer, amsId: 1, model: "AMS", slots: [{ trayId: 4 }], online: false });
-    const refs = findPrinter(makeHass({ devices: [printer, ams, gone] }), "dev-x1c");
-    expect(refs?.ams.map((unit) => unit.deviceId)).toEqual([ams.id]);
-    expect(refs?.watched).toContain("sensor.dev-x1c_ams_1_slot_1");
+    const hass = makeHass({ devices: [printer, ams, gone] });
+    const refs = findPrinter(hass, "dev-x1c") as PrinterRefs;
+    expect(refs.ams.map((unit) => unit.deviceId)).toEqual([ams.id, gone.id]);
+    expect(shownUnits(hass, refs).map((unit) => unit.deviceId)).toEqual([ams.id]);
+    expect(refs.watched).toContain("sensor.dev-x1c_ams_1_slot_1");
     // An offline printer's units are all unavailable: they stay.
-    const offline = findPrinter(makeHass({ devices: offlineP1s() }), "dev-p1s");
-    expect(offline?.ams).toHaveLength(1);
+    const offline = makeHass({ devices: offlineP1s() });
+    expect(shownUnits(offline, findPrinter(offline, "dev-p1s") as PrinterRefs)).toHaveLength(1);
   });
 
   it("skips a child device without slots, and entities without a translation key", () => {

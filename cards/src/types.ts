@@ -14,6 +14,9 @@ export interface HassEntityRegistryEntry {
   device_id?: string | null;
   platform: string;
   translation_key?: string | null;
+  /** The user's name for the entity, else the integration's own -- in the
+   * server's language. */
+  name?: string | null;
   hidden?: boolean;
 }
 
@@ -70,23 +73,51 @@ export interface Hass {
   ) => Promise<unknown>;
 }
 
-// --- Configuration (option keys are an interface: never renamed) -----------
+// --- Configuration (option keys and values are an interface: never renamed) --
 
 export type CameraMode = "tap" | "always" | "off";
 export const CAMERA_MODES: readonly CameraMode[] = ["tap", "always", "off"];
 
-export const SECTIONS = ["show_temperatures", "show_fans", "show_ams", "show_controls"] as const;
-export type Section = (typeof SECTIONS)[number];
+/** The status view's blocks below the job, in their default order: the
+ * print controls first, so Stop is in reach during a print; the plugs right
+ * after them -- after a print the switch-off waits there. */
+export const STATUS_BLOCKS = ["controls", "power", "temperatures", "ams", "fans", "speed"] as const;
+export type StatusBlock = (typeof STATUS_BLOCKS)[number];
+
+/** The chips under the printer's name: every one the editor offers. */
+export const HEADER_CHIPS = ["network", "hms", "firmware", "maintenance", "door", "storage", "drying", "power"] as const;
+export type HeaderChip = (typeof HEADER_CHIPS)[number];
+
+/** The chips a card shows unless the user chose: the others are offered. */
+export const DEFAULT_CHIPS: readonly HeaderChip[] = ["network", "hms", "firmware"];
+
+/** The control view's sections, in their default order. */
+export const CONTROL_SECTIONS = ["heating", "options", "motion"] as const;
+export type ControlSection = (typeof CONTROL_SECTIONS)[number];
+
+export const VIEWS = ["status", "control", "filament"] as const;
+export type View = (typeof VIEWS)[number];
+
+/** How the filament view shows an AMS unit at first: folded from three
+ * units on, folded, or with its slots. */
+export const AMS_FOLDING = ["auto", "folded", "open"] as const;
+export type AmsFolding = (typeof AMS_FOLDING)[number];
 
 export interface CardConfig {
   type: string;
   /** The printer's device ID. */
   printer?: string;
   camera?: CameraMode;
-  show_temperatures?: boolean;
-  show_fans?: boolean;
-  show_ams?: boolean;
-  show_controls?: boolean;
+  status_blocks?: StatusBlock[];
+  header_chips?: HeaderChip[];
+  start_view?: View;
+  show_control_tab?: boolean;
+  control_sections?: ControlSection[];
+  read_only?: boolean;
+  show_filament_tab?: boolean;
+  ams_folding?: AmsFolding;
+  /** The row of the switch-off after the print under the printer's plug. */
+  show_auto_off?: boolean;
 }
 
 // --- The printer as the card finds it ---------------------------------------
@@ -120,7 +151,7 @@ export interface Heater {
 /** An AMS unit's entities, by entity ID; slots in slot order. */
 export interface AmsRefs {
   deviceId: string;
-  /** "AMS 1", "AMS HT 1": the device's name without the printer's. */
+  /** "AMS A", "AMS HT A": the device's name without the printer's. */
   name: string;
   /** AMS, AMS 2 Pro, AMS HT or AMS Lite. */
   model: string;
@@ -129,6 +160,27 @@ export interface AmsRefs {
   slots: string[];
   drying?: string;
   dryingRemaining?: string;
+}
+
+/** A smart plug BamBuddy links to the printer, its entities by entity ID. */
+export interface PlugRefs {
+  deviceId: string;
+  /** The plug's name: its device's without the printer's. */
+  name: string;
+  /** Its switch, or -- a plug BamBuddy only watches, a key that may not
+   * switch plugs -- its state. */
+  power?: string;
+  /** `power` is a switch. */
+  switchable: boolean;
+  /** A Home Assistant script BamBuddy keeps as a plug: it runs. */
+  run?: string;
+  watts?: string;
+  energyToday?: string;
+  /** Our switch-off after the print: the plug powers the printer. */
+  autoOff?: string;
+  autoOffEveryPrint?: string;
+  autoOffTemperature?: string;
+  autoOffSkip?: string;
 }
 
 /** A printer's entities, by entity ID. */
@@ -173,6 +225,8 @@ export interface PrinterRefs {
   detectors: { key: DetectorKey; entityId: string }[];
   light?: string;
   camera?: string;
+  /** The live view's frame rate, where the camera gives more than 5. */
+  cameraFps?: string;
   cover?: string;
   /** Asks BamBuddy for the printer's status now; with every API key. */
   refresh?: string;
@@ -184,12 +238,26 @@ export interface PrinterRefs {
   ipAddress?: string;
   /** The printer's firmware update entity. */
   firmware?: string;
+  /** On while the door is open (printers with a door sensor). */
+  door?: string;
+  /** On while the printer has its storage: an SD card, or a USB drive. */
+  storage?: string;
+  /** The storage is a USB drive (P2S, X2D, H2 series), not an SD card. */
+  storageUsb: boolean;
+  /** BamBuddy's maintenance of the printer: state and tasks. */
+  maintenance?: string;
+  /** The airduct mode: cooling or heating (P2S, X2D, H2 series). */
+  airduct?: string;
+  /** The AMS filament backup switch: with an AMS unit. */
+  filamentBackup?: string;
   /** Per nozzle -- the only one, or left and right --, where it has one. */
   nozzleDiameters: (string | undefined)[];
   nozzleTypes: (string | undefined)[];
+  /** Every AMS unit of the printer, also one unplugged now (see shownUnits). */
   ams: AmsRefs[];
+  /** Its smart plugs: the one that powers it first. */
+  plugs: PlugRefs[];
   /** Every entity of the printer and its AMS units: their changes redraw the card. */
   watched: string[];
 }
 
-export type View = "status" | "control" | "filament";

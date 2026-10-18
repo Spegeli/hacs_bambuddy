@@ -7,7 +7,7 @@ By participating you agree to the [Code of Conduct](CODE_OF_CONDUCT.md).
 ## Ways to contribute
 
 - **Report a security vulnerability** — privately, never as a public issue: see the [security policy](SECURITY.md).
-- **Report a bug** — [open a bug report](https://github.com/Spegeli/hacs_bambuddy/issues/new?template=bug_report.yml). The versions of the integration, BamBuddy and Home Assistant, and a debug log, help most.
+- **Report a bug** — [open a bug report](https://github.com/Spegeli/hacs_bambuddy/issues/new?template=bug_report.yml). The versions of the integration, BamBuddy and Home Assistant, the diagnostics and a debug log help most.
 - **Suggest a feature** — [open a feature request](https://github.com/Spegeli/hacs_bambuddy/issues/new?template=feature_request.yml).
 - **Improve translations** — corrections and new languages are welcome, see [Translations](#translations).
 - **Submit a change** — see [Pull requests](#pull-requests).
@@ -26,7 +26,7 @@ Problems with BamBuddy itself — its web interface, its printer connection — 
 2. Keep the change focused — one topic per pull request.
 3. Write the commit messages as [Conventional Commits](https://www.conventionalcommits.org) — see [Commit messages](#commit-messages).
 4. Open the pull request against `dev` and fill in the template.
-5. Validate checks it automatically (see [Continuous integration](#continuous-integration)); it is merged once its **Validation summary** is green. A first-time contributor's run waits for the maintainer's approval, so run the tests and mypy yourself first (see [Tests and typing](#tests-and-typing)): you get the answer sooner.
+5. Validate checks it automatically (see [Continuous integration](#continuous-integration)); it is merged once its **Validation summary** is green. A first-time contributor's run waits for the maintainer's approval, so run the tests and mypy yourself first (see [Tests and typing](#tests-and-typing)), and for a change to the card its checks (see [Dashboard card](#dashboard-card)): you get the answer sooner.
 
 **Do not bump the version in `manifest.json`.** The Create Release workflow sets it (see [Releases](#releases)).
 
@@ -86,9 +86,9 @@ npm test            # Vitest with coverage; fails under 95 %
 npm run build       # writes the bundle
 ```
 
-To see a change in Home Assistant, run `npm run build` and restart Home Assistant: the integration reads the bundle's hash for its URL once per run (`cards.py`), and browsers keep the file they loaded under the old URL.
+To see a change in Home Assistant, run `npm run build`, restart Home Assistant and reload the page: the integration reads the bundle's hash for its URL once per run (`cards.py`), and a page left open keeps the bundle it loaded under the old URL.
 
-The card finds a printer's entities by their translation keys, and its AMS units as the devices connected through the printer (`cards/src/discovery.ts`). A translation key, a state or an attribute the card reads is an interface: change the card in the same pull request. Its editor is Home Assistant's own form, described by `getConfigForm` (`cards/src/forms.ts`). Its texts are English and German, `cards/src/translations/en.ts` as the source and `de.ts`, with the same keys and placeholders (`cards/test/i18n.test.ts`); entity states come translated from the integration.
+The card finds a printer's entities by their translation keys, and its AMS units as the devices connected through the printer (`cards/src/discovery.ts`). A translation key, a state or an attribute the card reads is an interface: change the card in the same pull request. Its editor (`cards/src/editor.ts`) shows Home Assistant's own form with the fields of `cards/src/forms.ts`, filled with the defaults, and writes back only what the user changed. In the editor's preview, a section with nothing to show now shows as a faded example (`sample`, `cards/src/parts.ts`); the card knows that preview by Home Assistant's dialog `hui-dialog-edit-card` around it, because Home Assistant sets `preview` on every card of a dashboard in edit mode too. Its texts are English and German, `cards/src/translations/en.ts` as the source and `de.ts`, with the same keys and placeholders (`cards/test/i18n.test.ts`); entity states come translated from the integration.
 
 Every change that can alter the build — under `cards/src`, or to `build.mjs`, `tsconfig.json` or `package-lock.json` — commits the rebuilt bundle with it, and nothing else ever changes the bundle: the check "Repository / Cards" rebuilds it and fails when the committed file differs. Pin every package to an exact version.
 
@@ -98,36 +98,56 @@ The integration lives in `custom_components/bambuddy/`; the dashboard card's sou
 
 | File | Responsibility |
 |---|---|
-| `__init__.py` | Setup and unload; one coordinator per printer added in the options; deleting a printer's device from its device page (the instance's device cannot be deleted) |
-| `api.py` | `BamBuddyClient` — all HTTP calls to BamBuddy |
-| `binary_sensor.py` | Printer binary sensors: online, SD card, HMS errors, wired network, developer mode |
+| `__init__.py` | Setup and unload: BamBuddy's printers and the key's permissions, the devices, one coordinator per printer added in the options, a repair issue for a printer BamBuddy no longer lists; the actions and the card, once per run; migrating older entries; deleting a device from its device page (not the instance's, nor an AMS unit its printer still reports) |
+| `api.py` | `BamBuddyClient` — every HTTP call to BamBuddy, and its errors; `normalise_url` for the address |
+| `binary_sensor.py` | BamBuddy's connection; per printer online, door, build plate, SD card (a USB drive on the P2S, X2D and H2 series), developer mode, wired network, timelapse; per AMS unit drying |
 | `brand/` | Icon and logo for Home Assistant's brands proxy |
-| `button.py` | Printer buttons: pause, resume, stop, clear HMS errors, clear plate, refresh status |
+| `button.py` | Pause, resume, stop, plate cleared, clear HMS errors, refresh status |
 | `camera.py` | MJPEG stream and snapshot through BamBuddy's camera proxy, with a stream token kept for 55 minutes |
-| `config_flow.py` | Setup (host, port, API key) and the options (Configure): add and remove printers |
-| `const.py` | Domain, config keys, default port, update interval, print speed modes |
-| `coordinator.py` | The instance coordinator (`/health`, `/system/info`, `/archives/stats`) and one coordinator per printer (`/printers/{id}`, `/printers/{id}/status`) |
-| `entity.py` | `BamBuddyPrinterEntityMixin` — the printer device's info, shared by every printer entity |
+| `cards.py` | Serves the dashboard card's bundle and adds it to every dashboard |
+| `config_flow.py` | Setup (address, API key, certificate check, printers), reauthentication, reconfiguration (a new address, its printers matched by serial number), and the options (Configure): add and remove printers |
+| `const.py` | Domain, config keys, intervals, the minimum BamBuddy version, print speed modes |
+| `coordinator.py` | One coordinator per printer (`/printers/{id}/status` every 10 seconds; print hours, BamBuddy's name and details once a minute, and the device names after them; its maintenance every 10 minutes and after a print), the instance's (`/archives/stats` every minute, `/system/info` every 5 minutes) and the update checks' (`/updates/check`, `/firmware/updates` every 6 hours) |
+| `diagnostics.py` | Entry and device diagnostics, redacted (`TO_REDACT`) |
+| `entity.py` | Device infos; the base entities — availability, unique IDs and entity IDs; `async_run_command`, how a command reaches a printer |
+| `fan.py` | Part cooling, auxiliary, chamber or exhaust, and left auxiliary fan |
 | `frontend/bambuddy-card.js` | The dashboard card, built from `cards/` — never edited by hand |
+| `icons.json` | Entity and action icons |
 | `image.py` | The cover image of the current print job |
-| `select.py` | Print speed |
-| `sensor.py` | Instance and printer sensors |
+| `light.py` | Chamber light |
+| `models.py` | What BamBuddy's printer status means, independent of entities: print status and stage, what each model has, AMS units and slots, names and keys |
+| `number.py` | Target temperatures |
+| `repairs.py` | The repair that removes a printer BamBuddy no longer lists |
+| `select.py` | Print speed, airduct mode, active nozzle |
+| `sensor.py` | BamBuddy's figures; per printer status, job, temperatures, filament, maintenance and diagnostics; per AMS unit slots, humidity, temperature and drying time |
+| `services.py`, `services.yaml` | The actions |
 | `strings.json`, `translations/` | UI strings, two languages (see [Translations](#translations)) |
-| `switch.py` | Chamber light |
-
-Both coordinators poll every 10 seconds.
+| `switch.py` | AMS filament backup (with an AMS unit, also one plugged in later), AI detection |
+| `update.py` | New BamBuddy releases and printer firmware |
 
 ## Things that are easy to get wrong
 
-**`/health` lies outside `/api/v1` and needs no key.** Every other endpoint is under `/api/v1` and needs the `X-API-Key` header.
+**Not every endpoint takes the key.** All are under `/api/v1`, and all but four need the `X-API-Key` header: `/updates/version` and `/auth/status` take none, the camera's stream and snapshot a camera token as `?token=` instead — which is why a request's query is never logged.
 
 **BamBuddy's field names are not always the obvious ones.** The current layer is `layer_num`, not `current_layer`; `remaining_time` is in minutes; the print speed is `speed_level` (1 Silent, 2 Standard, 3 Sport, 4 Ludicrous); the auxiliary and chamber fans are `big_fan1_speed` and `big_fan2_speed`.
 
-**Printers without a chamber sensor report `temperatures.chamber` as `null`** — the A1 Mini, for one. The Chamber Temperature sensor is created only when the printer reports a value at setup.
+**Some reads write.** BamBuddy's maintenance routes (`/maintenance/printers/{id}`) add missing default tasks to its database when they read: read them rarely.
 
-**Never set `model_id` on a device:** Home Assistant then shows the model twice. A printer's model reads `BamBuddy Printer (<model>)`.
+**BamBuddy 1.2.5.7 reads the AMS filament backup only from the printer's `cfg`,** which the A1 and P1 series do not send: `ams_filament_backup` is `null` there (1.2.6 reads it), so the switch exists with an AMS and may be unknown.
 
-**Permissions count only with BamBuddy's authentication on.** With it off, BamBuddy answers every request, so a missing permission shows only with authentication on. Test with it on: with a key that has only **Read Status**, the print controls must fail with 403.
+**Two nozzles are counted both ways.** In `temperatures`, `nozzle` is the left nozzle and `nozzle_2` the right; in `nozzles`, the nozzle setpoint and `select-extruder`, 0 is the right (or only) nozzle and 1 the left. The entities are keyed like the temperatures (`nozzle_…`, `nozzle_2_…`).
+
+**Printers without a chamber sensor report `temperatures.chamber` as `null`** — the A1 Mini, for one. The *Chamber temperature* sensor is created only when the printer reports a value at setup.
+
+**An offline printer answers with its last values:** BamBuddy reports `connected: false` beside stale data. So a printer's entities are unavailable while it is offline, except those that tell about the connection itself (`available_when_offline`).
+
+**BamBuddy's control routes do not check the printer's state** (only skipping objects and clearing the plate do). `async_run_command` (`entity.py`) refuses what the printer cannot take now: offline, a job under way (`idle_only`, `paused_ok`), a filament change, or the entity's own `allowed`.
+
+**Serial numbers are the identity, not BamBuddy's printer numbers**, which a new BamBuddy or a restored database changes: device identifiers `<entry>_printer_<serial>`, unique IDs `<entry>_p<serial>_<key>`, AMS units by their own serials. A new entity's ID is set from the model, the serial number and the English translation key (`suggest_entity_id`, `entity.py`). A changed key leaves the users' entities and their history behind; a changed translation key changes the entity's name and a new installation's entity ID, and breaks the card, which finds entities by it.
+
+**Never set `model_id` on a device:** Home Assistant then shows the model twice. A printer's model is BamBuddy's model string, its manufacturer Bambu Lab.
+
+**Permissions count only with BamBuddy's authentication on.** With it off, BamBuddy answers every request, so a missing permission shows only with authentication on. Test with it on: with a key that has only **Read Status**, the integration creates no controls, and BamBuddy refuses a control request with 403. Before BamBuddy 1.2.5.7, `/auth/me` claims every permission for any key — hence that minimum.
 
 **Home Assistant 2025.5 is the floor** (`homeassistant` in `hacs.json`), and only APIs that exist there may be used. Home Assistant 2025.5 runs on Python 3.13, so the integration must run on 3.13 too, although the tests and mypy run on 3.14: use no syntax and no standard-library API newer than 3.13 (such as `except A, B:` without parentheses), and keep `from __future__ import annotations` at the top of every module. 3.13 evaluates annotations as it defines a class or function, so without that line a name defined further down the module fails the import there, while 3.14 evaluates them only when asked. CI compiles the integration with Python 3.13, checks that every module keeps `from __future__ import annotations`, and runs the suite on 2025.5; what the tests do not reach is for review.
 
@@ -137,12 +157,12 @@ The integration ships two languages under `translations/`: English (`en`) and Ge
 
 `strings.json` is the source of truth, and `translations/en.json` mirrors it exactly. **Changing a text means changing it in every translation file**: edit `strings.json`, copy it to `translations/en.json`, and change the same key in `translations/de.json` in the same pull request. A new key goes into every file.
 
-Entity names are not translated yet: they are English, set in the code.
+Every entity takes its name — and an enum sensor's or a select's states — from its translation key under `entity`. The dashboard card's own texts live in `cards/src/translations/` (see [Dashboard card](#dashboard-card)).
 
 Which language a text is shown in depends on who writes it out:
 
-- **Home Assistant's frontend**, in each user's profile language: the setup and options dialogs.
-- **Home Assistant's backend**, in its system language: the integration's error messages (`exceptions`), such as the refusal to delete the BamBuddy instance's device.
+- **Home Assistant's frontend**, in each user's profile language: the setup, options and repair dialogs, entity states, the actions' descriptions — and the card's texts.
+- **Home Assistant's backend**, in its system language: entity names, and the integration's error messages (`exceptions`), such as the refusal to delete the BamBuddy instance's device. The card shows an error its own commands get in the viewer's language.
 
 Write the files as UTF-8 without a BOM, formatted like the others (`json.dumps(..., indent=2, ensure_ascii=False)`).
 
@@ -217,7 +237,7 @@ The maintainer releases with the **Create Release** workflow (`.github/workflows
 
 **Versions** follow [Semantic Versioning](https://semver.org). The next stable version is the last stable one plus a bump the commits since then call for (see [Commit messages](#commit-messages)): major when one of them is a breaking change, else minor when one is a `feat`, else patch. "Version bump" overrides that with major, minor or patch. A beta carries the stable version it leads to: after `2.0.0`, a `feat` on `dev` makes the betas `2.1.0-beta.1`, `2.1.0-beta.2`, and then the stable `2.1.0`. `manifest.json` gets the version without the `v`. A forced bump holds for its own run only — every run computes the version again. So force the same bump for every beta of a version and for its stable release: `major` for `3.0.0` and each of its betas. A later run on "auto" could plan `2.1.0`, which ranks below the `3.0.0` betas already out, so HACS offers it to none of their installations.
 
-**From the date versions to 2.0.0.** The date versions (`2026.05.17` and older) are the 1.x line: until the first Semantic Versioning stable exists, the next version counts from `1.0.0`. That first one is `2.0.0`: release it — and any beta of it — with "Version bump" set to major, which "auto" would count as `1.1.0`. Its tag, once, is `v2.0.0_redesign`: HACS cannot read that tag as a version and compares it with the installed one as text, so every installation on a date version sees the update, while a plain `2.0.0` ranks below `2026.05.17`. `manifest.json` says `2.0.0` and the release is titled `v2.0.0`; later tags are plain again. An installation that skips `2.0.0` and stays on a date version sees no later update either. A beta of `2.0.0` ranks below the date versions as well, so HACS offers it to nobody, pre-releases switched on or not: install it by hand, with Redownload → "Need a different version?". The early tags `v0.0.1b1` and `v0.0.1b2` count as neither: the release script ignores them.
+**From the date versions to 2.0.0.** The date versions (`2026.05.17` and older) are the 1.x line: until the first Semantic Versioning stable exists, the next version counts from `1.0.0`. That first one is `2.0.0`: release it — and any beta of it — with "Version bump" set to major. A run that plans any other first version stops at its plan with "No Semantic Versioning release exists yet", before it commits anything. Its tag, once, is `v2.0.0_redesign`: HACS cannot read that tag as a version and compares it with the installed one as text, so every installation on a date version sees the update, while a plain `2.0.0` ranks below `2026.05.17`. `manifest.json` says `2.0.0` and the release is titled `v2.0.0`; later tags are plain again. An installation that skips `2.0.0` and stays on a date version sees no later update either. A beta of `2.0.0` ranks below the date versions as well, so HACS offers it to nobody, pre-releases switched on or not: install it by hand, with Redownload → "Need a different version?". The early tags `v0.0.1b1` and `v0.0.1b2` count as neither: the release script ignores them.
 
 **Release notes** are generated from the commit subjects (see [Commit messages](#commit-messages)), in sections in this order, empty ones left out: 💥 Breaking Changes, ✨ New Features, ⚡ Improvements, 🐛 Bug Fixes, 🔒 Security, ♻️ Refactor & Code Quality, 📝 Documentation. For notes written by hand — `2.0.0`'s — tick "Create a stable release as a draft, to write its notes by hand": the draft carries the generated notes, to be replaced before it is published. A pre-release cannot be a draft: HACS does not see drafts. A draft's tag is pushed already, and it counts as released: it decides the next version, the notes' range and, for `2.0.0`, the one-time suffix. So to withdraw a draft, delete the draft **and its tag** before the next run. The version commit on `main` can stay: a next run with the same settings finds the version in `manifest.json` and commits nothing. With the tag kept, the next run stops with "Nothing to release"; once more was merged, it plans past the tag — for `2.0.0` a plain `v3.0.0` or `v2.0.1`, which no installation on a date version is offered.
 

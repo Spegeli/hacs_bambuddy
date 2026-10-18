@@ -1,8 +1,31 @@
 // What the card's tests do with a mounted card: find its parts, read its
 // text, press its buttons and hand it a new hass.
+import { cardStyles } from "../src/styles";
 import type { FakeCard, FakeHass } from "./fixtures";
 
+/** The card's style sheet as one text. */
+export const styleText = (): string => (Array.isArray(cardStyles) ? cardStyles : [cardStyles]).map((sheet) => (sheet as { cssText: string }).cssText).join("");
+
 export const NBSP = " ";
+
+/** The rules inside every at-rule of the style sheet with this head --
+ * "@container (max-width: 280px)" --, one after the other; "" where none. */
+export function atRule(head: string): string {
+  const sheet = styleText();
+  const blocks: string[] = [];
+  for (let start = sheet.indexOf(`${head} {`); start >= 0; start = sheet.indexOf(`${head} {`, start + 1)) {
+    const open = sheet.indexOf("{", start);
+    let depth = 0;
+    for (let index = open; index < sheet.length; index += 1) {
+      if (sheet[index] === "{") depth += 1;
+      else if (sheet[index] === "}" && --depth === 0) {
+        blocks.push(sheet.slice(open + 1, index));
+        break;
+      }
+    }
+  }
+  return blocks.join("\n");
+}
 
 export const root = (card: FakeCard): ShadowRoot => card.shadowRoot as ShadowRoot;
 export const find = <T extends Element = HTMLElement>(card: FakeCard, selector: string): T | null => root(card).querySelector<T>(selector);

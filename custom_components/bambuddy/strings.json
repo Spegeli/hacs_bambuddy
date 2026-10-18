@@ -17,14 +17,21 @@
       },
       "printers": {
         "title": "Choose printers",
-        "description": "These printers are set up in BamBuddy. Each selected printer becomes a device in Home Assistant. You can add or remove printers later with Configure.",
+        "description": "These printers are set up in BamBuddy. Each selected printer becomes a device in Home Assistant. You can add or remove printers later with Configure. Names come from BamBuddy: rename a printer there.",
+        "data": {
+          "printers": "Printers"
+        }
+      },
+      "printers_read_only": {
+        "title": "Choose printers",
+        "description": "These printers are set up in BamBuddy. Each selected printer becomes a device in Home Assistant. You can add or remove printers later with Configure. Names come from BamBuddy: rename a printer there.\n\nThis API key can only read: you see your printers but cannot control them. To control them, turn on Control Printer for the key in BamBuddy, then reload the integration.",
         "data": {
           "printers": "Printers"
         }
       },
       "reauth_confirm": {
-        "title": "Enter a new API key",
-        "description": "BamBuddy at {url} no longer accepts the API key. Create a new one in BamBuddy under Settings → API Keys.",
+        "title": "Enter the API key",
+        "description": "BamBuddy at {url} no longer accepts the API key. Enter it again, or create a new one in BamBuddy under Settings → API Keys.",
         "data": {
           "api_key": "API key"
         },
@@ -48,15 +55,27 @@
       },
       "new_address": {
         "title": "New address",
-        "description": "BamBuddy answers at {url}. Found there by their serial numbers, the printers keep their devices and history: {kept}.",
+        "description": "BamBuddy answers at {url}. These printers were found there by their serial numbers and keep their devices and history:\n\n{kept}",
         "data": {
           "bambuddy": "Which BamBuddy is it?",
           "remove_printers": "Remove printers not in this BamBuddy",
           "add_printers": "Add printers of this BamBuddy"
         },
         "data_description": {
-          "bambuddy": "The same: everything stays, history included. Another: its figures (prints, storage and the like) start afresh — the history of the BamBuddy device's entities is deleted for good, their entity IDs stay. The printers keep theirs.",
+          "bambuddy": "The same: everything stays, history included. Another: the BamBuddy device's figures (prints, storage and the like) start afresh and their history is deleted. The printers keep their history.",
           "remove_printers": "Ticked ones and their AMS units leave Home Assistant. Unticked ones stay and wait under Settings → Repairs until BamBuddy lists them again.",
+          "add_printers": "Each becomes a device in Home Assistant."
+        }
+      },
+      "new_address_all": {
+        "title": "New address",
+        "description": "BamBuddy answers at {url}. Every printer of this entry was found there by its serial number and keeps its device and history.",
+        "data": {
+          "bambuddy": "Which BamBuddy is it?",
+          "add_printers": "Add printers of this BamBuddy"
+        },
+        "data_description": {
+          "bambuddy": "The same: everything stays, history included. Another: the BamBuddy device's figures (prints, storage and the like) start afresh and their history is deleted. The printers keep their history.",
           "add_printers": "Each becomes a device in Home Assistant."
         }
       },
@@ -69,7 +88,7 @@
           "add_printers": "Add printers of this BamBuddy"
         },
         "data_description": {
-          "bambuddy": "The same: everything stays, history included. Another: its figures (prints, storage and the like) start afresh — the history of the BamBuddy device's entities is deleted for good, their entity IDs stay. The printers keep theirs.",
+          "bambuddy": "The same: everything stays, history included. Another: the BamBuddy device's figures (prints, storage and the like) start afresh and their history is deleted. The printers keep their history.",
           "remove_printers": "Ticked ones and their AMS units leave Home Assistant. Unticked ones stay and wait under Settings → Repairs until BamBuddy lists them again.",
           "add_printers": "Each becomes a device in Home Assistant."
         }
@@ -82,28 +101,35 @@
           "add_printers": "Add printers of this BamBuddy"
         },
         "data_description": {
-          "bambuddy": "The same: everything stays, history included. Another: its figures (prints, storage and the like) start afresh — the history of the BamBuddy device's entities is deleted for good, their entity IDs stay. The printers keep theirs.",
+          "bambuddy": "The same: everything stays, history included. Another: the BamBuddy device's figures (prints, storage and the like) start afresh and their history is deleted.",
           "add_printers": "Each becomes a device in Home Assistant."
         }
       }
     },
     "error": {
-      "cannot_connect": "BamBuddy cannot be reached at this address. Check the address and that BamBuddy is running.",
-      "invalid_auth": "BamBuddy does not accept this API key.",
+      "cannot_connect": "BamBuddy does not answer at this address. Check the address including the port (usually 8000) and that BamBuddy is running.",
+      "invalid_auth": "BamBuddy does not accept this API key. Copy it again (BamBuddy shows it only once) or create a new one.",
       "stored_key_refused": "BamBuddy no longer accepts the stored API key. Enter a new one.",
-      "missing_permission": "The API key lacks the permission Read Status. Turn it on in BamBuddy under Settings → API Keys.",
+      "missing_permission": "The API key lacks the permission Read Status. Turn it on in BamBuddy under Settings → API Keys (the key's owner needs it too).",
       "invalid_url": "This is not a valid address. Enter it like 192.168.1.20:8000 or {example_url}.",
       "not_bambuddy": "No BamBuddy answers at this address, or it is older than version {minimum}.",
-      "too_old": "BamBuddy {version} is too old. Update BamBuddy to version {minimum} or newer."
+      "too_old": "BamBuddy {version} is too old. Update BamBuddy to version {minimum} or newer.",
+      "ssl_error": "BamBuddy's certificate could not be verified. If BamBuddy uses a self-signed certificate, turn off “Verify SSL certificate”.",
+      "url_with_login": "Leave the user name and password out of the address: the integration signs in with the API key.",
+      "address_in_use": "This address already belongs to another BamBuddy entry.",
+      "not_https": "BamBuddy does not use https at this address. Enter it with http://, such as http://192.168.1.20:8000.",
+      "bad_answer": "BamBuddy answered with an error: {error}",
+      "error_not_bambuddy": "This address answered with an error ({error}). Is it BamBuddy's address?"
     },
     "abort": {
       "already_configured": "This BamBuddy server is already set up.\n\nTo add or remove its printers, use the gear “Configure” on its entry.",
       "address_in_use": "This address already belongs to another BamBuddy entry. Nothing was changed.",
-      "reauth_successful": "The new API key works. BamBuddy is connected again.",
+      "reauth_successful": "The API key works. BamBuddy is connected again.",
       "reconfigure_successful": "The connection has been saved.",
-      "reconfigure_successful_missing": "The connection has been changed. Not found: {printers}. You can remove them under Settings → Repairs.",
+      "reconfigure_successful_missing": "The connection has been changed. Not found: {printers}. You can remove them under Settings → Repairs, or all at once with Configure → Remove printers.",
       "reconfigure_successful_other": "The connection has been changed. The BamBuddy device's history starts afresh.",
-      "reconfigure_successful_other_missing": "The connection has been changed. The BamBuddy device's history starts afresh. Not found: {printers}. You can remove them under Settings → Repairs."
+      "reconfigure_successful_other_missing": "The connection has been changed. The BamBuddy device's history starts afresh. Not found: {printers}. You can remove them under Settings → Repairs, or all at once with Configure → Remove printers.",
+      "reconfigure_successful_read_only": "The connection has been saved. This key can only read: controls need a key with Control Printer."
     }
   },
   "options": {
@@ -124,7 +150,7 @@
       },
       "remove_printer": {
         "title": "Remove printers",
-        "description": "The selected printers, their AMS units and their entities leave Home Assistant. Nothing changes in BamBuddy.",
+        "description": "The selected printers, their AMS units and their entities leave Home Assistant. Nothing changes in BamBuddy. “Add printers” brings them back later.",
         "data": {
           "printers": "Printers"
         }
@@ -133,7 +159,8 @@
     "abort": {
       "cannot_connect": "BamBuddy cannot be reached. Try again later.",
       "all_printers_added": "All printers of BamBuddy are already added.",
-      "nothing_chosen": "No printer chosen: nothing changed."
+      "nothing_chosen": "No printer chosen: nothing changed.",
+      "key_refused": "BamBuddy no longer accepts the API key. Enter a new one where Home Assistant asks for it, under Settings → Devices & services."
     }
   },
   "entity": {
@@ -148,10 +175,17 @@
         "name": "Door"
       },
       "plate_clear_needed": {
-        "name": "Build plate"
+        "name": "Build plate",
+        "state": {
+          "on": "Needs clearing",
+          "off": "Ready"
+        }
       },
       "sd_card": {
         "name": "SD card"
+      },
+      "usb_drive": {
+        "name": "USB drive"
       },
       "developer_mode": {
         "name": "Developer mode"
@@ -164,6 +198,9 @@
       },
       "drying": {
         "name": "Drying"
+      },
+      "plug": {
+        "name": "Power"
       }
     },
     "button": {
@@ -184,6 +221,12 @@
       },
       "refresh_status": {
         "name": "Refresh status"
+      },
+      "plug_run": {
+        "name": "Run"
+      },
+      "auto_off_skip": {
+        "name": "Don't switch off this time"
       }
     },
     "camera": {
@@ -233,6 +276,12 @@
       },
       "chamber_target_temperature": {
         "name": "Chamber target temperature"
+      },
+      "camera_frame_rate": {
+        "name": "Camera frame rate"
+      },
+      "auto_off_temperature": {
+        "name": "Switch off below"
       }
     },
     "select": {
@@ -535,6 +584,37 @@
       },
       "print_hours": {
         "name": "Print hours"
+      },
+      "maintenance": {
+        "name": "Maintenance",
+        "state": {
+          "ok": "OK",
+          "due_soon": "Due soon",
+          "overdue": "Overdue"
+        },
+        "state_attributes": {
+          "tasks": {
+            "name": "Tasks"
+          },
+          "due_count": {
+            "name": "Overdue tasks"
+          },
+          "due_soon_count": {
+            "name": "Tasks due soon"
+          },
+          "can_mark_done": {
+            "name": "May mark done"
+          }
+        }
+      },
+      "plug_power": {
+        "name": "Power"
+      },
+      "plug_energy_today": {
+        "name": "Energy today"
+      },
+      "plug_energy_total": {
+        "name": "Energy total"
       }
     },
     "switch": {
@@ -564,6 +644,15 @@
       },
       "air_printing_detection": {
         "name": "Air printing detection"
+      },
+      "plug": {
+        "name": "Power"
+      },
+      "auto_off": {
+        "name": "Switch off after the print"
+      },
+      "auto_off_every_print": {
+        "name": "After every print"
       }
     },
     "update": {
@@ -583,13 +672,19 @@
       "message": "BamBuddy no longer accepts the API key. Open the BamBuddy integration to enter a new one."
     },
     "update_failed": {
-      "message": "BamBuddy cannot be reached: {error}"
+      "message": "BamBuddy cannot be reached. Is the BamBuddy server running, and is the address right? ({error})"
+    },
+    "bad_answer": {
+      "message": "BamBuddy answered with an error: {error}"
     },
     "cannot_connect": {
       "message": "BamBuddy cannot be reached. Check that it is running."
     },
     "cannot_delete_instance": {
       "message": "The BamBuddy server itself cannot be deleted here. To remove it, delete the BamBuddy integration entry."
+    },
+    "cannot_delete_ams": {
+      "message": "Its printer still reports this AMS unit. Unplug it first; then its device can be deleted."
     },
     "control_not_permitted": {
       "message": "The API key may not control printers. Turn on Control Printer for the key in BamBuddy under Settings → API Keys, then reload the integration."
@@ -600,8 +695,11 @@
     "printer_offline": {
       "message": "{printer} is offline."
     },
+    "printer_replaced": {
+      "message": "BamBuddy now lists another printer under the number of {printer}. The integration reloads to find {printer} again by its serial number."
+    },
     "job_running": {
-      "message": "{printer} has a print running or paused. This has to wait until it is done or stopped."
+      "message": "{printer} is printing or paused: this works once the print is done or stopped."
     },
     "not_now": {
       "message": "{printer} cannot do this right now."
@@ -619,10 +717,10 @@
       "message": "{printer} is not waiting for the plate to be cleared."
     },
     "not_a_printer": {
-      "message": "Choose a printer of a loaded BamBuddy integration."
+      "message": "Choose a printer of a loaded BamBuddy integration, not an AMS unit."
     },
     "not_an_ams": {
-      "message": "Choose an AMS unit of a loaded BamBuddy integration."
+      "message": "Choose an AMS unit of a loaded BamBuddy integration, not a printer."
     },
     "not_a_slot": {
       "message": "Choose an AMS slot or an external spool of a loaded BamBuddy integration."
@@ -653,6 +751,87 @@
     },
     "nothing_to_set": {
       "message": "Choose a material, a color or both."
+    },
+    "no_answer": {
+      "message": "BamBuddy did not answer in time; the command may still reach the printer. Check that BamBuddy is running and not overloaded."
+    },
+    "zero_distance": {
+      "message": "The distance must not be 0."
+    },
+    "cannot_dry": {
+      "message": "This AMS unit cannot dry filament. The AMS 2 Pro and the AMS HT can."
+    },
+    "drying_too_hot": {
+      "message": "The {model} dries at {maximum} °C at most."
+    },
+    "already_paused": {
+      "message": "{printer} is already paused."
+    },
+    "dry_on_screen": {
+      "message": "{printer} starts drying only from its own screen."
+    },
+    "dry_firmware": {
+      "message": "The firmware of {printer} cannot start drying from here. Update the printer."
+    },
+    "update_timeout": {
+      "message": "BamBuddy did not answer in time. Check that it is running and not overloaded. ({error})"
+    },
+    "printer_not_listed": {
+      "message": "BamBuddy does not list {printer} right now. Settings → Repairs says what to do."
+    },
+    "ams_not_reported": {
+      "message": "{printer} does not report this AMS unit right now. Is it plugged in?"
+    },
+    "dry_stop_on_screen": {
+      "message": "{printer} stops drying only from its own screen."
+    },
+    "maintenance_not_permitted": {
+      "message": "The API key may not mark maintenance done. Turn on Manage Maintenance for the key in BamBuddy under Settings → API Keys, then reload the integration."
+    },
+    "maintenance_task_unknown": {
+      "message": "{printer} has no such maintenance task."
+    },
+    "read_failed": {
+      "message": "BamBuddy reported an error ({error})."
+    },
+    "plug_control_not_permitted": {
+      "message": "The API key may not switch smart plugs. Turn on Control Printer for the key in BamBuddy under Settings → API Keys — or create it anew as a user who may control printers —, then reload the integration."
+    },
+    "plug_not_answering": {
+      "message": "The smart plug {plug} does not answer BamBuddy. Check that it is plugged in and on the network."
+    },
+    "plug_command_failed": {
+      "message": "BamBuddy could not switch the smart plug {plug}: {error}"
+    },
+    "auto_off_bambuddy": {
+      "message": "BamBuddy already switches the plug {plug} off after the print (its Auto Off). Turn that off in BamBuddy to use it here."
+    },
+    "cannot_delete_plug": {
+      "message": "BamBuddy still links this smart plug to the printer. Unlink it there first; then its device can be deleted."
+    },
+    "hms_not_current": {
+      "message": "The printer does not report the HMS message {code} now"
+    },
+    "hms_answer_not_offered": {
+      "message": "The printer does not offer this answer for the HMS message {code}"
+    },
+    "k_profile_unknown": {
+      "message": "{printer} has no K profile with this index for the nozzle that feeds the slot"
+    },
+    "rfid_not_external": {
+      "message": "The external spools have no chip reader"
+    },
+    "rfid_unload_first": {
+      "message": "Unload the filament first: the AMS of {printer} reads a chip only while no filament is loaded"
+    },
+    "k_profiles_no_answer": {
+      "message": "{printer} did not list its K profiles: open the slot again and choose once more"
+    },
+    "slot_pause_first": {
+      "message": "{printer} is printing. Pause the print first"
+    },
+    "hms_answer_not_taken": {
+      "message": "{printer} did not take the answer. Is it still connected to BamBuddy?"
     }
   },
   "issues": {
@@ -662,7 +841,7 @@
         "step": {
           "confirm": {
             "title": "Remove the printer?",
-            "description": "BamBuddy no longer lists the printer {printer}. If it was removed in BamBuddy on purpose, choose “Remove printer” to remove it here too: the printer, its AMS units and their entities leave Home Assistant, nothing changes in BamBuddy. If it is back in BamBuddy, close this and reload the integration instead.",
+            "description": "BamBuddy no longer lists the printer {printer}. If it was removed in BamBuddy on purpose, choose “Remove printer” to remove it here too: the printer, its AMS units and their entities leave Home Assistant, nothing changes in BamBuddy. If it is back in BamBuddy, close this: it comes back here by itself within a minute.",
             "submit": "Remove printer"
           }
         },
@@ -670,6 +849,10 @@
           "already_removed": "The printer has been removed already."
         }
       }
+    },
+    "names_from_bambuddy": {
+      "title": "The name comes from BamBuddy: {name}",
+      "description": "You renamed a device to “{given}” in Home Assistant. Its name comes from BamBuddy and went back to “{name}”.\n\nRename the printer in BamBuddy instead: Home Assistant follows within seconds (an AMS unit is named after its printer)."
     }
   },
   "services": {
@@ -802,6 +985,82 @@
         "color": {
           "name": "Color",
           "description": "Leave empty to keep the slot's color."
+        },
+        "k_profile": {
+          "name": "K profile",
+          "description": "One of the printer's K calibrations by its index, as Get K profiles lists them; -1 is the printer's default K."
+        }
+      }
+    },
+    "run_diagnostic": {
+      "name": "Check connection",
+      "description": "Has BamBuddy check its connection to the printer: its ports, the access code, developer mode, whether it reports. Sends the printer no command; takes a few seconds, at most half a minute.",
+      "fields": {
+        "device_id": {
+          "name": "Printer",
+          "description": "The printer to check."
+        }
+      }
+    },
+    "mark_maintenance_done": {
+      "name": "Mark maintenance done",
+      "description": "Marks a maintenance task of the printer as done in BamBuddy: its count starts over. Needs Manage Maintenance on the API key.",
+      "fields": {
+        "device_id": {
+          "name": "Printer",
+          "description": "The printer the task belongs to."
+        },
+        "task_id": {
+          "name": "Task",
+          "description": "The task's ID: the field id of the task in the attribute Tasks of the printer's Maintenance sensor."
+        }
+      }
+    },
+    "answer_hms": {
+      "name": "Answer an HMS message",
+      "description": "Answers one of the printer's HMS messages as its screen would, for example resume once the filament is loaded. Only an answer the printer offers for the message now; its attribute actions lists them.",
+      "fields": {
+        "device_id": {
+          "name": "Printer",
+          "description": "The printer with the message."
+        },
+        "code": {
+          "name": "Code",
+          "description": "The message's code, as the HMS sensor's errors attribute lists it, such as 0700_2000_0002_0012."
+        },
+        "action": {
+          "name": "Answer",
+          "description": "One of the message's actions, such as RESUME_PRINTING."
+        }
+      }
+    },
+    "get_k_profiles": {
+      "name": "Get K profiles",
+      "description": "Lists the printer's own K (pressure advance) calibrations for the nozzle that feeds a slot, as Set filament takes them, and the slot's current one. The printer is asked live; that can take a while.",
+      "fields": {
+        "entity_id": {
+          "name": "Slot",
+          "description": "The sensor of the slot (or of the external spool)."
+        }
+      }
+    },
+    "reset_slot": {
+      "name": "Reset slot",
+      "description": "Clears a slot's material and color, as Reset on the printer's screen; a spool with a chip shows again once the AMS reads it. Not during a running print; in a paused one it is allowed.",
+      "fields": {
+        "entity_id": {
+          "name": "Slot",
+          "description": "The sensor of the slot (or of the external spool)."
+        }
+      }
+    },
+    "refresh_rfid": {
+      "name": "Read the chip again",
+      "description": "Lets the AMS read the chip of the spool in a slot again, for a Bambu Lab spool it did not recognise. BamBuddy allows it only while no filament is loaded; the external spools have no reader. Not during a running print; in a paused one it is allowed.",
+      "fields": {
+        "entity_id": {
+          "name": "Slot",
+          "description": "The sensor of the slot (or of the external spool)."
         }
       }
     }

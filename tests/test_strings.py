@@ -139,8 +139,10 @@ def test_english_translation_is_the_strings_file():
 # (services._refuse), and a command's refusal (entity.async_run_command).
 _RAISED = (
     re.compile(r'translation_domain=DOMAIN,\s*translation_key="([a-z0-9_]+)"'),
-    re.compile(r'_refuse\(\s*"([a-z0-9_]+)"'),
+    re.compile(r'refuse\(\s*"([a-z0-9_]+)"'),
     re.compile(r'refusal(?::\s*str\s*)?=\s*"([a-z0-9_]+)"'),
+    # A button's refusal by the printer's state: both of its texts.
+    re.compile(r'refusal_fn=lambda data: "([a-z0-9_]+)" if [^\n]* else "([a-z0-9_]+)"'),
 )
 
 
@@ -151,7 +153,20 @@ def test_every_exception_text_is_one_the_code_raises():
         key
         for module in _DIR.glob("*.py")
         for pattern in _RAISED
-        for key in pattern.findall(module.read_text(encoding="utf-8"))
+        for found in pattern.findall(module.read_text(encoding="utf-8"))
+        for key in ((found,) if isinstance(found, str) else found)
     }
     assert raised
     assert raised == set(_load("strings.json")["exceptions"])
+
+
+def test_every_error_the_flows_set_has_a_text() -> None:
+    """A key without a text shows raw in the form."""
+    source = (Path(__file__).parent.parent / "custom_components" / "bambuddy" / "config_flow.py").read_text(encoding="utf-8")
+    errors = set(re.findall(r'\{"base": "(\w+)"\}', source)) | set(re.findall(r'\{CONF_URL: "(\w+)"\}', source))
+    reasons = set(re.findall(r'async_abort\(reason="(\w+)"', source))
+    strings = json.loads((Path(__file__).parent.parent / "custom_components" / "bambuddy" / "strings.json").read_text(encoding="utf-8"))
+    assert errors and reasons
+    assert errors <= set(strings["config"]["error"]), errors - set(strings["config"]["error"])
+    known = set(strings["config"]["abort"]) | set(strings["options"]["abort"])
+    assert reasons <= known, reasons - known

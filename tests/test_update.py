@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
+from freezegun.api import FrozenDateTimeFactory
+
 from homeassistant.components.update import ATTR_INSTALLED_VERSION, ATTR_LATEST_VERSION, ATTR_RELEASE_URL
 from homeassistant.const import STATE_OFF, STATE_ON, STATE_UNKNOWN
 from homeassistant.core import HomeAssistant
@@ -17,16 +19,15 @@ from tests.conftest import (
     X1C,
     entity_id,
     instance_uid,
-    make_entry,
+    next_refresh,
     printer_uid,
-    setup_integration,
+    set_up,
     state_of,
 )
 
 
 async def test_a_new_bambuddy(hass: HomeAssistant, bambuddy_api: SimpleNamespace) -> None:
-    entry = make_entry(hass, X1C)
-    await setup_integration(hass, entry)
+    entry = await set_up(hass, X1C)
 
     state = state_of(hass, "update", instance_uid(entry, "bambuddy_update"))
     assert state.state == STATE_ON
@@ -37,14 +38,32 @@ async def test_a_new_bambuddy(hass: HomeAssistant, bambuddy_api: SimpleNamespace
 async def test_firmware(hass: HomeAssistant, bambuddy_api: SimpleNamespace) -> None:
     """The X1C has new firmware; for the A1 Mini BamBuddy knows nothing
     newer than what it runs."""
-    entry = make_entry(hass, X1C, A1_MINI)
-    await setup_integration(hass, entry)
+    entry = await set_up(hass, X1C, A1_MINI)
 
     x1c = state_of(hass, "update", printer_uid(entry, "firmware"))
     assert (x1c.state, x1c.attributes[ATTR_LATEST_VERSION]) == (STATE_ON, "01.09.02.00")
     a1 = state_of(hass, "update", printer_uid(entry, "firmware", A1_MINI))
     assert a1.state == STATE_UNKNOWN
     assert a1.attributes[ATTR_INSTALLED_VERSION] == bambuddy_api.statuses[A1_MINI]["firmware_version"]
+
+
+async def test_a_firmware_the_printer_installed_is_no_update_any_more(
+    hass: HomeAssistant, bambuddy_api: SimpleNamespace, freezer: FrozenDateTimeFactory
+) -> None:
+    """The printer reports its new firmware with its next status: the
+    update entity follows at once, not with BamBuddy's next check hours
+    later."""
+    entry = await set_up(hass, X1C)
+    firmware = state_of(hass, "update", printer_uid(entry, "firmware"))
+    assert firmware.state == STATE_ON
+    latest = firmware.attributes[ATTR_LATEST_VERSION]
+
+    bambuddy_api.statuses[X1C]["firmware_version"] = latest
+    await next_refresh(hass, freezer)
+
+    firmware = state_of(hass, "update", printer_uid(entry, "firmware"))
+    assert (firmware.state, firmware.attributes[ATTR_INSTALLED_VERSION]) == (STATE_OFF, latest)
+    bambuddy_api.get_firmware_updates.assert_awaited_once()
 
 
 async def test_bambuddys_checks_off(hass: HomeAssistant, bambuddy_api: SimpleNamespace) -> None:
@@ -54,8 +73,7 @@ async def test_bambuddys_checks_off(hass: HomeAssistant, bambuddy_api: SimpleNam
         "latest_version": "1.2.5.7",
         "message": "Up to date",
     }
-    entry = make_entry(hass, X1C)
-    await setup_integration(hass, entry)
+    entry = await set_up(hass, X1C)
 
     assert state_of(hass, "update", instance_uid(entry, "bambuddy_update")).state == STATE_OFF
 
@@ -64,8 +82,7 @@ async def test_failed_checks_cost_only_the_update_entities(
     hass: HomeAssistant, bambuddy_api: SimpleNamespace
 ) -> None:
     bambuddy_api.get_firmware_updates.side_effect = BamBuddyConnectionError("refused")
-    entry = make_entry(hass, X1C)
-    await setup_integration(hass, entry)
+    entry = await set_up(hass, X1C)
 
     assert state_of(hass, "update", instance_uid(entry, "bambuddy_update")).state == "unavailable"
     assert state_of(hass, "sensor", printer_uid(entry, "status")).state == "printing"
@@ -74,8 +91,7 @@ async def test_failed_checks_cost_only_the_update_entities(
 async def test_the_release_notes(
     hass: HomeAssistant, bambuddy_api: SimpleNamespace, hass_ws_client: WebSocketGenerator
 ) -> None:
-    entry = make_entry(hass, X1C)
-    await setup_integration(hass, entry)
+    entry = await set_up(hass, X1C)
     assert await async_setup_component(hass, "update", {})
     client = await hass_ws_client(hass)
 

@@ -3,32 +3,38 @@ extruding, loading and unloading filament, setting a slot's filament,
 drying an AMS unit. The dashboard card calls them too."""
 from __future__ import annotations
 
-from collections.abc import Awaitable, Callable
+from collections.abc import Callable, Coroutine, Iterator
 from functools import partial
 import re
 from typing import Any
 
 import voluptuous as vol
 
-from homeassistant.config_entries import ConfigEntryState
 from homeassistant.core import HomeAssistant, ServiceCall, ServiceResponse, SupportsResponse, callback
-from homeassistant.exceptions import ServiceValidationError
 from homeassistant.helpers import config_validation as cv
 from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers import entity_registry as er
 
-from .const import DOMAIN
+from .api import BamBuddyApiError
+from .const import CONF_PRINTER_NAME, CONF_PRINTERS, DOMAIN, K_PROFILES_KEEP
 from .coordinator import BamBuddyConfigEntry, BamBuddyPrinterCoordinator, printer_identifier
-from .entity import ams_identifier, async_run_command
+from .entity import async_run_command, refuse as _refuse
 from .models import (
+    hms_answers,
+    hms_code,
     EXTERNAL_LEFT,
     EXTERNAL_RIGHT,
     MATERIALS,
     PrinterData,
-    ams_key,
     active_tray,
+    ams_key,
+    ams_model,
+    can_dry,
     find_tray,
+    has_heater,
     has_rfid,
+    short_name,
+    stored_key,
     tray_empty,
     tray_id,
     tray_label,
@@ -43,6 +49,10 @@ ATTR_DURATION = "duration"
 ATTR_OBJECTS = "objects"
 ATTR_MATERIAL = "material"
 ATTR_COLOR = "color"
+ATTR_TASK_ID = "task_id"
+ATTR_CODE = "code"
+ATTR_K_PROFILE = "k_profile"
+ATTR_ACTION = "action"
 # BamBuddy's AMS id of the external spools.
 _EXTERNAL_AMS = 255
 # BamBuddy skips objects only in these states.
@@ -54,14 +64,8 @@ MIN_EXTRUDE_TEMPERATURE = 170
 _SLOT_IN_UNIQUE_ID = re.compile(r"p([^_]+)_(?:ams([^_]+)_slot_(\d+)|external_spool(_2)?)")
 
 
-def _nonzero(value: float) -> float:
-    if value == 0:
-        raise vol.Invalid("the distance must not be 0")
-    return value
-
-
 def _distance(limit: float) -> vol.All:
-    return vol.All(vol.Coerce(float), vol.Range(min=-limit, max=limit), _nonzero)
+    return vol.All(vol.Coerce(float), vol.Range(min=-limit, max=limit))
 
 
 _DEVICE = {vol.Required(ATTR_DEVICE_ID): cv.string}
@@ -80,6 +84,11 @@ SCHEMAS: dict[str, vol.Schema] = {
     ),
     "stop_drying": vol.Schema(_DEVICE),
     "get_print_objects": vol.Schema(_DEVICE),
+    "run_diagnostic": vol.Schema(_DEVICE),
+    "mark_maintenance_done": vol.Schema({**_DEVICE, vol.Required(ATTR_TASK_ID): vol.Coerce(int)}),
+    "answer_hms": vol.Schema(
+        {**_DEVICE, vol.Required(ATTR_CODE): cv.string, vol.Required(ATTR_ACTION): vol.All(cv.string, vol.Upper)}
+    ),
     "skip_objects": vol.Schema(
         {**_DEVICE, vol.Required(ATTR_OBJECTS): vol.All(cv.ensure_list, [vol.Coerce(int)], vol.Length(min=1))}
     ),
@@ -88,27 +97,24 @@ SCHEMAS: dict[str, vol.Schema] = {
             vol.Required(ATTR_ENTITY_ID): cv.entity_id,
             vol.Optional(ATTR_MATERIAL): vol.In(list(MATERIALS)),
             vol.Optional(ATTR_COLOR): vol.All(vol.Coerce(tuple), vol.ExactSequence((cv.byte, cv.byte, cv.byte))),
+            # The printer's K calibration by its index; -1 its default K.
+            vol.Optional(ATTR_K_PROFILE): vol.All(vol.Coerce(int), vol.Range(min=-1)),
         }
     ),
+    "get_k_profiles": vol.Schema({vol.Required(ATTR_ENTITY_ID): cv.entity_id}),
+    "reset_slot": vol.Schema({vol.Required(ATTR_ENTITY_ID): cv.entity_id}),
+    "refresh_rfid": vol.Schema({vol.Required(ATTR_ENTITY_ID): cv.entity_id}),
 }
 
 
-def _refuse(key: str, **placeholders: str) -> ServiceValidationError:
-    return ServiceValidationError(
-        translation_domain=DOMAIN, translation_key=key, translation_placeholders=placeholders or None
-    )
+def _coordinators(hass: HomeAssistant) -> Iterator[BamBuddyPrinterCoordinator]:
+    """The printers of every loaded entry."""
+    for entry in hass.config_entries.async_loaded_entries(DOMAIN):
+        yield from entry.runtime_data.printers.values()
 
 
-def _loaded_entries(hass: HomeAssistant) -> list[BamBuddyConfigEntry]:
-    return [
-        entry
-        for entry in hass.config_entries.async_entries(DOMAIN)
-        if entry.state is ConfigEntryState.LOADED
-    ]
-
-
-def _controllable(entry: BamBuddyConfigEntry, coordinator: BamBuddyPrinterCoordinator) -> BamBuddyPrinterCoordinator:
-    if not entry.runtime_data.can_control:
+def _controllable(coordinator: BamBuddyPrinterCoordinator) -> BamBuddyPrinterCoordinator:
+    if not coordinator.config_entry.runtime_data.can_control:
         raise _refuse("control_not_permitted")
     return coordinator
 
@@ -117,26 +123,55 @@ def _printer(hass: HomeAssistant, device_id: str, *, control: bool = True) -> Ba
     """The printer of a printer device; `control`: the action commands it."""
     device = dr.async_get(hass).async_get(device_id)
     if device is not None:
-        for entry in _loaded_entries(hass):
-            for coordinator in entry.runtime_data.printers.values():
-                if printer_identifier(entry.entry_id, coordinator.key) in device.identifiers:
-                    return _controllable(entry, coordinator) if control else coordinator
+        for coordinator in _coordinators(hass):
+            if coordinator.identifier in device.identifiers:
+                return _controllable(coordinator) if control else coordinator
+    _refuse_not_listed(hass, device_id)
     raise _refuse("not_a_printer")
+
+
+def _refuse_not_listed(hass: HomeAssistant, device_id: str) -> None:
+    """A printer its entry keeps but BamBuddy does not list now, or one of
+    its AMS units: its repair issue says what to do."""
+    devices = dr.async_get(hass)
+    device = devices.async_get(device_id)
+    if device is None:
+        return
+    # An AMS unit: its printer (a child device of 2026.9 is none of ours).
+    printer = devices.async_get(device.via_device_id) if isinstance(device, dr.DeviceEntry) and device.via_device_id else None
+    identifiers = device.identifiers | (printer.identifiers if printer else set())
+    for entry in hass.config_entries.async_loaded_entries(DOMAIN):
+        for key, stored in _waiting(entry).items():
+            if printer_identifier(entry.entry_id, key) in identifiers:
+                raise _refuse("printer_not_listed", printer=stored[CONF_PRINTER_NAME])
+
+
+def _waiting(entry: BamBuddyConfigEntry) -> dict[str, dict[str, Any]]:
+    """The entry's printers BamBuddy does not list now, by their keys."""
+    served = {coordinator.key for coordinator in entry.runtime_data.printers.values()}
+    stored: list[dict[str, Any]] = entry.options.get(CONF_PRINTERS, [])
+    return {stored_key(printer): printer for printer in stored if stored_key(printer) not in served}
 
 
 def _ams(hass: HomeAssistant, device_id: str) -> tuple[BamBuddyPrinterCoordinator, int]:
     """The printer and the unit id of an AMS unit's device."""
     device = dr.async_get(hass).async_get(device_id)
     if device is not None:
-        for entry in _loaded_entries(hass):
-            for coordinator in entry.runtime_data.printers.values():
-                for unit in coordinator.data.ams_units:
-                    if ams_identifier(entry.entry_id, coordinator.key, ams_key(unit)) in device.identifiers:
-                        return _controllable(entry, coordinator), int(unit.get("id", 0))
+        for coordinator in _coordinators(hass):
+            for unit in coordinator.data.ams_units:
+                if coordinator.ams_identifier(ams_key(unit)) in device.identifiers:
+                    return _controllable(coordinator), int(unit.get("id", 0))
+    _refuse_not_listed(hass, device_id)
+    if device is not None:
+        for coordinator in _coordinators(hass):
+            # A unit the printer does not report now (unplugged): its device stays.
+            prefix = coordinator.ams_identifier("")[1]
+            if any(domain == DOMAIN and name.startswith(prefix) for domain, name in device.identifiers):
+                raise _refuse("ams_not_reported", printer=short_name(coordinator.info))
     raise _refuse("not_an_ams")
 
 
-def _place(hass: HomeAssistant, entity_id: str) -> tuple[BamBuddyPrinterCoordinator, int, int, int]:
+def _place(hass: HomeAssistant, entity_id: str, *, control: bool = True) -> tuple[BamBuddyPrinterCoordinator, int, int, int]:
     """Where a slot or external spool sensor's filament sits, from its
     unique ID -- the sensor is unavailable while the printer is offline, and
     the command then says so: the printer, BamBuddy's AMS id and slot in it
@@ -144,34 +179,35 @@ def _place(hass: HomeAssistant, entity_id: str) -> tuple[BamBuddyPrinterCoordina
     BamBuddy's global tray id."""
     entity = er.async_get(hass).async_get(entity_id)
     if entity is not None and entity.platform == DOMAIN:
-        for entry in _loaded_entries(hass):
-            if entity.config_entry_id != entry.entry_id:
+        for coordinator in _coordinators(hass):
+            entry_id = coordinator.config_entry.entry_id
+            match = _SLOT_IN_UNIQUE_ID.fullmatch(entity.unique_id.removeprefix(f"{entry_id}_"))
+            if entity.config_entry_id != entry_id or match is None or match.group(1) != coordinator.key:
                 continue
+            _, ams, slot, right = match.groups()
+            printer = _controllable(coordinator) if control else coordinator
+            if ams is not None:
+                unit, index = _unit_place(coordinator, ams), int(slot) - 1
+                return printer, unit, index, tray_id(unit, index)
+            return printer, _EXTERNAL_AMS, 1 if right else 0, EXTERNAL_RIGHT if right else EXTERNAL_LEFT
+        # A slot of a printer BamBuddy does not list now: its repair says why.
+        for entry in hass.config_entries.async_loaded_entries(DOMAIN):
             match = _SLOT_IN_UNIQUE_ID.fullmatch(entity.unique_id.removeprefix(f"{entry.entry_id}_"))
-            coordinator = next(
-                (printer for printer in entry.runtime_data.printers.values() if match and printer.key == match.group(1)),
-                None,
-            )
-            if match and coordinator is not None:
-                _, ams, slot, right = match.groups()
-                if ams is not None:
-                    unit, index = _unit_place(coordinator, ams), int(slot) - 1
-                    return _controllable(entry, coordinator), unit, index, tray_id(unit, index)
-                return _controllable(entry, coordinator), _EXTERNAL_AMS, int(bool(right)), (
-                    EXTERNAL_RIGHT if right else EXTERNAL_LEFT
-                )
+            waiting = _waiting(entry) if entity.config_entry_id == entry.entry_id and match else {}
+            if match and match.group(1) in waiting:
+                raise _refuse("printer_not_listed", printer=waiting[match.group(1)][CONF_PRINTER_NAME])
     raise _refuse("not_a_slot")
 
 
 def _unit_place(coordinator: BamBuddyPrinterCoordinator, key: str) -> int:
     """Where an AMS unit is plugged in now (BamBuddy's AMS id). A unit the
-    printer does not report: with the printer online, its slots hold
-    nothing; offline, the command says so first."""
+    printer does not report: with the printer online, the action says so;
+    offline, the command says that first."""
     for unit in coordinator.data.ams_units:
         if ams_key(unit) == key:
             return int(unit.get("id", 0))
     if coordinator.data.connected:
-        raise _refuse("slot_empty")
+        raise _refuse("ams_not_reported", printer=short_name(coordinator.info))
     return int(key) if key.isdigit() else 0
 
 
@@ -185,6 +221,8 @@ def _slot(hass: HomeAssistant, entity_id: str) -> tuple[BamBuddyPrinterCoordinat
 
 
 async def _move_axis(hass: HomeAssistant, call: ServiceCall) -> None:
+    if call.data[ATTR_DISTANCE] == 0:
+        raise _refuse("zero_distance")
     coordinator = _printer(hass, call.data[ATTR_DEVICE_ID])
     client, printer, distance = coordinator.client, coordinator.printer_id, call.data[ATTR_DISTANCE]
     move = {
@@ -211,6 +249,8 @@ def _active_nozzle_temperature(coordinator: BamBuddyPrinterCoordinator) -> float
 
 
 async def _extrude(hass: HomeAssistant, call: ServiceCall) -> None:
+    if call.data[ATTR_DISTANCE] == 0:
+        raise _refuse("zero_distance")
     coordinator = _printer(hass, call.data[ATTR_DEVICE_ID])
     data = coordinator.data
     # Offline, a job or a filament change: the general refusal says why.
@@ -253,7 +293,7 @@ async def _set_filament(hass: HomeAssistant, call: ServiceCall) -> None:
     printer's screen asks after a spool goes in. A new colour alone keeps
     the slot's preset and its K value; a new material takes Bambu's generic
     profile of it and the default K value, as on the printer's screen."""
-    if ATTR_MATERIAL not in call.data and ATTR_COLOR not in call.data:
+    if not {ATTR_MATERIAL, ATTR_COLOR, ATTR_K_PROFILE} & set(call.data):
         raise _refuse("nothing_to_set")
     coordinator, ams, slot, tray = _place(hass, call.data[ATTR_ENTITY_ID])
     data = coordinator.data
@@ -265,10 +305,10 @@ async def _set_filament(hass: HomeAssistant, call: ServiceCall) -> None:
         if has_rfid(current):
             raise _refuse("rfid_spool")
         if data.changing_filament:
-            raise _refuse("filament_change", printer=coordinator.printer_name)
+            raise _refuse("filament_change", printer=short_name(coordinator.info))
         # A paused print may relabel the spool swapped in by hand.
         if data.job_running and data.state != "PAUSE" and _in_use(data, ams, slot, tray):
-            raise _refuse("slot_in_use", printer=coordinator.printer_name)
+            raise _refuse("slot_in_use", printer=short_name(coordinator.info))
     material = MATERIALS.get(call.data.get(ATTR_MATERIAL, ""))
     if material is not None:
         tray_type, name, profile, cali_idx = (
@@ -287,7 +327,31 @@ async def _set_filament(hass: HomeAssistant, call: ServiceCall) -> None:
         cali_idx = cali if isinstance(cali, int) else -1
         temp_min, temp_max = _temperatures(current, tray_type)
     color = call.data.get(ATTR_COLOR)
-    hex_color = "{:02X}{:02X}{:02X}".format(*color) if color else str(current.get("tray_color") or "FFFFFF")[:6]
+    if color:
+        # Home Assistant's colour picker has no transparency: opaque.
+        hex_color = "{:02X}{:02X}{:02X}FF".format(*color)
+    else:
+        # The slot's own, a translucent filament's transparency kept; a slot
+        # BamBuddy reset is fully transparent black -- the new one is not.
+        kept = str(current.get("tray_color") or "FFFFFF").upper()
+        hex_color = kept if len(kept) == 8 and not kept.endswith("00") else f"{kept[:6]}FF"
+    k_profile: dict[str, Any] = {}
+    chosen = call.data.get(ATTR_K_PROFILE)
+    if chosen is not None:
+        cali_idx = chosen
+        if chosen >= 0:
+            # The printer's own calibration: BamBuddy files the slot under its filament.
+            profiles = (await _k_profiles(coordinator, ams, slot, listed_lately=True))[1]
+            if not profiles:
+                raise _refuse("k_profiles_no_answer", printer=short_name(coordinator.info))
+            found_profile = next((item for item in profiles if item["index"] == chosen), None)
+            if found_profile is None:
+                raise _refuse("k_profile_unknown", printer=short_name(coordinator.info))
+            k_profile = {
+                "kprofile_filament_id": found_profile["filament_id"] or None,
+                "kprofile_setting_id": found_profile["setting_id"],
+                "k_value": found_profile["k_value"],
+            }
     await async_run_command(
         coordinator,
         partial(
@@ -297,14 +361,110 @@ async def _set_filament(hass: HomeAssistant, call: ServiceCall) -> None:
             slot,
             tray_type=tray_type,
             name=name,
-            color=f"{hex_color.upper()}FF",
+            color=hex_color,
             temp_min=temp_min,
             temp_max=temp_max,
             tray_info_idx=profile,
             cali_idx=cali_idx,
             nozzle_diameter=_nozzle_diameter(data, ams, slot),
+            **k_profile,
         ),
     )
+
+
+async def _k_profiles(
+    coordinator: BamBuddyPrinterCoordinator, ams: int, slot: int, *, listed_lately: bool = False
+) -> tuple[str, list[dict[str, Any]]]:
+    """The printer's K calibrations for the nozzle that feeds the slot --
+    on a two-nozzle printer that nozzle's, where the printer files them per
+    nozzle -- as BamBuddy's own Configure dialog offers them. `listed_lately`:
+    the list read for the card a moment ago will do (a printer may not
+    answer the same question twice in a row)."""
+    data = coordinator.data
+    diameter = _nozzle_diameter(data, ams, slot)
+    now = coordinator.hass.loop.time()
+    kept = coordinator.kprofiles.get(diameter)
+    if listed_lately and kept is not None and now - kept[0] < K_PROFILES_KEEP:
+        listed = kept[1]
+    else:
+        listed = await async_run_command(
+            coordinator, partial(coordinator.client.get_kprofiles, coordinator.printer_id, diameter), refresh=False
+        )
+        if listed:
+            coordinator.kprofiles[diameter] = (now, listed)
+    nozzle = _extruder(data, ams, slot)
+    if nozzle is not None and any(item.get("extruder_id") == nozzle for item in listed):
+        listed = [item for item in listed if item.get("extruder_id") == nozzle]
+    profiles = []
+    for item in listed:
+        index = item.get("slot_id")
+        try:
+            k_value = float(item.get("k_value") or 0)
+        except (TypeError, ValueError):
+            k_value = 0.0
+        if not isinstance(index, int):
+            continue
+        profiles.append(
+            {
+                "index": index,
+                "name": str(item.get("name") or ""),
+                "k_value": k_value,
+                "filament_id": str(item.get("filament_id") or ""),
+                "setting_id": item.get("setting_id") if isinstance(item.get("setting_id"), str) else None,
+                "nozzle": ("right", "left")[nozzle] if data.is_dual_nozzle and nozzle in (0, 1) else None,
+            }
+        )
+    return diameter, profiles
+
+
+async def _get_k_profiles(hass: HomeAssistant, call: ServiceCall) -> ServiceResponse:
+    """A read: Read Status is enough."""
+    coordinator, ams, slot, tray = _place(hass, call.data[ATTR_ENTITY_ID], control=False)
+    diameter, profiles = await _k_profiles(coordinator, ams, slot)
+    found = find_tray(coordinator.data, tray)
+    current = found[0].get("cali_idx") if found else None
+    return {
+        "nozzle_diameter": diameter,
+        "current": current if isinstance(current, int) else -1,
+        "profiles": [{key: value for key, value in item.items() if key != "setting_id"} for item in profiles],
+    }
+
+
+async def _reset_slot(hass: HomeAssistant, call: ServiceCall) -> None:
+    """The slot's material and colour cleared, as Reset on the printer's
+    screen -- not during a print (a paused one may have had a spool swapped)."""
+    coordinator, ams, slot, tray = _place(hass, call.data[ATTR_ENTITY_ID])
+    data = coordinator.data
+    found = find_tray(data, tray)
+    if data.connected and ams != _EXTERNAL_AMS and (found is None or found[0].get("exists") is False or tray_empty(found[0])):
+        raise _refuse("slot_empty")
+    _pause_first(coordinator)
+    await async_run_command(coordinator, partial(coordinator.client.reset_slot, coordinator.printer_id, ams, slot))
+
+
+async def _refresh_rfid(hass: HomeAssistant, call: ServiceCall) -> None:
+    """The AMS reads the spool's chip again: BamBuddy refuses while any
+    filament is loaded, and the external spools have no reader."""
+    coordinator, ams, slot, _tray = _place(hass, call.data[ATTR_ENTITY_ID])
+    if ams == _EXTERNAL_AMS:
+        raise _refuse("rfid_not_external")
+    data = coordinator.data
+    if data.connected and active_tray(data.status) is not None:
+        raise _refuse("rfid_unload_first", printer=short_name(coordinator.info))
+    _pause_first(coordinator)
+    await async_run_command(coordinator, partial(coordinator.client.refresh_rfid, coordinator.printer_id, ams, slot))
+
+
+def _pause_first(coordinator: BamBuddyPrinterCoordinator) -> None:
+    """A slot's tools wait for a running print and a filament change; a
+    paused print allows them (a spool swapped by hand)."""
+    data = coordinator.data
+    if not data.connected:
+        return
+    if data.changing_filament:
+        raise _refuse("filament_change", printer=short_name(coordinator.info))
+    if data.job_running and data.state != "PAUSE":
+        raise _refuse("slot_pause_first", printer=short_name(coordinator.info))
 
 
 def _in_use(data: PrinterData, ams: int, slot: int, tray: int) -> bool:
@@ -319,17 +479,24 @@ def _in_use(data: PrinterData, ams: int, slot: int, tray: int) -> bool:
     return any((item.get("ams_id"), item.get("slot_id")) == (ams, slot) for item in fed)
 
 
+def _extruder(data: PrinterData, ams: int, slot: int) -> int | None:
+    """The nozzle a slot feeds: 0 the right or only nozzle, 1 the left; an
+    AMS unit's from its ams_extruder_map, the left external spool the left
+    nozzle. None: a unit BamBuddy leaves out of the map -- one on the
+    filament track switch reaches both nozzles."""
+    if not data.is_dual_nozzle:
+        return 0
+    if ams == _EXTERNAL_AMS:
+        return 1 if slot == 0 else 0
+    fed = (data.status.get("ams_extruder_map") or {}).get(str(ams))
+    return None if fed is None else int(fed)
+
+
 def _nozzle_diameter(data: PrinterData, ams: int, slot: int) -> str:
     """The diameter of the nozzle the slot feeds -- the printer keeps a K
-    value per diameter. BamBuddy's nozzles: 0 the right or only nozzle, 1
-    the left; an AMS unit's from its ams_extruder_map, the left external
-    spool feeds the left nozzle."""
-    extruder = 0
-    if data.is_dual_nozzle:
-        if ams == _EXTERNAL_AMS:
-            extruder = 1 if slot == 0 else 0
-        else:
-            extruder = int((data.status.get("ams_extruder_map") or {}).get(str(ams), 0))
+    value per diameter; a unit on both nozzles takes the first's (both are
+    alike as a rule)."""
+    extruder = _extruder(data, ams, slot) or 0
     nozzles = data.status.get("nozzles") or []
     for index in (extruder, 0):
         if index < len(nozzles) and nozzles[index].get("nozzle_diameter"):
@@ -346,8 +513,24 @@ def _temperatures(tray: dict[str, Any], tray_type: str) -> tuple[int, int]:
     return material.temp_min, material.temp_max
 
 
+# The hottest each drying unit dries at (Bambu Lab's specifications).
+_DRYING_MAX = {"AMS 2 Pro": 65, "AMS HT": 85}
+
+
 async def _start_drying(hass: HomeAssistant, call: ServiceCall) -> None:
     coordinator, unit = _ams(hass, call.data[ATTR_DEVICE_ID])
+    data = coordinator.data
+    found = _unit(data, unit)
+    model = ams_model(found, data)
+    if not can_dry(found, data):
+        if model not in _DRYING_MAX:
+            raise _refuse("cannot_dry")
+        if data.status.get("drying_screen_only"):
+            raise _refuse("dry_on_screen", printer=short_name(coordinator.info))
+        raise _refuse("dry_firmware", printer=short_name(coordinator.info))
+    maximum = _DRYING_MAX.get(model)
+    if maximum is not None and call.data[ATTR_TEMPERATURE] > maximum:
+        raise _refuse("drying_too_hot", model=model, maximum=str(maximum))
     await async_run_command(
         coordinator,
         partial(
@@ -360,8 +543,19 @@ async def _start_drying(hass: HomeAssistant, call: ServiceCall) -> None:
     )
 
 
+def _unit(data: PrinterData, unit: int) -> dict[str, Any]:
+    """BamBuddy's report of the unit at this place."""
+    return next((item for item in data.ams_units if int(item.get("id", 0)) == unit), {})
+
+
 async def _stop_drying(hass: HomeAssistant, call: ServiceCall) -> None:
     coordinator, unit = _ams(hass, call.data[ATTR_DEVICE_ID])
+    data = coordinator.data
+    if not has_heater(_unit(data, unit), data):
+        raise _refuse("cannot_dry")
+    # Started on its own screen, it stops there too (BamBuddy refuses it).
+    if data.status.get("drying_screen_only"):
+        raise _refuse("dry_stop_on_screen", printer=short_name(coordinator.info))
     await async_run_command(coordinator, partial(coordinator.client.stop_drying, coordinator.printer_id, unit))
 
 
@@ -384,6 +578,44 @@ async def _get_print_objects(hass: HomeAssistant, call: ServiceCall) -> ServiceR
     }
 
 
+async def _run_diagnostic(hass: HomeAssistant, call: ServiceCall) -> ServiceResponse:
+    """BamBuddy's connection check: a read (Read Status is enough), also
+    for an offline printer -- that is when it helps."""
+    coordinator = _printer(hass, call.data[ATTR_DEVICE_ID], control=False)
+    answer = await async_run_command(
+        coordinator, partial(coordinator.client.get_diagnostic, coordinator.printer_id), offline_ok=True, refresh=False
+    )
+    return {
+        "overall": answer.get("overall"),
+        "checks": [
+            {"id": check.get("id"), "status": check.get("status"), "params": check.get("params") or {}}
+            for check in answer.get("checks") or []
+            if isinstance(check, dict)
+        ],
+    }
+
+
+async def _mark_maintenance_done(hass: HomeAssistant, call: ServiceCall) -> None:
+    """A task of the printer done: BamBuddy's count starts over. Needs the
+    key's Manage Maintenance; BamBuddy keeps it, the printer may be off."""
+    coordinator = _printer(hass, call.data[ATTR_DEVICE_ID], control=False)
+    if not coordinator.config_entry.runtime_data.can_manage_maintenance:
+        raise _refuse("maintenance_not_permitted")
+    task = call.data[ATTR_TASK_ID]
+    # Any task BamBuddy listed, a disabled one too; before the first read
+    # BamBuddy decides.
+    listed = coordinator.data.maintenance
+    if listed is not None and task not in {item.get("id") for item in listed.get("maintenance_items") or [] if isinstance(item, dict)}:
+        raise _refuse("maintenance_task_unknown", printer=short_name(coordinator.info))
+    try:
+        await async_run_command(
+            coordinator, partial(coordinator.client.perform_maintenance, task), offline_ok=True, denied="maintenance_not_permitted"
+        )
+    finally:
+        # Also after no answer: BamBuddy may have marked it done.
+        await coordinator.async_reread_maintenance()
+
+
 async def _skip_objects(hass: HomeAssistant, call: ServiceCall) -> None:
     coordinator = _printer(hass, call.data[ATTR_DEVICE_ID])
     await async_run_command(
@@ -394,7 +626,35 @@ async def _skip_objects(hass: HomeAssistant, call: ServiceCall) -> None:
     )
 
 
-_HANDLERS: dict[str, Callable[[HomeAssistant, ServiceCall], Awaitable[None]]] = {
+async def _answer_hms(hass: HomeAssistant, call: ServiceCall) -> None:
+    """Answers one of the printer's HMS messages as its screen would: only
+    with an answer the printer offers for it now."""
+    coordinator = _printer(hass, call.data[ATTR_DEVICE_ID])
+    wanted = call.data[ATTR_CODE].replace("_", "").replace("-", "").upper().removeprefix("0X")
+    action = call.data[ATTR_ACTION]
+    if action == "STOP_PRINTING":
+        # The printer's word now: a message cleared at it meanwhile stops nothing.
+        await coordinator.async_refresh()
+    error = next((error for error in coordinator.data.status.get("hms_errors") or [] if hms_code(error) == wanted), None)
+    if error is None:
+        raise _refuse("hms_not_current", code=call.data[ATTR_CODE])
+    if action not in hms_answers(error):
+        raise _refuse("hms_answer_not_offered", code=call.data[ATTR_CODE])
+    job = error.get("job_id")
+
+    async def answer() -> None:
+        try:
+            await coordinator.client.execute_hms_action(coordinator.printer_id, hms_code(error), action, str(job) if job else None)
+        except BamBuddyApiError as err:
+            if err.status == 400:
+                # BamBuddy could not hand it to the printer.
+                raise _refuse("hms_answer_not_taken", printer=short_name(coordinator.info)) from err
+            raise
+
+    await async_run_command(coordinator, answer)
+
+
+_HANDLERS: dict[str, Callable[[HomeAssistant, ServiceCall], Coroutine[Any, Any, ServiceResponse]]] = {
     "move_axis": _move_axis,
     "home_axes": _home_axes,
     "extrude": _extrude,
@@ -404,28 +664,28 @@ _HANDLERS: dict[str, Callable[[HomeAssistant, ServiceCall], Awaitable[None]]] = 
     "stop_drying": _stop_drying,
     "skip_objects": _skip_objects,
     "set_filament": _set_filament,
+    "get_print_objects": _get_print_objects,
+    "run_diagnostic": _run_diagnostic,
+    "mark_maintenance_done": _mark_maintenance_done,
+    "answer_hms": _answer_hms,
+    "get_k_profiles": _get_k_profiles,
+    "reset_slot": _reset_slot,
+    "refresh_rfid": _refresh_rfid,
 }
+# The actions that answer (and only answer).
+_RESPONSES = {"get_print_objects", "run_diagnostic", "get_k_profiles"}
 
 
 @callback
 def async_setup_services(hass: HomeAssistant) -> None:
     """Register the actions once, for every entry."""
     for name, handler in _HANDLERS.items():
-
-        async def _handle(call: ServiceCall, handler: Any = handler) -> None:
-            await handler(hass, call)
-
-        # Home Assistant 2026.10 types schemas as probatio schemas; voluptuous
-        # works the same from 2025.5 on.
-        hass.services.async_register(DOMAIN, name, _handle, schema=SCHEMAS[name])  # type: ignore[arg-type]
-
-    async def _handle_objects(call: ServiceCall) -> ServiceResponse:
-        return await _get_print_objects(hass, call)
-
-    hass.services.async_register(
-        DOMAIN,
-        "get_print_objects",
-        _handle_objects,
-        schema=SCHEMAS["get_print_objects"],  # type: ignore[arg-type]
-        supports_response=SupportsResponse.ONLY,
-    )
+        hass.services.async_register(
+            DOMAIN,
+            name,
+            partial(handler, hass),
+            # Home Assistant 2026.10 types schemas as probatio schemas;
+            # voluptuous works the same from 2025.5 on.
+            schema=SCHEMAS[name],  # type: ignore[arg-type]
+            supports_response=SupportsResponse.ONLY if name in _RESPONSES else SupportsResponse.NONE,
+        )

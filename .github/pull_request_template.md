@@ -33,11 +33,13 @@ Never try the print controls on a printer that is printing.
 - [ ] Translations updated and in sync, if UI strings changed: `strings.json` and both `translations/*.json` (`en`, `de`)
 - [ ] No API key, camera token or other secret is logged or committed
 - [ ] README updated, if user-facing behavior changed
+- [ ] Card changed: its tests and typecheck pass, and the rebuilt bundle `custom_components/bambuddy/frontend/bambuddy-card.js` is committed (`npm --prefix cards run build`)
 
 <!--
 A pull request to dev or main is validated by CI: hassfest, HACS validation,
 the tests (≥ 95 % coverage, and on the minimum Home Assistant), mypy --strict,
-the Python 3.13 checks and the release script on Python 3.12. A pull request
+the Python 3.13 checks, the release script on Python 3.12 and the card (its
+tests, typecheck and a rebuilt bundle that matches the committed one). A pull request
 to dev merges once that run is green; one to main merges only with a green
 "Validation result".
 Do NOT bump the version in manifest.json — the release workflow sets it.

@@ -1,15 +1,37 @@
 // A fake Home Assistant for the card's tests: registries and states the way
 // the integration creates them, built from a few lines per printer.
 import type { Hass, HassDevice, HassEntityRegistryEntry, HassEntityState, LocalizeFunc } from "../src/types";
+import integrationDe from "../../custom_components/bambuddy/translations/de.json";
+import integrationEn from "../../custom_components/bambuddy/translations/en.json";
+
+type EntityTexts = Record<string, Record<string, { name?: string }>>;
+
+/** The integration's entity names, by "platform.translation_key", in each
+ * of its languages: what Home Assistant's entity registry holds for an
+ * entity the user did not rename -- in the server's language. */
+export const INTEGRATION_NAMES = Object.fromEntries(
+  Object.entries({ en: integrationEn, de: integrationDe }).map(([language, texts]) => [
+    language,
+    Object.fromEntries(
+      Object.entries((texts as { entity: EntityTexts }).entity).flatMap(([platform, entities]) =>
+        Object.entries(entities).map(([key, entity]) => [`${platform}.${key}`, entity.name ?? ""]),
+      ),
+    ),
+  ]),
+) as Record<"en" | "de", Record<string, string>>;
 
 export interface FakeEntity {
   entityId: string;
   key: string;
   state: string;
   attributes?: Record<string, unknown>;
+  /** The entity registry's name: the user's, else the integration's own. */
+  name?: string;
   platform?: string;
   /** The display precision Home Assistant formats a number with. */
   precision?: number;
+  /** When the state last changed (ISO), as Home Assistant reports it. */
+  lastChanged?: string;
 }
 
 export interface FakeDevice {
@@ -124,7 +146,12 @@ const STATE_TEXTS: Record<string, Record<string, string>> = {
 };
 
 function stateOf(entity: FakeEntity): HassEntityState {
-  return { entity_id: entity.entityId, state: entity.state, attributes: { ...(entity.attributes ?? {}) } };
+  return {
+    entity_id: entity.entityId,
+    state: entity.state,
+    attributes: { ...(entity.attributes ?? {}) },
+    ...(entity.lastChanged ? { last_changed: entity.lastChanged } : {}),
+  };
 }
 
 export function makeHass(options: FakeHassOptions = {}): FakeHass {
@@ -136,6 +163,8 @@ export function makeHass(options: FakeHassOptions = {}): FakeHass {
     time_zone: options.timeZone ?? "server",
   };
   const config = { time_zone: options.serverTimeZone ?? "Europe/Berlin" };
+  // Home Assistant keeps the user object while states change.
+  const user = { is_admin: options.admin ?? true };
   const translations = options.translations ?? {};
   const calls: ServiceCall[] = [];
 
@@ -155,7 +184,13 @@ export function makeHass(options: FakeHassOptions = {}): FakeHass {
       };
       for (const entity of device.entities) {
         if (entity.precision !== undefined) precisions.set(entity.entityId, entity.precision);
-        entities[entity.entityId] = { entity_id: entity.entityId, device_id: device.id, platform: entity.platform ?? "bambuddy", translation_key: entity.key };
+        entities[entity.entityId] = {
+          entity_id: entity.entityId,
+          device_id: device.id,
+          platform: entity.platform ?? "bambuddy",
+          translation_key: entity.key,
+          ...(entity.name === undefined ? {} : { name: entity.name }),
+        };
         states[entity.entityId] = stateOf(entity);
       }
     }
@@ -205,7 +240,7 @@ export function makeHass(options: FakeHassOptions = {}): FakeHass {
       language,
       locale,
       config,
-      user: { is_admin: options.admin ?? true },
+      user,
       formatEntityState,
       localize,
       loadBackendTranslation,
@@ -322,33 +357,70 @@ export interface PrinterSpec {
   nozzleTypes?: string[];
   /** The firmware update entity; none when left out. */
   firmware?: { installed: string | null; latest: string | null; state?: string };
+  /** The server's language: the entity names Home Assistant gave; English when left out. */
+  serverLanguage?: "en" | "de";
+  /** Names the user gave entities in Home Assistant, by translation key. */
+  renamed?: Record<string, string>;
+  /** The door sensor: on (open) or off; none when left out. */
+  door?: "on" | "off";
+  /** The storage sensor: on (present) or off; none when left out. */
+  storage?: "on" | "off";
+  /** The storage is a USB drive (P2S, X2D, H2 series), not an SD card. */
+  storageUsb?: boolean;
+  /** The maintenance sensor; none when left out. */
+  maintenance?: MaintenanceSpec | "unavailable";
+  /** The airduct mode select's state, with control; none when left out. */
+  airduct?: string;
+  /** The AMS filament backup switch, with control: on (when left out), off, unknown, or none. */
+  filamentBackup?: "on" | "off" | "unknown" | "none";
 }
 
-/** The fans' names in English, as Home Assistant puts them after the device's. */
-const FAN_NAMES: Record<string, string> = {
-  part_cooling_fan: "Part cooling fan",
-  auxiliary_fan: "Auxiliary fan",
-  chamber_fan: "Chamber fan",
-  exhaust_fan: "Exhaust fan",
-  left_auxiliary_fan: "Left auxiliary fan",
-};
+/** A maintenance task as the integration's sensor lists it. */
+export interface MaintenanceTask {
+  id: number;
+  name: string;
+  due: boolean;
+  due_soon: boolean;
+  unit: "hours" | "days";
+  interval: number;
+  left: number;
+  last_done: string | null;
+}
 
-/** The detection switches' names in English, as Home Assistant puts them after the device's. */
-const DETECTOR_NAMES: Record<string, string> = {
-  ai_monitoring: "AI print monitoring",
-  first_layer_inspection: "First layer inspection",
-  build_plate_detection: "Build plate detection",
-  build_plate_position_detection: "Build plate position detection",
-  spaghetti_detection: "Spaghetti detection",
-  pileup_detection: "Purge chute pile-up detection",
-  clumping_detection: "Nozzle clumping detection",
-  air_printing_detection: "Air printing detection",
-};
+export interface MaintenanceSpec {
+  state: "ok" | "due_soon" | "overdue";
+  tasks: MaintenanceTask[];
+  canMarkDone?: boolean;
+}
+
+/** Five tasks of an X1C: one overdue, one due soon, one never done (and
+ * overdue), two fine -- one counted in days. */
+export const MAINTENANCE_TASKS: MaintenanceTask[] = [
+  { id: 13, name: "Check Belt Tension", due: false, due_soon: false, unit: "hours", interval: 200, left: 136, last_done: "2026-08-15T12:00:00+00:00" },
+  { id: 11, name: "Clean Build Plate", due: true, due_soon: false, unit: "hours", interval: 25, left: -12.5, last_done: "2026-09-20T10:00:00+00:00" },
+  { id: 12, name: "Clean Nozzle/Hotend", due: false, due_soon: true, unit: "hours", interval: 100, left: 4, last_done: "2026-09-01T08:30:00+00:00" },
+  { id: 14, name: "Clean Carbon Rods", due: true, due_soon: false, unit: "hours", interval: 100, left: -459.5, last_done: null },
+  { id: 15, name: "Wipe the camera", due: false, due_soon: false, unit: "days", interval: 30, left: 20, last_done: "2026-10-07T09:00:00+00:00" },
+];
+
+export const maintenanceSpec = (overrides: Partial<MaintenanceSpec> = {}): MaintenanceSpec => ({
+  state: "overdue",
+  tasks: MAINTENANCE_TASKS,
+  canMarkDone: true,
+  ...overrides,
+});
 
 /** A printer's device with the entities the integration creates for it. */
 export function printerDevice(spec: PrinterSpec): FakeDevice {
   const p = spec.slug;
   const online = spec.online ?? true;
+  // An entity's registry name and its friendly name, which Home Assistant
+  // puts after the device's: the user's where he renamed it, else the
+  // integration's in the server's language.
+  const named = (platform: string, key: string): { name: string; friendly_name: string } => {
+    const name = spec.renamed?.[key] ?? INTEGRATION_NAMES[spec.serverLanguage ?? "en"][`${platform}.${key}`] ?? key;
+    return { name, friendly_name: `${spec.nameByUser ?? spec.name} ${name}` };
+  };
   // An offline printer's entities are unavailable, but for its print status
   // ("offline") and its Online sensor.
   const value = (state: string): string => (online ? state : "unavailable");
@@ -367,7 +439,13 @@ export function printerDevice(spec: PrinterSpec): FakeDevice {
     { entityId: `sensor.${p}_total_layers`, key: "total_layers", state: value(String(spec.totalLayers ?? 0)) },
     { entityId: `sensor.${p}_current_print`, key: "current_print", state: value(spec.job ?? "unknown") },
     { entityId: `sensor.${p}_bed_temperature`, key: "bed_temperature", state: value(String(spec.bed[0])), attributes: { unit_of_measurement: "°C" } },
-    { entityId: `sensor.${p}_hotend_fan`, key: "hotend_fan", state: value(String(spec.hotendFan ?? 0)), attributes: { unit_of_measurement: "%" } },
+    {
+      entityId: `sensor.${p}_hotend_fan`,
+      key: "hotend_fan",
+      name: named("sensor", "hotend_fan").name,
+      state: value(String(spec.hotendFan ?? 0)),
+      attributes: { unit_of_measurement: "%", friendly_name: named("sensor", "hotend_fan").friendly_name },
+    },
     {
       entityId: `sensor.${p}_hms_errors`,
       key: "hms_errors",
@@ -411,6 +489,33 @@ export function printerDevice(spec: PrinterSpec): FakeDevice {
       attributes: { installed_version: installed, latest_version: latest, supported_features: 16 },
     });
   }
+  if (spec.door !== undefined) {
+    entities.push({ entityId: `binary_sensor.${p}_door`, key: "door", state: value(spec.door), attributes: { device_class: "door" } });
+  }
+  if (spec.storage !== undefined) {
+    const key = spec.storageUsb ? "usb_drive" : "sd_card";
+    entities.push({ entityId: `binary_sensor.${p}_${key}`, key, state: value(spec.storage) });
+  }
+  if (spec.maintenance !== undefined) {
+    // Available while the printer is offline: BamBuddy keeps it.
+    const maintenance = spec.maintenance;
+    entities.push(
+      maintenance === "unavailable"
+        ? { entityId: `sensor.${p}_maintenance`, key: "maintenance", state: "unavailable" }
+        : {
+            entityId: `sensor.${p}_maintenance`,
+            key: "maintenance",
+            state: maintenance.state,
+            attributes: {
+              device_class: "enum",
+              tasks: maintenance.tasks,
+              due_count: maintenance.tasks.filter((task) => task.due).length,
+              due_soon_count: maintenance.tasks.filter((task) => task.due_soon).length,
+              can_mark_done: maintenance.canMarkDone ?? false,
+            },
+          },
+    );
+  }
   if (spec.developerMode !== "none") {
     entities.push({ entityId: `binary_sensor.${p}_developer_mode`, key: "developer_mode", state: value(spec.developerMode ?? "on") });
   }
@@ -443,12 +548,22 @@ export function printerDevice(spec: PrinterSpec): FakeDevice {
   const active = spec.externalSpools.find((spool) => spool.active);
   entities.push({ entityId: `sensor.${p}_active_filament`, key: "active_filament", state: value(active ? slotState(active) : "none") });
   if (spec.camera !== false) {
+    // BamBuddy's rule: the RTSP models up to 30 frames a second, the A1 and P1 series 5.
+    const most = /^(X1|X2|H2|P2)/.test(spec.model.toUpperCase()) ? 30 : 5;
     entities.push({
       entityId: `camera.${p}_camera`,
       key: "camera",
       state: value("idle"),
-      attributes: { access_token: `token-${p}`, entity_picture: `/api/camera_proxy/camera.${p}_camera?token=token-${p}` },
+      attributes: { access_token: `token-${p}`, entity_picture: `/api/camera_proxy/camera.${p}_camera?token=token-${p}`, frame_rate: most },
     });
+    if (most > 5) {
+      entities.push({
+        entityId: `number.${p}_camera_frame_rate`,
+        key: "camera_frame_rate",
+        state: String(most),
+        attributes: { min: 5, max: most, step: 5, unit_of_measurement: "fps" },
+      });
+    }
   }
   if (spec.cover !== false) {
     entities.push({
@@ -473,6 +588,10 @@ export function printerDevice(spec: PrinterSpec): FakeDevice {
       },
       { entityId: `number.${p}_bed_target_temperature`, key: "bed_target_temperature", state: value(String(spec.bed[1] ?? 0)) },
     );
+    if (spec.airduct !== undefined) {
+      entities.push({ entityId: `select.${p}_airduct_mode`, key: "airduct_mode", state: value(spec.airduct), attributes: { options: ["cooling", "heating"] } });
+    }
+
     spec.nozzles.forEach(([, target], index) => {
       const side = sides[index] as string;
       entities.push({ entityId: `number.${p}_${side}nozzle_target_temperature`, key: `${side}nozzle_target_temperature`, state: value(String(target ?? 0)) });
@@ -481,23 +600,35 @@ export function printerDevice(spec: PrinterSpec): FakeDevice {
       entities.push({ entityId: `number.${p}_chamber_target_temperature`, key: "chamber_target_temperature", state: value(String(spec.chamber[1])) });
     }
     for (const fan of spec.fans ?? []) {
+      const { name, friendly_name } = named("fan", fan.key);
       entities.push({
         entityId: `fan.${p}_${fan.key}`,
         key: fan.key,
+        name,
         state: value(fan.percent > 0 ? "on" : "off"),
-        attributes: { percentage: fan.percent, friendly_name: `${spec.nameByUser ?? spec.name} ${FAN_NAMES[fan.key] ?? fan.key}` },
+        attributes: { percentage: fan.percent, friendly_name },
       });
     }
     entities.push(
       { entityId: `light.${p}_chamber_light`, key: "chamber_light", state: value(spec.light ? "on" : "off") },
-      { entityId: `switch.${p}_ams_filament_backup`, key: "ams_filament_backup", state: value("on") },
     );
+    if (spec.filamentBackup !== "none") {
+      const backup = spec.filamentBackup ?? "on";
+      entities.push({
+        entityId: `switch.${p}_ams_filament_backup`,
+        key: "ams_filament_backup",
+        state: value(backup),
+        attributes: backup === "unknown" ? { assumed_state: true } : {},
+      });
+    }
     for (const detector of spec.detectors ?? []) {
+      const { name, friendly_name } = named("switch", detector.key);
       entities.push({
         entityId: `switch.${p}_${detector.key}`,
         key: detector.key,
+        name,
         state: value(detector.on ? "on" : "off"),
-        attributes: { friendly_name: `${spec.nameByUser ?? spec.name} ${DETECTOR_NAMES[detector.key] ?? detector.key}` },
+        attributes: { friendly_name },
       });
     }
     if (dual) {
@@ -523,8 +654,10 @@ export interface AmsSpec {
   temperature?: number;
   slots: SlotSpec[];
   /** Drying is offered: true while it runs, with its minutes left. */
-  drying?: { on: boolean; remaining: number };
+  drying?: { on: boolean; remaining: number; target?: number };
   online?: boolean;
+  /** On a two-nozzle printer: the nozzle the unit feeds (its slots say it). */
+  nozzle?: "left" | "right";
 }
 
 export function amsDevice(spec: AmsSpec): FakeDevice {
@@ -537,7 +670,7 @@ export function amsDevice(spec: AmsSpec): FakeDevice {
     entityId: `sensor.${p}_slot_${index + 1}`,
     key: "ams_slot",
     state: value(slotState(slot)),
-    attributes: slotAttributes(slot, index + 1),
+    attributes: { ...slotAttributes(slot, index + 1), ...(spec.nozzle ? { nozzle: spec.nozzle } : {}) },
   }));
   if (spec.humidity !== undefined) {
     entities.push({ entityId: `sensor.${p}_humidity`, key: "ams_humidity", state: value(String(spec.humidity)), attributes: { unit_of_measurement: "%" } });
@@ -547,7 +680,12 @@ export function amsDevice(spec: AmsSpec): FakeDevice {
   }
   if (spec.drying) {
     entities.push(
-      { entityId: `binary_sensor.${p}_drying`, key: "drying", state: value(spec.drying.on ? "on" : "off") },
+      {
+        entityId: `binary_sensor.${p}_drying`,
+        key: "drying",
+        state: value(spec.drying.on ? "on" : "off"),
+        attributes: { target_temperature: spec.drying.target ?? null },
+      },
       { entityId: `sensor.${p}_drying_remaining_time`, key: "drying_remaining_time", state: value(String(spec.drying.remaining)), attributes: { unit_of_measurement: "min" } },
     );
   }
@@ -680,6 +818,7 @@ export function h2d(overrides: Partial<PrinterSpec> = {}): FakeDevice[] {
     printer,
     amsId: 0,
     model: "AMS 2 Pro",
+    nozzle: "right",
     humidity: 14,
     temperature: 51.5,
     drying: { on: true, remaining: 200 },
@@ -694,6 +833,7 @@ export function h2d(overrides: Partial<PrinterSpec> = {}): FakeDevice[] {
     printer,
     amsId: 128,
     model: "AMS HT",
+    nozzle: "left",
     humidity: 9,
     temperature: 30,
     drying: { on: false, remaining: 0 },
@@ -805,6 +945,12 @@ export function offlineP1s(): FakeDevice[] {
   return [printer, ams];
 }
 
+/** The devices while BamBuddy does not answer: the integration's poll
+ * fails, and every entity of the printer and its AMS units is unavailable,
+ * the print status and the Online sensor too, without their attributes. */
+export const unreachable = (devices: FakeDevice[]): FakeDevice[] =>
+  devices.map((device) => ({ ...device, entities: device.entities.map((entity) => ({ ...entity, state: "unavailable", attributes: {} })) }));
+
 /** The X1C read with a key that lacks Control Printer: no controls. */
 export const readOnlyX1c = (overrides: Partial<PrinterSpec> = {}): FakeDevice[] => x1c({ control: false, ...overrides });
 
@@ -834,3 +980,87 @@ export async function mountCard(hass: FakeHass, config: Record<string, unknown>)
   await card.updateComplete;
   return card;
 }
+
+// --- Smart plugs ----------------------------------------------------------------
+
+export interface PlugSpec {
+  printer: FakeDevice;
+  /** BamBuddy's number of the plug. */
+  id: number;
+  name: string;
+  /** A switch; its state only (MQTT, or a key that may not switch); a script. */
+  kind?: "switch" | "state" | "script";
+  /** "on", "off", "unknown" (a REST plug without status), "unavailable". */
+  state?: string;
+  powersPrinter?: boolean;
+  onCard?: boolean;
+  bambuddyAutoOff?: boolean;
+  watts?: number;
+  today?: number;
+  lastChanged?: string;
+  /** When the integration saw the plug go from off to on. */
+  onSince?: string;
+  /** Our switch-off after the print, where the plug powers the printer. */
+  autoOff?: { armed: boolean; phase?: string; since?: string; temperature?: number; everyPrint?: boolean; waitingFor?: string; switching?: boolean };
+}
+
+export function plugDevice(spec: PlugSpec): FakeDevice {
+  const p = `${spec.printer.id}_plug_${spec.id}`;
+  const attributes = {
+    powers_printer: spec.powersPrinter ?? true,
+    on_printer_card: spec.onCard ?? true,
+    bambuddy_auto_off: spec.bambuddyAutoOff ?? false,
+    plug_type: spec.kind === "script" ? "homeassistant" : spec.kind === "state" ? "mqtt" : "tasmota",
+    on_since: spec.onSince ?? null,
+  };
+  const state = spec.state ?? "on";
+  const kind = spec.kind ?? "switch";
+  const entities: FakeEntity[] = [
+    kind === "script"
+      ? { entityId: `button.${p}_run`, key: "plug_run", state: state === "unavailable" ? "unavailable" : "unknown", attributes }
+      : {
+          entityId: `${kind === "switch" ? "switch" : "binary_sensor"}.${p}`,
+          key: "plug",
+          state,
+          attributes: { ...attributes, ...(state === "unknown" ? { assumed_state: true } : {}) },
+          ...(spec.lastChanged ? { lastChanged: spec.lastChanged } : {}),
+        },
+  ];
+  const figure = (value: number | undefined): string => (state === "unavailable" ? "unavailable" : String(value));
+  if (spec.watts !== undefined) {
+    entities.push({ entityId: `sensor.${p}_power`, key: "plug_power", state: figure(spec.watts), attributes: { unit_of_measurement: "W" } });
+  }
+  if (spec.today !== undefined) {
+    entities.push({ entityId: `sensor.${p}_energy_today`, key: "plug_energy_today", state: figure(spec.today), attributes: { unit_of_measurement: "kWh" } });
+  }
+  if (spec.autoOff) {
+    const auto = spec.autoOff;
+    entities.push(
+      {
+        entityId: `switch.${p}_auto_off`,
+        key: "auto_off",
+        state: auto.armed ? "on" : "off",
+        attributes: {
+          phase: auto.phase ?? "idle",
+          since: auto.since ?? null,
+          temperature: auto.temperature ?? 50,
+          every_print: auto.everyPrint ?? false,
+          waiting_for: auto.waitingFor ?? null,
+          switching: auto.switching ?? false,
+        },
+      },
+      { entityId: `switch.${p}_auto_off_every_print`, key: "auto_off_every_print", state: auto.everyPrint ? "on" : "off" },
+      {
+        entityId: `number.${p}_auto_off_temperature`,
+        key: "auto_off_temperature",
+        state: String(auto.temperature ?? 50),
+        attributes: { min: 30, max: 100, step: 1, unit_of_measurement: "°C" },
+      },
+      { entityId: `button.${p}_auto_off_skip`, key: "auto_off_skip", state: auto.phase === "waiting" ? "unknown" : "unavailable" },
+    );
+  }
+  const cut = spec.printer.name.lastIndexOf(" (");
+  const short = cut > 0 ? spec.printer.name.slice(0, cut) : spec.printer.name;
+  return { id: `${spec.printer.id}-plug-${spec.id}`, name: `${short} ${spec.name} (Smart Plug)`, model: "Tasmota", via: spec.printer.id, entities };
+}
+

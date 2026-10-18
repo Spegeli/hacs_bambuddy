@@ -97,7 +97,9 @@ describe("suggestions for an entity (Home Assistant 2026.6 on)", () => {
     devices: [...x1c(), ...a1mini(), instanceDevice],
     foreign: [{ entityId: "sensor.outside", key: "temperature", state: "12" }],
   });
-  const config = (printer: string) => ({ config: { type: "custom:bambuddy-printer-card", printer, camera: "tap" } });
+  // Home Assistant adds a suggested card as it is: the printer, as a card
+  // from the picker; the editor shows the defaults.
+  const config = (printer: string) => ({ config: { type: "custom:bambuddy-printer-card", printer } });
 
   it("suggests the card for a printer's entities", () => {
     expect(suggestCard(hass, "sensor.x1c_progress", "bambuddy-printer-card")).toEqual(config("dev-x1c"));

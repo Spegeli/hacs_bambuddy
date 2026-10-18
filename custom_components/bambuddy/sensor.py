@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime, timedelta
+from functools import partial
 from typing import Any
 
 from homeassistant.components.sensor import (
@@ -17,20 +18,34 @@ from homeassistant.const import (
     PERCENTAGE,
     SIGNAL_STRENGTH_DECIBELS_MILLIWATT,
     EntityCategory,
+    UnitOfEnergy,
     UnitOfInformation,
     UnitOfLength,
     UnitOfMass,
+    UnitOfPower,
     UnitOfTemperature,
     UnitOfTime,
 )
-from homeassistant.core import HomeAssistant, callback
+from homeassistant.core import HomeAssistant
+from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 from homeassistant.helpers.typing import StateType
 from homeassistant.util import dt as dt_util
 
-from .coordinator import BamBuddyConfigEntry, BamBuddyInstanceCoordinator, BamBuddyPrinterCoordinator
-from .entity import BamBuddyAmsEntity, BamBuddyInstanceEntity, BamBuddyPrinterEntity
+from .const import DOMAIN
+from .coordinator import BamBuddyConfigEntry, BamBuddyInstanceCoordinator, BamBuddyPlugCoordinator, BamBuddyPrinterCoordinator
+from .entity import (
+    BamBuddyAmsEntity,
+    BamBuddyDescribedEntity,
+    BamBuddyInstanceEntity,
+    BamBuddyPlugEntity,
+    async_add_ams_entities,
+    async_add_plug_entities,
+)
+from .plugs import Plug
 from .models import (
+    ACTIVE_STATES,
+    hms_answers,
     AMS_STATUSES,
     EXTERNAL_LEFT,
     EXTERNAL_RIGHT,
@@ -38,12 +53,13 @@ from .models import (
     STAGE_OPTIONS,
     PrinterData,
     active_tray,
-    ams_key,
     ams_model,
     ams_status,
     bambuddy_name,
-    can_dry,
     find_tray,
+    has_heater,
+    maintenance_state,
+    maintenance_task,
     nozzle_type,
     print_stage,
     print_status,
@@ -57,9 +73,6 @@ from .models import (
 PARALLEL_UPDATES = 0
 
 _SEVERITIES = {1: "error", 2: "warning", 3: "notice"}
-# States of a job whose end can be told: a paused one ends whenever it is
-# resumed.
-_ENDING_STATES = frozenset({"PREPARE", "SLICING", "RUNNING"})
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -75,6 +88,8 @@ class BamBuddyPrinterSensorDescription(SensorEntityDescription):
     available_when_offline: bool = False
     # Whether the printer has the value at all just now.
     available_fn: Callable[[PrinterData], bool] = lambda _: True
+    # Whether the entity is on at first, from what the printer reports then.
+    enabled_fn: Callable[[PrinterData], bool] = lambda _: True
 
 
 def _stat(key: str) -> Callable[[dict[str, Any]], StateType]:
@@ -85,33 +100,35 @@ def _system(section: str, key: str) -> Callable[[dict[str, Any]], StateType]:
     return lambda data: (data["system"].get(section) or {}).get(key)
 
 
+# BamBuddy's totals go down when archives are purged with their statistics
+# or its print log is cleared: totals, not meters that only grow.
 INSTANCE_SENSORS: tuple[BamBuddyInstanceSensorDescription, ...] = (
     BamBuddyInstanceSensorDescription(
         key="total_prints", translation_key="total_prints",
-        state_class=SensorStateClass.TOTAL_INCREASING, value_fn=_stat("total_prints"),
+        state_class=SensorStateClass.TOTAL, value_fn=_stat("total_prints"),
     ),
     BamBuddyInstanceSensorDescription(
         key="successful_prints", translation_key="successful_prints",
-        state_class=SensorStateClass.TOTAL_INCREASING, value_fn=_stat("successful_prints"),
+        state_class=SensorStateClass.TOTAL, value_fn=_stat("successful_prints"),
     ),
     BamBuddyInstanceSensorDescription(
         key="failed_prints", translation_key="failed_prints",
-        state_class=SensorStateClass.TOTAL_INCREASING, value_fn=_stat("failed_prints"),
+        state_class=SensorStateClass.TOTAL, value_fn=_stat("failed_prints"),
     ),
     BamBuddyInstanceSensorDescription(
         key="cancelled_prints", translation_key="cancelled_prints",
-        state_class=SensorStateClass.TOTAL_INCREASING, value_fn=_stat("cancelled_prints"),
+        state_class=SensorStateClass.TOTAL, value_fn=_stat("cancelled_prints"),
     ),
     BamBuddyInstanceSensorDescription(
         key="total_print_time", translation_key="total_print_time",
         device_class=SensorDeviceClass.DURATION, native_unit_of_measurement=UnitOfTime.HOURS,
-        state_class=SensorStateClass.TOTAL_INCREASING, suggested_display_precision=0,
+        state_class=SensorStateClass.TOTAL, suggested_display_precision=0,
         value_fn=_stat("total_print_time_hours"),
     ),
     BamBuddyInstanceSensorDescription(
         key="total_filament_used", translation_key="total_filament_used",
         device_class=SensorDeviceClass.WEIGHT, native_unit_of_measurement=UnitOfMass.GRAMS,
-        state_class=SensorStateClass.TOTAL_INCREASING, suggested_display_precision=0,
+        state_class=SensorStateClass.TOTAL, suggested_display_precision=0,
         value_fn=_stat("total_filament_grams"),
     ),
     BamBuddyInstanceSensorDescription(
@@ -152,7 +169,7 @@ def _end_time(data: PrinterData) -> datetime | None:
     """Now plus the remaining minutes, to the minute: the time stays put
     from poll to poll."""
     remaining = data.status.get("remaining_time")
-    if data.state not in _ENDING_STATES or not isinstance(remaining, int) or remaining <= 0:
+    if data.state not in ACTIVE_STATES or not isinstance(remaining, int) or remaining <= 0:
         return None
     return dt_util.utcnow().replace(second=0, microsecond=0) + timedelta(minutes=remaining)
 
@@ -167,23 +184,32 @@ def _hms_errors(data: PrinterData) -> dict[str, Any]:
                 "code": "_".join(code[i : i + 4] for i in range(0, len(code), 4)) if code.isalnum() else code,
                 "severity": _SEVERITIES.get(error.get("severity"), "unknown"),
                 "description": error.get("description"),
+                # What the printer's screen offers to answer (the card shows them).
+                "actions": hms_answers(error),
             }
         )
     return {"errors": errors}
 
 
-def _active_filament(data: PrinterData) -> str:
+def _active_slot(data: PrinterData) -> tuple[dict[str, Any], int, int] | None:
+    """The slot the printer feeds from: its tray, its slot number and
+    BamBuddy's global id of it."""
     loaded = active_tray(data.status)
     found = find_tray(data, loaded) if loaded is not None else None
-    return tray_label(found[0]) if found and not tray_empty(found[0]) else "none"
+    return None if found is None or loaded is None else (found[0], found[1], loaded)
+
+
+def _active_filament(data: PrinterData) -> str:
+    slot = _active_slot(data)
+    return tray_label(slot[0]) if slot and not tray_empty(slot[0]) else "none"
 
 
 def _active_filament_attributes(data: PrinterData) -> dict[str, Any]:
-    loaded = active_tray(data.status)
-    found = find_tray(data, loaded) if loaded is not None else None
-    if found is None or loaded is None:
+    slot = _active_slot(data)
+    if slot is None:
         return {}
-    return slot_attributes(found[0], found[1], loaded, loaded)
+    tray, place, loaded = slot
+    return slot_attributes(tray, place, loaded, loaded)
 
 
 def _find_spool(data: PrinterData, tray: int | None) -> dict[str, Any] | None:
@@ -293,6 +319,12 @@ PRINTER_SENSORS: tuple[BamBuddyPrinterSensorDescription, ...] = (
         suggested_display_precision=0, value_fn=lambda data: data.hours, available_when_offline=True,
     ),
     BamBuddyPrinterSensorDescription(
+        key="maintenance", translation_key="maintenance", device_class=SensorDeviceClass.ENUM,
+        options=["ok", "due_soon", "overdue"], value_fn=maintenance_state,
+        # BamBuddy keeps it, not the printer.
+        available_when_offline=True, available_fn=lambda data: data.maintenance is not None,
+    ),
+    BamBuddyPrinterSensorDescription(
         key="stage", translation_key="print_stage", device_class=SensorDeviceClass.ENUM,
         options=STAGE_OPTIONS, value_fn=lambda data: print_stage(data.status),
     ),
@@ -360,9 +392,11 @@ PRINTER_SENSORS: tuple[BamBuddyPrinterSensorDescription, ...] = (
         value_fn=_spool(EXTERNAL_RIGHT), attr_fn=_spool_attributes(EXTERNAL_RIGHT),
     ),
     # BamBuddy's `nozzles`: 0 the only or the right nozzle, 1 the left one.
+    # Known as the temperatures are: "nozzle" the only or the left one,
+    # "nozzle_2" the right one.
     *_nozzle_sensors(0, "nozzle", "", _single),
-    *_nozzle_sensors(0, "nozzle", "right_", _dual),
-    *_nozzle_sensors(1, "nozzle_2", "left_", _dual),
+    *_nozzle_sensors(1, "nozzle", "left_", _dual),
+    *_nozzle_sensors(0, "nozzle_2", "right_", _dual),
     BamBuddyPrinterSensorDescription(
         key="wifi_signal", translation_key="wifi_signal", device_class=SensorDeviceClass.SIGNAL_STRENGTH,
         native_unit_of_measurement=SIGNAL_STRENGTH_DECIBELS_MILLIWATT, state_class=SensorStateClass.MEASUREMENT,
@@ -370,6 +404,8 @@ PRINTER_SENSORS: tuple[BamBuddyPrinterSensorDescription, ...] = (
         # BamBuddy reports -90 dBm for a printer on Ethernet: no signal to wait for.
         value_fn=lambda data: data.status.get("wifi_signal"),
         available_fn=lambda data: not data.status.get("wired_network"),
+        # On a cable from the start: no signal to show.
+        enabled_fn=lambda data: not data.status.get("wired_network"),
     ),
     BamBuddyPrinterSensorDescription(
         key="ip_address", translation_key="ip_address", entity_category=EntityCategory.DIAGNOSTIC,
@@ -409,8 +445,9 @@ AMS_SENSORS: tuple[BamBuddyAmsSensorDescription, ...] = (
     BamBuddyAmsSensorDescription(
         key="drying_remaining_time", translation_key="drying_remaining_time",
         device_class=SensorDeviceClass.DURATION, native_unit_of_measurement=UnitOfTime.MINUTES,
-        exists_fn=can_dry,
-        value_fn=lambda unit: unit.get("dry_time"),
+        exists_fn=has_heater,
+        # 0 while not drying: nothing left to wait for, no "0 min".
+        value_fn=lambda unit: unit.get("dry_time") or None,
     ),
 )  # fmt: skip
 
@@ -424,41 +461,32 @@ async def async_setup_entry(
     ]
     for coordinator in runtime.printers.values():
         entities.extend(
-            (BamBuddyEndTimeSensor if description.key == "end_time" else BamBuddyPrinterSensor)(coordinator, description)
+            _PRINTER_SENSOR_CLASSES.get(description.key, BamBuddyPrinterSensor)(coordinator, description)
             for description in PRINTER_SENSORS
             if description.exists_fn(coordinator.data)
         )
         _add_ams_units(coordinator, async_add_entities)
+    if runtime.plugs is not None:
+        _add_plug_sensors(runtime.plugs, async_add_entities)
     async_add_entities(entities)
 
 
 def _add_ams_units(coordinator: BamBuddyPrinterCoordinator, async_add_entities: AddConfigEntryEntitiesCallback) -> None:
-    """The AMS units' sensors; units attached later get theirs when the
-    printer first reports them."""
-    known: set[str] = set()
+    """The AMS units' sensors and slots."""
 
-    @callback
-    def add_new_units() -> None:
-        entities: list[SensorEntity] = []
-        data = coordinator.data
-        for unit in data.ams_units:
-            unit_id = int(unit.get("id", 0))
-            if ams_key(unit) in known or not coordinator.ams_unit_ready(unit):
-                continue
-            known.add(ams_key(unit))
-            entities.extend(
-                BamBuddyAmsSensor(coordinator, unit_id, description)
+    def create(unit: dict[str, Any], data: PrinterData) -> list[tuple[str, Callable[[], SensorEntity]]]:
+        unit_id = int(unit.get("id", 0))
+        trays = [int(tray.get("id", 0)) for tray in unit.get("tray") or []]
+        return [
+            *(
+                (description.key, partial(BamBuddyAmsSensor, coordinator, unit_id, description))
                 for description in AMS_SENSORS
                 if description.exists_fn(unit, data)
-            )
-            entities.extend(
-                BamBuddyAmsSlotSensor(coordinator, unit_id, int(tray.get("id", 0))) for tray in unit.get("tray") or []
-            )
-        if entities:
-            async_add_entities(entities)
+            ),
+            *((f"slot_{tray}", partial(BamBuddyAmsSlotSensor, coordinator, unit_id, tray)) for tray in trays),
+        ]
 
-    add_new_units()
-    coordinator.config_entry.async_on_unload(coordinator.async_add_listener(add_new_units))
+    async_add_ams_entities(coordinator, async_add_entities, create)
 
 
 class BamBuddyInstanceSensor(BamBuddyInstanceEntity, SensorEntity):
@@ -473,20 +501,21 @@ class BamBuddyInstanceSensor(BamBuddyInstanceEntity, SensorEntity):
 
     @property
     def native_value(self) -> StateType:
-        return self.entity_description.value_fn(self.coordinator.data)
+        # No figures yet when BamBuddy's first answer failed.
+        data = self.coordinator.data
+        return None if data is None else self.entity_description.value_fn(data)
 
 
-class BamBuddyPrinterSensor(BamBuddyPrinterEntity, SensorEntity):
+class BamBuddyPrinterSensor(BamBuddyDescribedEntity, SensorEntity):
     entity_description: BamBuddyPrinterSensorDescription
     # The HMS list can be long and changes with each error: kept out of the
     # recorder.
     _unrecorded_attributes = frozenset({"errors"})
 
     def __init__(self, coordinator: BamBuddyPrinterCoordinator, description: BamBuddyPrinterSensorDescription) -> None:
-        # First: the entity ID is made from its translation key.
-        self.entity_description = description
-        super().__init__(coordinator, description.key)
-        self.available_when_offline = description.available_when_offline
+        super().__init__(coordinator, description)
+        if not description.enabled_fn(coordinator.data):
+            self._attr_entity_registry_enabled_default = False
 
     @property
     def available(self) -> bool:
@@ -502,6 +531,24 @@ class BamBuddyPrinterSensor(BamBuddyPrinterEntity, SensorEntity):
         return attr_fn(self.data) if attr_fn else None
 
 
+class BamBuddyMaintenanceSensor(BamBuddyPrinterSensor):
+    """BamBuddy's maintenance of the printer: overdue when a task is due,
+    due soon in a task's last tenth. Its tasks (enabled ones), and whether
+    the key may mark them done."""
+
+    _unrecorded_attributes = frozenset({"tasks"})
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        tasks = self.data.maintenance_tasks
+        return {
+            "tasks": [maintenance_task(task) for task in tasks],
+            "due_count": sum(1 for task in tasks if task.get("is_due")),
+            "due_soon_count": sum(1 for task in tasks if task.get("is_warning") and not task.get("is_due")),
+            "can_mark_done": self.coordinator.config_entry.runtime_data.can_manage_maintenance,
+        }
+
+
 class BamBuddyEndTimeSensor(BamBuddyPrinterSensor):
     """Moves only when the printer's estimate does: computed at each poll,
     polls on both sides of a minute boundary would flip it back and forth."""
@@ -515,7 +562,7 @@ class BamBuddyEndTimeSensor(BamBuddyPrinterSensor):
         if remaining != self._remaining or self._end is None:
             self._remaining = remaining if isinstance(remaining, int) else None
             self._end = _end_time(self.data)
-        elif self.data.state not in _ENDING_STATES:
+        elif self.data.state not in ACTIVE_STATES:
             self._end = None
         return self._end
 
@@ -564,4 +611,89 @@ class BamBuddyAmsSlotSensor(BamBuddyAmsEntity, SensorEntity):
         tray = self.tray
         if tray is None:
             return None
-        return slot_attributes(tray, self.slot + 1, tray_id(self.ams_id, self.slot), active_tray(self.data.status))
+        attributes = slot_attributes(tray, self.slot + 1, tray_id(self.ams_id, self.slot), active_tray(self.data.status))
+        fed = (self.data.status.get("ams_extruder_map") or {}).get(str(self.ams_id))
+        if self.data.is_dual_nozzle and fed is not None:
+            # The nozzle the unit feeds (his word): BamBuddy's 0 right, 1 left;
+            # a unit on the filament track switch reaches both and has none.
+            attributes["nozzle"] = "left" if str(fed) == "1" else "right"
+        return attributes
+
+
+_PRINTER_SENSOR_CLASSES: dict[str, type[BamBuddyPrinterSensor]] = {
+    "end_time": BamBuddyEndTimeSensor,
+    "maintenance": BamBuddyMaintenanceSensor,
+}
+
+
+@dataclass(frozen=True, kw_only=True)
+class PlugSensorDescription(SensorEntityDescription):
+    """A figure of a plug's energy report (BamBuddy's field)."""
+
+    field: str
+
+
+PLUG_SENSORS = (
+    PlugSensorDescription(
+        key="power",
+        translation_key="plug_power",
+        field="power",
+        device_class=SensorDeviceClass.POWER,
+        state_class=SensorStateClass.MEASUREMENT,
+        native_unit_of_measurement=UnitOfPower.WATT,
+    ),
+    # BamBuddy's day starts at its own midnight: a drop is a new day.
+    PlugSensorDescription(
+        key="energy_today",
+        translation_key="plug_energy_today",
+        field="today",
+        device_class=SensorDeviceClass.ENERGY,
+        state_class=SensorStateClass.TOTAL_INCREASING,
+        native_unit_of_measurement=UnitOfEnergy.KILO_WATT_HOUR,
+    ),
+    # For Home Assistant's energy dashboard.
+    PlugSensorDescription(
+        key="energy_total",
+        translation_key="plug_energy_total",
+        field="total",
+        device_class=SensorDeviceClass.ENERGY,
+        state_class=SensorStateClass.TOTAL_INCREASING,
+        native_unit_of_measurement=UnitOfEnergy.KILO_WATT_HOUR,
+    ),
+)
+
+
+def _add_plug_sensors(coordinator: BamBuddyPlugCoordinator, async_add_entities: AddConfigEntryEntitiesCallback) -> None:
+    """A sensor for each figure a plug has reported once (his decision: a
+    plug without metering gets none -- no "0 W" for nothing); one known
+    from before keeps its place while the plug has not answered yet."""
+    registry = er.async_get(coordinator.hass)
+    entry_id = coordinator.config_entry.entry_id
+
+    def create(plug: Plug) -> list[tuple[str, Callable[[], SensorEntity]]]:
+        return [
+            (description.key, partial(BamBuddyPlugSensor, coordinator, plug, description))
+            for description in PLUG_SENSORS
+            if coordinator.reported(plug.id, description.field)
+            or registry.async_get_entity_id("sensor", DOMAIN, f"{entry_id}_plug{plug.id}_{description.key}")
+        ]
+
+    async_add_plug_entities(coordinator, async_add_entities, create)
+
+
+class BamBuddyPlugSensor(BamBuddyPlugEntity, SensorEntity):
+    """Power in W, energy in kWh, as the plug reports them to BamBuddy."""
+
+    entity_description: PlugSensorDescription
+
+    def __init__(self, coordinator: BamBuddyPlugCoordinator, plug: Plug, description: PlugSensorDescription) -> None:
+        self.entity_description = description
+        super().__init__(coordinator, plug, description.key)
+
+    @property
+    def available(self) -> bool:
+        return super().available and self.plug is not None and self.plug.reachable
+
+    @property
+    def native_value(self) -> float | None:
+        return self.plug.figure(self.entity_description.field) if self.plug else None

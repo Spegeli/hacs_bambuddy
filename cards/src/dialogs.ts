@@ -5,12 +5,15 @@
 // first and has the focus; it says what stays as it is.
 import { html, nothing, type TemplateResult } from "lit";
 
-import type { PrintObject } from "./actions";
-import { formatTemperature, needsOutline } from "./format";
-import { canClearHms, firmwareContent, hmsContent, infoContent } from "./header";
+import type { KProfile, KProfiles, PrintObject } from "./actions";
+import { formatFixed, formatTemperature, needsOutline, rgbOf } from "./format";
+import { checkContent, type CheckDialog } from "./check";
+import { canClearHms, firmwareContent, hmsAnswered, hmsContent, infoContent, storageContent } from "./header";
+import { autoOffContent, powerContent } from "./power";
+import { maintenanceContent, type MaintenanceDialog } from "./maintenance";
 import { icon } from "./icons";
 import { t, type TextKey } from "./i18n";
-import type { CardContext, Confirmation } from "./parts";
+import { actionButton, dialogNote, slotOf, type CardContext, type Confirmation } from "./parts";
 import type { AmsRefs, Hass } from "./types";
 
 /** Drying defaults and limits: BamBuddy's range; the AMS 2 Pro heats to 65 °C at most. */
@@ -46,14 +49,53 @@ export interface SkipDialog {
   error?: string;
 }
 
-/** The generic materials the integration sets (Bambu's generic profiles). */
-export const MATERIALS = ["PLA", "PLA Silk", "PLA-CF", "PETG", "PETG HF", "PETG-CF", "PCTG", "ABS", "ASA", "PC", "PA", "PA-CF", "TPU"] as const;
+/** The generic materials the integration sets (Bambu's generic profiles),
+ * each with its profile id and the type it gives the slot -- the K profiles
+ * of the printer are matched by them. */
+const GENERIC: readonly [string, string, string][] = [
+  ["PLA", "GFL99", "PLA"],
+  ["PLA Silk", "GFL96", "PLA"],
+  ["PLA High Speed", "GFL95", "PLA"],
+  ["PLA-CF", "GFL98", "PLA-CF"],
+  ["PETG", "GFG99", "PETG"],
+  ["PETG HF", "GFG96", "PETG"],
+  ["PETG-CF", "GFG98", "PETG-CF"],
+  ["PCTG", "GFG97", "PCTG"],
+  ["ABS", "GFB99", "ABS"],
+  ["ASA", "GFB98", "ASA"],
+  ["PC", "GFC99", "PC"],
+  ["PA", "GFN99", "PA"],
+  ["PA-CF", "GFN98", "PA-CF"],
+  ["PPA-CF", "GFN97", "PPA-CF"],
+  ["PPA-GF", "GFN96", "PPA-GF"],
+  ["TPU", "GFU99", "TPU"],
+  ["TPU for AMS", "GFU98", "TPU"],
+  ["PVA", "GFS99", "PVA"],
+  ["HIPS", "GFS98", "HIPS"],
+  ["BVOH", "GFS97", "BVOH"],
+  ["PE", "GFP99", "PE"],
+  ["PE-CF", "GFP98", "PE-CF"],
+  ["PP", "GFP97", "PP"],
+  ["PP-CF", "GFP96", "PP-CF"],
+  ["PP-GF", "GFP95", "PP-GF"],
+  ["EVA", "GFR99", "EVA"],
+  ["PHA", "GFR98", "PHA"],
+  ["PPS", "GFT97", "PPS"],
+  ["PPS-CF", "GFT98", "PPS-CF"],
+];
+export const MATERIALS: readonly string[] = GENERIC.map(([name]) => name);
+
+/** The K profile choice that keeps the slot's own. */
+export const K_KEEP = "keep";
+
+/** The printer's default K, where a slot has no profile of its own. */
+const DEFAULT_K = 0.02;
 
 /** The material choice that keeps the slot's own. */
 export const KEEP = "keep";
 
 /** Bambu's common basic colours, each with its name. */
-export const PALETTE: readonly { color: string; name: TextKey }[] = [
+const PALETTE: readonly { color: string; name: TextKey }[] = [
   { color: "#FFFFFF", name: "color_white" },
   { color: "#000000", name: "color_black" },
   { color: "#8E9089", name: "color_gray" },
@@ -89,15 +131,56 @@ export interface FilamentDialog {
   color?: string;
   /** A colour outside the palette: the slot's own, or one picked. */
   custom?: string;
+  /** A Bambu spool's chip describes it: the dialog offers only its tools. */
+  rfid?: boolean;
+  /** An AMS slot (the external spools have no chip reader). */
+  ams?: boolean;
+  /** A chip spool, as the strip names it: "PLA Basic · 77 %". */
+  spool?: string;
+  /** The slot feeds the printer now. */
+  active?: boolean;
+  /** The slot's material type, for matching its K profiles. */
+  type?: string;
+  /** The printer's K profiles for the slot, while asked "loading", or
+   * "failed" when it did not list them. */
+  kprofiles?: KProfiles | "loading" | "failed";
+  /** The K profile chosen: K_KEEP, "-1" the default, or a profile's index. */
+  kprofile?: string;
 }
 
 /** What the set_filament action is to change: only what differs from the
  * slot's. A colour as [r, g, b]. */
-export function filamentChanges(dialog: FilamentDialog): { material?: string; color?: number[] } {
+export function filamentChanges(dialog: FilamentDialog): { material?: string; color?: number[]; k_profile?: number } {
   const material = dialog.material !== undefined && dialog.material !== KEEP ? { material: dialog.material } : {};
   const color = dialog.color;
   const changed = color !== undefined && color !== dialog.current;
-  return { ...material, ...(changed ? { color: [1, 3, 5].map((start) => parseInt(color.slice(start, start + 2), 16)) } : {}) };
+  // A K profile chosen that differs from the slot's -- a new material takes
+  // the default otherwise, as on the printer's screen.
+  const chosen = dialog.kprofile !== undefined && dialog.kprofile !== K_KEEP ? Number(dialog.kprofile) : undefined;
+  const current = typeof dialog.kprofiles === "object" ? dialog.kprofiles.current : -1;
+  const kChanged = chosen !== undefined && (chosen !== current || "material" in material) && !(chosen === -1 && "material" in material);
+  return { ...material, ...(changed ? { color: rgbOf(color) } : {}), ...(kChanged ? { k_profile: chosen } : {}) };
+}
+
+/** The printer's first K profile for the material the dialog holds now:
+ * a new material takes it, as BamBuddy's own dialog does; none: the
+ * printer's default. */
+export function matchingProfile(dialog: FilamentDialog): string | undefined {
+  const state = dialog.kprofiles;
+  if (typeof state !== "object") return undefined;
+  const { id, type } = materialType(dialog);
+  const found = state.profiles.find(
+    (profile) => (id !== undefined && profile.filamentId === id) || (type !== "" && profile.name.toUpperCase().includes(type.toUpperCase())),
+  );
+  return found ? String(found.index) : undefined;
+}
+
+/** The material a slot will hold: the one chosen, else its own. */
+function materialType(dialog: FilamentDialog): { type: string; id?: string; name: string } {
+  const chosen = GENERIC.find(([name]) => name === dialog.material);
+  if (chosen) return { name: chosen[0], id: chosen[1], type: chosen[2] };
+  const type = dialog.type ?? "";
+  return { name: type, type };
 }
 
 /** The printer information; `copied` while "Copied" shows. */
@@ -107,13 +190,30 @@ export interface InfoDialog {
 }
 
 /** Dialogs that show the printer's state as it is now: they follow it while open. */
-export type StateDialog = { kind: "hms" } | { kind: "firmware" } | InfoDialog;
+export type StateDialog =
+  | { kind: "hms" }
+  | { kind: "firmware" }
+  | { kind: "storage" }
+  | { kind: "power" }
+  | { kind: "auto_off" }
+  | { kind: "camera" }
+  | InfoDialog
+  | MaintenanceDialog;
 
-export type Dialog = ({ kind: "confirm" } & Confirmation) | DryingDialog | SkipDialog | FilamentDialog | StateDialog;
+export type Dialog = ({ kind: "confirm" } & Confirmation) | DryingDialog | SkipDialog | FilamentDialog | StateDialog | CheckDialog;
+
+export type { CheckDialog, MaintenanceDialog };
 
 export interface DialogActions {
   close: () => void;
   confirm: () => void;
+  /** Starts the live view anew, at the rate set. */
+  restartLive: () => void;
+  /** The K profile chosen in the filament dialog. */
+  setKProfile: (value: string) => void;
+  /** The filament dialog's slot: cleared after a question, its chip read again. */
+  resetSlot: () => void;
+  refreshRfid: () => void;
   /** Takes a drying value; returns the one the dialog holds then. */
   setDrying: (field: DryingField, value: number) => number;
   toggleObject: (id: number) => void;
@@ -124,6 +224,15 @@ export interface DialogActions {
   pickColor: (color: string) => void;
   /** Copies a text, an IP address say, to the clipboard. */
   copy: (text: string) => void;
+  /** The maintenance task whose row asks "Mark as done?", or none. */
+  confirmTask: (id: number | undefined) => void;
+  markDone: (id: number) => void;
+  /** Opens or folds a folded line of the connection check. */
+  toggleFold: (which: "pass" | "skip") => void;
+  /** Now, for the seconds a check runs. */
+  now: () => number;
+  /** Escape: closes the dialog, or first a question inside it. */
+  cancel: (event: Event) => void;
 }
 
 function stepper(
@@ -256,7 +365,90 @@ function paletteKeys(event: KeyboardEvent): void {
   next.click();
 }
 
-function filamentContent(hass: Hass, dialog: FilamentDialog, actions: DialogActions): TemplateResult {
+/** The printer's K profiles for the slot: its default, those of the
+ * material, the others -- as BamBuddy's own dialog offers them. */
+function kField(hass: Hass, dialog: FilamentDialog, actions: DialogActions): TemplateResult {
+  const state = dialog.kprofiles;
+  const profiles = typeof state === "object" ? state.profiles : [];
+  const current = typeof state === "object" ? state.current : -1;
+  const keeping = dialog.material === KEEP;
+  const { name, id, type } = materialType(dialog);
+  const matches = (profile: KProfile): boolean =>
+    (id !== undefined && profile.filamentId === id) || (type !== "" && profile.name.toUpperCase().includes(type.toUpperCase()));
+  const matching = profiles.filter(matches);
+  const others = profiles.filter((profile) => !matches(profile)).sort((a, b) => a.name.localeCompare(b.name));
+  const label = (profile: KProfile): string => `${profile.name} (K ${formatFixed(hass, profile.k, 3)})`;
+  const listed = keeping ? profiles.find((profile) => profile.index === current) : undefined;
+  // The slot's own: by its name, by its number where the printer did not
+  // list it, unnamed where the printer gave no list at all.
+  const keepText = !keeping
+    ? undefined
+    : listed
+      ? t(hass, "k_keep", { profile: label(listed) })
+      : current >= 0
+        ? t(hass, "k_keep_number", { index: current })
+        : state === "failed"
+          ? t(hass, "k_keep_plain")
+          : undefined;
+  const value = dialog.kprofile ?? (keepText ? K_KEEP : "-1");
+  const other = others.some((profile) => String(profile.index) === value);
+  const option = (profile: KProfile): TemplateResult =>
+    html`<option value=${String(profile.index)} .selected=${value === String(profile.index)}>${label(profile)}</option>`;
+  return html`<div class="field kfield">
+      <label for="fil-k">${t(hass, "k_profile")}</label>
+      <span class="select">
+        <select id="fil-k" ?disabled=${state === "loading"} @change=${(event: Event) => actions.setKProfile((event.target as HTMLSelectElement).value)}>
+          ${state === "loading"
+            ? html`<option selected>${t(hass, "k_loading")}</option>`
+            : html`${keepText ? html`<option value=${K_KEEP} .selected=${value === K_KEEP}>${keepText}</option>` : nothing}
+                <option value="-1" .selected=${value === "-1"}>${t(hass, "k_default", { k: formatFixed(hass, DEFAULT_K, 3) })}</option>
+                ${matching.length ? html`<optgroup label=${t(hass, "k_matching", { material: type || name })}>${matching.map(option)}</optgroup>` : nothing}
+                ${others.length ? html`<optgroup label=${t(hass, "k_others")}>${others.map(option)}</optgroup>` : nothing}`}
+        </select>
+        ${icon("chevronDown")}
+      </span>
+      ${state === "failed"
+        ? html`<span class="k-hint">${t(hass, "k_failed")}</span>`
+        : typeof state === "object" && !profiles.length
+          ? html`<span class="k-hint">${t(hass, "k_none")}</span>`
+          : other
+            ? html`<span class="k-hint">${t(hass, "k_other_note")}</span>`
+            : nothing}
+    </div>`;
+}
+
+/** What else a slot offers: its chip read again (AMS slots), reset. Both
+ * wait for a running print -- drawn from the printer as it is now --; the
+ * AMS reads a chip only with nothing loaded. */
+function slotTools(ctx: CardContext, dialog: FilamentDialog, actions: DialogActions): TemplateResult {
+  const { hass, refs } = ctx;
+  const running = ctx.running;
+  // The slots that hold filament now, by the names the dialogs give them.
+  const loaded = [
+    ...refs.ams.flatMap((unit) =>
+      unit.slots.filter((entityId) => slotOf(hass, entityId).active).map((entityId) => t(hass, "slot_label", { slot: unit.slots.indexOf(entityId) + 1, unit: unit.name })),
+    ),
+    ...refs.externalSpools.filter((entityId) => slotOf(hass, entityId).active).map(() => t(hass, "external")),
+  ];
+  return html`<div class="slot-tools">
+      ${dialog.ams ? actionButton({ label: t(hass, "rfid_read"), iconName: "sync", disabled: running || loaded.length > 0, onClick: actions.refreshRfid }) : nothing}
+      ${actionButton({ label: t(hass, "slot_reset"), iconName: "restore", disabled: running, onClick: actions.resetSlot })}
+    </div>
+    ${running
+      ? dialogNote(t(hass, "slot_tools_running"))
+      : dialog.ams && loaded.length
+        ? dialogNote(t(hass, "rfid_unload_hint", { slots: loaded.join(", ") }))
+        : nothing}`;
+}
+
+function filamentContent(ctx: CardContext, dialog: FilamentDialog, actions: DialogActions): TemplateResult {
+  const { hass } = ctx;
+  if (dialog.rfid) {
+    return html`<h2 id="dlg-title">${dialog.title}</h2>
+      <p>${t(hass, "filament_rfid")}</p>
+      ${dialog.spool ? html`<p class="rfid-spool">${dialog.spool}</p>` : nothing}
+      ${slotTools(ctx, dialog, actions)}`;
+  }
   const options = PALETTE.map((item) => ({ color: item.color, label: t(hass, item.name) }));
   const custom = dialog.custom ? { color: dialog.custom, label: t(hass, dialog.custom === dialog.current ? "color_current" : "color_chosen") } : undefined;
   // The chosen colour is the stop in the tab order, else the first.
@@ -288,23 +480,27 @@ function filamentContent(hass: Hass, dialog: FilamentDialog, actions: DialogActi
         </div>
       </div>
     </div>
-    <p class="dlg-note">${icon("info")}<span>${t(hass, "filament_note")}</span></p>`;
+    ${kField(hass, dialog, actions)}
+    ${dialogNote(t(hass, "filament_note"))}
+    ${slotTools(ctx, dialog, actions)}`;
 }
 
 /** What the safe and the confirming button say; no confirming button
  * where there is nothing to confirm. `need` says what is missing while the
  * confirming button waits. */
-function buttons(ctx: CardContext, dialog: Dialog): { keep: string; confirm?: string; danger: boolean; ready: boolean; need?: string } {
+function buttons(ctx: CardContext, dialog: Dialog): { keep: string; confirm?: string; danger: boolean; ready: boolean; need?: string; quiet?: boolean } {
   const { hass } = ctx;
   switch (dialog.kind) {
     case "confirm":
-      return { keep: dialog.keep ?? t(hass, "back"), confirm: dialog.confirm, danger: dialog.danger === true, ready: true };
+      return { keep: dialog.keep ?? t(hass, "cancel"), confirm: dialog.confirm, danger: dialog.danger === true, ready: true };
     case "drying":
-      return { keep: t(hass, "back"), confirm: t(hass, "dry_start"), danger: false, ready: true };
+      return { keep: t(hass, "cancel"), confirm: t(hass, "dry_start"), danger: false, ready: true };
     case "filament":
+      // A Bambu spool: its tools only.
+      if (dialog.rfid) return { keep: t(hass, "dismiss"), danger: false, ready: false };
       // A material where the slot has none, and a change.
       return {
-        keep: t(hass, "back"),
+        keep: t(hass, "cancel"),
         confirm: t(hass, "filament_set"),
         danger: false,
         ready: dialog.material !== undefined && Object.keys(filamentChanges(dialog)).length > 0,
@@ -312,15 +508,22 @@ function buttons(ctx: CardContext, dialog: Dialog): { keep: string; confirm?: st
         ...(dialog.material === undefined && dialog.color !== undefined ? { need: t(hass, "filament_need_material") } : {}),
       };
     case "hms":
-      return { keep: t(hass, "dismiss"), ...(canClearHms(ctx) ? { confirm: t(hass, "hms_clear") } : {}), danger: false, ready: true };
+      return { keep: t(hass, "dismiss"), ...(canClearHms(ctx) ? { confirm: t(hass, "hms_clear") } : {}), danger: false, ready: true, quiet: hmsAnswered(ctx) };
     case "firmware":
     case "info":
+    case "storage":
+    case "maintenance":
+    case "power":
+    case "auto_off":
+    case "camera":
       return { keep: t(hass, "dismiss"), danger: false, ready: false };
+    case "check":
+      return { keep: t(hass, "dismiss"), ...(dialog.running ? {} : { confirm: t(hass, "check_again") }), danger: false, ready: !dialog.running };
     case "skip": {
       if (!dialog.loading && (dialog.error || !dialog.objects.length)) return { keep: t(hass, "dismiss"), danger: true, ready: false };
       const count = dialog.chosen.length;
       const confirm = count === 0 ? t(hass, "skip") : count === 1 ? t(hass, "skip_one") : t(hass, "skip_many", { count });
-      return { keep: t(hass, "skip_keep"), confirm, danger: true, ready: count > 0 && !everyObject(dialog) };
+      return { keep: t(hass, "cancel"), confirm, danger: true, ready: count > 0 && !everyObject(dialog) };
     }
   }
 }
@@ -330,12 +533,12 @@ function content(ctx: CardContext, dialog: Dialog, actions: DialogActions): Temp
   switch (dialog.kind) {
     case "confirm":
       return html`<h2 id="dlg-title">${dialog.title}</h2>
-        <p>${dialog.text}</p>
-        ${dialog.note ? html`<p class="dlg-note">${icon("info")}<span>${dialog.note}</span></p>` : nothing}`;
+        <p id="dlg-text">${dialog.text}</p>
+        ${dialog.note ? dialogNote(dialog.note, dialog.noteTone, "dlg-note") : nothing}`;
     case "drying":
       return dryingContent(hass, dialog, actions);
     case "filament":
-      return filamentContent(hass, dialog, actions);
+      return filamentContent(ctx, dialog, actions);
     case "skip":
       return skipContent(hass, dialog, actions);
     case "hms":
@@ -344,24 +547,108 @@ function content(ctx: CardContext, dialog: Dialog, actions: DialogActions): Temp
       return firmwareContent(ctx, actions.close);
     case "info":
       return infoContent(ctx, dialog.copied === true, actions.copy);
+    case "storage":
+      return storageContent(ctx);
+    case "power":
+      return powerContent(ctx);
+    case "auto_off":
+      return autoOffContent(ctx);
+    case "camera":
+      return cameraContent(ctx, actions);
+    case "maintenance":
+      return maintenanceContent(ctx, dialog, actions);
+    case "check":
+      return checkContent(ctx, dialog, actions, actions.now());
   }
 }
 
-export function dialogView(ctx: CardContext, dialog: Dialog, actions: DialogActions): TemplateResult {
-  const { keep, confirm, danger, ready, need } = buttons(ctx, dialog);
-  // A tap on the backdrop -- the dialog element itself -- closes it.
-  const backdrop = (event: Event): void => {
-    if (event.target === event.currentTarget) actions.close();
+/** The live view's frame rate (his word): from 5 to the camera's most, in
+ * steps of 5; sent when the taps stop, the stream follows. */
+function cameraContent(ctx: CardContext, actions: DialogActions): TemplateResult {
+  const { hass, refs } = ctx;
+  const number = refs.cameraFps as string;
+  const attributes = hass.states[number]?.attributes ?? {};
+  const figure = (value: unknown, fallback: number): number => (typeof value === "number" ? value : fallback);
+  const set = ctx.targetOf(number);
+  // Limits missing: from 5 to the value it has.
+  const min = figure(attributes["min"], 5);
+  const max = figure(attributes["max"], Math.max(min, set ?? min));
+  const step = figure(attributes["step"], 5);
+  const value = set ?? max;
+  // What arrives, where it is not what the camera asks for.
+  const camera = refs.camera ? hass.states[refs.camera]?.attributes : undefined;
+  const asked = camera?.["frame_rate"];
+  const arriving = camera?.["streamed_frame_rate"];
+  const differs = typeof arriving === "number" && typeof asked === "number" && Math.abs(arriving - asked) > 2;
+  return html`<h2 id="dlg-title">${t(hass, "fps_title")}</h2>
+    <div class="stepper">
+      ${actionButton({
+        label: t(hass, "fps_lower", { step }),
+        iconName: "minus",
+        iconOnly: true,
+        disabled: value <= min,
+        onClick: () => ctx.stepTarget(number, Math.max(min, value - step)),
+      })}
+      <output class="step-value" aria-live="polite">
+        <span aria-hidden="true">${t(hass, "fps_value", { fps: value })}</span><span class="sr-only">${t(hass, "fps_aria", { fps: value })}</span>
+      </output>
+      ${actionButton({
+        label: t(hass, "fps_raise", { step }),
+        iconName: "plus",
+        iconOnly: true,
+        disabled: value >= max,
+        onClick: () => ctx.stepTarget(number, Math.min(max, value + step)),
+      })}
+    </div>
+    <p class="hint">${t(hass, "fps_note", { max })}</p>
+    ${differs
+      ? html`${dialogNote(t(hass, "fps_arriving", { now: arriving }), "warning", "fps-arriving")}
+          <button class="btn tonal fps-restart" @click=${actions.restartLive}>${icon("restore")}<span>${t(hass, "fps_restart")}</span></button>`
+      : nothing}`;
+}
+
+/** The dialogs a press started on the backdrop of: kept on the element, as
+ * the card may draw again between the press and the click. */
+const pressedBeside = new WeakSet<EventTarget>();
+
+/** The dialog; `notice`: "Sent" or an error, inside it while it is open --
+ * the card behind a modal dialog is out of reach. */
+export function dialogView(ctx: CardContext, dialog: Dialog, actions: DialogActions, notice: TemplateResult | typeof nothing = nothing): TemplateResult {
+  const { keep, confirm, danger, ready, need, quiet } = buttons(ctx, dialog);
+  // A tap on the backdrop -- the dialog element itself -- closes it. Only
+  // one pressed there too: a drag from a field out of the dialog, selecting
+  // its text, ends with a click on the backdrop as well.
+  const press = (event: Event): void => {
+    const element = event.currentTarget as EventTarget;
+    if (event.target === element) pressedBeside.add(element);
+    else pressedBeside.delete(element);
   };
-  return html`<dialog aria-labelledby="dlg-title" @close=${actions.close} @click=${backdrop}>
+  const backdrop = (event: Event): void => {
+    const element = event.currentTarget as EventTarget;
+    const pressed = pressedBeside.delete(element);
+    if (pressed && event.target === element) actions.close();
+  };
+  // A question is read out whole; one that ends something is an alert.
+  const question = dialog.kind === "confirm";
+  const described = question ? (dialog.note ? "dlg-text dlg-note" : "dlg-text") : undefined;
+  return html`<dialog
+    role=${question && danger ? "alertdialog" : nothing}
+    aria-labelledby="dlg-title"
+    aria-describedby=${described ?? nothing}
+    @cancel=${actions.cancel}
+    @close=${actions.close}
+    @pointerdown=${press}
+    @click=${backdrop}
+  >
     <div class="dlg-body">
       ${content(ctx, dialog, actions)}
+      ${notice}
       <div class="dlg-actions">
         ${need ? html`<span class="dlg-need">${need}</span>` : nothing}
         <button class="btn plain safe" autofocus @click=${actions.close}>${keep}</button>
         ${confirm === undefined
           ? nothing
-          : html`<button class="btn ${danger ? "danger" : "primary"}" ?disabled=${!ready} @click=${actions.confirm}>${confirm}</button>`}
+          : html`<button class="btn ${danger ? "danger" : quiet ? "tonal" : "primary"}" ?disabled=${!ready} @click=${actions.confirm}>${confirm}</button>`}
       </div>
     </div>
   </dialog>`;

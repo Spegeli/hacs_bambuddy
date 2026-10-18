@@ -22,6 +22,16 @@ export function numericState(hass: Hass, entityId: string | undefined): number |
   return Number.isFinite(value) ? value : undefined;
 }
 
+/** A value that is a text with something in it, else undefined. */
+export const textOrUndefined = (value: unknown): string | undefined => (typeof value === "string" && value ? value : undefined);
+
+/** A select's options as its state lists them, else the card's own; an
+ * empty list counts only where `allowEmpty`. */
+export function listedOptions(state: HassEntityState, fallback: readonly string[], allowEmpty: boolean): readonly string[] {
+  const listed = state.attributes["options"];
+  return Array.isArray(listed) && (allowEmpty || listed.length > 0) && listed.every((option) => typeof option === "string") ? (listed as string[]) : fallback;
+}
+
 /** The entity's state as Home Assistant shows it, translated; undefined
  * when there is none. `state` formats another state of the same entity:
  * an option of a select. */
@@ -58,7 +68,19 @@ export function formatNumber(hass: Hass, value: number, maximumFractionDigits = 
 
 export const formatTemperature = (hass: Hass, value: number): string => `${formatNumber(hass, value)}\u00a0°C`;
 
+/** A number with exactly `digits` decimals: a K value as 0.020. */
+export function formatFixed(hass: Hass, value: number, digits: number): string {
+  return new Intl.NumberFormat(numberLocale(hass), { minimumFractionDigits: digits, maximumFractionDigits: digits }).format(value);
+}
+
 export const formatPercent = (hass: Hass, value: number): string => `${formatNumber(hass, value)}\u00a0%`;
+
+/** Power in W, from 1000 W in kW (his decision). */
+export const formatPower = (hass: Hass, watts: number): string =>
+  Math.abs(watts) >= 1000 ? `${formatNumber(hass, watts / 1000, 1)}\u00a0kW` : `${formatNumber(hass, watts)}\u00a0W`;
+
+/** Energy in kWh, to the watt hour a plug reports it. */
+export const formatEnergy = (hass: Hass, kwh: number): string => `${formatNumber(hass, kwh, 2)}\u00a0kWh`;
 
 /** Minutes as "42 min", "2 h", "1 h 23 min", "1 d 4 h". */
 export function formatDuration(hass: Hass, minutes: number): string {
@@ -66,7 +88,7 @@ export function formatDuration(hass: Hass, minutes: number): string {
   const days = Math.floor(total / 1440);
   const hours = Math.floor((total % 1440) / 60);
   const rest = total % 60;
-  if (days > 0) return t(hass, "dur_dh", { d: days, h: hours });
+  if (days > 0) return hours === 0 ? t(hass, "dur_d", { d: days }) : t(hass, "dur_dh", { d: days, h: hours });
   if (hours === 0) return t(hass, "dur_min", { m: rest });
   return rest === 0 ? t(hass, "dur_h", { h: hours }) : t(hass, "dur_hm", { h: hours, m: rest });
 }
@@ -125,7 +147,7 @@ export const FILAMENT_CHANGE: ReadonlySet<string> = new Set(["heating", "feeding
 /** States that show the job's progress and cover. */
 export const WITH_JOB: ReadonlySet<string> = new Set<PrintStatus>(["printing", "paused", "preparing", "slicing", "finished", "failed"]);
 
-export type Tone = "active" | "paused" | "done" | "failed" | "idle" | "off";
+type Tone = "active" | "paused" | "done" | "failed" | "idle" | "off";
 
 /** The colour family of a print status. */
 export function toneOf(status: string | undefined): Tone {
@@ -155,9 +177,12 @@ export function filamentColor(value: unknown): string | undefined {
   return typeof value === "string" && /^#[0-9a-f]{6}([0-9a-f]{2})?$/i.test(value) ? value.slice(0, 7) : undefined;
 }
 
+/** "#RRGGBB" as [r, g, b], each 0-255. */
+export const rgbOf = (color: string): number[] => [1, 3, 5].map((start) => parseInt(color.slice(start, start + 2), 16));
+
 /** A colour's relative brightness, 0 (black) to 1 (white). */
 function brightness(color: string): number {
-  const [r, g, b] = [1, 3, 5].map((start) => parseInt(color.slice(start, start + 2), 16) / 255) as [number, number, number];
+  const [r, g, b] = rgbOf(color).map((value) => value / 255) as [number, number, number];
   return 0.2126 * r + 0.7152 * g + 0.0722 * b;
 }
 

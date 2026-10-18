@@ -14,6 +14,7 @@ from custom_components.bambuddy.models import (
     ams_model,
     ams_name,
     ams_number,
+    camera_max_fps,
     detectors,
     find_tray,
     nozzle_type,
@@ -64,6 +65,10 @@ def test_print_status(status: dict[str, Any], expected: str | None) -> None:
         # Idle: BamBuddy names no stage.
         ({"stg_cur": -1, "stg_cur_name": None}, "idle"),
         ({"stg_cur": 255, "stg_cur_name": None}, "idle"),
+        ({"stg_cur": 255, "stg_cur_name": None, "state": "FINISH"}, "idle"),
+        # No name during a job is no idle printer: unknown.
+        ({"stg_cur": -1, "stg_cur_name": None, "state": "RUNNING"}, None),
+        ({"stg_cur": 255, "stg_cur_name": None, "state": "PAUSE"}, None),
         # Derived at the start of a print, without a stage number.
         ({"stg_cur": -1, "stg_cur_name": "Heating heatbed"}, "heating_heatbed"),
         ({"stg_cur": 255, "stg_cur_name": "Heating nozzle"}, "heating_nozzle"),
@@ -193,20 +198,22 @@ def test_find_tray() -> None:
 
 
 @pytest.mark.parametrize(
-    ("model", "aux", "door", "airduct", "ethernet", "sd", "exhaust"),
+    ("model", "aux", "door", "airduct", "ethernet", "sd", "exhaust", "usb"),
     [
-        ("X1C", True, True, False, True, True, False),
-        ("A1 Mini", False, False, False, False, False, False),
-        ("a1", False, False, False, False, False, False),
-        ("P1S", True, False, False, True, True, False),
-        ("H2D", True, True, True, True, True, False),
-        ("P2S", True, True, True, True, True, True),
+        ("X1C", True, True, False, True, True, False, False),
+        # The A1 series has a microSD slot.
+        ("A1 Mini", False, False, False, False, True, False, False),
+        ("a1", False, False, False, False, True, False, False),
+        ("P1S", True, False, False, True, True, False, False),
+        # No SD slot: BamBuddy's flag tells a USB drive.
+        ("H2D", True, True, True, True, True, False, True),
+        ("P2S", True, True, True, True, True, True, True),
         # An unknown model: only what every printer has.
-        ("", False, False, False, False, False, False),
+        ("", False, False, False, False, False, False, False),
     ],
 )
 def test_model_capabilities(
-    model: str, aux: bool, door: bool, airduct: bool, ethernet: bool, sd: bool, exhaust: bool
+    model: str, aux: bool, door: bool, airduct: bool, ethernet: bool, sd: bool, exhaust: bool, usb: bool
 ) -> None:
     printer = _printer({}, model)
     assert (
@@ -216,7 +223,8 @@ def test_model_capabilities(
         printer.has_ethernet(),
         printer.has_sd_card(),
         printer.has_exhaust_fan(),
-    ) == (aux, door, airduct, ethernet, sd, exhaust)
+        printer.stores_on_usb(),
+    ) == (aux, door, airduct, ethernet, sd, exhaust, usb)
 
 
 @pytest.mark.parametrize(
@@ -336,3 +344,44 @@ def test_ams_names(unit_id: int, model: str, serial: str, name: str) -> None:
     """After the printer, lettered as Bambu Lab and BamBuddy do."""
     assert ams_name({"id": 4, "name": "Studio", "model": "H2D"}, unit_id, model, serial) == name
 
+
+@pytest.mark.parametrize(
+    ("model", "fps"),
+    [
+        ("X1C", 30),
+        ("X1", 30),
+        ("X1E", 30),
+        ("X2D", 30),
+        ("H2D", 30),
+        ("H2D Pro", 30),
+        ("H2S", 30),
+        ("H2C", 30),
+        ("P2S", 30),
+        ("BL-P001", 30),
+        ("N7", 30),
+        ("O1C2", 30),
+        ("A1", 5),
+        ("A1 Mini", 5),
+        ("P1S", 5),
+        ("P1P", 5),
+        ("A2L", 5),
+        ("", 5),
+    ],
+)
+def test_the_camera_frame_rate_by_model(model: str, fps: int) -> None:
+    """BamBuddy's rule (services/camera.py supports_rtsp, routes/camera.py
+    camera_stream): the RTSP models stream up to 30 frames a second; the
+    chamber image of the A1 and P1 series, and a model BamBuddy does not
+    know, up to 5."""
+    assert camera_max_fps({"model": model}) == fps
+
+
+def test_a_camera_bambuddy_takes_from_elsewhere_gives_15() -> None:
+    """An external camera BamBuddy streams instead (on, with an address):
+    BamBuddy caps it at 15, whatever the printer."""
+    external = {"external_camera_enabled": True, "external_camera_url": "http://camera.local/stream"}
+    assert camera_max_fps({"model": "X1C", **external}) == 15
+    assert camera_max_fps({"model": "A1 Mini", **external}) == 15
+    # On without an address, or an address switched off: the printer's own.
+    assert camera_max_fps({"model": "A1 Mini", "external_camera_enabled": True, "external_camera_url": None}) == 5
+    assert camera_max_fps({"model": "X1C", **external, "external_camera_enabled": False}) == 30

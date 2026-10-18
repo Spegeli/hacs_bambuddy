@@ -1,0 +1,54 @@
+[
+  {
+    "slot_id": 1,
+    "extruder_id": 0,
+    "nozzle_id": "",
+    "nozzle_diameter": "0.4",
+    "filament_id": "GFL99",
+    "name": "Generic PLA",
+    "k_value": "0.020000",
+    "n_coef": "0.000000",
+    "ams_id": 0,
+    "tray_id": -1,
+    "setting_id": "GFSL99"
+  },
+  {
+    "slot_id": 2,
+    "extruder_id": 0,
+    "nozzle_id": "",
+    "nozzle_diameter": "0.4",
+    "filament_id": "GFG99",
+    "name": "Generic PETG",
+    "k_value": "0.035000",
+    "n_coef": "0.000000",
+    "ams_id": 0,
+    "tray_id": -1,
+    "setting_id": "GFSG99"
+  },
+  {
+    "slot_id": 3,
+    "extruder_id": 0,
+    "nozzle_id": "",
+    "nozzle_diameter": "0.4",
+    "filament_id": "GFL99",
+    "name": "Grey PLA matte",
+    "k_value": "0.018000",
+    "n_coef": "0.000000",
+    "ams_id": 0,
+    "tray_id": -1,
+    "setting_id": null
+  },
+  {
+    "slot_id": 1,
+    "extruder_id": 1,
+    "nozzle_id": "",
+    "nozzle_diameter": "0.4",
+    "filament_id": "GFB99",
+    "name": "Generic ABS",
+    "k_value": "0.024000",
+    "n_coef": "0.000000",
+    "ams_id": 0,
+    "tray_id": -1,
+    "setting_id": "GFSB99"
+  }
+]

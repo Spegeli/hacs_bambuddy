@@ -28,6 +28,9 @@ export const cardStyles = css`
     position: relative;
     color: var(--bb-text);
     font-family: var(--ha-font-family-body, inherit);
+    /* Where the chips and the HMS line start: the card's padding, as the
+       tabs and the blocks below -- one left edge under the head. */
+    --bb-inset: 16px;
   }
   .tone-active {
     --tone: var(--bb-accent);
@@ -78,7 +81,7 @@ export const cardStyles = css`
     outline-offset: 2px;
   }
 
-  /* Header: online dot, name, status, light, menu; the chips below. */
+  /* Header: online dot, name, light, menu; the chips below. */
   .head {
     display: flex;
     align-items: center;
@@ -111,13 +114,12 @@ export const cardStyles = css`
     overflow: hidden;
     overflow-wrap: anywhere;
   }
+  /* Never cut: two nozzles and the hours take a second line on a narrow card. */
   .model {
     font-size: 12px;
     color: var(--bb-muted);
     line-height: 16px;
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
+    overflow-wrap: anywhere;
   }
   /* Network, HMS, firmware: small chips that wrap; the icon carries the
      colour, the text stays readable. */
@@ -125,7 +127,7 @@ export const cardStyles = css`
     display: flex;
     flex-wrap: wrap;
     gap: 6px;
-    margin: -2px 16px 10px 36px;
+    margin: -2px var(--bb-inset) 10px;
   }
   .pill {
     position: relative;
@@ -139,7 +141,10 @@ export const cardStyles = css`
     font-size: 12px;
     font-weight: 500;
     line-height: 16px;
-    white-space: nowrap;
+    /* Never cut: more chips take more rows, and a chip wider than a narrow
+       card wraps its words. */
+    white-space: normal;
+    text-align: start;
     color: var(--bb-text);
     background: color-mix(in srgb, var(--tone) 13%, transparent);
     font-variant-numeric: tabular-nums;
@@ -154,6 +159,19 @@ export const cardStyles = css`
     width: 15px;
     height: 15px;
     color: var(--tone);
+  }
+  /* The drying chip: what dries, then its time in bold; where the row is
+     too narrow, the time wraps whole onto a line of its own. */
+  .dry-chip .dry-text {
+    display: inline-flex;
+    flex-wrap: wrap;
+    column-gap: 5px;
+  }
+  .dry-chip .dry-text > span {
+    white-space: nowrap;
+  }
+  .dry-chip .dry-time {
+    font-weight: 700;
   }
   .pill.tone-neutral {
     background: var(--bb-tint);
@@ -180,9 +198,9 @@ export const cardStyles = css`
     align-items: center;
     gap: 6px;
     box-sizing: border-box;
-    width: calc(100% - 52px);
+    width: calc(100% - 2 * var(--bb-inset));
     min-height: 32px;
-    margin: -4px 16px 10px 36px;
+    margin: -4px var(--bb-inset) 10px;
     padding: 0 6px 0 8px;
     border: 0;
     border-radius: 8px;
@@ -275,11 +293,6 @@ export const cardStyles = css`
       transform: translateY(-4px);
     }
   }
-  @media (prefers-reduced-motion: reduce) {
-    .menu {
-      animation: none;
-    }
-  }
   .chip {
     display: inline-flex;
     align-items: center;
@@ -288,8 +301,11 @@ export const cardStyles = css`
     font-size: 13px;
     font-weight: 500;
     white-space: nowrap;
-    color: var(--tone);
+    color: color-mix(in srgb, var(--tone) 45%, var(--bb-text));
     background: color-mix(in srgb, var(--tone) 15%, transparent);
+  }
+  .chip.tone-off {
+    --tone: var(--bb-muted);
   }
   .icon-btn {
     width: 36px;
@@ -308,6 +324,13 @@ export const cardStyles = css`
   .icon-btn .icon {
     width: 20px;
     height: 20px;
+  }
+  /* With Hide controls: the light's state, nothing to tap. */
+  span.icon-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    cursor: default;
   }
   .icon-btn.light.on {
     color: var(--amber-color, #ffb300);
@@ -339,6 +362,10 @@ export const cardStyles = css`
     color: var(--bb-text);
     box-shadow: 0 1px 3px rgba(0, 0, 0, 0.14);
   }
+  /* A tab's icon shows only on a card too narrow for its name. */
+  .tabs .tab-icon {
+    display: none;
+  }
   .body {
     display: flex;
     flex-direction: column;
@@ -350,7 +377,8 @@ export const cardStyles = css`
     color: var(--bb-muted);
   }
 
-  /* Buttons. */
+  /* Buttons. Their text mixes the accent with the text colour, as the
+     state line does: 4.5:1 on their tints, light and dark. */
   .btn {
     display: inline-flex;
     align-items: center;
@@ -364,7 +392,7 @@ export const cardStyles = css`
     font-weight: 500;
     white-space: nowrap;
     cursor: pointer;
-    color: var(--bb-accent);
+    color: color-mix(in srgb, var(--bb-accent) 50%, var(--bb-text));
     background: color-mix(in srgb, var(--bb-accent) 14%, transparent);
     transition: opacity 0.15s;
   }
@@ -373,7 +401,7 @@ export const cardStyles = css`
     background: var(--bb-accent);
   }
   .btn.danger {
-    color: var(--bb-err);
+    color: color-mix(in srgb, var(--bb-err) 70%, var(--bb-text));
     background: color-mix(in srgb, var(--bb-err) 13%, transparent);
   }
   .btn.plain {
@@ -388,19 +416,416 @@ export const cardStyles = css`
     opacity: 0.65;
     cursor: progress;
   }
+  /* On its way: the icon turns into a small spinner. */
+  .btn.pending > .icon,
+  .icon-btn.pending > .icon {
+    box-sizing: border-box;
+    border: 2px solid currentColor;
+    border-right-color: transparent;
+    border-radius: 50%;
+    animation: spin 0.8s linear infinite;
+  }
+  .btn.pending > .icon path,
+  .icon-btn.pending > .icon path {
+    display: none;
+  }
   .btn.icon-only {
     padding: 0;
     width: 36px;
   }
-  .link {
+
+  /* The card editor's preview: parts with nothing to show now, as examples. */
+  .sample {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+  .sample-note {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 12px;
+    color: var(--bb-muted);
+  }
+  .sample-note .icon {
+    flex: none;
+    width: 14px;
+    height: 14px;
+  }
+  .sample-body {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    opacity: 0.55;
+    pointer-events: none;
+  }
+
+  /* The offline view's actions: check the connection, the plug; on a
+     narrow card the second goes below the first, a long label wraps. */
+  .offline-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+  .offline-actions .btn {
+    max-width: 100%;
+    white-space: normal;
+  }
+  /* The airduct mode: last in the heating section. */
+  .airduct {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    padding-top: 10px;
+    border-top: 1px solid var(--bb-divider);
+  }
+  .airduct .hint {
+    margin: 0;
+  }
+  /* The AMS filament backup: a setting between the AMS units and the
+     external spool. */
+  .backup {
+    border-top: 1px solid var(--bb-divider);
+  }
+  .backup + .unit {
+    border-top: 1px solid var(--bb-divider);
+    padding-top: 12px;
+  }
+  .backup .seg {
+    flex: none;
+    width: 116px;
+  }
+  /* Unknown: the choice on a line of its own, outlined -- nothing chosen. */
+  .backup .det-row.choosing {
+    flex-wrap: wrap;
+    padding-bottom: 8px;
+  }
+  .backup .det-row.choosing .det-text {
+    flex: 1 1 0;
+  }
+  .backup .backup-set {
+    flex: 1 0 100%;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+  /* The plugs: one tinted box, a row per plug -- icon, name and what it
+     reports, its switch on the right --; the switch-off after the print
+     indented under the printer's plug. */
+  .power {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+  .power-box {
+    display: flex;
+    flex-direction: column;
+    padding: 4px 12px;
+    border-radius: 10px;
+    background: var(--bb-tint);
+  }
+  .p-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    min-height: 48px;
+    padding: 6px 0;
+  }
+  .power-box > .p-row:not(.p-auto) + .p-row:not(.p-auto),
+  .power-box > .p-skip + .p-row,
+  .power-box > .p-set + .p-row {
+    border-top: 1px solid var(--bb-divider);
+  }
+  .p-icon {
+    flex: none;
+    display: inline-flex;
+    color: var(--bb-muted);
+  }
+  .p-icon.on {
+    color: var(--bb-warn);
+  }
+  .p-icon .icon {
+    width: 20px;
+    height: 20px;
+  }
+  .p-text {
+    flex: 1 1 0;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+  }
+  button.p-text {
     border: 0;
     padding: 0;
+    margin: 0;
     background: none;
     color: inherit;
-    font-size: 12px;
-    text-decoration: underline;
+    font: inherit;
+    text-align: start;
     cursor: pointer;
-    align-self: flex-start;
+  }
+  /* The switch-off's settings open from its text: a chevron says so. */
+  .p-open {
+    flex-direction: row;
+    align-items: center;
+    gap: 4px;
+  }
+  .p-open-text {
+    flex: 1 1 0;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+  }
+  .p-chevron {
+    flex: none;
+    display: inline-flex;
+    color: var(--bb-muted);
+  }
+  .p-chevron .icon {
+    width: 18px;
+    height: 18px;
+  }
+  .p-name {
+    font-size: 14px;
+    line-height: 18px;
+    font-weight: 500;
+    overflow-wrap: anywhere;
+  }
+  .p-sub {
+    font-size: 12px;
+    line-height: 16px;
+    color: var(--bb-muted);
+    overflow-wrap: anywhere;
+  }
+  .p-sub b {
+    color: var(--bb-text);
+    font-weight: 600;
+  }
+  .p-row.warn .p-sub,
+  .p-row.warn .p-icon {
+    color: var(--bb-warn);
+  }
+  .p-auto {
+    padding-left: 30px;
+    min-height: 40px;
+  }
+  .p-auto .p-name {
+    font-size: 13px;
+  }
+  .p-auto.waiting .p-name,
+  .p-auto.waiting .p-icon {
+    color: var(--bb-accent);
+  }
+  .p-skip,
+  .p-set {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    padding: 0 0 8px 30px;
+  }
+  .p-set {
+    padding-left: 30px;
+  }
+  /* A long label wraps on a narrow card rather than leaving it. */
+  .p-skip .btn {
+    max-width: 100%;
+    white-space: normal;
+  }
+  .p-starting {
+    display: flex;
+    align-items: flex-start;
+    gap: 10px;
+  }
+  .p-starting .check-spinner {
+    margin-top: 2px;
+  }
+  .p-starting .p-name {
+    color: var(--bb-accent);
+  }
+  /* The switch-off's dialog: its temperature, then when. */
+  .dlg-label {
+    margin: 12px 0 6px;
+    font-size: 13px;
+    color: var(--bb-muted);
+  }
+  .stepper {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+  }
+  .step-value {
+    min-width: 64px;
+    text-align: center;
+    font-size: 18px;
+    font-weight: 500;
+  }
+  /* Its choices may take two lines: never cut. */
+  .seg.auto-off-when button {
+    white-space: normal;
+    overflow: visible;
+  }
+  /* The maintenance dialog: a task per row, its tone in its bar. */
+  .maint-list {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    max-height: min(55vh, 440px);
+    overflow-y: auto;
+  }
+  .maint-row {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px 12px;
+    padding: 10px 12px;
+    border-radius: 10px;
+    background: var(--bb-tint);
+  }
+  .maint-text {
+    flex: 1 1 150px;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+  }
+  .maint-name {
+    font-size: 14px;
+    line-height: 20px;
+    overflow-wrap: anywhere;
+  }
+  .maint-when {
+    font-size: 12px;
+    line-height: 16px;
+    color: var(--bb-muted);
+  }
+  .maint-row.tone-err .maint-when,
+  .maint-row.tone-warn .maint-when {
+    color: color-mix(in srgb, var(--tone) 70%, var(--bb-text));
+  }
+  .maint-bar {
+    height: 4px;
+    margin-top: 4px;
+    border-radius: 2px;
+    overflow: hidden;
+    background: var(--bb-tint-2);
+  }
+  .maint-bar > span {
+    display: block;
+    height: 100%;
+    background: var(--tone);
+  }
+  .maint-confirm {
+    flex: 1 1 100%;
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px;
+    font-size: 13px;
+    line-height: 18px;
+  }
+  .maint-confirm > span:first-child {
+    flex: 1 1 150px;
+  }
+  .maint-confirm-actions {
+    display: flex;
+    flex: none;
+    gap: 8px;
+    margin-left: auto;
+  }
+  .maint-foot {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    margin: 0;
+    font-size: 12px;
+    line-height: 16px;
+    color: var(--bb-muted);
+  }
+  /* The connection check: running, then the verdict, the problems, and
+     folded what passed and what was not checked. */
+  .check-running {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    font-size: 14px;
+  }
+  .check-spinner {
+    flex: none;
+    width: 16px;
+    height: 16px;
+    border-radius: 50%;
+    border: 2px solid var(--bb-tint-2);
+    border-top-color: var(--bb-accent);
+    animation: bb-spin 0.9s linear infinite;
+  }
+  @keyframes bb-spin {
+    to {
+      transform: rotate(360deg);
+    }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .check-spinner {
+      animation: none;
+    }
+  }
+  .check-verdict {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 10px 12px;
+    border-radius: 10px;
+    font-size: 14px;
+    font-weight: 500;
+    line-height: 20px;
+    background: color-mix(in srgb, var(--tone) 13%, transparent);
+  }
+  .check-verdict .icon {
+    flex: none;
+    color: var(--tone);
+  }
+  .check-title {
+    font-weight: 500;
+  }
+  .check-detail {
+    font-size: 13px;
+    line-height: 18px;
+  }
+  .sev-ok {
+    --sev: var(--bb-ok);
+  }
+  .sev-skip {
+    --sev: var(--bb-muted);
+  }
+  .check-folded {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    padding: 2px 0 4px 26px;
+  }
+  .check-line {
+    display: flex;
+    flex-direction: column;
+    font-size: 13px;
+    line-height: 18px;
+  }
+  .check-line .check-title {
+    font-weight: 400;
+  }
+  .check-line .check-detail {
+    color: var(--bb-muted);
+  }
+  .check-fold .section-label .icon {
+    color: var(--tone);
+  }
+  .sr-only {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip: rect(0 0 0 0);
+    white-space: nowrap;
   }
 
   /* Notes and banners. */
@@ -424,27 +849,28 @@ export const cardStyles = css`
     line-height: 16px;
     color: var(--bb-muted);
   }
+  /* The text keeps lines of 150 px at least -- beside its icon on a
+     half-width card too --: else the button goes below it. */
   .callout {
     display: flex;
+    flex-wrap: wrap;
+    align-items: center;
     gap: 10px;
     padding: 10px 12px;
     border-radius: 10px;
     font-size: 13px;
     line-height: 18px;
+    background: color-mix(in srgb, var(--bb-accent) 10%, transparent);
   }
   .callout .btn {
     margin: -4px -4px -4px 0;
     flex: none;
   }
-  .callout {
-    align-items: center;
-    background: color-mix(in srgb, var(--bb-accent) 10%, transparent);
-  }
   .callout > .icon {
     color: var(--bb-accent);
   }
   .callout > span {
-    flex: 1;
+    flex: 1 1 150px;
   }
 
   /* The job: picture, name, progress, times. */
@@ -554,17 +980,35 @@ export const cardStyles = css`
     -webkit-box-orient: vertical;
     word-break: break-word;
   }
+  /* A text in a state's colour mixes it with the text colour: the hue stays,
+     and it reads at 4.5:1 on light and dark themes -- warning orange alone
+     reaches 2:1 on white. An icon keeps the pure colour. */
   .pct {
     font-size: 22px;
     font-weight: 500;
     line-height: 24px;
-    color: var(--tone);
+    color: color-mix(in srgb, var(--tone) 55%, var(--bb-text));
     font-variant-numeric: tabular-nums;
   }
-  .stage {
+  /* The state line: icon and word in the state's colour; unknown in the
+     muted text colour, readable unlike the disabled one. */
+  .state {
+    display: flex;
+    align-items: center;
+    gap: 4px;
     font-size: 13px;
-    color: var(--bb-muted);
+    line-height: 18px;
+    font-weight: 500;
+    color: color-mix(in srgb, var(--tone) 55%, var(--bb-text));
     margin-top: -4px;
+  }
+  .state.tone-off {
+    --tone: var(--bb-muted);
+  }
+  .state .icon {
+    width: 16px;
+    height: 16px;
+    color: var(--tone);
   }
   .bar {
     height: 8px;
@@ -614,10 +1058,14 @@ export const cardStyles = css`
     height: 100%;
     object-fit: contain;
   }
-  .live-badge {
+  .live-tags {
     position: absolute;
     top: 8px;
     left: 8px;
+    display: flex;
+    gap: 6px;
+  }
+  .live-badge {
     padding: 2px 8px;
     border-radius: 10px;
     font-size: 11px;
@@ -626,10 +1074,20 @@ export const cardStyles = css`
     color: #fff;
     background: rgba(219, 68, 55, 0.92);
   }
-  .live .icon-btn {
+  .live-fps {
+    background: rgba(0, 0, 0, 0.55);
+  }
+  .fps-restart {
+    margin-top: 8px;
+  }
+  .live-tools {
     position: absolute;
     top: 6px;
     right: 6px;
+    display: flex;
+    gap: 6px;
+  }
+  .live .icon-btn {
     background: rgba(0, 0, 0, 0.55);
     color: #fff;
   }
@@ -639,6 +1097,11 @@ export const cardStyles = css`
     color: #fff;
     font-size: 13px;
     background: #222;
+  }
+  /* On the dark panel in every theme: white, not the theme's text colour. */
+  .live.failed .btn {
+    color: #fff;
+    background: rgba(255, 255, 255, 0.16);
   }
 
   /* Temperatures. */
@@ -653,10 +1116,13 @@ export const cardStyles = css`
   .temps.dual {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
+  /* As high as an AMS head's second line, which it stands in for. */
   .slot-side {
     font-size: 10px;
     font-weight: 600;
     color: var(--bb-muted);
+    height: 13px;
+    line-height: 13px;
   }
   .temp {
     display: flex;
@@ -687,6 +1153,22 @@ export const cardStyles = css`
   .temp-head .icon {
     width: 15px;
     height: 15px;
+  }
+  /* The active one of two nozzles, as the Control tab's tag. */
+  .temp-head {
+    flex-wrap: wrap;
+  }
+  .temp-head .temp-tag,
+  .p-name .temp-tag {
+    flex: none;
+    overflow: visible;
+    font-size: 11px;
+    line-height: 16px;
+    font-weight: 500;
+    padding: 0 6px;
+    border-radius: 8px;
+    color: color-mix(in srgb, var(--bb-accent) 50%, var(--bb-text));
+    background: color-mix(in srgb, var(--bb-accent) 15%, transparent);
   }
   .temp-value {
     font-size: 18px;
@@ -727,6 +1209,9 @@ export const cardStyles = css`
     width: 16px;
     height: 16px;
   }
+  span.fan {
+    cursor: default;
+  }
   .fan-label.full {
     display: none;
   }
@@ -744,26 +1229,14 @@ export const cardStyles = css`
       transform: rotate(360deg);
     }
   }
-  @media (prefers-reduced-motion: reduce) {
-    .fan.on .icon,
-    .ams-activity .icon,
-    .activity .icon,
-    .activity-bar,
-    .sent {
-      animation: none;
-    }
-    .bar span {
-      transition: none;
-    }
-  }
 
   /* Filament: the strip on the status view. */
   .ams-strip {
     display: flex;
     flex-wrap: wrap;
     align-items: stretch;
-    gap: 8px 18px;
-    padding: 10px 40px 10px 12px;
+    gap: 8px 16px;
+    padding: 10px 36px 10px 12px;
     border: 0;
     border-radius: 10px;
     background: var(--bb-tint);
@@ -771,29 +1244,85 @@ export const cardStyles = css`
     cursor: pointer;
     position: relative;
   }
+  /* Without a filament view to open: no chevron to make room for. */
+  div.ams-strip {
+    padding-right: 12px;
+    cursor: default;
+  }
+  /* The AMS units one below the other; the AMS HT units and the external
+     spools beside them as long as the widest of them fits there, else
+     below. */
+  .ams-column {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+  .ams-fill {
+    display: flex;
+    flex: 1 1 0%;
+    min-width: min-content;
+    flex-wrap: wrap;
+    align-content: flex-start;
+    gap: 8px 16px;
+  }
+  /* With an AMS HT there, each unit is as wide as one -- its second line:
+     the humidity, 6 px, the temperature --, so the rows fill evenly: never
+     one unit alone above two. An AMS HT then fits beside an AMS from a card
+     of about 326 px: a 360 px phone keeps it there with 10 px to spare. */
+  .ams-fill.with-ht .ams-head {
+    min-width: calc(34px + 8.5ch);
+  }
   .ams-group {
     display: flex;
     flex-direction: column;
     gap: 6px;
   }
+  /* Two lines of one height each -- the name and the model, the humidity
+     and the temperature --, so a row's colours stand level. */
   .ams-head {
     display: flex;
-    align-items: center;
-    gap: 8px;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 2px;
     font-size: 12px;
     color: var(--bb-muted);
     white-space: nowrap;
+  }
+  .ams-line,
+  .ams-env {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    height: 15px;
+  }
+  /* The chip a shade darker than the strip it sits on. */
+  .ams-strip .unit-model,
+  .ams-strip .ams-nozzle {
+    font-size: 11px;
+    line-height: 15px;
+    padding: 0 6px;
+    border-radius: 8px;
+    background: var(--bb-tint-2);
   }
   .ams-name {
     font-weight: 500;
     color: var(--bb-text);
   }
-  .ams-hum {
+  /* Room for "99 %" and "88 °C" (the icon, 1px, the figure): a unit keeps
+     its width when they change, so it never jumps below the column at 10 %. */
+  .ams-env > span {
     display: inline-flex;
     align-items: center;
     gap: 1px;
+    font-variant-numeric: tabular-nums;
   }
-  .ams-hum .icon {
+  .ams-hum {
+    min-width: calc(14px + 4ch);
+  }
+  .ams-temp {
+    min-width: calc(14px + 4.5ch);
+  }
+  .ams-env .icon {
     width: 13px;
     height: 13px;
   }
@@ -906,6 +1435,11 @@ export const cardStyles = css`
     flex-direction: column;
     gap: 6px;
   }
+  /* The speed as it is, with the controls hidden. */
+  .speed-now {
+    font-size: 13px;
+    font-weight: 500;
+  }
   .speed-label,
   .step-label,
   .axis-label {
@@ -941,8 +1475,8 @@ export const cardStyles = css`
     text-overflow: ellipsis;
   }
   .seg button[aria-checked="true"] {
+    color: color-mix(in srgb, var(--bb-accent) 50%, var(--bb-text));
     background: color-mix(in srgb, var(--bb-accent) 18%, transparent);
-    color: var(--bb-accent);
     font-weight: 500;
   }
   .seg button:disabled {
@@ -967,16 +1501,18 @@ export const cardStyles = css`
     overflow: hidden;
     text-overflow: ellipsis;
   }
+  /* The percentage is small: in the option's colour, not paler. */
   .seg.speeds .opt-sub {
     font-size: 11px;
     line-height: 14px;
     font-weight: 400;
-    opacity: 0.8;
+    opacity: 1;
     font-variant-numeric: tabular-nums;
   }
 
-  /* Control view: the heaters on top; the step, the pad beside the bed,
-     the extruder below them -- beside them where there is room. */
+  /* Control view: its sections in the user's order; in moving, the step,
+     the pad beside the bed, the extruder below them -- beside them where
+     there is room. */
   .heating {
     display: flex;
     flex-direction: column;
@@ -1055,7 +1591,7 @@ export const cardStyles = css`
     font-weight: 500;
     padding: 0 6px;
     border-radius: 8px;
-    color: var(--bb-accent);
+    color: color-mix(in srgb, var(--bb-accent) 50%, var(--bb-text));
     background: color-mix(in srgb, var(--bb-accent) 15%, transparent);
   }
   .heat-now {
@@ -1070,7 +1606,8 @@ export const cardStyles = css`
     align-items: center;
     gap: 4px;
   }
-  .heat-set .btn.icon-only {
+  /* The steppers and the heater's off button. */
+  .heat-row .btn.icon-only {
     width: 34px;
     min-height: 34px;
     height: 34px;
@@ -1088,15 +1625,13 @@ export const cardStyles = css`
     font-weight: 400;
   }
   .btn.heat-off {
-    width: 34px;
-    min-height: 34px;
     color: var(--bb-muted);
   }
   .btn.heat-off:not(:disabled):hover {
     color: var(--bb-text);
   }
-  /* The print options: folded under a head with the count of those on; a
-     row per detection, only its switch taps. */
+  /* The print options: folded under a head that says what is off; a row
+     per detection, only its switch taps. */
   .detection {
     display: flex;
     flex-direction: column;
@@ -1114,14 +1649,10 @@ export const cardStyles = css`
     padding: 0;
     border: 0;
     background: none;
-    color: inherit;
-    font: inherit;
     text-align: left;
     cursor: pointer;
   }
   .det-head:focus-visible {
-    outline: 2px solid var(--bb-accent);
-    outline-offset: 2px;
     border-radius: 6px;
   }
   .detection .section-label {
@@ -1132,10 +1663,6 @@ export const cardStyles = css`
     flex: none;
     font-size: 13px;
     color: var(--bb-muted);
-  }
-  .det-summary.warn {
-    color: var(--bb-warn);
-    font-weight: 500;
   }
   .det-chevron {
     flex: none;
@@ -1239,13 +1766,6 @@ export const cardStyles = css`
   }
   .detection .hint {
     margin-top: 4px;
-  }
-  @media (prefers-reduced-motion: reduce) {
-    .det-chevron,
-    .toggle,
-    .toggle .knob {
-      transition: none;
-    }
   }
   .nozzle-row {
     display: flex;
@@ -1362,23 +1882,80 @@ export const cardStyles = css`
   }
   .unit-head {
     display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+  /* An AMS unit's head folds and unfolds it: the whole row is the button. */
+  button.unit-head {
+    width: 100%;
+    margin: -6px -8px;
+    padding: 6px 8px;
+    box-sizing: content-box;
+    border: 0;
+    border-radius: 8px;
+    background: none;
+    text-align: left;
+    cursor: pointer;
+  }
+  button.unit-head:hover {
+    background: var(--bb-tint);
+  }
+  button.unit-head:focus-visible {
+    outline: 2px solid var(--bb-accent);
+    outline-offset: -2px;
+  }
+  .unit-title {
+    display: flex;
     align-items: center;
     flex-wrap: wrap;
     gap: 4px 10px;
+    width: 100%;
+  }
+  .unit-fold {
+    display: flex;
+    color: var(--bb-muted);
+    transition: transform 0.2s ease;
+  }
+  .unit.open .unit-fold {
+    transform: rotate(180deg);
+  }
+  .unit-colors {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    padding: 2px;
   }
   .unit-name {
     font-weight: 500;
     font-size: 15px;
   }
-  .unit-model {
+  /* A unit's model, and on a two-nozzle printer the nozzle it feeds. */
+  .unit-model,
+  .unit-nozzle,
+  .ams-nozzle {
     font-size: 12px;
     color: var(--bb-muted);
     padding: 1px 8px;
     border-radius: 10px;
     background: var(--bb-tint);
   }
-  .unit-env {
+  /* The figures and the chevron stay together: a wrap moves both. */
+  .unit-end {
     margin-left: auto;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+  .unit-nozzle {
+    display: inline-flex;
+    align-items: center;
+    gap: 2px;
+  }
+  .unit-nozzle .icon {
+    width: 14px;
+    height: 14px;
+  }
+  .unit-env {
     display: flex;
     gap: 10px;
     font-size: 13px;
@@ -1395,14 +1972,23 @@ export const cardStyles = css`
   }
   .drying {
     display: flex;
+    flex-wrap: wrap;
     align-items: center;
-    gap: 8px;
+    gap: 2px 8px;
     font-size: 13px;
     color: var(--bb-muted);
     min-height: 32px;
   }
   .drying > span {
-    flex: 1;
+    flex: 1 1 auto;
+  }
+  /* The text wraps beside its button before the button goes below it. */
+  .drying > .drying-text {
+    flex: 1 1 0;
+    min-width: 8em;
+  }
+  .drying > .btn {
+    margin-left: auto;
   }
   .drying.on {
     color: var(--bb-text);
@@ -1410,8 +1996,19 @@ export const cardStyles = css`
   .drying.on > .icon {
     color: var(--bb-heat);
   }
+  /* No buttons where the printer dries from its own screen only: where
+     instead, on a line of its own below the state. */
+  .drying > .dry-where {
+    flex: 1 0 100%;
+    box-sizing: border-box;
+    padding-left: 26px;
+    color: var(--bb-muted);
+    font-size: 12px;
+  }
+  /* One column no wider than the card: a slot's sub line never widens it. */
   .slots {
     display: grid;
+    grid-template-columns: minmax(0, 1fr);
     gap: 6px;
   }
   .slot {
@@ -1453,16 +2050,15 @@ export const cardStyles = css`
     -webkit-box-orient: vertical;
     -webkit-line-clamp: 2;
   }
+  /* Never cut: beside a pencil and a button on a narrow card it wraps. */
   .slot-sub {
     font-size: 12px;
     color: var(--bb-muted);
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
+    overflow-wrap: anywhere;
   }
   .slot-sub .in-use {
     font-weight: 500;
-    color: var(--bb-accent);
+    color: color-mix(in srgb, var(--bb-accent) 55%, var(--bb-text));
   }
   .slot .btn {
     flex: none;
@@ -1512,6 +2108,22 @@ export const cardStyles = css`
     background: none;
   }
 
+  /* Inside an open dialog the notices stand in its flow. */
+  .dlg-body .toast {
+    position: static;
+    margin: 0;
+    box-shadow: none;
+  }
+  .dlg-body .sent-slot {
+    position: static;
+    height: auto;
+  }
+  .dlg-body .sent {
+    position: static;
+    transform: none;
+    width: fit-content;
+    margin: 0 auto;
+  }
   /* "Sent": a snackbar over the card's bottom, so nothing moves while it shows. */
   .sent-slot {
     position: sticky;
@@ -1556,12 +2168,13 @@ export const cardStyles = css`
     align-items: center;
     gap: 4px;
     font-size: 12px;
-    color: var(--bb-accent);
+    color: color-mix(in srgb, var(--bb-accent) 55%, var(--bb-text));
   }
   .ams-activity .icon,
   .activity .icon {
     width: 15px;
     height: 15px;
+    color: var(--bb-accent);
     animation: spin 1.6s linear infinite;
   }
   .activity {
@@ -1575,9 +2188,6 @@ export const cardStyles = css`
     font-size: 13px;
     color: var(--bb-text);
     background: color-mix(in srgb, var(--bb-accent) 10%, transparent);
-  }
-  .activity .icon {
-    color: var(--bb-accent);
   }
   .activity-bar {
     position: absolute;
@@ -1598,21 +2208,26 @@ export const cardStyles = css`
     }
   }
 
-  /* Dialogs. */
+  /* Dialogs: on the theme's dialog surface, with an edge and a darker
+     backdrop, so that they stand out from a dark page too. */
   dialog {
+    --bb-surface: var(--ha-dialog-surface-background, var(--mdc-theme-surface, var(--card-background-color, #fff)));
     border: 0;
     padding: 0;
     border-radius: 16px;
     max-width: min(360px, calc(100vw - 32px));
     width: 100%;
     color: var(--bb-text);
-    background: var(--ha-card-background, var(--card-background-color, #fff));
-    box-shadow: 0 12px 40px rgba(0, 0, 0, 0.3);
+    background: var(--bb-surface);
+    box-shadow:
+      0 0 0 1px var(--bb-divider),
+      0 12px 40px rgba(0, 0, 0, 0.3);
   }
   dialog::backdrop {
-    background: rgba(0, 0, 0, 0.45);
+    background: rgba(0, 0, 0, 0.55);
   }
   .dlg-body {
+    position: relative;
     display: flex;
     flex-direction: column;
     gap: 14px;
@@ -1699,6 +2314,14 @@ export const cardStyles = css`
      notice blue. */
   .hms-item {
     --sev: var(--bb-warn);
+    display: flex;
+    gap: 10px;
+    align-items: flex-start;
+    padding: 10px 12px;
+    border-radius: 10px;
+    font-size: 14px;
+    line-height: 20px;
+    background: color-mix(in srgb, var(--sev) 12%, transparent);
   }
   .sev-error {
     --sev: var(--bb-err);
@@ -1712,16 +2335,6 @@ export const cardStyles = css`
     gap: 8px;
     max-height: min(50vh, 360px);
     overflow-y: auto;
-  }
-  .hms-item {
-    display: flex;
-    gap: 10px;
-    align-items: flex-start;
-    padding: 10px 12px;
-    border-radius: 10px;
-    font-size: 14px;
-    line-height: 20px;
-    background: color-mix(in srgb, var(--sev) 12%, transparent);
   }
   .hms-item > .icon {
     color: var(--sev);
@@ -1737,6 +2350,65 @@ export const cardStyles = css`
     line-height: 16px;
     color: var(--bb-muted);
     font-family: var(--ha-font-family-code, monospace);
+  }
+  /* The filament dialog's slot tools: chip and reset, below a line. */
+  .slot-tools {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-top: 4px;
+    padding-top: 12px;
+    border-top: 1px solid var(--bb-divider);
+  }
+  .slot-tools .btn {
+    max-width: 100%;
+    white-space: normal;
+  }
+  /* The K profile: label above, the select over the dialog's width -- a
+     profile's name is long. */
+  .field.kfield {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 6px;
+  }
+  .field.kfield .select {
+    max-width: none;
+  }
+  .rfid-spool {
+    font-weight: 500;
+  }
+  .k-hint {
+    display: block;
+    margin-top: 4px;
+    font-size: 12px;
+    line-height: 16px;
+    color: var(--bb-muted);
+  }
+  /* A message's answers, as on the printer's screen; long ones wrap. */
+  .hms-answers {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    margin-top: 8px;
+  }
+  .hms-answers .btn {
+    max-width: 100%;
+    white-space: normal;
+    text-align: start;
+  }
+  .hms-wiki {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    margin-top: 4px;
+    padding: 6px 0;
+    font-size: 13px;
+    color: var(--bb-accent);
+    text-decoration: none;
+  }
+  .hms-wiki .icon {
+    width: 16px;
+    height: 16px;
   }
   /* A fact sheet: label left, value right, a copy button beside it. */
   .spec {
@@ -1779,7 +2451,7 @@ export const cardStyles = css`
     color: var(--bb-muted);
   }
   .spec-value.update {
-    color: var(--bb-warn);
+    color: color-mix(in srgb, var(--bb-warn) 55%, var(--bb-text));
     font-weight: 500;
   }
   .spec-value .chip {
@@ -1805,9 +2477,6 @@ export const cardStyles = css`
     height: 16px;
   }
   /* "Copied", inside the dialog: the card's own snackbar lies behind it. */
-  .dlg-body {
-    position: relative;
-  }
   .dlg-snack {
     position: absolute;
     left: 0;
@@ -1912,6 +2581,9 @@ export const cardStyles = css`
     margin-top: 1px;
     color: var(--bb-info);
   }
+  .dlg-note.warning .icon {
+    color: var(--bb-warn);
+  }
   /* The filament dialog: the material, then the colours. The select draws
      its own arrow, in the theme's colours. */
   .select {
@@ -1931,7 +2603,7 @@ export const cardStyles = css`
     font: inherit;
     font-size: 14px;
     color: var(--bb-text);
-    background: var(--ha-card-background, var(--card-background-color, #fff));
+    background: var(--bb-surface);
     cursor: pointer;
     text-overflow: ellipsis;
   }
@@ -1945,7 +2617,7 @@ export const cardStyles = css`
   }
   .select option {
     color: var(--bb-text);
-    background: var(--ha-card-background, var(--card-background-color, #fff));
+    background: var(--bb-surface);
   }
   .select .icon {
     position: absolute;
@@ -2001,7 +2673,7 @@ export const cardStyles = css`
   }
   .pal[aria-checked="true"] {
     box-shadow:
-      0 0 0 2px var(--ha-card-background, var(--card-background-color, #fff)),
+      0 0 0 2px var(--bb-surface),
       0 0 0 4px var(--bb-accent);
   }
   .pal:focus-visible {
@@ -2099,7 +2771,6 @@ export const cardStyles = css`
       font-size: 12px;
     }
   }
-  /* Very narrow: the speed names and the step label get the room. */
   /* Very wide: the heaters and the detections in two columns -- narrower,
      their names would not fit. */
   @container (min-width: 760px) {
@@ -2127,7 +2798,11 @@ export const cardStyles = css`
     }
   }
 
+  /* Very narrow: less padding; the speed names and the step label get the room. */
   @container (max-width: 340px) {
+    ha-card {
+      --bb-inset: 12px;
+    }
     .head {
       padding: 12px 12px 8px;
       gap: 8px;
@@ -2162,8 +2837,7 @@ export const cardStyles = css`
     .heat-now {
       padding-left: 0;
     }
-    .heat-set .btn.icon-only,
-    .btn.heat-off {
+    .heat-row .btn.icon-only {
       width: 30px;
       height: 30px;
       min-height: 30px;
@@ -2182,6 +2856,271 @@ export const cardStyles = css`
     }
     .btn.stack {
       width: 76px;
+    }
+  }
+
+  /* A phone: a notice's button below its text, the notice's full width. */
+  @container (max-width: 400px) {
+    .callout .btn {
+      flex: 1 0 100%;
+      margin: 4px 0 0;
+    }
+  }
+
+  /* A half-width card: the control view in one column -- the step, the pad,
+     the bed, the extruder --, smaller pad buttons, a heater's name and
+     temperature above its steppers, two temperature tiles a row. */
+  @container (max-width: 280px) {
+    /* The step's three choices on a line of their own: "10 mm" never cut. */
+    .step-row {
+      flex-wrap: wrap;
+    }
+    .step-row .seg {
+      order: 2;
+      flex: 1 0 100%;
+    }
+    .step-row .live-btn {
+      margin-left: auto;
+    }
+    .temps {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+    /* The steppers under the name: room before the line to the next heater. */
+    .heat-row {
+      grid-template-columns: minmax(0, 1fr) auto;
+      padding-bottom: 8px;
+    }
+    .heat-row + .heat-row {
+      padding-top: 6px;
+    }
+    .heat-name {
+      grid-column: 1 / -1;
+    }
+    .heat-now {
+      white-space: normal;
+    }
+    .heat-target {
+      min-width: 44px;
+    }
+    .control {
+      grid-template-columns: minmax(0, 1fr);
+      grid-template-areas: "step" "pad" "bed" "ext";
+      justify-content: stretch;
+      justify-items: center;
+    }
+    .step-row,
+    .axis-col.ext {
+      justify-self: stretch;
+    }
+    .pad {
+      grid-template-columns: repeat(3, 40px);
+      grid-template-rows: repeat(3, 40px);
+    }
+    .pad .btn {
+      width: 40px;
+      height: 40px;
+    }
+    .axis-col.bed {
+      flex-direction: row;
+      flex-wrap: wrap;
+      justify-content: center;
+      justify-self: stretch;
+      height: auto;
+    }
+    .axis-col.bed .axis-label {
+      flex-basis: 100%;
+      justify-content: center;
+    }
+  }
+
+  /* A half-width card on a phone (under 200 px): every action below its
+     text at full width, the name on a row of its own in whole words with
+     the chips and the HMS line under it, the job's words below its
+     picture, one temperature a row, the tabs' names on two lines. */
+  /* A narrow live view: the chips go to the bottom, clear of the gear and
+     the close button (never cut, his rule). */
+  @container (max-width: 260px) {
+    .live-tags {
+      top: auto;
+      bottom: 8px;
+      right: 8px;
+      flex-wrap: wrap-reverse;
+    }
+  }
+  @container (max-width: 200px) {
+    /* A script's Run goes under its name. */
+    .p-row.p-script {
+      flex-wrap: wrap;
+      row-gap: 4px;
+    }
+    .p-row.p-script .p-text {
+      flex-basis: calc(100% - 30px);
+    }
+    .p-row.p-script .btn {
+      margin-left: 0;
+    }
+    .head {
+      flex-wrap: wrap;
+      row-gap: 6px;
+    }
+    .names {
+      flex: 1 0 100%;
+      order: -1;
+    }
+    .name {
+      overflow-wrap: break-word;
+    }
+    .head .dot {
+      margin-right: auto;
+    }
+    .hms-line-more {
+      display: none;
+    }
+    .tabs {
+      margin: 0 8px 4px;
+    }
+    /* The names do not fit: the tabs show icons, the names stay for a
+       screen reader and as a tooltip -- never broken mid-word. */
+    .tabs button {
+      position: relative;
+      min-width: 0;
+      display: flex;
+      justify-content: center;
+      padding: 6px 2px;
+    }
+    .tabs .tab-icon {
+      display: inline-flex;
+    }
+    /* An AMS head's lines wrap rather than running into the chevron; no
+       AMS HT's width here, the unit takes the room there is. */
+    .ams-line,
+    .ams-env {
+      height: auto;
+      flex-wrap: wrap;
+      row-gap: 2px;
+    }
+    .ams-fill.with-ht .ams-head {
+      min-width: 0;
+    }
+    /* An AMS unit's colours two a row: the fourth stays in its box. */
+    .ams-slots {
+      display: grid;
+      grid-template-columns: repeat(2, auto);
+      justify-content: start;
+    }
+    button.ams-strip {
+      padding-right: 28px;
+    }
+    /* A slot's sub line wraps rather than being cut. */
+    .slot-sub {
+      white-space: normal;
+    }
+    .tabs .tab-text {
+      position: absolute;
+      width: 1px;
+      height: 1px;
+      overflow: hidden;
+      clip: rect(0 0 0 0);
+      white-space: nowrap;
+    }
+    .job {
+      flex-wrap: wrap;
+      justify-content: center;
+    }
+    .job-info {
+      flex: 1 0 100%;
+    }
+    .temps,
+    .temps.n1,
+    .temps.n2,
+    .temps.n4,
+    .temps.dual {
+      grid-template-columns: minmax(0, 1fr);
+    }
+    .heat-head {
+      flex-wrap: wrap;
+    }
+    .seg button {
+      padding: 6px 2px;
+      font-size: 12px;
+      white-space: normal;
+    }
+    .ext-buttons {
+      flex-direction: column;
+    }
+    .nozzle-row {
+      flex-wrap: wrap;
+    }
+    .nozzle-row .seg {
+      flex: 1 0 100%;
+    }
+    .ctl-buttons .btn,
+    .drying > .btn {
+      white-space: normal;
+    }
+    .det-head {
+      flex-wrap: wrap;
+      row-gap: 0;
+    }
+    .det-chevron {
+      margin-left: auto;
+    }
+    .slot {
+      flex-wrap: wrap;
+    }
+    .slot-main {
+      flex: 1 0 100%;
+    }
+    .slot .btn:not(.edit) {
+      flex: 1 0 auto;
+    }
+    .callout {
+      padding: 8px 10px;
+    }
+    .callout > .icon {
+      display: none;
+    }
+    .callout > span {
+      flex-basis: 100%;
+    }
+    .callout .btn {
+      padding: 6px 10px;
+      white-space: normal;
+    }
+  }
+
+  /* A thumb gets 44 px for the light, the menu and a heater's off button --
+     after the narrow card's smaller steppers, so that it wins there too. */
+  @media (pointer: coarse) {
+    .head .icon-btn {
+      width: 44px;
+      height: 44px;
+    }
+    .heat-row .btn.heat-off {
+      width: 44px;
+      height: 44px;
+      min-height: 44px;
+    }
+  }
+
+  /* Nothing moves for those who ask their system for less motion. */
+  @media (prefers-reduced-motion: reduce) {
+    .menu,
+    .btn.pending > .icon,
+    .icon-btn.pending > .icon,
+    .fan.on .icon,
+    .ams-activity .icon,
+    .activity .icon,
+    .activity-bar,
+    .sent {
+      animation: none;
+    }
+    .bar span,
+    .det-chevron,
+    .toggle,
+    .toggle .knob,
+    .unit-fold {
+      transition: none;
     }
   }
 `;

@@ -4,11 +4,12 @@ slots, and what each printer model has."""
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from typing import Any
 
 from awesomeversion import AwesomeVersion, AwesomeVersionException
 
-from .const import CONF_PRINTER_ID, CONF_SERIAL, MIN_BAMBUDDY_VERSION
+from .const import CONF_PRINTER_ID, CONF_PRINTER_NAME, CONF_SERIAL, MIN_BAMBUDDY_VERSION
 
 # The print status sensor's states. BamBuddy passes the firmware's
 # gcode_state on and adds "unknown"; a printer it cannot reach is "offline".
@@ -35,9 +36,9 @@ _STATUS_BY_STATE = {
 }
 # A job is under way: the printer must not be moved by hand.
 JOB_STATES = frozenset({"PREPARE", "SLICING", "RUNNING", "PAUSE"})
-# A job can be paused or stopped.
-PAUSABLE_STATES = frozenset({"PREPARE", "SLICING", "RUNNING"})
-STOPPABLE_STATES = JOB_STATES
+# A job under way, not paused: it can be paused, and its end can be told
+# (a paused one ends whenever it is resumed). Every job can be stopped.
+ACTIVE_STATES = frozenset({"PREPARE", "SLICING", "RUNNING"})
 
 # BamBuddy's stage numbers (Bambu Studio's DeviceManager) with our slugs.
 STAGES: dict[int, str] = {
@@ -137,7 +138,11 @@ _ETHERNET = frozenset(
         "BL-P001", "BL-P003", "C12", "C13", "N6", "N7", "O1D", "O1E", "O2D", "O1C", "O1C2", "O1S",
     }
 )  # fmt: skip
-_NO_SD_CARD = frozenset({"A1", "A1 MINI", "N1", "N2S", "A11", "A12", "A04"})
+# No SD slot but a USB port (and internal storage): BamBuddy's SD card flag
+# tells a USB drive.
+_USB_DRIVE = frozenset(
+    {"P2S", "X2D", "H2C", "H2D", "H2D PRO", "H2S", "N6", "N7", "O1C", "O1C2", "O1D", "O1E", "O2D", "O1S"}
+)
 # "Exhaust fan" is Bambu's name for the chamber fan of these.
 _EXHAUST_FAN = frozenset({"P2S", "X2D", "N6", "N7"})
 
@@ -147,11 +152,60 @@ EXTERNAL_RIGHT = 255
 NOTHING_LOADED = 255
 
 
+def maintenance_state(data: PrinterData) -> str | None:
+    """Overdue when a task is due, due soon in a task's last tenth, else
+    ok -- BamBuddy's enabled tasks; None before they are read."""
+    if data.maintenance is None:
+        return None
+    tasks = data.maintenance_tasks
+    if any(task.get("is_due") for task in tasks):
+        return "overdue"
+    if any(task.get("is_warning") for task in tasks):
+        return "due_soon"
+    return "ok"
+
+
+def maintenance_task(task: dict[str, Any]) -> dict[str, Any]:
+    """A task for the sensor's attributes: what is left (negative when
+    overdue) in hours, or days for a task BamBuddy counts in days."""
+    days = task.get("interval_type") == "days"
+    left = task.get("days_until_due") if days else task.get("hours_until_due")
+    due = bool(task.get("is_due"))
+    return {
+        "id": task.get("id"),
+        "name": task.get("maintenance_type_name"),
+        "due": due,
+        "due_soon": bool(task.get("is_warning")) and not due,
+        "unit": "days" if days else "hours",
+        "interval": task.get("interval_hours"),
+        "left": round(left, 1) if isinstance(left, float) else left,
+        "last_done": _utc(task.get("last_performed_at")),
+    }
+
+
+def _utc(value: Any) -> str | None:
+    """BamBuddy's time (UTC, without its zone) with its zone; None for a
+    task never done."""
+    if not isinstance(value, str) or not value:
+        return None
+    try:
+        moment = datetime.fromisoformat(value)
+    except ValueError:
+        return None
+    return (moment if moment.tzinfo else moment.replace(tzinfo=UTC)).isoformat()
+
+
 def too_old(version: str) -> bool:
     """Whether a BamBuddy version is older than the integration supports; a
     version that is no number (a development build) passes."""
+    return _older(version, MIN_BAMBUDDY_VERSION)
+
+
+def _older(found: Any, version: str) -> bool:
+    """Whether a version (BamBuddy's, a printer's firmware) is older than
+    `version`; unknown or no number is not."""
     try:
-        return AwesomeVersion(version) < AwesomeVersion(MIN_BAMBUDDY_VERSION)
+        return bool(found) and AwesomeVersion(str(found)) < AwesomeVersion(version)
     except AwesomeVersionException:
         return False
 
@@ -175,6 +229,31 @@ def _model_key(model: str | None) -> str:
     return (model or "").strip().upper()
 
 
+# The camera's frame rate, as BamBuddy streams it (services/camera.py
+# supports_rtsp, routes/camera.py camera_stream): the RTSP models up to 30
+# frames a second, the chamber image of the A1 and P1 series -- and a model
+# BamBuddy does not know -- up to 5, a camera it takes from elsewhere up to 15.
+CAMERA_MIN_FPS = 5
+CAMERA_FPS_STEP = 5
+_RTSP_PREFIXES = ("X1", "X2", "H2", "P2")
+_RTSP_CODES = frozenset({"BL-P001", "C13", "N6", "O1D", "O1C", "O1C2", "O1S", "O1E", "O2D", "N7"})
+
+
+def camera_is_external(info: dict[str, Any]) -> bool:
+    """Whether BamBuddy streams a camera it takes from elsewhere -- to each
+    viewer on its own, not through one shared connection."""
+    return bool(info.get("external_camera_enabled") and info.get("external_camera_url"))
+
+
+def camera_max_fps(info: dict[str, Any]) -> int:
+    """The most frames a second BamBuddy streams of a printer's camera."""
+    if camera_is_external(info):
+        return 15
+    # As BamBuddy compares: in capitals, not stripped.
+    model = str(info.get("model") or "").upper()
+    return 30 if model.startswith(_RTSP_PREFIXES) or model in _RTSP_CODES else 5
+
+
 @dataclass(frozen=True)
 class PrinterData:
     """A printer as BamBuddy describes it (`info`, read at setup) and its
@@ -184,10 +263,27 @@ class PrinterData:
     status: dict[str, Any]
     # BamBuddy's count of the hours the printer printed; None before it is read.
     hours: float | None = None
+    # BamBuddy's maintenance tasks of the printer; None before they are read.
+    maintenance: dict[str, Any] | None = None
+
+    @property
+    def maintenance_tasks(self) -> list[dict[str, Any]]:
+        """The enabled tasks: BamBuddy counts only those."""
+        items = (self.maintenance or {}).get("maintenance_items") or []
+        return [item for item in items if isinstance(item, dict) and item.get("enabled", True)]
 
     @property
     def connected(self) -> bool:
         return bool(self.status.get("connected"))
+
+    @property
+    def blank(self) -> bool:
+        """BamBuddy has no status of its own for the printer -- it has not
+        reached it since it started -- and answers with its defaults: no
+        chamber, no AMS backup, none of what the printer has. Without a
+        connection object its temperatures are null, with one that never
+        heard from the printer empty."""
+        return not self.connected and not self.status.get("temperatures")
 
     @property
     def state(self) -> str | None:
@@ -244,22 +340,17 @@ class PrinterData:
         return _model_key(self.model) in _ETHERNET
 
     def has_sd_card(self) -> bool:
-        model = _model_key(self.model)
-        return bool(model) and model not in _NO_SD_CARD
+        """Every printer has a slot for its storage: microSD, or USB."""
+        return bool(_model_key(self.model))
+
+    def stores_on_usb(self) -> bool:
+        return _model_key(self.model) in _USB_DRIVE
 
     def has_exhaust_fan(self) -> bool:
         return _model_key(self.model) in _EXHAUST_FAN
 
     def is_a1_family(self) -> bool:
         return _model_key(self.model) in _A1_FAMILY
-
-
-def _older(firmware: Any, version: str) -> bool:
-    """Whether a printer's firmware is older than `version`; unknown is not."""
-    try:
-        return bool(firmware) and AwesomeVersion(str(firmware)) < AwesomeVersion(version)
-    except AwesomeVersionException:
-        return False
 
 
 def bambuddy_name(printer: dict[str, Any]) -> str | None:
@@ -294,6 +385,16 @@ def printer_key(printer: dict[str, Any]) -> str:
     restored database); BamBuddy's number only for a printer without one."""
     serial = str(printer.get("serial_number") or "").strip()
     return serial or f"id{printer['id']}"
+
+
+def stored_printer(printer: dict[str, Any]) -> dict[str, Any]:
+    """A printer as the entry stores it: BamBuddy's number for the API, the
+    serial number to find it again when BamBuddy numbers its printers anew."""
+    return {
+        CONF_PRINTER_ID: printer["id"],
+        CONF_PRINTER_NAME: printer_name(printer),
+        CONF_SERIAL: str(printer.get("serial_number") or ""),
+    }
 
 
 def stored_key(printer: dict[str, Any]) -> str:
@@ -385,11 +486,12 @@ def print_status(data: PrinterData) -> str | None:
 
 
 def print_stage(status: dict[str, Any]) -> str | None:
-    """The stage of the print: BamBuddy names none while idle; a stage
-    number we do not know yet is unknown."""
+    """The stage of the print: BamBuddy names none while idle -- nor in a
+    moment of a job, which is no idle printer; a stage number we do not know
+    yet is unknown."""
     name = status.get("stg_cur_name")
     if name is None:
-        return "idle"
+        return None if status.get("state") in JOB_STATES else "idle"
     stage = status.get("stg_cur")
     if isinstance(stage, int) and stage in STAGES:
         return STAGES[stage]
@@ -458,8 +560,15 @@ def ams_model(unit: dict[str, Any], printer: PrinterData) -> str:
 DRYING_AMS_MODELS = frozenset({"AMS 2 Pro", "AMS HT"})
 
 
+def has_heater(unit: dict[str, Any], printer: PrinterData) -> bool:
+    """Whether the unit dries: it reports its drying, whoever started it."""
+    return ams_model(unit, printer) in DRYING_AMS_MODELS
+
+
 def can_dry(unit: dict[str, Any], printer: PrinterData) -> bool:
-    return bool(printer.status.get("supports_drying")) and ams_model(unit, printer) in DRYING_AMS_MODELS
+    """Whether Home Assistant may start its drying: not where the printer
+    dries only from its own screen, nor on firmware too old for it."""
+    return bool(printer.status.get("supports_drying")) and has_heater(unit, printer)
 
 
 def ams_number(unit_id: int) -> int:
@@ -551,23 +660,85 @@ class Material:
     temp_max: int
 
 
-# The materials a slot can be set to: Bambu's generic profiles, with the
-# nozzle ranges of BamBuddy's own table (utils/filament_ids.py); PLA Silk,
-# PETG HF and PCTG, which it lacks, take their base material's.
+# The answers to an HMS message that send the printer something (BamBuddy's
+# hms_actions.py): Bambu's catalogue also names buttons of its own screen
+# -- the assistant, the live view, "load", "cancel", "close" -- that send
+# nothing (BamBuddy then waits in vain for the printer).
+HMS_ANSWERS = frozenset(
+    {
+        "RESUME_PRINTING",
+        "RESUME_PRINTING_DEFECTS",
+        "RESUME_PRINTING_PROBELM_SOLVED",
+        "PROBLEM_SOLVED_RESUME",
+        "FILAMENT_LOAD_RESUME",
+        "PROCEED",
+        "DBL_CHECK_RESUME",
+        "STOP_PRINTING",
+        "IGNORE_RESUME",
+        "IGNORE_NO_REMINDER_NEXT_TIME",
+        "DONT_REMIND_NEXT_TIME",
+        "NO_REMINDER_NEXT_TIME",
+        "FILAMENT_EXTRUDED",
+        "DBL_CHECK_DONE",
+        "RETRY_FILAMENT_EXTRUDED",
+        "CONTINUE",
+        "RETRY_PROBLEM_SOLVED",
+        "DBL_CHECK_RETRY",
+        "ABORT",
+        "OK_BUTTON",
+        "DBL_CHECK_OK",
+        "REFRESH_NOZZLE",
+        "TURN_OFF_FIRE_ALARM",
+        "STOP_DRYING",
+        "DISABLE_PURIFICATION",
+    }
+)
+
+
+def hms_answers(error: dict[str, Any]) -> list[str]:
+    """The answers the printer offers for a message, in Bambu's order."""
+    actions = error.get("actions")
+    return [action for action in actions if action in HMS_ANSWERS] if isinstance(actions, list) else []
+
+
+def hms_code(error: dict[str, Any]) -> str:
+    """A message's full code, as the printer and BamBuddy take it back."""
+    return str(error.get("full_code") or error.get("code") or "").removeprefix("0x").upper()
+
+
+# The materials a slot or an external spool can be set to: Bambu's generic
+# profiles (BamBuddy's list of them), with Bambu Studio's nozzle ranges of
+# each profile (his word, 2026-10-18: the more, the better).
 MATERIALS: dict[str, Material] = {
-    "PLA": Material("PLA", "GFL99", 190, 230),
-    "PLA Silk": Material("PLA", "GFL96", 190, 230),
-    "PLA-CF": Material("PLA-CF", "GFL98", 210, 240),
-    "PETG": Material("PETG", "GFG99", 220, 260),
-    "PETG HF": Material("PETG", "GFG96", 220, 260),
+    "PLA": Material("PLA", "GFL99", 190, 240),
+    "PLA Silk": Material("PLA", "GFL96", 190, 240),
+    "PLA High Speed": Material("PLA", "GFL95", 190, 240),
+    "PLA-CF": Material("PLA-CF", "GFL98", 190, 240),
+    "PETG": Material("PETG", "GFG99", 220, 270),
+    "PETG HF": Material("PETG", "GFG96", 220, 270),
     "PETG-CF": Material("PETG-CF", "GFG98", 240, 270),
-    "PCTG": Material("PCTG", "GFG97", 220, 260),
-    "ABS": Material("ABS", "GFB99", 240, 270),
-    "ASA": Material("ASA", "GFB98", 240, 270),
-    "PC": Material("PC", "GFC99", 250, 280),
-    "PA": Material("PA", "GFN99", 260, 290),
-    "PA-CF": Material("PA-CF", "GFN98", 270, 300),
-    "TPU": Material("TPU", "GFU99", 200, 240),
+    "PCTG": Material("PCTG", "GFG97", 240, 270),
+    "ABS": Material("ABS", "GFB99", 240, 280),
+    "ASA": Material("ASA", "GFB98", 240, 280),
+    "PC": Material("PC", "GFC99", 260, 290),
+    "PA": Material("PA", "GFN99", 240, 280),
+    "PA-CF": Material("PA-CF", "GFN98", 260, 300),
+    "PPA-CF": Material("PPA-CF", "GFN97", 280, 320),
+    "PPA-GF": Material("PPA-GF", "GFN96", 280, 320),
+    "TPU": Material("TPU", "GFU99", 200, 250),
+    "TPU for AMS": Material("TPU", "GFU98", 200, 250),
+    "PVA": Material("PVA", "GFS99", 190, 240),
+    "HIPS": Material("HIPS", "GFS98", 220, 270),
+    "BVOH": Material("BVOH", "GFS97", 190, 240),
+    "PE": Material("PE", "GFP99", 175, 220),
+    "PE-CF": Material("PE-CF", "GFP98", 175, 220),
+    "PP": Material("PP", "GFP97", 220, 250),
+    "PP-CF": Material("PP-CF", "GFP96", 220, 250),
+    "PP-GF": Material("PP-GF", "GFP95", 220, 250),
+    "EVA": Material("EVA", "GFR99", 175, 220),
+    "PHA": Material("PHA", "GFR98", 190, 240),
+    "PPS": Material("PPS", "GFT97", 300, 340),
+    "PPS-CF": Material("PPS-CF", "GFT98", 310, 340),
 }
 
 

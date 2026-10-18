@@ -5,10 +5,25 @@ import { findPrinter } from "../src/discovery";
 import { subtitle } from "../src/header";
 import { ICONS } from "../src/icons";
 import type { CardContext } from "../src/parts";
-import { cardStyles } from "../src/styles";
 import type { Hass, PrinterRefs } from "../src/types";
-import { a1mini, h2d, instanceDevice, makeHass, mountCard, offlineP1s, p1s, readOnlyX1c, x1c, type FakeCard, type FakeDevice, type FakeHass, type PrinterSpec } from "./fixtures";
-import { button, find, findAll, hasButton, NBSP, press, root, settle, text, update } from "./helpers";
+import {
+  a1mini,
+  h2d,
+  instanceDevice,
+  makeHass,
+  mountCard,
+  offlineP1s,
+  p1s,
+  readOnlyX1c,
+  unreachable,
+  x1c,
+  type FakeCard,
+  type FakeDevice,
+  type FakeHass,
+  type FakeHassOptions,
+  type PrinterSpec,
+} from "./fixtures";
+import { button, find, findAll, hasButton, NBSP, press, root, settle, styleText, text, update } from "./helpers";
 
 const PRINTERS = {
   x1c: [x1c, "dev-x1c"],
@@ -23,13 +38,20 @@ type Name = keyof typeof PRINTERS;
 
 async function cardFor(
   name: Name,
-  options: { language?: string; devices?: FakeDevice[]; config?: Record<string, unknown>; admin?: boolean } = {},
+  options: {
+    language?: string;
+    devices?: FakeDevice[];
+    config?: Record<string, unknown>;
+    admin?: boolean;
+    callService?: FakeHassOptions["callService"];
+  } = {},
 ): Promise<{ card: FakeCard; hass: FakeHass }> {
   const [devices, printer] = PRINTERS[name];
   const hass = makeHass({
     devices: options.devices ?? (devices as () => FakeDevice[])(),
     language: options.language ?? "en",
     ...(options.admin === undefined ? {} : { admin: options.admin }),
+    ...(options.callService ? { callService: options.callService } : {}),
   });
   const card = await mountCard(hass, { printer, ...(options.config ?? {}) });
   return { card, hass };
@@ -47,8 +69,7 @@ const rows = (card: FakeCard): [string, string][] => findAll(card, "dialog .spec
 
 const MINUS = "−";
 
-/** The card's style sheet as one text. */
-const css = (): string => (Array.isArray(cardStyles) ? cardStyles : [cardStyles]).map((sheet) => (sheet as { cssText: string }).cssText).join("");
+const css = styleText;
 
 beforeEach(() => {
   vi.useFakeTimers({ toFake: ["Date"] });
@@ -65,9 +86,10 @@ describe("the title", () => {
     const { card } = await cardFor("x1c");
     expect(text(find(card, ".name"))).toBe("Workshop");
     expect(text(find(card, ".model"))).toBe(`X1C · 0.4${NBSP}mm · 559 h`);
-    // The rest of the head stays as it was.
+    // The rest of the head: the dot, the light, the menu -- the state is
+    // the job's line, no chip beside the light.
     expect(find(card, ".dot")?.classList.contains("on")).toBe(true);
-    expect(text(find(card, ".head .chip"))).toBe("Printing");
+    expect(find(card, ".head .chip")).toBeNull();
     expect(hasButton(card, "Chamber light")).toBe(true);
     const { card: desk } = await cardFor("a1mini");
     // BamBuddy's name comes first, also where the device was renamed.
@@ -75,7 +97,8 @@ describe("the title", () => {
     expect(text(find(desk, ".model"))).toBe(`A1 Mini · 0.4${NBSP}mm · 87 h`);
   });
 
-  it("falls back to the device's name, the user's first", async () => {
+  it("falls back to the device's name, the user's first, without the model and serial after BamBuddy's name", async () => {
+    // Without a name in BamBuddy, the serial tells the printer apart: it stays.
     const { card } = await cardFor("offline");
     expect(text(find(card, ".name"))).toBe("P1S (01P00A400000999)");
     // Offline: the nozzle is unknown, the print hours are BamBuddy's.
@@ -84,7 +107,11 @@ describe("the title", () => {
     expect(text(find(renamed, ".name"))).toBe("Desk A1 mini");
     const { card: empty, hass } = await cardFor("x1c");
     await update(empty, hass.withState("sensor.x1c_print_status", "printing", { bambuddy_name: "" }));
-    expect(text(find(empty, ".name"))).toBe("Workshop (X1C / 00M09A350100123)");
+    expect(text(find(empty, ".name"))).toBe("Workshop");
+    // A name of the user's own with brackets stays as it is.
+    const [printer, ams] = x1c({ bambuddyName: null }) as [FakeDevice, FakeDevice];
+    const { card: own } = await cardFor("x1c", { devices: [{ ...printer, nameByUser: "Workshop (left)" }, ams] });
+    expect(text(find(own, ".name"))).toBe("Workshop (left)");
   });
 
   it("names both nozzles of a dual-nozzle printer once where they are alike", async () => {
@@ -106,6 +133,12 @@ describe("the title", () => {
     expect(subtitle(ctx)).toBe(`X1C · 0.4${NBSP}mm · 559 h`);
   });
 
+  it("is a heading, for those who move through a page by its headings", async () => {
+    const { card } = await cardFor("x1c");
+    expect(find(card, ".name")?.getAttribute("role")).toBe("heading");
+    expect(find(card, ".name")?.getAttribute("aria-level")).toBe("2");
+  });
+
   it("may wrap a long name to two lines before it is cut", () => {
     expect(css()).toMatch(/\.name\s*\{[^}]*-webkit-line-clamp: 2/);
     expect(css()).not.toMatch(/\.name\s*\{[^}]*white-space: nowrap/);
@@ -121,27 +154,39 @@ describe("the title", () => {
   });
 });
 
-describe("the status chips", () => {
+describe("the head's chips", () => {
   it("show the Wi-Fi signal in the colour of its strength", async () => {
     const { card } = await cardFor("x1c");
     const network = pill(card, "network");
     expect(text(network)).toBe(`${MINUS}52${NBSP}dBm`);
-    expect(network?.getAttribute("aria-label")).toBe(`Wi-Fi signal: ${MINUS}52${NBSP}dBm`);
+    // Named as the LAN chip is: "Network: LAN (wired)".
+    // The colour's word too, for a screen reader.
+    expect(network?.getAttribute("aria-label")).toBe(`Network: Wi-Fi, ${MINUS}52${NBSP}dBm, good`);
     expect(toneOf(network)).toBe("tone-ok");
     expect(iconOf(network)).toBe(ICONS.wifi);
-    // −60 dBm and better is good, down to −75 dBm fair, below weak.
-    for (const [dbm, tone] of [[-60, "tone-ok"], [-61, "tone-warn"], [-75, "tone-warn"], [-76, "tone-err"]] as const) {
+    // −67 dBm and better is good, as Wi-Fi is commonly judged; down to
+    // −75 dBm fair, below weak. A signal near −60 dBm no longer flips.
+    for (const [dbm, tone, word] of [
+      [-60, "tone-ok", "good"],
+      [-63, "tone-ok", "good"],
+      [-67, "tone-ok", "good"],
+      [-68, "tone-warn", "fair"],
+      [-75, "tone-warn", "fair"],
+      [-76, "tone-err", "weak"],
+    ] as const) {
       const { card: other } = await withX1c({ wifi: dbm });
       expect(toneOf(pill(other, "network")), String(dbm)).toBe(tone);
+      expect(pill(other, "network")?.getAttribute("aria-label"), String(dbm)).toMatch(new RegExp(`, ${word}$`));
     }
   });
 
-  it("show LAN for a printer on Ethernet, and nothing for one BamBuddy cannot reach", async () => {
+  it("show LAN for a printer on Ethernet, green like a good Wi-Fi signal, and nothing for one BamBuddy cannot reach", async () => {
     const { card } = await cardFor("h2d");
     expect(text(pill(card, "network"))).toBe("LAN");
+    expect(pill(card, "network")?.getAttribute("aria-label")).toBe("Network: LAN (wired)");
     expect(iconOf(pill(card, "network"))).toBe(ICONS.ethernet);
-    expect(toneOf(pill(card, "network"))).toBe("tone-neutral");
-    // The status chip says Offline already.
+    expect(toneOf(pill(card, "network"))).toBe("tone-ok");
+    // The dot and the job say Offline already.
     const { card: offline } = await cardFor("offline");
     expect(pill(offline, "network")).toBeNull();
   });
@@ -185,6 +230,16 @@ describe("the status chips", () => {
     const { card } = await cardFor("x1c");
     expect(find(card, ".pills")?.getAttribute("aria-live")).toBe("polite");
     expect(pill(card, "network")?.getAttribute("aria-live")).toBe("off");
+  });
+
+  it("line up with the tabs and the blocks below, also on a very narrow card", () => {
+    // The card's padding: 16 px, 12 px below 340 px -- one left edge under the head.
+    expect(css()).toMatch(/ha-card\s*\{[^}]*--bb-inset: 16px/);
+    expect(css()).toMatch(/@container \(max-width: 340px\)\s*\{[^@]*ha-card\s*\{[^}]*--bb-inset: 12px/);
+    // On both sides, as the tabs and the blocks below.
+    expect(css()).toMatch(/\.pills\s*\{[^}]*margin: -2px var\(--bb-inset\) 10px/);
+    expect(css()).toMatch(/\.hms-line\s*\{[^}]*margin: -4px var\(--bb-inset\) 10px/);
+    expect(css()).toMatch(/\.hms-line\s*\{[^}]*width: calc\(100% - 2 \* var\(--bb-inset\)\)/);
   });
 
   it("are easy to hit on a touch screen without looking bigger", () => {
@@ -240,7 +295,7 @@ describe("the status chips", () => {
 
   it("say it in German", async () => {
     const { card } = await cardFor("x1c", { language: "de" });
-    expect(pill(card, "network")?.getAttribute("aria-label")).toBe(`WLAN-Signal: ${MINUS}52${NBSP}dBm`);
+    expect(pill(card, "network")?.getAttribute("aria-label")).toBe(`Netzwerk: WLAN, ${MINUS}52${NBSP}dBm, gut`);
     expect(pill(card, "hms")?.getAttribute("aria-label")).toBe("HMS-Meldungen: keine");
     expect(text(pill(card, "hms"))).toBe("HMS OK");
     expect(pill(card, "firmware")?.getAttribute("aria-label")).toBe("Firmware 01.08.02.00: Update verfügbar");
@@ -265,7 +320,7 @@ describe("the HMS line", () => {
     expect(find(card, ".pills")?.nextElementSibling).toBe(line(card));
     line(card)?.click();
     await card.updateComplete;
-    expect(text(find(card, "dialog h2"))).toBe("HMS messages");
+    expect(text(find(card, "dialog h2"))).toBe("Printer messages (HMS)");
     const { card: one } = await withX1c({ hms: [error] });
     expect(text(line(one))).toBe("The heatbed temperature is abnormal.");
     expect(line(one)?.querySelector(".hms-line-more")).toBeNull();
@@ -314,23 +369,106 @@ describe("the HMS dialog", () => {
     const { card, hass } = await cardFor("p1s");
     pill(card, "hms")?.click();
     await card.updateComplete;
-    expect(text(find(card, "dialog h2"))).toBe("HMS messages");
+    // "HMS" says nothing to a beginner: whose messages they are.
+    expect(text(find(card, "dialog h2"))).toBe("Printer messages (HMS)");
     const items = findAll(card, "dialog .hms-item");
     expect(items.map((item) => [...item.classList].find((name) => name.startsWith("sev-")))).toEqual(["sev-error", "sev-warning", "sev-notice"]);
     expect(items.map((item) => iconOf(item))).toEqual([ICONS.error, ICONS.warning, ICONS.info]);
     expect(findAll(card, "dialog .hms-text").map(text)).toEqual([
       "The nozzle temperature is abnormal; the heater may be short-circuited.",
       "The front cover of the toolhead fell off.",
-      "Notice",
+      "Notice: BamBuddy has no text for this code.",
     ]);
     expect(findAll(card, "dialog .hms-code").map(text)).toEqual(["0300_0100_0001_0001", "0300_1200_0002_0001", "0500_0400_0003_0002"]);
-    expect(text(find(card, "dialog .dlg-note"))).toBe("Errors the printer still sees come back after clearing.");
+    // Clearing does not fix the problem: said where it is offered.
+    expect(findAll(card, "dialog .dlg-note").map(text)).toEqual(["Clearing only removes the message: errors the printer still sees come back."]);
     expect(findAll(card, "dialog .dlg-actions .btn").map(text)).toEqual(["Close", "Clear HMS errors"]);
     expect(root(card).activeElement).toBe(find(card, "dialog .btn.safe"));
     await press(card, "Clear HMS errors");
     expect(hass.calls.at(-1)).toMatchObject({ domain: "button", service: "press", data: { entity_id: "button.p1s_clear_hms_errors" } });
     expect(find(card, "dialog")).toBeNull();
     expect(text(find(card, ".sent"))).toBe("Sent");
+  });
+
+  it("answers a message as the printer's screen would; stopping asks first and comes back", async () => {
+    const { card, hass } = await cardFor("p1s");
+    const answerable = {
+      code: "0700_2000_0002_0012",
+      severity: "warning",
+      description: "The filament of AMS slot 2 has run out.",
+      actions: ["RESUME_PRINTING", "STOP_PRINTING"],
+    };
+    await update(card, hass.withState("sensor.p1s_hms_errors", "1", { errors: [answerable] }));
+    pill(card, "hms")?.click();
+    await card.updateComplete;
+
+    expect(findAll(card, "dialog .hms-item .hms-answers .btn").map(text)).toEqual(["Resume printing", "Stop printing"]);
+    // Each answer names the message it answers.
+    const described = find(card, "dialog .hms-answers .btn")?.getAttribute("aria-describedby") ?? "";
+    expect(text(find(card, `dialog #${described}`))).toBe("The filament of AMS slot 2 has run out.");
+    expect(find(card, "dialog a.hms-wiki")?.getAttribute("href")).toBe("https://wiki.bambulab.com/en/hms/home");
+    await press(card, "Resume printing");
+    expect(hass.calls.at(-1)).toMatchObject({
+      domain: "bambuddy",
+      service: "answer_hms",
+      data: { device_id: "dev-p1s", code: "0700_2000_0002_0012", action: "RESUME_PRINTING" },
+    });
+    // The message is answered: the dialog ends (review U11).
+    expect(find(card, "dialog")).toBeNull();
+    pill(card, "hms")?.click();
+    await card.updateComplete;
+
+    // A tap focuses the button it lands on.
+    button(card, "Stop printing").focus();
+    await press(card, "Stop printing");
+    expect(text(find(card, "dialog h2"))).toBe("Stop the print?");
+    expect(find(card, "dialog .btn.danger")).not.toBeNull();
+    await press(card, "Cancel");
+    expect(text(find(card, "dialog h2"))).toBe("Printer messages (HMS)");
+    // The keyboard's place: back on the button that asked.
+    expect(root(card).activeElement?.getAttribute("aria-label")).toBe("Stop printing");
+    await press(card, "Stop printing");
+    (find(card, "dialog .btn.danger") as HTMLButtonElement).click();
+    await card.updateComplete;
+    expect(hass.calls.at(-1)).toMatchObject({ domain: "bambuddy", service: "answer_hms", data: { action: "STOP_PRINTING" } });
+  });
+
+  it("puts the answers first: the focus in a question, a failure inside the dialog, Clear quiet, the note", async () => {
+    const answerable = { code: "0700_2000_0002_0012", severity: "warning", description: "Leer.", actions: ["FILAMENT_LOAD_RESUME", "STOP_PRINTING"] };
+    const failing = async (call: { service: string }): Promise<unknown> => {
+      if (call.service === "answer_hms") throw new Error("Failed to execute HMS action");
+      return undefined;
+    };
+    const { card, hass } = await cardFor("p1s", { callService: failing });
+    await update(card, hass.withState("sensor.p1s_hms_errors", "1", { errors: [answerable] }).withState("sensor.p1s_print_status", "paused"));
+    pill(card, "hms")?.click();
+    await card.updateComplete;
+    // Clearing does not answer the printer: the answers stand out (review U13).
+    expect(find(card, "dialog .dlg-actions .btn.tonal")?.textContent?.trim()).toBe("Clear HMS errors");
+    expect(findAll(card, "dialog .dlg-note").map(text)).toContain("Check the print, then answer here as on the printer's screen.");
+    // The question takes the focus to its safe button (review U1).
+    button(card, "Stop printing").focus();
+    await press(card, "Stop printing");
+    expect(text(root(card).activeElement as Element)).toBe("Cancel");
+    await press(card, "Cancel");
+    // A failed answer says so inside the dialog (review U4).
+    await press(card, "Filament loaded, resume");
+    expect(text(find(card, "dialog .dlg-body .toast"))).toContain("Failed to execute HMS action");
+    expect(find(card, "ha-card > .toast")).toBeNull();
+  });
+
+  it("offers no answer where the card only shows, and names them in German", async () => {
+    const errors = [{ code: "0700_2000_0002_0012", severity: "warning", description: "Leer.", actions: ["FILAMENT_LOAD_RESUME"] }];
+    const shown = await cardFor("p1s", { config: { read_only: true } });
+    await update(shown.card, shown.hass.withState("sensor.p1s_hms_errors", "1", { errors }));
+    pill(shown.card, "hms")?.click();
+    await shown.card.updateComplete;
+    expect(find(shown.card, "dialog .hms-answers")).toBeNull();
+    const german = await cardFor("p1s", { language: "de" });
+    await update(german.card, german.hass.withState("sensor.p1s_hms_errors", "1", { errors }));
+    pill(german.card, "hms")?.click();
+    await german.card.updateComplete;
+    expect(findAll(german.card, "dialog .hms-answers .btn").map(text)).toEqual(["Filament geladen, fortsetzen"]);
   });
 
   it("follows the messages while it is open, and says when there are none", async () => {
@@ -346,7 +484,7 @@ describe("the HMS dialog", () => {
     expect(findAll(card, "dialog .dlg-actions .btn").map(text)).toEqual(["Close", "Clear HMS errors"]);
     // A code BamBuddy shortened, an unknown severity, a code that is no text.
     await update(card, hass.withState("sensor.x1c_hms_errors", "2", { errors: [{ code: "0500400E", severity: "fatal", description: "" }, { code: 5 }] }));
-    expect(findAll(card, "dialog .hms-text").map(text)).toEqual(["HMS message", "HMS message"]);
+    expect(findAll(card, "dialog .hms-text").map(text)).toEqual(Array(2).fill("HMS message: BamBuddy has no text for this code."));
     expect(findAll(card, "dialog .hms-code").map(text)).toEqual(["0500_400E"]);
     expect(findAll(card, "dialog .hms-item").map((item) => item.classList.contains("sev-warning"))).toEqual([true, true]);
     // A count without the list.
@@ -356,13 +494,49 @@ describe("the HMS dialog", () => {
     expect(find(card, "dialog")).toBeNull();
   });
 
-  it("offers no clearing without Control Printer or with show_controls off", async () => {
+  it("says what to do next while a message holds the print paused", async () => {
+    const { card } = await cardFor("h2d");
+    pill(card, "hms")?.click();
+    await card.updateComplete;
+    expect(findAll(card, "dialog .dlg-note").map(text)).toEqual([
+      "Check the print, then resume or stop it.",
+      "Clearing only removes the message: errors the printer still sees come back.",
+    ]);
+    // Without control, only the next step.
+    const { card: readOnly } = await cardFor("h2d", { devices: h2d({ control: false }) });
+    pill(readOnly, "hms")?.click();
+    await readOnly.updateComplete;
+    // ... at the printer or in BamBuddy: the card offers neither then.
+    expect(findAll(readOnly, "dialog .dlg-note").map(text)).toEqual(["Check the print, then resume or stop it at the printer or in BamBuddy."]);
+    // Controls hidden on such a key: Home Assistant has no button either.
+    const { card: both } = await cardFor("h2d", { devices: h2d({ control: false }), config: { read_only: true } });
+    pill(both, "hms")?.click();
+    await both.updateComplete;
+    expect(findAll(both, "dialog .dlg-note").map(text)).toEqual(["Check the print, then resume or stop it at the printer or in BamBuddy."]);
+    // Controls hidden: Home Assistant can too.
+    const { card: display } = await cardFor("h2d", { config: { read_only: true } });
+    pill(display, "hms")?.click();
+    await display.updateComplete;
+    expect(findAll(display, "dialog .dlg-note").map(text)).toEqual([
+      "Check the print, then resume or stop it at the printer, in BamBuddy or in Home Assistant.",
+    ]);
+    const { card: german } = await cardFor("h2d", { language: "de" });
+    pill(german, "hms")?.click();
+    await german.updateComplete;
+    expect(text(find(german, "dialog h2"))).toBe("Meldungen des Druckers (HMS)");
+    expect(findAll(german, "dialog .dlg-note").map(text)).toEqual([
+      "Prüfe den Druck. Danach: Druck fortsetzen oder stoppen.",
+      "Löschen entfernt nur die Meldung: Fehler, die der Drucker weiter sieht, meldet er erneut.",
+    ]);
+  });
+
+  it("offers no clearing without Control Printer or with the controls hidden", async () => {
     const { card } = await cardFor("readOnly", { devices: readOnlyX1c({ hms: [{ code: "1", severity: "error", description: "x" }] }) });
     pill(card, "hms")?.click();
     await card.updateComplete;
     expect(findAll(card, "dialog .dlg-actions .btn").map(text)).toEqual(["Close"]);
     expect(find(card, "dialog .dlg-note")).toBeNull();
-    const { card: plain } = await cardFor("p1s", { config: { show_controls: false } });
+    const { card: plain } = await cardFor("p1s", { config: { read_only: true } });
     pill(plain, "hms")?.click();
     await plain.updateComplete;
     expect(findAll(plain, "dialog .dlg-actions .btn").map(text)).toEqual(["Close"]);
@@ -372,9 +546,9 @@ describe("the HMS dialog", () => {
     const { card } = await cardFor("p1s", { language: "de" });
     pill(card, "hms")?.click();
     await card.updateComplete;
-    expect(text(find(card, "dialog h2"))).toBe("HMS-Meldungen");
-    expect(findAll(card, "dialog .hms-text").map(text).at(-1)).toBe("Hinweis");
-    expect(text(find(card, "dialog .dlg-note"))).toBe("Fehler, die der Drucker weiter sieht, meldet er nach dem Löschen erneut.");
+    expect(text(find(card, "dialog h2"))).toBe("Meldungen des Druckers (HMS)");
+    expect(findAll(card, "dialog .hms-text").map(text).at(-1)).toBe("Hinweis: BamBuddy hat keinen Text zu diesem Code.");
+    expect(text(find(card, "dialog .dlg-note"))).toBe("Löschen entfernt nur die Meldung: Fehler, die der Drucker weiter sieht, meldet er erneut.");
     expect(findAll(card, "dialog .dlg-actions .btn").map(text)).toEqual(["Schließen", "HMS-Fehler löschen"]);
     const { card: none } = await cardFor("x1c", { language: "de" });
     pill(none, "hms")?.click();
@@ -461,7 +635,7 @@ describe("the menu", () => {
     expect(find(card, "[role=menu]")).toBeNull();
     await open(card);
     expect(dots.getAttribute("aria-expanded")).toBe("true");
-    expect(items(card).map(text)).toEqual(["Open device page", "Printer information", "Refresh status"]);
+    expect(items(card).map(text)).toEqual(["Open device page", "Printer information", "Refresh status", "Check connection"]);
     expect(root(card).activeElement).toBe(items(card)[0]);
     await open(card);
     expect(find(card, "[role=menu]")).toBeNull();
@@ -474,13 +648,13 @@ describe("the menu", () => {
     expect(root(card).activeElement).toBe(items(card)[1]);
     await key(card, "ArrowUp");
     await key(card, "ArrowUp");
-    expect(root(card).activeElement).toBe(items(card)[2]);
+    expect(root(card).activeElement).toBe(items(card).at(-1));
     await key(card, "Home");
     expect(root(card).activeElement).toBe(items(card)[0]);
     await key(card, "End");
-    expect(root(card).activeElement).toBe(items(card)[2]);
+    expect(root(card).activeElement).toBe(items(card).at(-1));
     await key(card, "x");
-    expect(root(card).activeElement).toBe(items(card)[2]);
+    expect(root(card).activeElement).toBe(items(card).at(-1));
     await key(card, "Escape");
     expect(find(card, "[role=menu]")).toBeNull();
     expect(root(card).activeElement).toBe(trigger(card));
@@ -506,14 +680,14 @@ describe("the menu", () => {
   it("offers the device page only to an administrator", async () => {
     const { card } = await cardFor("x1c", { admin: false });
     await open(card);
-    expect(items(card).map(text)).toEqual(["Printer information", "Refresh status"]);
+    expect(items(card).map(text)).toEqual(["Printer information", "Refresh status", "Check connection"]);
     expect(root(card).activeElement).toBe(items(card)[0]);
     // A hass without a user says nothing about it either.
     const hass = makeHass({ devices: x1c() });
     delete (hass as Partial<Hass>).user;
     const nobody = await mountCard(hass, { printer: "dev-x1c" });
     await open(nobody);
-    expect(items(nobody).map(text)).toEqual(["Printer information", "Refresh status"]);
+    expect(items(nobody).map(text)).toEqual(["Printer information", "Refresh status", "Check connection"]);
   });
 
   it("gives the focus back to the three dots after an item, and after the dialog it opened", async () => {
@@ -574,7 +748,32 @@ describe("the menu", () => {
     const [printer] = x1c() as [FakeDevice];
     const { card: bare } = await cardFor("x1c", { devices: [{ ...printer, entities: printer.entities.filter((entity) => entity.key !== "refresh_status") }] });
     await open(bare);
-    expect(items(bare).map(text)).toEqual(["Open device page", "Printer information"]);
+    expect(items(bare).map(text)).toEqual(["Open device page", "Printer information", "Check connection"]);
+  });
+
+  it("says in the printer information that BamBuddy cannot be reached, with no print status", async () => {
+    // The firmware comes from BamBuddy's update check: it may still answer.
+    const firmware = (x1c() as [FakeDevice])[0].entities.find((entity) => entity.key === "firmware");
+    const devices = unreachable(x1c()).map((device) => ({
+      ...device,
+      entities: device.entities.map((entity) => (entity.key === "firmware" && firmware ? { ...firmware, state: "off" } : entity)),
+    }));
+    const { card } = await cardFor("x1c", { devices });
+    await open(card);
+    await press(card, "Printer information");
+    const shown = Object.fromEntries(rows(card));
+    expect(shown["Status"]).toBe("No data from BamBuddy");
+    expect(find(card, "dialog .spec-value .chip")?.classList.contains("tone-warn")).toBe(true);
+    expect(shown["Print status"]).toBeUndefined();
+    // The firmware chip says it too.
+    expect(pill(card, "firmware")?.getAttribute("aria-label")).toMatch(/^Firmware .+ \(no data from BamBuddy\)$/);
+  });
+
+  it("says the key may only read, also with the controls hidden", async () => {
+    const { card } = await cardFor("readOnly", { config: { read_only: true } });
+    await open(card);
+    await press(card, "Printer information");
+    expect(Object.fromEntries(rows(card))["Control"]).toBe("Read only (API key without “Control Printer”)");
   });
 
   it("closes when the card leaves the page", async () => {
@@ -590,7 +789,7 @@ describe("the menu", () => {
     const { card } = await cardFor("x1c", { language: "de" });
     expect(trigger(card).getAttribute("aria-label")).toBe("Weitere Optionen");
     await open(card);
-    expect(items(card).map(text)).toEqual(["Geräteseite öffnen", "Druckerinformationen", "Status aktualisieren"]);
+    expect(items(card).map(text)).toEqual(["Geräteseite öffnen", "Druckerinformationen", "Status aktualisieren", "Verbindung prüfen"]);
   });
 });
 
@@ -651,7 +850,7 @@ describe("the printer information", () => {
     const { card } = await cardFor("h2d");
     await openInfo(card);
     const shown = Object.fromEntries(rows(card));
-    expect(shown["Network"]).toBe("LAN");
+    expect(shown["Network"]).toBe("LAN (wired)");
     expect(shown["Nozzles"]).toBe(`2 nozzles Left: 0.4${NBSP}mm · Hardened steel Right: 0.4${NBSP}mm · Stainless steel, high flow`);
     // Its IP address sensor is off, as Home Assistant creates it.
     expect(shown["IP address"]).toBeUndefined();
@@ -756,5 +955,11 @@ describe("the printer information", () => {
     await settle(off);
     await press(off, "Druckerinformationen");
     expect(Object.fromEntries(rows(off))["Entwicklermodus"]).toBe("Aus Befehle werden möglicherweise ignoriert.");
+    // BamBuddy's German pages name the permission „Drucker steuern“.
+    const { card: reading } = await cardFor("readOnly", { language: "de" });
+    (find(reading, ".menu-btn") as HTMLButtonElement).click();
+    await settle(reading);
+    await press(reading, "Druckerinformationen");
+    expect(Object.fromEntries(rows(reading))["Steuern"]).toBe("Nur lesen (API-Schlüssel ohne „Drucker steuern“)");
   });
 });

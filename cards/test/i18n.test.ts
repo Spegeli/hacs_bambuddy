@@ -2,7 +2,8 @@ import { afterEach, describe, expect, it } from "vitest";
 
 import { languageOf, LANGUAGES, rememberLocale, t } from "../src/i18n";
 import { en } from "../src/translations/en";
-import { makeHass } from "./fixtures";
+import { DETECTORS } from "../src/types";
+import { INTEGRATION_NAMES, makeHass } from "./fixtures";
 
 afterEach(() => {
   document.body.innerHTML = "";
@@ -19,6 +20,25 @@ describe("the card's texts", () => {
         expect(placeholders(text), `${language}.${key}`).toEqual(placeholders(en[key as keyof typeof en]));
         expect(text.trim(), `${language}.${key}`).not.toBe("");
       }
+    }
+  });
+
+  it("name the print options and the fans as the integration does, in each of its languages", () => {
+    // The card takes an entity whose registry name is one of these for not
+    // renamed, and shows its own name for it in the viewer's language.
+    const fans: [string, string][] = [
+      ["part", "fan.part_cooling_fan"],
+      ["aux", "fan.auxiliary_fan"],
+      ["chamber", "fan.chamber_fan"],
+      ["exhaust", "fan.exhaust_fan"],
+      ["left_aux", "fan.left_auxiliary_fan"],
+      ["hotend", "sensor.hotend_fan"],
+    ];
+    for (const language of ["en", "de"] as const) {
+      const texts = LANGUAGES[language] as Record<string, string>;
+      const integration = INTEGRATION_NAMES[language];
+      for (const key of DETECTORS) expect(texts[`detection_${key}`], `${language} ${key}`).toBe(integration[`switch.${key}`]);
+      for (const [card, entity] of fans) expect(texts[`fan_${card}_name`], `${language} ${card}`).toBe(integration[entity]);
     }
   });
 

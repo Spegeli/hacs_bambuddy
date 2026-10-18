@@ -13,7 +13,7 @@ from homeassistant.core import HomeAssistant
 from custom_components.bambuddy import cards
 from custom_components.bambuddy.cards import CARD_FILE, CARD_URL, async_register_card, card_digest
 
-from tests.conftest import X1C, make_entry, setup_integration
+from tests.conftest import X1C, set_up
 
 
 def _frontend(hass: HomeAssistant) -> Mock:
@@ -67,8 +67,7 @@ async def test_the_card_is_registered_once(hass: HomeAssistant, bambuddy_api: Si
     with patch.object(cards, "async_register_card", AsyncMock()) as register, patch(
         "custom_components.bambuddy.async_register_card", register
     ):
-        entry = make_entry(hass, X1C)
-        await setup_integration(hass, entry)
+        entry = await set_up(hass, X1C)
         await hass.config_entries.async_reload(entry.entry_id)
         await hass.async_block_till_done()
 
@@ -90,7 +89,19 @@ def test_the_readme_documents_what_the_bundle_takes() -> None:
     options = re.findall(r"^\| `(\w+)` \|", section, flags=re.MULTILINE)
     bundle = CARD_FILE.read_text(encoding="utf-8")
 
-    assert options == ["printer", "camera", "show_temperatures", "show_fans", "show_ams", "show_controls"]
+    assert options == [
+        "printer",
+        "camera",
+        "status_blocks",
+        "header_chips",
+        "start_view",
+        "show_control_tab",
+        "control_sections",
+        "read_only",
+        "show_filament_tab",
+        "ams_folding",
+        "show_auto_off",
+    ]
     for option in options:
         assert option in bundle, option
     assert "bambuddy-printer-card" in bundle

@@ -96,6 +96,7 @@ def printer_name(printer_id: int) -> str:
 
 # The methods of BamBuddyClient that send a command and only report success.
 CONTROLS = (
+    "execute_hms_action",
     "pause",
     "resume",
     "stop",
@@ -120,8 +121,12 @@ CONTROLS = (
     "select_extruder",
     "set_ams_backup",
     "configure_slot",
+    "reset_slot",
+    "refresh_rfid",
     "set_print_option",
     "skip_objects",
+    "perform_maintenance",
+    "control_plug",
 )
 
 
@@ -134,6 +139,10 @@ def bambuddy_api() -> Iterator[SimpleNamespace]:
     through `statuses` (read again on every refresh), any other answer
     through its mock."""
     statuses = {printer_id: load_fixture(name) for printer_id, name in _STATUSES.items()}
+    # Every printer the X1C's tasks, under its own number.
+    maintenance = {printer_id: {**load_fixture("maintenance_x1c.json"), "printer_id": printer_id} for printer_id in _STATUSES}
+    # Each plug's status, by its number as text (read again on every refresh).
+    plug_statuses: dict[str, Any] = load_fixture("plug_statuses.json")
     mocks = {
         "get_version": AsyncMock(return_value="1.2.5.7"),
         "get_auth_status": AsyncMock(return_value=load_fixture("auth_status.json")),
@@ -148,14 +157,26 @@ def bambuddy_api() -> Iterator[SimpleNamespace]:
         ),
         "get_status": AsyncMock(side_effect=lambda printer_id: copy.deepcopy(statuses[printer_id])),
         "get_stream_token": AsyncMock(return_value=STREAM_TOKEN),
+        # Nobody else watches: BamBuddy ends the camera connection.
+        "stop_camera": AsyncMock(return_value=True),
         "get_snapshot": AsyncMock(return_value=b"jpeg"),
         "get_cover": AsyncMock(return_value=b"png"),
         "get_print_objects": AsyncMock(return_value=load_fixture("print_objects.json")),
         "get_runtime": AsyncMock(return_value={"runtime_hours": 547.5, "print_hours_offset": 12.0, "total_hours": 559.5}),
+        "get_maintenance": AsyncMock(
+            side_effect=lambda printer_id: copy.deepcopy(
+                maintenance.setdefault(printer_id, {**load_fixture("maintenance_x1c.json"), "printer_id": printer_id})
+            )
+        ),
+        "get_diagnostic": AsyncMock(return_value=load_fixture("diagnostic_offline.json")),
+        "get_kprofiles": AsyncMock(return_value=load_fixture("kprofiles.json")),
+        # No smart plugs unless a test gives BamBuddy some (`with_plugs`).
+        "get_smart_plugs": AsyncMock(return_value=[]),
+        "get_plug_status": AsyncMock(side_effect=lambda plug_id, patient=True: copy.deepcopy(plug_statuses[str(plug_id)])),
         **{name: AsyncMock(return_value=None) for name in CONTROLS},
     }
     with patch.multiple(BamBuddyClient, **mocks):
-        yield SimpleNamespace(statuses=statuses, **mocks)
+        yield SimpleNamespace(statuses=statuses, maintenance=maintenance, plug_statuses=plug_statuses, **mocks)
 
 
 def make_entry(hass: HomeAssistant, *printer_ids: int) -> MockConfigEntry:
@@ -189,6 +210,13 @@ async def setup_integration(hass: HomeAssistant, entry: MockConfigEntry) -> None
     assert entry.state is ConfigEntryState.LOADED
 
 
+async def set_up(hass: HomeAssistant, *printer_ids: int) -> MockConfigEntry:
+    """An entry with these printers, set up and loaded."""
+    entry = make_entry(hass, *printer_ids)
+    await setup_integration(hass, entry)
+    return entry
+
+
 async def next_refresh(hass: HomeAssistant, freezer: FrozenDateTimeFactory) -> None:
     """Past the printers' next poll: a coordinator's next refresh comes 9 to
     10.5 seconds after the last."""
@@ -204,6 +232,11 @@ def entity_id(hass: HomeAssistant, platform: str, unique_id: str) -> str:
     found = er.async_get(hass).async_get_entity_id(platform, DOMAIN, unique_id)
     assert found is not None, (platform, unique_id)
     return found
+
+
+def no_entity(hass: HomeAssistant, platform: str, unique_id: str) -> bool:
+    """Whether the entity `unique_id` of `platform` does not exist."""
+    return er.async_get(hass).async_get_entity_id(platform, DOMAIN, unique_id) is None
 
 
 def printer_uid(entry: MockConfigEntry, key: str, printer_id: int = X1C) -> str:

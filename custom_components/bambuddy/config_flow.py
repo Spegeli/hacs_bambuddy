@@ -4,9 +4,10 @@ printers matched there), and adding or removing printers (Configure)."""
 from __future__ import annotations
 
 from collections.abc import Mapping
-from typing import Any
+from typing import Any, NamedTuple
 from urllib.parse import urlsplit
 
+import aiohttp
 import voluptuous as vol
 
 from homeassistant.config_entries import ConfigEntryState, ConfigFlow, ConfigFlowResult, OptionsFlow
@@ -26,26 +27,28 @@ from homeassistant.helpers.selector import (
 )
 
 from .api import (
+    AddressWithLoginError,
+    BamBuddyApiError,
     BamBuddyAuthError,
     BamBuddyClient,
+    BamBuddyConnectionError,
     BamBuddyError,
     BamBuddyNotFoundError,
+    BamBuddyNotJsonError,
     BamBuddyPermissionError,
     normalise_url,
 )
 from .const import (
     CONF_API_KEY,
-    CONF_PRINTER_ID,
     CONF_PRINTER_NAME,
     CONF_PRINTERS,
-    CONF_SERIAL,
     CONF_URL,
     CONF_VERIFY_SSL,
     DOMAIN,
     MIN_BAMBUDDY_VERSION,
 )
-from .coordinator import BamBuddyConfigEntry
-from .models import find_printers, printer_key, printer_name, stored_key, too_old
+from .coordinator import BamBuddyConfigEntry, create_client
+from .models import find_printers, printer_key, printer_name, short_name, stored_key, stored_printer as _stored, too_old
 
 # Home Assistant 2026.10 types form schemas as probatio schemas; the voluptuous
 # ones built here work the same from 2025.5 on, hence `type: ignore[arg-type]`
@@ -81,7 +84,9 @@ _ADD = "add_printers"
 
 
 def _many(options: list[SelectOptionDict]) -> SelectSelector:
-    return SelectSelector(SelectSelectorConfig(options=options, multiple=True))
+    """Printers to tick, each shown with its box -- with six or more options
+    Home Assistant would draw a picker that names none of them."""
+    return SelectSelector(SelectSelectorConfig(options=options, multiple=True, mode=SelectSelectorMode.LIST))
 
 
 def _choice(options: list[SelectOptionDict]) -> vol.Schema:
@@ -90,42 +95,92 @@ def _choice(options: list[SelectOptionDict]) -> vol.Schema:
     return vol.Schema({vol.Optional(CONF_PRINTERS, default=[]): _many(options)})
 
 
-def _stored(printer: dict[str, Any]) -> dict[str, Any]:
-    """A printer as the entry stores it: BamBuddy's number for the API, the
-    serial number to find it again when BamBuddy numbers its printers anew."""
-    return {
-        CONF_PRINTER_ID: printer["id"],
-        CONF_PRINTER_NAME: printer_name(printer),
-        CONF_SERIAL: str(printer.get("serial_number") or ""),
-    }
+class _Found(NamedTuple):
+    """What an address and a key give: the errors and their placeholders, or
+    BamBuddy's printers and whether the key may control them."""
+
+    errors: dict[str, str]
+    placeholders: dict[str, str]
+    printers: list[dict[str, Any]]
+    can_control: bool = False
 
 
-def _printer_label(printer: dict[str, Any]) -> str:
-    """The choice when adding or removing: the device name, BamBuddy's name
-    first."""
-    return printer_name(printer)
+# A web page answered, not BamBuddy's API: inside the flow only -- `_find`
+# tries the address's parents, then says it is no BamBuddy.
+_WEB_PAGE = "wrong_path"
 
-
-async def _validate(
-    hass: HomeAssistant, url: str, api_key: str, verify_ssl: bool
-) -> tuple[dict[str, str], dict[str, str], list[dict[str, Any]]]:
-    """Errors and their placeholders, and BamBuddy's printers when there
-    are none."""
+async def _validate(hass: HomeAssistant, url: str, api_key: str, verify_ssl: bool) -> _Found:
     client = BamBuddyClient(url, api_key, async_get_clientsession(hass), verify_ssl=verify_ssl)
+    # BamBuddy tells its version to anyone, never with an error.
+    first = True
     try:
         version = await client.get_version()
+        first = False
         if too_old(version):
-            return {"base": "too_old"}, {"version": version, "minimum": MIN_BAMBUDDY_VERSION}, []
-        await client.get_system_info()
-        return {}, {}, await client.get_printers()
-    except BamBuddyAuthError:
-        return {"base": "invalid_auth"}, {}, []
-    except BamBuddyPermissionError:
-        return {"base": "missing_permission"}, {}, []
+            return _Found({"base": "too_old"}, {"version": version, "minimum": MIN_BAMBUDDY_VERSION}, [])
+        try:
+            # The key's check; its archive walk may be slow or fail: the
+            # integration runs without its figures, so the flow does too.
+            await client.get_system_info(patient=False)
+        except (BamBuddyAuthError, BamBuddyPermissionError):
+            raise
+        except BamBuddyError:
+            pass
+        printers = await client.get_printers()
+        return _Found({}, {}, printers, await client.can_control())
+    except (BamBuddyAuthError, BamBuddyPermissionError) as err:
+        # BamBuddy asks no key for its version: a login in front of it does.
+        if first:
+            return _Found({"base": "error_not_bambuddy"}, {"error": str(err)}, [])
+        return _Found({"base": "invalid_auth" if isinstance(err, BamBuddyAuthError) else "missing_permission"}, {}, [])
     except BamBuddyNotFoundError:
-        return {"base": "not_bambuddy"}, {"minimum": MIN_BAMBUDDY_VERSION}, []
-    except BamBuddyError:
-        return {"base": "cannot_connect"}, {}, []
+        return _Found({"base": "not_bambuddy"}, {"minimum": MIN_BAMBUDDY_VERSION}, [])
+    except BamBuddyNotJsonError:
+        return _Found({"base": _WEB_PAGE}, {}, [])
+    except BamBuddyConnectionError as err:
+        # A self-signed certificate: the switch below is the way. Another
+        # TLS failure: https at a plain-HTTP port -- the switch would not help.
+        if isinstance(err.__cause__, aiohttp.ClientConnectorCertificateError):
+            return _Found({"base": "ssl_error"}, {}, [])
+        if isinstance(err.__cause__, aiohttp.ClientSSLError):
+            return _Found({"base": "not_https"}, {}, [])
+        return _Found({"base": "cannot_connect"}, {}, [])
+    except BamBuddyApiError as err:
+        # A proxy without BamBuddy behind it answers 502-504: unreachable.
+        if err.status in (502, 503, 504):
+            return _Found({"base": "cannot_connect"}, {}, [])
+        # An error to the first question: another server at the address.
+        if first:
+            return _Found({"base": "error_not_bambuddy"}, {"error": str(err)}, [])
+        return _Found({"base": "bad_answer"}, {"error": str(err)}, [])
+
+
+async def _find(hass: HomeAssistant, url: str, api_key: str, verify_ssl: bool, *, parents: bool = True) -> tuple[str, _Found]:
+    """BamBuddy at the address -- or at one of its parents: an address
+    copied from the browser often ends in a page's path (/printers,
+    /settings), where BamBuddy's web page answers, not its API. Without
+    `parents` (the stored address) only the address itself."""
+    found = await _validate(hass, url, api_key, verify_ssl)
+    tried = url
+    while parents and found.errors.get("base") == _WEB_PAGE and urlsplit(tried).path:
+        tried = tried.rsplit("/", 1)[0]
+        parent = await _validate(hass, tried, api_key, verify_ssl)
+        if parent.errors.get("base") != _WEB_PAGE:
+            return tried, parent
+    if found.errors.get("base") == _WEB_PAGE:
+        # A web page down to the address's root is no BamBuddy.
+        return url, _Found({"base": "not_bambuddy"}, {"minimum": MIN_BAMBUDDY_VERSION}, [])
+    return url, found
+
+
+def _short(name: str) -> str:
+    """A stored device name without " (model / serial)": BamBuddy's name."""
+    return name.rsplit(" (", 1)[0] if name.endswith(")") and " (" in name else name
+
+
+def _bullets(names: list[str]) -> str:
+    """Names as a Markdown list: a run-on sentence of fifteen is unreadable."""
+    return "\n".join(f"- {name}" for name in names)
 
 
 def _title(url: str) -> str:
@@ -153,11 +208,14 @@ async def _async_forget_history(hass: HomeAssistant, entry: BamBuddyConfigEntry)
     get_instance(hass).async_clear_statistics(entity_ids)
 
 
-def _normalised(user_input: dict[str, Any]) -> str | None:
+def _normalised(user_input: dict[str, Any]) -> tuple[str | None, str]:
+    """The address in its one form, or the error to show for it."""
     try:
-        return normalise_url(user_input[CONF_URL])
+        return normalise_url(user_input[CONF_URL]), ""
+    except AddressWithLoginError:
+        return None, "url_with_login"
     except ValueError:
-        return None
+        return None, "invalid_url"
 
 
 class BamBuddyConfigFlow(ConfigFlow, domain=DOMAIN):
@@ -171,6 +229,7 @@ class BamBuddyConfigFlow(ConfigFlow, domain=DOMAIN):
         # BamBuddy's printer for each (None: not there).
         self._stored: list[dict[str, Any]] = []
         self._found: list[dict[str, Any] | None] = []
+        self._can_control = True
 
     @staticmethod
     @callback
@@ -181,19 +240,24 @@ class BamBuddyConfigFlow(ConfigFlow, domain=DOMAIN):
         errors: dict[str, str] = {}
         placeholders: dict[str, str] = {}
         if user_input is not None:
-            url = _normalised(user_input)
+            url, invalid = _normalised(user_input)
+            # A key pasted with a space around it.
+            api_key = str(user_input[CONF_API_KEY]).strip()
             if url is None:
-                errors[CONF_URL] = "invalid_url"
+                errors[CONF_URL] = invalid
             else:
                 await self.async_set_unique_id(url)
                 self._abort_if_unique_id_configured()
-                errors, placeholders, printers = await _validate(
-                    self.hass, url, user_input[CONF_API_KEY], user_input[CONF_VERIFY_SSL]
-                )
+                url, found = await _find(self.hass, url, api_key, user_input[CONF_VERIFY_SSL])
+                errors, placeholders = found.errors, found.placeholders
                 if not errors:
-                    self._data = {**user_input, CONF_URL: url}
-                    self._printers = printers
-                    if printers:
+                    # Found at a parent of the address typed.
+                    await self.async_set_unique_id(url)
+                    self._abort_if_unique_id_configured()
+                    self._data = {**user_input, CONF_URL: url, CONF_API_KEY: api_key}
+                    self._printers = found.printers
+                    self._can_control = found.can_control
+                    if found.printers:
                         return await self.async_step_printers()
                     return self._create_entry([])
         return self.async_show_form(
@@ -205,19 +269,20 @@ class BamBuddyConfigFlow(ConfigFlow, domain=DOMAIN):
 
     async def async_step_printers(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
         """Which of BamBuddy's printers to add: all, unless the user says
-        otherwise."""
+        otherwise. A key that may only read is said here: the printers show,
+        nothing controls them."""
         if user_input is not None:
             chosen = set(user_input[CONF_PRINTERS])
             return self._create_entry([printer for printer in self._printers if str(printer["id"]) in chosen])
-        options = [SelectOptionDict(value=str(printer["id"]), label=_printer_label(printer)) for printer in self._printers]
+        options = [SelectOptionDict(value=str(printer["id"]), label=printer_name(printer)) for printer in self._printers]
         schema = vol.Schema(
             {
-                vol.Optional(CONF_PRINTERS, default=[option["value"] for option in options]): SelectSelector(
-                    SelectSelectorConfig(options=options, multiple=True)
-                )
+                vol.Optional(CONF_PRINTERS, default=[option["value"] for option in options]): _many(options)
             }
         )
-        return self.async_show_form(step_id="printers", data_schema=schema)  # type: ignore[arg-type]
+        return self.async_show_form(step_id="printers" if self._can_control else "printers_read_only", data_schema=schema)  # type: ignore[arg-type]
+
+    async_step_printers_read_only = async_step_printers
 
     def _create_entry(self, printers: list[dict[str, Any]]) -> ConfigFlowResult:
         return self.async_create_entry(
@@ -230,11 +295,13 @@ class BamBuddyConfigFlow(ConfigFlow, domain=DOMAIN):
 
     def _update_entry(self, entry: BamBuddyConfigEntry, **changes: Any) -> None:
         """Store a new key or address and set the entry up with it. A loaded
-        entry reloads through its update listener; one whose setup failed
-        has none. (async_update_reload_and_abort would clash with the
+        entry reloads through its update listener when something changed;
+        one whose setup failed has none, and an unchanged one -- the same key
+        entered again after BamBuddy refused it for a while -- would stay
+        without data. (async_update_reload_and_abort would clash with the
         listener from Home Assistant 2026.12 on.)"""
-        self.hass.config_entries.async_update_entry(entry, **changes)
-        if entry.state is not ConfigEntryState.LOADED:
+        changed = self.hass.config_entries.async_update_entry(entry, **changes)
+        if entry.state is not ConfigEntryState.LOADED or not changed:
             self.hass.config_entries.async_schedule_reload(entry.entry_id)
 
     async def async_step_reauth(self, entry_data: Mapping[str, Any]) -> ConfigFlowResult:
@@ -246,12 +313,12 @@ class BamBuddyConfigFlow(ConfigFlow, domain=DOMAIN):
         errors: dict[str, str] = {}
         placeholders = {"url": entry.data[CONF_URL]}
         if user_input is not None:
-            errors, found, _ = await _validate(
-                self.hass, entry.data[CONF_URL], user_input[CONF_API_KEY], entry.data.get(CONF_VERIFY_SSL, True)
-            )
-            placeholders.update(found)
+            api_key = str(user_input[CONF_API_KEY]).strip()
+            _, found = await _find(self.hass, entry.data[CONF_URL], api_key, entry.data.get(CONF_VERIFY_SSL, True), parents=False)
+            errors = found.errors
+            placeholders.update(found.placeholders)
             if not errors:
-                self._update_entry(entry, data={**entry.data, CONF_API_KEY: user_input[CONF_API_KEY]})
+                self._update_entry(entry, data={**entry.data, CONF_API_KEY: api_key})
                 return self.async_abort(reason="reauth_successful")
         return self.async_show_form(
             step_id="reauth_confirm",
@@ -269,22 +336,27 @@ class BamBuddyConfigFlow(ConfigFlow, domain=DOMAIN):
         # A key just typed; the field left empty keeps the stored one.
         typed = str((user_input or {}).get(CONF_API_KEY) or "").strip()
         if user_input is not None:
-            url = _normalised(user_input)
+            url, invalid = _normalised(user_input)
             api_key = typed or entry.data[CONF_API_KEY]
             if url is None:
-                errors[CONF_URL] = "invalid_url"
+                errors[CONF_URL] = invalid
             else:
-                if self._address_in_use(entry, url):
-                    return self.async_abort(reason="address_in_use")
-                errors, placeholders, listed = await _validate(self.hass, url, api_key, user_input[CONF_VERIFY_SSL])
+                url, found = await _find(self.hass, url, api_key, user_input[CONF_VERIFY_SSL])
+                errors, placeholders, listed = found.errors, found.placeholders, found.printers
                 if errors.get("base") == "invalid_auth" and not typed:
                     errors = {"base": "stored_key_refused"}
+                if self._address_in_use(entry, url):
+                    errors = {CONF_URL: "address_in_use"}
                 if not errors:
                     self._data = {CONF_URL: url, CONF_API_KEY: api_key, CONF_VERIFY_SSL: user_input[CONF_VERIFY_SSL]}
                     if url == entry.unique_id:
                         self._update_entry(entry, data=self._data)
-                        return self.async_abort(reason="reconfigure_successful")
+                        # A key that may only read: its controls go at the reload.
+                        return self.async_abort(
+                            reason="reconfigure_successful" if found.can_control else "reconfigure_successful_read_only"
+                        )
                     self._printers = listed
+                    self._can_control = found.can_control
                     self._stored = list(entry.options.get(CONF_PRINTERS, []))
                     self._found = find_printers(listed, self._stored)
                     return await self.async_step_new_address()
@@ -319,7 +391,7 @@ class BamBuddyConfigFlow(ConfigFlow, domain=DOMAIN):
         new = [printer for printer in self._printers if printer["id"] not in matched]
         if user_input is not None:
             return await self._async_move(entry, user_input, stored, new)
-        kept = [printer_name(info) for info in self._found if info is not None]
+        kept = [short_name(info) for info in self._found if info is not None]
         # None of the entry's printers there speaks for another BamBuddy.
         other = bool(stored) and not kept
         schema: dict[Any, Any] = {
@@ -333,7 +405,7 @@ class BamBuddyConfigFlow(ConfigFlow, domain=DOMAIN):
             )
         if new:
             schema[vol.Optional(_ADD, default=[])] = _many(
-                [SelectOptionDict(value=str(printer["id"]), label=_printer_label(printer)) for printer in new]
+                [SelectOptionDict(value=str(printer["id"]), label=printer_name(printer)) for printer in new]
             )
         if not stored:
             return self.async_show_form(
@@ -341,15 +413,23 @@ class BamBuddyConfigFlow(ConfigFlow, domain=DOMAIN):
                 data_schema=vol.Schema(schema),  # type: ignore[arg-type]
                 description_placeholders={"url": self._data[CONF_URL]},
             )
+        if not missing:
+            # Every printer found there: no list of fifteen names.
+            return self.async_show_form(
+                step_id="new_address_all",
+                data_schema=vol.Schema(schema),  # type: ignore[arg-type]
+                description_placeholders={"url": self._data[CONF_URL]},
+            )
         return self.async_show_form(
             step_id="other_bambuddy" if other else "new_address",
             data_schema=vol.Schema(schema),  # type: ignore[arg-type]
-            description_placeholders={"url": self._data[CONF_URL], "kept": ", ".join(kept)},
+            description_placeholders={"url": self._data[CONF_URL], "kept": _bullets(kept)},
         )
 
-    # The same step: with a warning (none of the entry's printers there), and
-    # for an entry without printers.
+    # The same step: with a warning (none of the entry's printers there), for
+    # every printer found there, and for an entry without printers.
     async_step_other_bambuddy = async_step_new_address
+    async_step_new_address_all = async_step_new_address
     async_step_new_address_no_printers = async_step_new_address
 
     async def _async_move(
@@ -370,7 +450,7 @@ class BamBuddyConfigFlow(ConfigFlow, domain=DOMAIN):
                 printers.append(_stored(info))
             elif stored_key(printer) not in remove:
                 printers.append(printer)
-                waiting.append(printer[CONF_PRINTER_NAME])
+                waiting.append(_short(printer[CONF_PRINTER_NAME]))
         printers += [_stored(printer) for printer in new if str(printer["id"]) in add]
         other = user_input[_KIND] == _OTHER
         if other:
@@ -388,6 +468,9 @@ class BamBuddyConfigFlow(ConfigFlow, domain=DOMAIN):
         reason = "reconfigure_successful_other" if other else "reconfigure_successful"
         if waiting:
             return self.async_abort(reason=f"{reason}_missing", description_placeholders={"printers": ", ".join(waiting)})
+        if not other and not self._can_control:
+            # A key that may only read: its controls go at the reload.
+            return self.async_abort(reason="reconfigure_successful_read_only")
         return self.async_abort(reason=reason)
 
 
@@ -400,12 +483,7 @@ class BamBuddyOptionsFlow(OptionsFlow):
         if entry.state is ConfigEntryState.LOADED:
             client: BamBuddyClient = entry.runtime_data.client
             return client
-        return BamBuddyClient(
-            entry.data[CONF_URL],
-            entry.data[CONF_API_KEY],
-            async_get_clientsession(self.hass),
-            verify_ssl=entry.data.get(CONF_VERIFY_SSL, True),
-        )
+        return create_client(self.hass, entry)
 
     @property
     def _printers(self) -> list[dict[str, Any]]:
@@ -420,6 +498,8 @@ class BamBuddyOptionsFlow(OptionsFlow):
     async def async_step_add_printer(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
         try:
             available = await self._client().get_printers()
+        except (BamBuddyAuthError, BamBuddyPermissionError):
+            return self.async_abort(reason="key_refused")
         except BamBuddyError:
             return self.async_abort(reason="cannot_connect")
         added = {stored_key(printer) for printer in self._printers}
@@ -437,7 +517,7 @@ class BamBuddyOptionsFlow(OptionsFlow):
                     + [_stored(printer) for printer in chosen],
                 }
             )
-        options = [SelectOptionDict(value=value, label=_printer_label(printer)) for value, printer in new.items()]
+        options = [SelectOptionDict(value=value, label=printer_name(printer)) for value, printer in new.items()]
         return self.async_show_form(step_id="add_printer", data_schema=_choice(options))  # type: ignore[arg-type]
 
     async def async_step_remove_printer(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
@@ -448,14 +528,12 @@ class BamBuddyOptionsFlow(OptionsFlow):
             return self.async_create_entry(
                 data={
                     **self.config_entry.options,
-                    CONF_PRINTERS: [
-                        printer for printer in self._printers if str(printer[CONF_PRINTER_ID]) not in removed
-                    ],
+                    CONF_PRINTERS: [printer for printer in self._printers if stored_key(printer) not in removed],
                 }
             )
-        options = [
-            SelectOptionDict(value=str(printer[CONF_PRINTER_ID]), label=self._label(printer)) for printer in self._printers
-        ]
+        # By serial, as everywhere: after BamBuddy renumbered, a printer it
+        # no longer lists may share its number with one it lists.
+        options = [SelectOptionDict(value=stored_key(printer), label=self._label(printer)) for printer in self._printers]
         return self.async_show_form(step_id="remove_printer", data_schema=_choice(options))  # type: ignore[arg-type]
 
     def _label(self, printer: dict[str, Any]) -> str:
@@ -463,7 +541,8 @@ class BamBuddyOptionsFlow(OptionsFlow):
         model differ only in their serials."""
         entry = self.config_entry
         if entry.state is ConfigEntryState.LOADED:
-            coordinator = entry.runtime_data.printers.get(printer[CONF_PRINTER_ID])
-            if coordinator is not None:
-                return _printer_label(coordinator.info)
+            key = stored_key(printer)
+            for coordinator in entry.runtime_data.printers.values():
+                if coordinator.key == key:
+                    return str(coordinator.printer_name)
         return str(printer[CONF_PRINTER_NAME])

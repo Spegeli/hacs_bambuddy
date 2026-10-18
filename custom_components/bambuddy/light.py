@@ -1,6 +1,7 @@
 """BamBuddy's light: the printer's chamber light."""
 from __future__ import annotations
 
+from collections.abc import Awaitable, Callable
 from functools import partial
 from typing import Any
 
@@ -10,7 +11,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 
 from .coordinator import BamBuddyConfigEntry, BamBuddyPrinterCoordinator
-from .entity import BamBuddyPrinterEntity, async_run_command
+from .entity import BamBuddyToggle
 
 PARALLEL_UPDATES = 1
 
@@ -23,7 +24,7 @@ async def async_setup_entry(
         async_add_entities(BamBuddyChamberLight(coordinator) for coordinator in runtime.printers.values())
 
 
-class BamBuddyChamberLight(BamBuddyPrinterEntity, LightEntity):
+class BamBuddyChamberLight(BamBuddyToggle, LightEntity):
     """On or off; BamBuddy switches both chamber lights of printers that
     have two."""
 
@@ -34,18 +35,8 @@ class BamBuddyChamberLight(BamBuddyPrinterEntity, LightEntity):
     def __init__(self, coordinator: BamBuddyPrinterCoordinator) -> None:
         super().__init__(coordinator, "chamber_light")
 
-    @property
-    def is_on(self) -> bool | None:
-        value = self.data.status.get("chamber_light")
-        return None if value is None else bool(value)
+    def _reported(self) -> Any:
+        return self.data.status.get("chamber_light")
 
-    async def _switch(self, on: bool) -> None:
-        await async_run_command(
-            self.coordinator, partial(self.coordinator.client.set_chamber_light, self.coordinator.printer_id, on)
-        )
-
-    async def async_turn_on(self, **kwargs: Any) -> None:
-        await self._switch(True)
-
-    async def async_turn_off(self, **kwargs: Any) -> None:
-        await self._switch(False)
+    def _command(self, on: bool) -> Callable[[], Awaitable[None]]:
+        return partial(self.coordinator.client.set_chamber_light, self.coordinator.printer_id, on)

@@ -1,4 +1,4 @@
-// Defines the card's element and lists it in the dashboard's card picker,
+// Defines the card's elements and lists it in the dashboard's card picker,
 // with a preview and, from Home Assistant 2026.6 on, as a suggestion for
 // the entities of a BamBuddy printer and its AMS units. A module loaded
 // twice defines nothing twice.
@@ -40,7 +40,7 @@ export interface CardInfo {
 }
 
 interface Suggestion {
-  config: { type: string; printer: string; camera: string };
+  config: Record<string, unknown> & { type: string; printer: string };
 }
 
 interface PickerEntry {
@@ -53,20 +53,26 @@ interface PickerEntry {
 }
 
 /** The card for an entity of a BamBuddy printer, or of one of its AMS
- * units; null for any other entity. */
+ * units; null for any other entity. Home Assistant adds it as it is: the
+ * printer, as a card from the picker -- its editor shows the defaults. */
 export function suggestCard(hass: Hass, entityId: string, tag: string): Suggestion | null {
   const entry = hass.entities[entityId];
   if (!entry || entry.platform !== PLATFORM || !entry.device_id) return null;
   const device = hass.devices[entry.device_id];
   const printer = isPrinter(hass, entry.device_id) ? entry.device_id : device?.via_device_id;
   if (!printer || !isPrinter(hass, printer)) return null;
-  return { config: { type: `custom:${tag}`, printer, camera: "tap" } };
+  return { config: { type: `custom:${tag}`, printer } };
 }
 
-export function defineCard(tag: string, element: CustomElementConstructor, info: CardInfo): void {
+/** Defines an element in the registry Home Assistant uses, once. */
+export function defineElement(tag: string, element: CustomElementConstructor): void {
   void whenRegistryReady().then((registry) => {
     if (!registry.get(tag)) registry.define(tag, element);
   });
+}
+
+export function defineCard(tag: string, element: CustomElementConstructor, info: CardInfo): void {
+  defineElement(tag, element);
   const picker = window as Window & { customCards?: PickerEntry[] };
   picker.customCards ??= [];
   if (picker.customCards.some((entry) => entry.type === tag)) return;

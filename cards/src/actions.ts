@@ -27,6 +27,40 @@ export async function errorText(hass: Hass, error: unknown): Promise<string> {
   return typeof failure.message === "string" && failure.message ? failure.message : t(hass, "error_generic");
 }
 
+/** One of the printer's own K calibrations, as the integration lists it. */
+export interface KProfile {
+  index: number;
+  name: string;
+  k: number;
+  filamentId: string;
+}
+
+/** A slot's K profiles: the printer's for the nozzle that feeds it, and
+ * the slot's own (-1: the printer's default). */
+export interface KProfiles {
+  current: number;
+  profiles: KProfile[];
+}
+
+/** The integration's get_k_profiles action, called for its response; an
+ * answer without profiles is none. */
+export async function kProfiles(hass: Hass, entityId: string): Promise<KProfiles> {
+  const result = await hass.callService("bambuddy", "get_k_profiles", { entity_id: entityId }, undefined, false, true);
+  const response = (result as { response?: { current?: unknown; profiles?: unknown } | null } | undefined)?.response;
+  const listed = response?.profiles;
+  return {
+    current: typeof response?.current === "number" ? response.current : -1,
+    profiles: (Array.isArray(listed) ? (listed as unknown[]) : [])
+      .filter((item): item is Record<string, unknown> => typeof item === "object" && item !== null && typeof (item as { index?: unknown }).index === "number")
+      .map((item) => ({
+        index: item["index"] as number,
+        name: typeof item["name"] === "string" ? item["name"] : "",
+        k: typeof item["k_value"] === "number" ? item["k_value"] : 0,
+        filamentId: typeof item["filament_id"] === "string" ? item["filament_id"] : "",
+      })),
+  };
+}
+
 /** An object of the running print, as the integration lists it. */
 export interface PrintObject {
   id: number;

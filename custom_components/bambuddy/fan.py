@@ -17,8 +17,8 @@ from homeassistant.components.fan import (  # type: ignore[attr-defined]
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 
-from .coordinator import BamBuddyConfigEntry, BamBuddyPrinterCoordinator
-from .entity import BamBuddyPrinterEntity, async_run_command
+from .coordinator import BamBuddyConfigEntry
+from .entity import BamBuddyDescribedEntity, async_run_command
 from .models import PrinterData
 
 PARALLEL_UPDATES = 1
@@ -29,7 +29,7 @@ class BamBuddyFanDescription(FanEntityDescription):
     # BamBuddy's name for the fan in fan-speed, and its status field.
     fan: str
     field: str
-    exists_fn: Callable[[PrinterData], bool]
+    exists_fn: Callable[[PrinterData], bool] = lambda _: True
 
 
 FANS: tuple[BamBuddyFanDescription, ...] = (
@@ -38,7 +38,6 @@ FANS: tuple[BamBuddyFanDescription, ...] = (
         translation_key="part_cooling_fan",
         fan="part",
         field="cooling_fan_speed",
-        exists_fn=lambda _: True,
     ),
     # The A1 series has neither an auxiliary nor a chamber fan.
     BamBuddyFanDescription(
@@ -87,18 +86,13 @@ async def async_setup_entry(
     )
 
 
-class BamBuddyFan(BamBuddyPrinterEntity, FanEntity):
+class BamBuddyFan(BamBuddyDescribedEntity, FanEntity):
     """The printer reports its fans in fifteenths: 15 steps. A running job
     sets the fans again with its next command."""
 
     entity_description: BamBuddyFanDescription
     _attr_supported_features = FanEntityFeature.SET_SPEED | FanEntityFeature.TURN_ON | FanEntityFeature.TURN_OFF
     _attr_speed_count = 15
-
-    def __init__(self, coordinator: BamBuddyPrinterCoordinator, description: BamBuddyFanDescription) -> None:
-        # First: the entity ID is made from its translation key.
-        self.entity_description = description
-        super().__init__(coordinator, description.key)
 
     @property
     def percentage(self) -> int | None:

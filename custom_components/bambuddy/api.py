@@ -5,28 +5,63 @@ from __future__ import annotations
 
 from collections.abc import Awaitable
 import logging
-from typing import Any
+from typing import Any, NamedTuple
 from urllib.parse import urlsplit, urlunsplit
 
 import aiohttp
 
 _LOGGER = logging.getLogger(__name__)
 
-_TIMEOUT = aiohttp.ClientTimeout(total=10)
+# Five seconds to connect: a connection that never opens is no slow answer.
+_TIMEOUT = aiohttp.ClientTimeout(total=10, connect=5)
 # BamBuddy waits up to 15 s for a fresh camera frame.
-_SNAPSHOT_TIMEOUT = aiohttp.ClientTimeout(total=20)
+_SNAPSHOT_TIMEOUT = aiohttp.ClientTimeout(total=20, connect=5)
+# For its system information BamBuddy walks through its whole archive.
+_SYSTEM_TIMEOUT = aiohttp.ClientTimeout(total=30, connect=5)
 # The first cover of a job can need an FTP download from the printer.
-_COVER_TIMEOUT = aiohttp.ClientTimeout(total=30)
+_COVER_TIMEOUT = aiohttp.ClientTimeout(total=30, connect=5)
 # Without a copy in its archive BamBuddy downloads the whole job first.
-_OBJECTS_TIMEOUT = aiohttp.ClientTimeout(total=60)
+_OBJECTS_TIMEOUT = aiohttp.ClientTimeout(total=60, connect=5)
+# The connection check probes the printer's ports and waits up to ten
+# seconds for a report: some 26 s at worst.
+_DIAGNOSTIC_TIMEOUT = aiohttp.ClientTimeout(total=40, connect=5)
+# A plug's status: BamBuddy asks the plug itself -- a Home Assistant plug
+# with energy sensors in several calls of up to ten seconds each.
+_PLUG_TIMEOUT = aiohttp.ClientTimeout(total=30, connect=5)
+# BamBuddy asks the printer for its K profiles live: three tries of 5 s.
+_KPROFILES_TIMEOUT = aiohttp.ClientTimeout(total=25, connect=5)
+_PLUG_QUICK = aiohttp.ClientTimeout(total=5, connect=5)
 _API_PATH = "/api/v1"
+# A gateway's answers: a proxy without BamBuddy behind it.
+_GATEWAY = (502, 503, 504)
+# BamBuddy's permission for the printer controls.
+_CONTROL_PERMISSION = "printers:control"
+# And for marking maintenance done (the key's "Manage Maintenance").
+_MAINTENANCE_PERMISSION = "maintenance:update"
+# And for switching smart plugs ("Control Printer" too, unless the key's
+# owner may not).
+_PLUGS_PERMISSION = "smart_plugs:control"
+
+
+class Permissions(NamedTuple):
+    """What the key may do beyond reading."""
+
+    control: bool
+    maintenance: bool
+    plugs: bool
+
+
+class AddressWithLoginError(ValueError):
+    """The address carries a user name or password: BamBuddy takes the API
+    key, and the address is the entry's identity -- no secret in it."""
 
 
 def normalise_url(url: str) -> str:
     """The one form of a BamBuddy address, whatever the user typed: http://
-    added when no scheme is given, scheme and host in lower case, a trailing
-    slash and a copied /api/v1 removed. Raises ValueError for anything that
-    is no http(s) address."""
+    added when no scheme is given, scheme and host in lower case, the
+    scheme's default port, a trailing slash and a copied /api/v1 removed.
+    Raises ValueError for anything that is no http(s) address,
+    AddressWithLoginError for one with a login."""
     text = url.strip()
     if not text:
         raise ValueError("empty URL")
@@ -37,9 +72,11 @@ def normalise_url(url: str) -> str:
     host = parts.hostname
     if scheme not in ("http", "https") or not host or any(char.isspace() for char in host):
         raise ValueError(f"not an http(s) address: {url!r}")
+    if parts.username is not None or parts.password is not None:
+        raise AddressWithLoginError("an address with a login")
     port = parts.port  # raises ValueError for a port that is no number
     netloc = f"[{host}]" if ":" in host else host
-    if port is not None:
+    if port is not None and port != {"http": 80, "https": 443}[scheme]:
         netloc = f"{netloc}:{port}"
     path = parts.path.rstrip("/")
     if path.endswith(_API_PATH):
@@ -76,6 +113,11 @@ class BamBuddyNotFoundError(BamBuddyApiError):
     """404: e.g. a printer BamBuddy no longer has."""
 
 
+class BamBuddyNotJsonError(BamBuddyApiError):
+    """An answer that is no JSON: BamBuddy's web page answers every path
+    that is not its API -- an address copied with a page's path."""
+
+
 _ERRORS: dict[int, type[BamBuddyApiError]] = {
     401: BamBuddyAuthError,
     403: BamBuddyPermissionError,
@@ -96,6 +138,18 @@ async def _detail(response: aiohttp.ClientResponse) -> str:
     if isinstance(detail, dict):
         return str(detail.get("message", detail))
     return str(detail) if detail else f"HTTP {response.status}"
+
+
+def _flag(value: bool) -> str:
+    """A flag for a query, as text: aiohttp refuses a bool there."""
+    return "true" if value else "false"
+
+
+def timed_out(err: BaseException) -> bool:
+    """Whether BamBuddy did not answer in time -- not a connection that
+    never opened, which is no answer at all."""
+    cause = err.__cause__
+    return isinstance(cause, TimeoutError) and not isinstance(cause, aiohttp.ConnectionTimeoutError)
 
 
 class BamBuddyClient:
@@ -135,19 +189,24 @@ class BamBuddyClient:
             ) as response:
                 _LOGGER.debug("%s %s: HTTP %s", method, path, response.status)
                 if response.status >= 400:
+                    detail = await _detail(response)
+                    # A proxy in front of a BamBuddy that does not answer (it
+                    # restarts): the proxy's page, no text of BamBuddy's.
+                    if response.status in _GATEWAY and detail == f"HTTP {response.status}":
+                        raise BamBuddyConnectionError(f"{method} {path}: HTTP {response.status}")
                     error = _ERRORS.get(response.status, BamBuddyApiError)
-                    raise error(response.status, await _detail(response))
+                    raise error(response.status, detail)
                 if raw:
                     return await response.read()
                 try:
                     return await response.json(content_type=None)
                 except ValueError as err:
-                    raise BamBuddyApiError(response.status, "The answer is not JSON") from err
+                    raise BamBuddyNotJsonError(response.status, "The answer is not JSON") from err
         except (aiohttp.ClientError, TimeoutError) as err:
             raise BamBuddyConnectionError(f"{method} {path}: {type(err).__name__}") from err
 
-    async def _object(self, path: str, *, key: bool = True) -> dict[str, Any]:
-        answer = await self._request("GET", path, key=key)
+    async def _object(self, path: str, *, key: bool = True, timeout: aiohttp.ClientTimeout = _TIMEOUT) -> dict[str, Any]:
+        answer = await self._request("GET", path, key=key, timeout=timeout)
         if not isinstance(answer, dict):
             raise BamBuddyApiError(200, "Unexpected answer")
         return answer
@@ -164,12 +223,30 @@ class BamBuddyClient:
     async def get_auth_status(self) -> dict[str, Any]:
         return await self._object("/auth/status", key=False)
 
+    async def can_control(self) -> bool:
+        """Whether the key may control printers."""
+        return (await self.permissions()).control
+
+    async def permissions(self) -> Permissions:
+        """What the key may do: with BamBuddy's authentication off every
+        request may, else the key's permissions decide."""
+        if not (await self.get_auth_status()).get("auth_enabled"):
+            return Permissions(control=True, maintenance=True, plugs=True)
+        granted = (await self.get_auth_me()).get("permissions") or []
+        return Permissions(
+            control=_CONTROL_PERMISSION in granted,
+            maintenance=_MAINTENANCE_PERMISSION in granted,
+            plugs=_PLUGS_PERMISSION in granted,
+        )
+
     async def get_auth_me(self) -> dict[str, Any]:
         """The key's real permissions."""
         return await self._object("/auth/me")
 
-    async def get_system_info(self) -> dict[str, Any]:
-        return await self._object("/system/info")
+    async def get_system_info(self, *, patient: bool = True) -> dict[str, Any]:
+        """For it BamBuddy walks through its whole archive: 30 s -- or 10
+        where something waits for it (setup, a flow)."""
+        return await self._object("/system/info", timeout=_SYSTEM_TIMEOUT if patient else _TIMEOUT)
 
     async def get_statistics(self) -> dict[str, Any]:
         return await self._object("/archives/stats")
@@ -192,45 +269,81 @@ class BamBuddyClient:
     async def get_status(self, printer_id: int) -> dict[str, Any]:
         return await self._object(f"/printers/{printer_id}/status")
 
-    async def get_cover(self, printer_id: int) -> bytes:
-        """The current job's cover. BamBuddy up to 1.2.5.5 refuses the key
-        for it once its authentication is on and wants the camera token."""
-        path = f"/printers/{printer_id}/cover"
-        try:
-            cover: bytes = await self._request("GET", path, raw=True, timeout=_COVER_TIMEOUT)
-        except BamBuddyAuthError:
-            token = await self.get_stream_token()
-            cover = await self._request(
-                "GET", path, params={"token": token}, key=False, raw=True, timeout=_COVER_TIMEOUT
-            )
-        return cover
-
-    # Camera
-
     async def get_runtime(self, printer_id: int) -> dict[str, Any]:
         """BamBuddy's runtime counter of a printer: the hours it printed
         (`total_hours`, with the offset set in BamBuddy)."""
         return await self._object(f"/printers/{printer_id}/runtime-debug")
+
+    async def get_maintenance(self, printer_id: int) -> dict[str, Any]:
+        """The printer's maintenance tasks as BamBuddy keeps them. A read can
+        write to BamBuddy's database: it adds missing default tasks."""
+        return await self._object(f"/maintenance/printers/{printer_id}")
+
+    async def get_diagnostic(self, printer_id: int) -> dict[str, Any]:
+        """BamBuddy's connection check of the printer: it sends the printer
+        no command."""
+        return await self._object(f"/printers/{printer_id}/diagnostic", timeout=_DIAGNOSTIC_TIMEOUT)
+
+    async def get_print_objects(self, printer_id: int) -> dict[str, Any]:
+        """The running job's objects; BamBuddy may download the job from the
+        printer first."""
+        return await self._object(f"/printers/{printer_id}/print/objects", timeout=_OBJECTS_TIMEOUT)
+
+    async def get_kprofiles(self, printer_id: int, nozzle_diameter: str) -> list[dict[str, Any]]:
+        """The printer's own K (pressure advance) calibrations for a nozzle
+        diameter; empty where the printer did not answer."""
+        answer = await self._request(
+            "GET", f"/printers/{printer_id}/kprofiles/", params={"nozzle_diameter": nozzle_diameter}, timeout=_KPROFILES_TIMEOUT
+        )
+        profiles = answer.get("profiles") if isinstance(answer, dict) else None
+        return [profile for profile in profiles if isinstance(profile, dict)] if isinstance(profiles, list) else []
+
+    async def get_smart_plugs(self) -> list[dict[str, Any]]:
+        """BamBuddy's smart plugs, from its database. The answer holds a
+        plug's address and login: never logged."""
+        answer = await self._request("GET", "/smart-plugs/")
+        if not isinstance(answer, list):
+            raise BamBuddyApiError(200, "Unexpected answer")
+        return answer
+
+    async def get_plug_status(self, plug_id: int, *, patient: bool = True) -> dict[str, Any]:
+        """A plug's state, reachability and energy figures: BamBuddy asks the
+        plug itself -- 30 s, or 5 where Home Assistant's start waits for it."""
+        answer = await self._request("GET", f"/smart-plugs/{plug_id}/status", timeout=_PLUG_TIMEOUT if patient else _PLUG_QUICK)
+        if not isinstance(answer, dict):
+            raise BamBuddyApiError(200, "Unexpected answer")
+        return answer
+
+    async def get_cover(self, printer_id: int) -> bytes:
+        """The current job's cover, with the key."""
+        cover: bytes = await self._request("GET", f"/printers/{printer_id}/cover", raw=True, timeout=_COVER_TIMEOUT)
+        return cover
+
+    # Camera
 
     async def get_stream_token(self) -> str:
         """A camera token, valid for 60 minutes."""
         answer = await self._request("POST", "/printers/camera/stream-token")
         return str(answer.get("token", "")) if isinstance(answer, dict) else ""
 
-    def stream_url(self, printer_id: int, token: str, fps: int = 5) -> str:
+    def stream_url(self, printer_id: int, token: str, fps: int) -> str:
         return f"{self._api}/printers/{printer_id}/camera/stream?fps={fps}&token={token}"
 
-    def snapshot_url(self, printer_id: int, token: str) -> str:
-        return f"{self._api}/printers/{printer_id}/camera/snapshot?token={token}"
-
-    def open_stream(self, printer_id: int, token: str) -> Awaitable[aiohttp.ClientResponse]:
+    def open_stream(self, printer_id: int, token: str, fps: int) -> Awaitable[aiohttp.ClientResponse]:
         """The MJPEG stream's request, for Home Assistant's proxy: no total
         timeout, the stream runs as long as someone watches."""
         return self._session.get(
-            self.stream_url(printer_id, token),
+            self.stream_url(printer_id, token, fps),
             ssl=self._ssl,
-            timeout=aiohttp.ClientTimeout(total=None, connect=10),
+            timeout=aiohttp.ClientTimeout(total=None, connect=5),
         )
+
+    async def stop_camera(self, printer_id: int) -> bool:
+        """Ends BamBuddy's connection to the printer's camera, which it keeps
+        5 s after the last viewer left, at the rate the first one asked.
+        False when BamBuddy kept it: someone still watches."""
+        answer = await self._request("POST", f"/printers/{printer_id}/camera/stop")
+        return not (isinstance(answer, dict) and answer.get("skipped"))
 
     async def get_snapshot(self, printer_id: int, token: str) -> bytes:
         snapshot: bytes = await self._request(
@@ -259,8 +372,7 @@ class BamBuddyClient:
         await self._command(f"/printers/{printer_id}/print-speed", mode=mode)
 
     async def set_chamber_light(self, printer_id: int, on: bool) -> None:
-        # As text: aiohttp refuses a bool in a query.
-        await self._command(f"/printers/{printer_id}/chamber-light", on="true" if on else "false")
+        await self._command(f"/printers/{printer_id}/chamber-light", on=_flag(on))
 
     async def set_nozzle_temperature(self, printer_id: int, target: int, nozzle: int) -> None:
         """`nozzle` 0 is the only or the right nozzle, 1 the left one."""
@@ -292,6 +404,13 @@ class BamBuddyClient:
     async def home_axes(self, printer_id: int) -> None:
         await self._command(f"/printers/{printer_id}/home-axes", axes="all")
 
+    async def execute_hms_action(self, printer_id: int, code: str, action: str, job_id: str | None) -> None:
+        """Answers an HMS message as on the printer's screen: its full code,
+        the answer, the job it belongs to (BamBuddy waits for the printer)."""
+        await self._request(
+            "POST", f"/printers/{printer_id}/hms/execute-action", json={"print_error": code, "action": action, "job_id": job_id}
+        )
+
     async def clear_hms(self, printer_id: int) -> None:
         await self._command(f"/printers/{printer_id}/hms/clear")
 
@@ -319,14 +438,6 @@ class BamBuddyClient:
         """Two-nozzle printers: extruder 0 is the right nozzle, 1 the left one."""
         await self._command(f"/printers/{printer_id}/select-extruder", extruder=extruder)
 
-    async def get_print_objects(self, printer_id: int) -> dict[str, Any]:
-        """The running job's objects; BamBuddy may download the job from the
-        printer first."""
-        answer = await self._request("GET", f"/printers/{printer_id}/print/objects", timeout=_OBJECTS_TIMEOUT)
-        if not isinstance(answer, dict):
-            raise BamBuddyApiError(200, "Unexpected answer")
-        return answer
-
     async def skip_objects(self, printer_id: int, objects: list[int]) -> None:
         """For good: the printer leaves these objects out of the rest of the job."""
         await self._request("POST", f"/printers/{printer_id}/print/skip-objects", json=objects)
@@ -345,11 +456,25 @@ class BamBuddyClient:
         tray_info_idx: str = "",
         cali_idx: int = -1,
         nozzle_diameter: str = "0.4",
+        kprofile_filament_id: str | None = None,
+        kprofile_setting_id: str | None = None,
+        k_value: float | None = None,
     ) -> None:
         """The filament of a slot (AMS 255: the external spools, 0 left or
         the only one, 1 right), as BamBuddy's Configure dialog sends it. An
         empty `tray_info_idx` keeps the slot's preset when the material
-        stays, else BamBuddy takes the material's generic one."""
+        stays, else BamBuddy takes the material's generic one. A K profile
+        (`cali_idx` of the printer's table) goes with its filament: BamBuddy
+        files the slot under it, so the printer keeps the selection."""
+        k_profile = {
+            name: value
+            for name, value in (
+                ("kprofile_filament_id", kprofile_filament_id),
+                ("kprofile_setting_id", kprofile_setting_id),
+                ("k_value", k_value),
+            )
+            if value is not None
+        }
         await self._command(
             f"/printers/{printer_id}/slots/{ams_id}/{slot}/configure",
             tray_info_idx=tray_info_idx,
@@ -360,7 +485,18 @@ class BamBuddyClient:
             nozzle_temp_max=temp_max,
             cali_idx=cali_idx,
             nozzle_diameter=nozzle_diameter,
+            **k_profile,
         )
+
+    async def reset_slot(self, printer_id: int, ams_id: int, slot: int) -> None:
+        """The slot's material and colour cleared, as the printer's Reset
+        (AMS 255: the external spools, 0 left or the only one, 1 right)."""
+        await self._command(f"/printers/{printer_id}/ams/{ams_id}/tray/{slot}/reset")
+
+    async def refresh_rfid(self, printer_id: int, ams_id: int, slot: int) -> None:
+        """The AMS reads the spool's chip again (refused while any filament
+        is loaded)."""
+        await self._command(f"/printers/{printer_id}/ams/{ams_id}/slot/{slot}/refresh")
 
     async def set_print_option(self, printer_id: int, module: str, enabled: bool) -> None:
         """An AI detector on or off. "never_halt" makes BamBuddy leave the
@@ -368,9 +504,21 @@ class BamBuddyClient:
         await self._command(
             f"/printers/{printer_id}/print-options",
             module_name=module,
-            enabled="true" if enabled else "false",
+            enabled=_flag(enabled),
             sensitivity="never_halt",
         )
 
+    async def perform_maintenance(self, task_id: int) -> None:
+        """Marks a maintenance task done: its count starts over."""
+        await self._request("POST", f"/maintenance/items/{task_id}/perform", json={"notes": None})
+
     async def set_ams_backup(self, printer_id: int, enabled: bool) -> None:
-        await self._command(f"/printers/{printer_id}/ams-backup", enabled="true" if enabled else "false")
+        await self._command(f"/printers/{printer_id}/ams-backup", enabled=_flag(enabled))
+
+    async def control_plug(self, plug_id: int, on: bool) -> None:
+        """A plug on or off, by name: BamBuddy's toggle skips what it does
+        on and off (a printer marked offline, its scripts run). Off cuts the
+        power -- BamBuddy checks no print."""
+        await self._request(
+            "POST", f"/smart-plugs/{plug_id}/control", json={"action": "on" if on else "off"}, timeout=_PLUG_TIMEOUT
+        )

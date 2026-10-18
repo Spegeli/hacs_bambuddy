@@ -10,6 +10,9 @@
       "sd_card": {
         "default": "mdi:sd"
       },
+      "usb_drive": {
+        "default": "mdi:usb-flash-drive"
+      },
       "developer_mode": {
         "default": "mdi:code-braces"
       },
@@ -21,6 +24,12 @@
       },
       "drying": {
         "default": "mdi:heat-wave"
+      },
+      "plug": {
+        "default": "mdi:power-plug",
+        "state": {
+          "off": "mdi:power-plug-off"
+        }
       }
     },
     "button": {
@@ -41,6 +50,12 @@
       },
       "refresh_status": {
         "default": "mdi:refresh"
+      },
+      "plug_run": {
+        "default": "mdi:script-text-play-outline"
+      },
+      "auto_off_skip": {
+        "default": "mdi:timer-cancel-outline"
       }
     },
     "camera": {
@@ -90,6 +105,12 @@
       },
       "chamber_target_temperature": {
         "default": "mdi:thermometer-chevron-up"
+      },
+      "camera_frame_rate": {
+        "default": "mdi:filmstrip"
+      },
+      "auto_off_temperature": {
+        "default": "mdi:thermometer-chevron-down"
       }
     },
     "select": {
@@ -272,6 +293,13 @@
       },
       "print_hours": {
         "default": "mdi:timer-sand-complete"
+      },
+      "maintenance": {
+        "default": "mdi:wrench",
+        "state": {
+          "ok": "mdi:wrench-check",
+          "overdue": "mdi:wrench-clock"
+        }
       }
     },
     "switch": {
@@ -301,6 +329,24 @@
       },
       "air_printing_detection": {
         "default": "mdi:weather-windy"
+      },
+      "plug": {
+        "default": "mdi:power-plug",
+        "state": {
+          "off": "mdi:power-plug-off"
+        }
+      },
+      "auto_off": {
+        "default": "mdi:timer-cog-outline",
+        "state": {
+          "off": "mdi:timer-off-outline"
+        }
+      },
+      "auto_off_every_print": {
+        "default": "mdi:repeat",
+        "state": {
+          "off": "mdi:repeat-once"
+        }
       }
     },
     "update": {
@@ -339,6 +385,24 @@
     },
     "set_filament": {
       "service": "mdi:palette"
+    },
+    "run_diagnostic": {
+      "service": "mdi:lan-check"
+    },
+    "mark_maintenance_done": {
+      "service": "mdi:wrench-check"
+    },
+    "answer_hms": {
+      "service": "mdi:message-reply-text-outline"
+    },
+    "get_k_profiles": {
+      "service": "mdi:tune-vertical"
+    },
+    "reset_slot": {
+      "service": "mdi:backup-restore"
+    },
+    "refresh_rfid": {
+      "service": "mdi:nfc-search-variant"
     }
   }
 }

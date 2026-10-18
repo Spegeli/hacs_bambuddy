@@ -11,6 +11,7 @@
     "useDefineForClassFields": false,
     "skipLibCheck": true,
     "isolatedModules": true,
+    "resolveJsonModule": true,
     "noEmit": true
   },
   "include": ["src", "test", "vitest.config.ts"]

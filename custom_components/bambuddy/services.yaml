@@ -143,6 +143,56 @@ get_print_objects:
             integration: bambuddy
             domain: sensor
             device_class: enum
+get_k_profiles:
+  fields:
+    entity_id:
+      required: true
+      selector:
+        entity:
+          filter:
+            integration: bambuddy
+            domain: sensor
+reset_slot:
+  fields:
+    entity_id:
+      required: true
+      selector:
+        entity:
+          filter:
+            integration: bambuddy
+            domain: sensor
+refresh_rfid:
+  fields:
+    entity_id:
+      required: true
+      selector:
+        entity:
+          filter:
+            integration: bambuddy
+            domain: sensor
+answer_hms:
+  fields:
+    device_id:
+      required: true
+      selector:
+        device:
+          filter:
+            integration: bambuddy
+          # Printers only: AMS units and BamBuddy itself have no enum sensor.
+          entity:
+            integration: bambuddy
+            domain: sensor
+            device_class: enum
+    code:
+      required: true
+      example: "0700_2000_0002_0012"
+      selector:
+        text:
+    action:
+      required: true
+      example: "RESUME_PRINTING"
+      selector:
+        text:
 skip_objects:
   fields:
     device_id:
@@ -176,6 +226,7 @@ set_filament:
           options:
             - "PLA"
             - "PLA Silk"
+            - "PLA High Speed"
             - "PLA-CF"
             - "PETG"
             - "PETG HF"
@@ -186,7 +237,62 @@ set_filament:
             - "PC"
             - "PA"
             - "PA-CF"
+            - "PPA-CF"
+            - "PPA-GF"
             - "TPU"
+            - "TPU for AMS"
+            - "PVA"
+            - "HIPS"
+            - "BVOH"
+            - "PE"
+            - "PE-CF"
+            - "PP"
+            - "PP-CF"
+            - "PP-GF"
+            - "EVA"
+            - "PHA"
+            - "PPS"
+            - "PPS-CF"
     color:
       selector:
         color_rgb:
+    k_profile:
+      selector:
+        number:
+          min: -1
+          max: 999
+          mode: box
+run_diagnostic:
+  fields:
+    device_id:
+      required: true
+      selector:
+        device:
+          filter:
+            integration: bambuddy
+          # Printers only: AMS units and BamBuddy itself have no enum sensor.
+          entity:
+            integration: bambuddy
+            domain: sensor
+            device_class: enum
+mark_maintenance_done:
+  fields:
+    device_id:
+      required: true
+      selector:
+        device:
+          filter:
+            integration: bambuddy
+          # Printers only: AMS units and BamBuddy itself have no enum sensor.
+          entity:
+            integration: bambuddy
+            domain: sensor
+            device_class: enum
+    task_id:
+      required: true
+      example: 17
+      selector:
+        number:
+          min: 1
+          max: 1000000
+          mode: box
