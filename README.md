@@ -129,7 +129,7 @@ A printer removed in BamBuddy shows up under **Settings → Repairs**; **Remove 
 ### Changing settings later
 
 - **Another address, key or certificate check:** on the BamBuddy entry, choose **⋮ → Reconfigure**. The form never shows the stored API key: leave the field empty to keep it. A new address leads to a second step: say whether it is the same BamBuddy or another one — for another, the history of BamBuddy's own figures is deleted, their entity IDs stay. The printers are found there by their serial numbers and keep their devices, entities and history. In the same step you can remove the printers the new address lacks and add those only it has; one you keep waits under **Settings → Repairs** until BamBuddy lists it again.
-- **A key BamBuddy no longer accepts:** Home Assistant asks for a new one — a notification and the BamBuddy entry under **Settings → Devices & services** lead you there.
+- **A key BamBuddy no longer accepts:** Home Assistant asks for a new one — an entry under **Settings → Repairs** and the BamBuddy entry under **Settings → Devices & services** lead you there.
 - **Permissions changed in BamBuddy** (**Control Printer** added or removed): reload the entry (**⋮ → Reload**). The controls appear or go; when they come back, they keep their entity IDs. A smart plug's switch is a binary sensor (`binary_sensor.…` instead of `switch.…`) while the key cannot control, so automations on the switch need the other entity then.
 
 ### How the integration reads BamBuddy
