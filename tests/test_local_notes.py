@@ -22,9 +22,16 @@ _POINTERS = re.compile(
     r"|\bspecs?\s+(?:#\s*)?(?:section\b|§|\d|D\d)"
     r"|§\s*\d"
     r"|\bthe spec\b"
-    # A ruling or a review finding: "ruling R9", "review Important 3".
+    # A ruling or a review finding: "ruling R9", "review Important 3",
+    # "Review M6".
     r"|\bruling\s+R?\d"
-    r"|\breview\s+(?:#\s*)?(?:critical|important|minor)\b",
+    r"|\breview\s+(?:#\s*)?(?:critical|important|minor)\b"
+    r"|\breview\s+[A-Z]\d+\b"
+    # A test round or review by its name: "round 4's", "after the live
+    # review", "after the verification", "final review".
+    r"|\bround\s+\d+'s\b|\bafter the (?:\w+ )?(?:review|verification)\b|\bfinal review\b"
+    # The maintainer's word or decision: the code says the reason instead.
+    r"|\bhis\s+(?:word|decision|rule|call|idea|choice|findings?)\b",
     re.IGNORECASE,
 )
 

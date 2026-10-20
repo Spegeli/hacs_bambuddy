@@ -26,7 +26,7 @@ import {
   type FakeHassOptions,
   type PrinterSpec,
 } from "./fixtures";
-import { atRule, button, cardText, find, findAll, hasButton, NBSP, settle, styleText, text, update } from "./helpers";
+import { atRule, button, find, findAll, hasButton, NBSP, settle, styleText, text, update } from "./helpers";
 
 interface Mounted {
   card: FakeCard;
@@ -54,12 +54,12 @@ const chip = (card: FakeCard, name: string): HTMLButtonElement => {
   return found;
 };
 
-async function showView(card: FakeCard, tab: string): Promise<void> {
-  const found = findAll(card, "[role=tab]").find((item) => text(item) === tab);
-  if (!found) throw new Error(`no tab "${tab}" in: ${cardText(card)}`);
-  found.click();
-  await card.updateComplete;
-}
+/** An element's text as it shows: without what only a screen reader hears. */
+const shown = (element: Element): string => {
+  const copy = element.cloneNode(true) as Element;
+  copy.querySelectorAll(".sr-only").forEach((hidden) => hidden.remove());
+  return text(copy);
+};
 
 async function openMenu(card: FakeCard): Promise<string[]> {
   (find(card, ".menu-btn") as HTMLButtonElement).click();
@@ -115,13 +115,14 @@ describe("the new chips", () => {
 
   it("are offered, not chosen: the default chips stay network, HMS, firmware", async () => {
     const { card } = await withX1c(all);
-    expect(chips(card)).toEqual([`−52${NBSP}dBm`, "HMS OK", "01.08.02.00"]);
+    expect(chips(card)).toEqual([`−52${NBSP}dBm`, "HMS OK", "Update 01.09.00.00"]);
   });
 
   it("show maintenance always: OK, or what is due -- red with an overdue task", async () => {
     const { card, hass } = await withX1c(all, { header_chips: ["maintenance"] });
     const due = chip(card, "3 due");
     expect([due.classList.contains("tone-err"), due.getAttribute("aria-label")]).toEqual([true, "3 due – maintenance: 2 overdue, 1 due soon"]);
+    expect(due.getAttribute("aria-haspopup")).toBe("dialog");
     const soon = MAINTENANCE_TASKS.map((task) => ({ ...task, due: false }));
     await update(card, hass.withState("sensor.x1c_maintenance", "due_soon", { tasks: soon, due_count: 0, due_soon_count: 1, can_mark_done: true }));
     expect(chip(card, "1 due").classList.contains("tone-warn")).toBe(true);
@@ -156,11 +157,15 @@ describe("the new chips", () => {
     const { card, hass } = await withX1c(all, { header_chips: ["storage"] });
     const missing = chip(card, "No SD card");
     expect(missing.classList.contains("tone-warn")).toBe(true);
+    expect(missing.getAttribute("aria-haspopup")).toBe("dialog");
     missing.click();
     await card.updateComplete;
     expect(text(find(card, "dialog"))).toContain("Without an SD card BamBuddy cannot send prints to the printer");
     await update(card, hass.withState("binary_sensor.x1c_sd_card", "on"));
     expect(chips(card)).toEqual([]);
+    // The open dialog follows: the card is in.
+    expect(text(find(card, "dialog p"))).toBe("The SD card is in: BamBuddy can send prints again.");
+    expect(text(find(card, "dialog h2"))).toBe("SD card");
     const usb = await mount(h2d({ storage: "off", storageUsb: true }), "dev-h2d", { header_chips: ["storage"] });
     expect(chips(usb.card)).toEqual(["No USB drive"]);
   });
@@ -233,7 +238,7 @@ describe("the editor's chips", () => {
       "Power",
     ]);
     expect(form.computeHelper({ name: "header_chips" })).toBe(
-      "The chips below the name: drag to reorder, × hides a chip. Door, storage and drying appear only while the door is open, the storage is missing or an AMS dries; Power only with a smart plug. An HMS error always shows.",
+      "The chips below the name. Drag a chip where you want it; × hides it. Door, SD card / USB drive and drying appear only while the door is open, the storage is missing or an AMS dries; Power only with a smart plug. An HMS error always shows.",
     );
   });
 });
@@ -340,6 +345,14 @@ describe("checking the connection", () => {
   const answering = (result: unknown): FakeHassOptions["callService"] => async (call) =>
     call.service === "run_diagnostic" ? { response: result } : undefined;
 
+  it("says what to do where a check fails on its own", async () => {
+    const alone = { overall: "warnings", checks: [{ id: "port_mqtt", status: "pass", params: {} }, { id: "port_ftps", status: "warn", params: {} }] };
+    const { card } = await mount(offlineP1s(), "dev-p1s", {}, { callService: answering(alone) });
+    button(card, "Check connection").click();
+    await settle(card);
+    expect(findAll(card, ".check-item").map(shown)).toEqual(["File transfer (port 990) Not reachable: BamBuddy cannot send prints. Unblock port 990."]);
+  });
+
   it("is offered in the offline view, not while BamBuddy gives no data", async () => {
     const { card } = await mount(offlineP1s(), "dev-p1s");
     expect(hasButton(card, "Check connection")).toBe(true);
@@ -367,9 +380,9 @@ describe("checking the connection", () => {
     answer({ response: RESULT });
     await settle(card);
     expect(text(find(card, ".check-verdict"))).toBe("1 problem found.");
-    expect(findAll(card, ".check-item").map((item) => text(item))).toEqual([
+    expect(findAll(card, ".check-item").map(shown)).toEqual([
       "Control (port 8883) Not reachable. Is the printer on and still at the same IP address? Is a firewall blocking the port?",
-      "File transfer (port 990) Not reachable: BamBuddy cannot send prints. Unblock port 990. Usually follows from the problem above.",
+      "File transfer (port 990) Not reachable: BamBuddy cannot send prints. Usually follows from the problem above.",
       "Camera (port 322) Not reachable: no live view. Printing still works. Usually follows from the problem above.",
     ]);
     expect(findAll(card, ".check-fold > button").map(text)).toEqual(["2 checks passed", "4 not checked"]);
@@ -441,6 +454,24 @@ describe("the airduct mode", () => {
     expect(radios(card).map((item) => item.getAttribute("aria-checked"))).toEqual(["false", "false"]);
   });
 
+  it("says the laser mode the printer set, and offers only cooling and heating", async () => {
+    const { card, hass } = await withX1c({ airduct: "laser", status: "idle", stage: "idle" }, { start_view: "control" });
+    expect(radios(card).map((item) => [text(item), item.getAttribute("aria-checked")])).toEqual([
+      ["Cooling", "false"],
+      ["Heating", "false"],
+    ]);
+    expect(text(heating(card))).toContain("Now in laser mode: the printer sets it for its laser module.");
+    radios(card)[0]?.click();
+    await settle(card);
+    expect(hass.calls.at(-1)).toMatchObject({ domain: "select", service: "select_option", data: { option: "cooling" } });
+  });
+
+  it("shows the laser mode as text without controls", async () => {
+    const { card } = await withX1c({ airduct: "laser", status: "idle", stage: "idle" }, { read_only: true, start_view: "control" }, "de");
+    expect(text(find(card, ".airduct .det-state"))).toBe("Lasermodus");
+    expect(find(card, ".airduct [role=radio]")).toBeNull();
+  });
+
   it("is not there without the select", async () => {
     const { card } = await withX1c({}, { start_view: "control" });
     expect(heating(card)).toBeNull();
@@ -455,7 +486,7 @@ describe("the AMS filament backup", () => {
     const order = [...(find(card, ".body")?.children ?? [])].map((child) => child.className.split(" ")[0]).filter((name) => name === "unit" || name === "backup");
     expect(order).toEqual(["unit", "backup", "unit"]);
     expect(text(row(card))).toBe(
-      "AMS filament backup When a spool runs out, the printer continues with a matching spool from the AMS: same brand, material and colour.",
+      "AMS filament backup When a spool runs out, the printer continues with a matching spool from the AMS: same brand, material and color.",
     );
     const toggle = find<HTMLButtonElement>(card, ".backup [role=switch]") as HTMLButtonElement;
     expect(toggle.getAttribute("aria-checked")).toBe("true");
@@ -473,6 +504,23 @@ describe("the AMS filament backup", () => {
     choices[1]?.click();
     await settle(card);
     expect(hass.calls.at(-1)).toMatchObject({ domain: "switch", service: "turn_on", data: { entity_id: "switch.x1c_ams_filament_backup" } });
+  });
+
+  it("marks the choice on its way, and takes no second", async () => {
+    let finish: () => void = () => undefined;
+    const { card, hass } = await mount(x1c({ filamentBackup: "unknown" }), "dev-x1c", { start_view: "filament" }, {
+      callService: () => new Promise((resolve) => (finish = () => resolve(undefined))),
+    });
+    const on = (): HTMLButtonElement => findAll<HTMLButtonElement>(card, ".backup .backup-set button")[1] as HTMLButtonElement;
+    on().click();
+    await card.updateComplete;
+    expect([on().classList.contains("pending"), on().getAttribute("aria-busy"), on().getAttribute("aria-disabled")]).toEqual([true, "true", "true"]);
+    on().click();
+    await card.updateComplete;
+    expect(hass.calls.filter((call) => call.domain === "switch")).toHaveLength(1);
+    finish();
+    await settle(card);
+    expect(on().classList.contains("pending")).toBe(false);
   });
 
   it("shows the state as text with Hide controls", async () => {
@@ -509,7 +557,7 @@ describe("the connection check's words, closer", () => {
     await settle(card);
     return card;
   };
-  const items = (card: FakeCard): string[] => findAll(card, ".check-item").map(text);
+  const items = (card: FakeCard): string[] => findAll(card, ".check-item").map(shown);
 
   it("takes the most specific text there is for a reason", async () => {
     const card = await check([
@@ -520,14 +568,17 @@ describe("the connection check's words, closer", () => {
       { id: "subnet", status: "warn", params: { printer_ip: "10.0.0.5", host_ip: "192.168.1.2" } },
     ], "problems");
     const found = items(card);
-    expect(found.filter((_, index) => index !== 3)).toEqual([
-      "File transfer (port 990) Port open, but the printer's file service hangs. Restart the printer.",
+    // Failures first, then the warnings, each in BamBuddy's order.
+    expect(found.filter((_, index) => index !== 2)).toEqual([
       "Files on external storage No SD card or USB drive in the printer: prints cannot be sent. Insert one.",
       "Credentials The printer rejects the access code or serial number. Read the access code on its screen and enter it again in BamBuddy.",
+      "File transfer (port 990) Port open, but the printer's file service hangs. Restart the printer.",
       "Subnet The printer (10.0.0.5) and BamBuddy (192.168.1.2) are on different subnets. This works only with routing between them.",
     ]);
     // The developer mode: the card's own advice, as on its Status tab.
-    expect(found[3]).toBe(`Developer mode (LAN) ${t_developer_off}`);
+    expect(found[2]).toBe(`Developer mode (LAN) ${t_developer_off}`);
+    // A screen reader hears whether each is a failure or a warning.
+    expect(findAll(card, ".check-item .sr-only").map(text)).toEqual(["Error:", "Error:", "Error:", "Warning:", "Warning:"]);
     expect(text(find(card, ".check-verdict"))).toBe("3 problems found.");
   });
 
@@ -566,7 +617,7 @@ describe("the connection check's words, closer", () => {
       { id: "port_rtsps", status: "warn", params: { port: 6000 } },
       { id: "network_mode", status: "warn", params: {} },
     ], "warnings", "de");
-    expect(text(find(warned, ".check-verdict"))).toBe("Der Drucker sollte gehen, aber 2 Punkte brauchen Aufmerksamkeit.");
+    expect(text(find(warned, ".check-verdict"))).toBe("Der Drucker sollte funktionieren, aber 2 Punkte brauchen Aufmerksamkeit.");
     expect(items(warned)[0]).toBe("Kamera (Port 6000) Nicht erreichbar: kein Livebild. Drucken geht trotzdem.");
   });
 
@@ -586,6 +637,17 @@ describe("the connection check's words, closer", () => {
     answer({ response: { overall: "ok", checks: [] } });
     await settle(card);
     expect(find(card, "dialog")).toBeNull();
+  });
+});
+
+describe("the maintenance dialog while BamBuddy does not answer", () => {
+  it("says it has no data, not “No maintenance tasks.”", async () => {
+    const { card, hass } = await withX1c({ maintenance: maintenanceSpec({ state: "ok", tasks: [] }) }, { header_chips: ["maintenance"] });
+    chip(card, "Maintenance OK").click();
+    await card.updateComplete;
+    await update(card, hass.withState("sensor.x1c_print_status", "unavailable", {}).withState("sensor.x1c_maintenance", "unavailable", {}));
+    expect(text(find(card, "dialog"))).toContain("No data from BamBuddy");
+    expect(text(find(card, "dialog"))).not.toContain("No maintenance tasks.");
   });
 });
 
@@ -612,7 +674,7 @@ describe("the maintenance dialog, closer", () => {
   });
 });
 
-describe("after the code review", () => {
+describe("the maintenance dialog, the connection check and the backup's unknown state", () => {
   it("says why the container network and the printer's own checks were not run", async () => {
     const { card } = await mount(x1c(), "dev-x1c", {}, {
       callService: async (call) =>
@@ -659,6 +721,24 @@ describe("after the code review", () => {
     expect(findAll(card, ".maint-row")).toHaveLength(5);
   });
 
+  it("keeps the focus with the task marked done when the list sorts anew", async () => {
+    const { card, hass } = await withX1c({ maintenance: maintenanceSpec() }, { header_chips: ["maintenance"] });
+    findAll<HTMLButtonElement>(card, ".pills .pill")[0]?.click();
+    await card.updateComplete;
+    const done = find<HTMLButtonElement>(card, '.maint-done[data-task="11"]') as HTMLButtonElement;
+    const row = done.closest(".maint-row") as Element;
+    done.click();
+    await settle(card);
+    [...row.querySelectorAll<HTMLButtonElement>(".maint-confirm button")].at(-1)?.click();
+    await settle(card);
+    expect((card.shadowRoot as ShadowRoot).activeElement?.getAttribute("data-task")).toBe("11");
+    const tasks = MAINTENANCE_TASKS.map((task) => (task.id === 11 ? { ...task, due: false, left: 25, last_done: "2026-10-16T08:00:00+00:00" } : task));
+    await update(card, hass.withState("sensor.x1c_maintenance", "overdue", { tasks, can_mark_done: true }));
+    const active = (card.shadowRoot as ShadowRoot).activeElement;
+    // Its own button, or none: never another task's.
+    if (active?.classList.contains("maint-done")) expect(active.getAttribute("data-task")).toBe("11");
+  });
+
   it("moves the focus to the question's Cancel, and back to the row's Done after it", async () => {
     const { card } = await withX1c({ maintenance: maintenanceSpec() }, { header_chips: ["maintenance"] });
     findAll<HTMLButtonElement>(card, ".pills .pill")[0]?.click();
@@ -681,8 +761,8 @@ describe("after the code review", () => {
     expect(group.getAttribute("role")).toBe("group");
     const described = (group.getAttribute("aria-describedby") ?? "").split(" ").map((id) => text((card.shadowRoot as ShadowRoot).getElementById(id)));
     expect(described).toEqual([
-      "When a spool runs out, the printer continues with a matching spool from the AMS: same brand, material and colour.",
-      "State unknown: BamBuddy does not report it for this printer.",
+      "When a spool runs out, the printer continues with a matching spool from the AMS: same brand, material and color.",
+      "State unknown: BamBuddy does not report it for this printer. Switching it on or off still works.",
     ]);
   });
 
@@ -702,9 +782,25 @@ describe("after the code review", () => {
     await card.updateComplete;
     expect(text(find(card, ".check-seconds"))).toBe("Checking the connection … 2 s");
   });
+
+  it("opens an open dialog modal again when the card comes back", async () => {
+    const { card } = await mount(x1c(), "dev-x1c");
+    (await menuItem(card, "Printer information")).click();
+    await card.updateComplete;
+    const modal = vi.spyOn(HTMLDialogElement.prototype, "showModal");
+    try {
+      card.remove();
+      document.body.append(card);
+      await card.updateComplete;
+      expect(modal).toHaveBeenCalledTimes(1);
+      expect(find(card, "dialog")?.hasAttribute("open")).toBe(true);
+    } finally {
+      modal.mockRestore();
+    }
+  });
 });
 
-describe("after the live review", () => {
+describe("the dialogs' details", () => {
   it("keeps the focus in the dialog while it checks again, in one live region without the seconds", async () => {
     let answer: (value: unknown) => void = () => undefined;
     const { card } = await mount(x1c(), "dev-x1c", {}, {
@@ -773,7 +869,7 @@ describe("after the live review", () => {
   });
 });
 
-describe("after the verification", () => {
+describe("the AMS strip, the nozzle tags and the read-only views", () => {
   it("gives the focus back to the row's Done once the task is marked, or failed", async () => {
     for (const fails of [false, true]) {
       const { card } = await mount(x1c({ maintenance: maintenanceSpec() }), "dev-x1c", { header_chips: ["maintenance"] }, {
@@ -806,7 +902,7 @@ describe("the tabs on a narrow card", () => {
   });
 });
 
-describe("his findings at 168 px", () => {
+describe("the narrow card at 168 px", () => {
   const rule = (selector: string, body: string): RegExp => new RegExp(`${selector}\\s*\\{[^}]*${body}`);
 
   it("keeps the step's three choices whole: on a line of their own from 280 px down", () => {
@@ -818,8 +914,8 @@ describe("his findings at 168 px", () => {
   it("puts an AMS unit's colours two a row, so the fourth stays in its box", () => {
     const tiny = atRule("@container (max-width: 200px)");
     expect(tiny).toMatch(rule("\\.ams-slots", "display: grid;[^}]*grid-template-columns: repeat\\(2, auto\\);"));
-    // A slot's sub line wraps rather than being cut.
-    expect(tiny).toMatch(rule("\\.slot-sub", "white-space: normal;"));
+    // A slot's sub line wraps rather than being cut (from 280 px down).
+    expect(atRule("@container (max-width: 280px)")).toMatch(rule("\\.slot-sub", "white-space: normal;"));
   });
 
   it("gives each heater room above the line below it", () => {
@@ -848,7 +944,7 @@ describe("his findings at 168 px", () => {
   });
 });
 
-describe("the temperature a unit dries at (his word: where it fits)", () => {
+describe("the temperature a unit dries at (where it fits)", () => {
   it("stands in the drying line, the time after it", async () => {
     const devices = h2d({ status: "idle", stage: "idle", hms: [] });
     const unit = devices.find((device) => device.model === "AMS 2 Pro") as FakeDevice;
@@ -859,16 +955,16 @@ describe("the temperature a unit dries at (his word: where it fits)", () => {
   });
 });
 
-describe("the nozzle an AMS unit feeds (his word)", () => {
+describe("the nozzle an AMS unit feeds", () => {
   it("is named beside the unit in the Filament tab, as L or R in the Status tab's strip, and in the load question", async () => {
     const { card } = await mount(h2d({ status: "idle", stage: "idle", hms: [] }), "dev-h2d", { start_view: "filament" });
-    // Short, as in the strip: L or R, the full word for a screen reader (review U5).
+    // Short, as in the strip: L or R, the full word for a screen reader.
     expect(findAll(card, ".unit-head .unit-nozzle > span[aria-hidden]").map(text)).toEqual(["R", "L"]);
     expect(findAll(card, ".unit-head .unit-nozzle .sr-only").map(text)).toEqual(["Right nozzle", "Left nozzle"]);
 
     const strip = await mount(h2d({ status: "idle", stage: "idle", hms: [] }), "dev-h2d");
     expect(findAll(strip.card, ".ams-line .ams-nozzle").map(text)).toEqual(["R", "L"]);
-    expect(find(strip.card, ".ams-strip")?.getAttribute("aria-label")).toContain("AMS A (AMS 2 Pro, right nozzle)");
+    expect(text(find(strip.card, "#ams-said"))).toContain("AMS A (AMS 2 Pro, right nozzle)");
 
     (findAll<HTMLButtonElement>(card, ".slot .btn").find((item) => text(item) === "Load") as HTMLButtonElement).click();
     await settle(card);
@@ -945,7 +1041,7 @@ describe("Hide controls shows states", () => {
   it("shows the Control tab read-only: targets, print options and the airduct as text, no axes", async () => {
     const { card, hass } = await withX1c({ airduct: "heating", status: "idle", stage: "idle" }, { ...hidden, start_view: "control" }, "de");
     expect(find(card, ".heating button")).toBeNull();
-    expect(findAll(card, ".heat-target").map(text)).toEqual(["220 °C", "55 °C"].map((value) => value.replace(" ", "\u00a0")));
+    expect(findAll(card, ".heat-target").map(shown)).toEqual(["220 °C", "55 °C"].map((value) => value.replace(" ", "\u00a0")));
     expect(text(find(card, ".airduct .det-state"))).toBe("Heizen");
     expect(find(card, ".pad")).toBeNull();
     (find(card, ".det-head") as HTMLButtonElement).click();
@@ -962,14 +1058,14 @@ describe("Hide controls shows states", () => {
 });
 
 
-describe("the AMS strip's order (his rule, 2026-10-18)", () => {
+describe("the AMS strip's order", () => {
   const names = (scope: Element | null | undefined): string[] => [...(scope?.querySelectorAll(".ams-name") ?? [])].map((item) => text(item));
   const rule = (selector: string, body: string): RegExp => new RegExp(`${selector}\\s*\\{[^}]*${body}`);
 
   it("puts the AMS units in a column, the AMS HT units and the external spools beside it", async () => {
     const { card } = await mount(h2d(), "dev-h2d");
     const strip = find(card, ".ams-strip");
-    expect([...(strip?.children ?? [])].map((child) => child.classList[0])).toEqual(["ams-column", "ams-fill", "ams-go"]);
+    expect([...(strip?.children ?? [])].map((child) => child.classList[0])).toEqual(["sr-only", "ams-column", "ams-fill", "ams-go"]);
     expect(names(find(card, ".ams-column"))).toEqual(["AMS A"]);
     expect(names(find(card, ".ams-fill"))).toEqual(["AMS HT A", "Ext"]);
     // With an AMS HT, each unit there is as wide as one: the rows fill evenly.
@@ -1019,7 +1115,7 @@ describe("the AMS strip's order (his rule, 2026-10-18)", () => {
   });
 });
 
-describe("the AMS model chip (his rule, 2026-10-18)", () => {
+describe("the AMS model chip", () => {
   const heads = (card: FakeCard): string[][] =>
     findAll(card, ".unit-head").map((head) => [text(head.querySelector(".unit-name")), text(head.querySelector(".unit-model"))]);
 
@@ -1055,14 +1151,14 @@ describe("the AMS model chip (his rule, 2026-10-18)", () => {
   });
 });
 
-describe("the AMS strip's heads (his choice, 2026-10-18)", () => {
+describe("the AMS strip's heads", () => {
   const head = (group: Element): (string | null)[] => [text(group.querySelector(".ams-line")), group.querySelector(".ams-env") ? text(group.querySelector(".ams-env")) : null];
   const rule = (selector: string, body: string): RegExp => new RegExp(`${selector}\\s*\\{[^}]*${body}`);
 
   it("puts the name and the model on the first line, humidity and temperature on the second", async () => {
     const { card } = await mount(h2d(), "dev-h2d");
     expect(findAll(card, ".ams-strip .ams-group").map(head)).toEqual([
-      // The nozzle each unit feeds, as L or R (his word).
+      // The nozzle each unit feeds, as L or R.
       ["AMS A AMS 2 Pro R", `14${NBSP}% 52${NBSP}°C`],
       ["AMS HT A L", `9${NBSP}% 30${NBSP}°C`],
       // Two external spools: their L and R stand where the second line would.

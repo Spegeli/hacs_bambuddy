@@ -8,15 +8,18 @@ from typing import Any
 from freezegun.api import FrozenDateTimeFactory
 import pytest
 import voluptuous as vol
+import yaml
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError, ServiceValidationError
 
 from custom_components.bambuddy.api import BamBuddyApiError, BamBuddyConnectionError
 from custom_components.bambuddy.const import DOMAIN
+from custom_components.bambuddy.models import HMS_ANSWERS
 
 from tests.conftest import (
     A1_MINI,
     H2D,
+    INTEGRATION,
     P1S,
     X1C,
     ams_device,
@@ -29,6 +32,7 @@ from tests.conftest import (
     printer_device,
     printer_name,
     printer_uid,
+    printers_but,
     set_up,
     setup_integration,
 )
@@ -183,10 +187,62 @@ async def test_drying(hass: HomeAssistant, bambuddy_api: SimpleNamespace) -> Non
     ams = device_id(hass, entry, ams_device(entry, H2D, 0))
 
     await _act(hass, "start_drying", device_id=ams, temperature=55, duration=8)
-    await _act(hass, "stop_drying", device_id=ams)
+    # The AMS HT dries.
+    await _act(hass, "stop_drying", device_id=device_id(hass, entry, ams_device(entry, H2D, 128)))
 
     bambuddy_api.start_drying.assert_awaited_once_with(H2D, 0, 55, 8)
-    bambuddy_api.stop_drying.assert_awaited_once_with(H2D, 0)
+    bambuddy_api.stop_drying.assert_awaited_once_with(H2D, 128)
+
+
+@pytest.mark.parametrize(("action", "minutes"), [("start_drying", 120), ("stop_drying", 0)])
+async def test_drying_on_an_offline_printer_says_offline(
+    hass: HomeAssistant, bambuddy_api: SimpleNamespace, freezer: FrozenDateTimeFactory, action: str, minutes: int
+) -> None:
+    """Its drying figures are stale offline: the printer's state is the reason to name."""
+    entry = await set_up(hass, H2D)
+    bambuddy_api.statuses[H2D]["connected"] = False
+    bambuddy_api.statuses[H2D]["ams"][1]["dry_time"] = minutes
+    await next_refresh(hass, freezer)
+    extra = {"temperature": 55, "duration": 8} if action == "start_drying" else {}
+
+    with pytest.raises(ServiceValidationError) as raised:
+        await _act(hass, action, device_id=device_id(hass, entry, ams_device(entry, H2D, 128)), **extra)
+
+    assert raised.value.translation_key == "printer_offline"
+
+
+async def test_a_parked_drying_countdown_may_be_stopped(hass: HomeAssistant, bambuddy_api: SimpleNamespace) -> None:
+    bambuddy_api.statuses[H2D]["ams"][1]["dry_countdown_stalled"] = True
+    entry = await set_up(hass, H2D)
+
+    await _act(hass, "stop_drying", device_id=device_id(hass, entry, ams_device(entry, H2D, 128)))
+
+    bambuddy_api.stop_drying.assert_awaited_once_with(H2D, 128)
+
+
+async def test_a_unit_that_is_not_drying_is_said_so(hass: HomeAssistant, bambuddy_api: SimpleNamespace) -> None:
+    entry = await set_up(hass, H2D)
+
+    with pytest.raises(ServiceValidationError) as raised:
+        await _act(hass, "stop_drying", device_id=device_id(hass, entry, ams_device(entry, H2D, 0)))
+
+    assert raised.value.translation_key == "not_drying"
+    bambuddy_api.stop_drying.assert_not_awaited()
+
+
+async def test_setting_a_colour_on_an_offline_printer_says_offline(
+    hass: HomeAssistant, bambuddy_api: SimpleNamespace, freezer: FrozenDateTimeFactory
+) -> None:
+    """Offline, the slot's material is unknown too: the printer's state is the reason to name."""
+    entry = await set_up(hass, A1_MINI)
+    bambuddy_api.statuses[A1_MINI]["connected"] = False
+    bambuddy_api.statuses[A1_MINI]["ams"][0]["tray"][0]["tray_type"] = ""
+    await next_refresh(hass, freezer)
+
+    with pytest.raises(ServiceValidationError) as raised:
+        await _set_filament(hass, ams_uid(entry, 0, "slot_1", A1_MINI), color=[255, 0, 0])
+
+    assert raised.value.translation_key == "printer_offline"
 
 
 async def test_drying_only_where_and_as_hot_as_a_unit_can(hass: HomeAssistant, bambuddy_api: SimpleNamespace) -> None:
@@ -258,8 +314,8 @@ async def test_answering_an_hms_message(hass: HomeAssistant, bambuddy_api: Simpl
     [
         ("0700_2000_0002_0099", "RESUME_PRINTING", "hms_not_current"),
         ("0700_2000_0002_0012", "STOP_PRINTING", "hms_answer_not_offered"),
-        # A button of Bambu's own screen that sends nothing, though listed.
-        ("0700_2000_0002_0012", "CHECK_ASSISTANT", "hms_answer_not_offered"),
+        # A button of Bambu's own screen that sends nothing, though listed: said so.
+        ("0700_2000_0002_0012", "CHECK_ASSISTANT", "hms_answer_screen_only"),
     ],
 )
 async def test_an_hms_answer_the_printer_does_not_offer_is_refused(
@@ -290,8 +346,8 @@ async def test_only_answers_that_send_something_are_listed(hass: HomeAssistant, 
 
 
 async def test_more_materials(hass: HomeAssistant, bambuddy_api: SimpleNamespace) -> None:
-    """Bambu's generic profiles, with Bambu Studio's nozzle ranges (his
-    word: the more, the better -- the external spool needs them too)."""
+    """Bambu's generic profiles, with Bambu Studio's nozzle ranges -- the
+    external spool needs them too."""
     entry = await set_up(hass, A1_MINI)
 
     await _set_filament(hass, ams_uid(entry, 0, "slot_2", A1_MINI), material="PPS-CF")
@@ -318,7 +374,7 @@ async def test_a_slots_k_profiles(hass: HomeAssistant, bambuddy_api: SimpleNames
 
     bambuddy_api.get_kprofiles.assert_awaited_once_with(X1C, "0.4")
     assert response == {
-        "nozzle_diameter": "0.4",
+        "nozzle_diameter": 0.4,
         "current": 3,
         "profiles": [
             {"index": 1, "name": "Generic PLA", "k_value": 0.02, "filament_id": "GFL99", "nozzle": None},
@@ -408,6 +464,18 @@ async def test_a_slot_is_not_reset_during_a_print_or_empty(
     bambuddy_api.reset_slot.assert_not_awaited()
 
 
+async def test_a_spool_nobody_named_is_no_slot_to_reset(hass: HomeAssistant, bambuddy_api: SimpleNamespace) -> None:
+    """Present, but without a material: nothing to reset, as an empty slot."""
+    bambuddy_api.statuses[A1_MINI]["ams"][0]["tray"][1]["tray_type"] = ""
+    entry = await set_up(hass, A1_MINI)
+
+    with pytest.raises(ServiceValidationError) as raised:
+        await _slot_action(hass, "reset_slot", ams_uid(entry, 0, "slot_2", A1_MINI))
+
+    assert raised.value.translation_key == "slot_empty"
+    bambuddy_api.reset_slot.assert_not_awaited()
+
+
 async def test_reading_a_spools_chip_again(hass: HomeAssistant, bambuddy_api: SimpleNamespace) -> None:
     entry = await set_up(hass, A1_MINI)
 
@@ -438,7 +506,7 @@ async def test_a_chip_is_read_again_only_unloaded_and_in_an_ams(
 
 
 async def test_a_unit_on_both_nozzles_gets_every_k_profile(hass: HomeAssistant, bambuddy_api: SimpleNamespace) -> None:
-    """Review I1: not narrowed to a nozzle the unit may not feed."""
+    """Not narrowed to a nozzle the unit may not feed."""
     bambuddy_api.statuses[H2D]["ams_extruder_map"] = {}
     entry = await set_up(hass, H2D)
 
@@ -450,7 +518,7 @@ async def test_a_unit_on_both_nozzles_gets_every_k_profile(hass: HomeAssistant, 
 
 
 async def test_a_k_profile_just_listed_is_set_without_asking_again(hass: HomeAssistant, bambuddy_api: SimpleNamespace) -> None:
-    """Review I2: the printer may not answer a second time (BamBuddy then
+    """The printer may not answer a second time (BamBuddy then
     gives an empty list after 16 s); the list the card showed holds."""
     entry = await set_up(hass, A1_MINI)
     slot = entity_id(hass, "sensor", ams_uid(entry, 0, "slot_2", A1_MINI))
@@ -474,7 +542,7 @@ async def test_a_printer_that_lists_no_k_profiles_says_so(hass: HomeAssistant, b
 
 
 async def test_a_chip_is_read_in_a_pause_with_nothing_loaded(hass: HomeAssistant, bambuddy_api: SimpleNamespace) -> None:
-    """Review M4: as the card says -- pause first."""
+    """As the card says -- pause first."""
     bambuddy_api.statuses[P1S]["tray_now"] = 255
     entry = await set_up(hass, P1S)
 
@@ -484,7 +552,7 @@ async def test_a_chip_is_read_in_a_pause_with_nothing_loaded(hass: HomeAssistant
 
 
 async def test_an_hms_answer_the_printer_does_not_take_says_so(hass: HomeAssistant, bambuddy_api: SimpleNamespace) -> None:
-    """BamBuddy's 400 in words (review U4): the printer did not take it."""
+    """BamBuddy's 400 in words: the printer did not take it."""
     entry = await set_up(hass, P1S)
     bambuddy_api.execute_hms_action.side_effect = BamBuddyApiError(400, "Failed to execute HMS action")
 
@@ -500,7 +568,7 @@ async def test_an_hms_answer_the_printer_does_not_take_says_so(hass: HomeAssista
 
 
 async def test_stopping_through_an_hms_answer_reads_the_printer_first(hass: HomeAssistant, bambuddy_api: SimpleNamespace) -> None:
-    """Review N10: a message cleared at the printer meanwhile stops nothing."""
+    """A message cleared at the printer meanwhile stops nothing."""
     status = bambuddy_api.statuses[P1S]
     status["hms_errors"][0]["actions"] = ["RESUME_PRINTING", "STOP_PRINTING"]
     entry = await set_up(hass, P1S)
@@ -945,6 +1013,19 @@ async def test_the_external_spool_feeding_a_nozzle_is_in_use(
     assert raised.value.translation_key == "slot_in_use"
 
 
+async def test_the_left_external_spool_is_free_while_the_right_one_feeds(
+    hass: HomeAssistant, bambuddy_api: SimpleNamespace
+) -> None:
+    """BamBuddy's 254 on a two-nozzle printer is "an external spool": the right nozzle feeds from the
+    right one, so the left one may be set during the print."""
+    bambuddy_api.statuses[H2D].update({"tray_now": 254, "active_extruder": 0})
+    entry = await set_up(hass, H2D)
+
+    await _set_filament(hass, printer_uid(entry, "external_spool", H2D), material="PLA")
+
+    bambuddy_api.configure_slot.assert_awaited_once()
+
+
 async def test_a_slot_of_an_ams_plugged_in_elsewhere(
     hass: HomeAssistant, bambuddy_api: SimpleNamespace, freezer: FrozenDateTimeFactory
 ) -> None:
@@ -989,7 +1070,7 @@ async def test_a_printer_bambuddy_does_not_list_now_points_to_its_repair(
     entry = await set_up(hass, X1C, A1_MINI)
     printer = device_id(hass, entry, printer_device(entry, A1_MINI))
     unit = device_id(hass, entry, ams_device(entry, A1_MINI, 0))
-    bambuddy_api.get_printers.return_value = [item for item in load_fixture("printers.json") if item["id"] != A1_MINI]
+    bambuddy_api.get_printers.return_value = printers_but(A1_MINI)
     await hass.config_entries.async_reload(entry.entry_id)
     await hass.async_block_till_done()
 
@@ -1022,7 +1103,7 @@ async def test_a_slot_of_a_printer_bambuddy_does_not_list_now_points_to_its_repa
 ) -> None:
     entry = await set_up(hass, X1C, A1_MINI)
     slot = entity_id(hass, "sensor", ams_uid(entry, 0, "slot_1", A1_MINI))
-    bambuddy_api.get_printers.return_value = [item for item in load_fixture("printers.json") if item["id"] != A1_MINI]
+    bambuddy_api.get_printers.return_value = printers_but(A1_MINI)
     await hass.config_entries.async_reload(entry.entry_id)
     await hass.async_block_till_done()
 
@@ -1106,3 +1187,260 @@ async def test_a_connection_check_bambuddy_fails(hass: HomeAssistant, bambuddy_a
 
     assert (raised.value.translation_key, raised.value.translation_placeholders) == ("read_failed", {"error": "Simulated failure"})
 
+
+
+async def test_a_unit_drying_already_is_said_so(hass: HomeAssistant, bambuddy_api: SimpleNamespace) -> None:
+    """The H2D's AMS HT dries: another start would be BamBuddy's error; said before it is sent."""
+    entry = await set_up(hass, H2D)
+
+    with pytest.raises(ServiceValidationError) as raised:
+        await _act(hass, "start_drying", device_id=device_id(hass, entry, ams_device(entry, H2D, 128)), temperature=55, duration=8)
+
+    assert raised.value.translation_key == "already_drying"
+    bambuddy_api.start_drying.assert_not_awaited()
+
+
+async def test_no_drying_during_a_filament_change(hass: HomeAssistant, bambuddy_api: SimpleNamespace) -> None:
+    bambuddy_api.statuses[H2D].update({"ams_status_main": 1, "ams_status_sub": 2})
+    entry = await set_up(hass, H2D)
+
+    with pytest.raises(ServiceValidationError) as raised:
+        await _act(hass, "start_drying", device_id=device_id(hass, entry, ams_device(entry, H2D, 0)), temperature=55, duration=8)
+
+    assert raised.value.translation_key == "filament_change"
+
+
+async def test_bambuddys_own_refusal_is_no_error_of_home_assistant(hass: HomeAssistant, bambuddy_api: SimpleNamespace) -> None:
+    """BamBuddy refuses with a 4xx (here a 409 "AMS is busy"): a validation error -- no ERROR in the log,
+    an automation can tell it from a failing BamBuddy."""
+    bambuddy_api.start_drying.side_effect = BamBuddyApiError(409, "AMS is busy")
+    entry = await set_up(hass, H2D)
+
+    with pytest.raises(ServiceValidationError) as raised:
+        await _act(hass, "start_drying", device_id=device_id(hass, entry, ams_device(entry, H2D, 0)), temperature=55, duration=8)
+
+    assert raised.value.translation_key == "command_failed"
+
+
+async def test_a_failing_bambuddy_stays_an_error(hass: HomeAssistant, bambuddy_api: SimpleNamespace) -> None:
+    """A 5xx is BamBuddy failing, not refusing: an error, not a validation error."""
+    bambuddy_api.start_drying.side_effect = BamBuddyApiError(500, "Internal Server Error")
+    entry = await set_up(hass, H2D)
+
+    with pytest.raises(HomeAssistantError) as raised:
+        await _act(hass, "start_drying", device_id=device_id(hass, entry, ams_device(entry, H2D, 0)), temperature=55, duration=8)
+
+    assert type(raised.value) is HomeAssistantError
+
+
+async def test_a_parked_drying_timer_is_no_drying(hass: HomeAssistant, bambuddy_api: SimpleNamespace) -> None:
+    """The AMS HT's countdown stands still (the drying sensor says off): a new drying may start."""
+    bambuddy_api.statuses[H2D]["ams"][1]["dry_countdown_stalled"] = True
+    entry = await set_up(hass, H2D)
+
+    await _act(hass, "start_drying", device_id=device_id(hass, entry, ams_device(entry, H2D, 128)), temperature=55, duration=8)
+
+    bambuddy_api.start_drying.assert_awaited_once()
+
+
+async def test_a_parked_countdown_the_printer_still_counts_is_said_so(hass: HomeAssistant, bambuddy_api: SimpleNamespace) -> None:
+    """Where the printer still counts a parked countdown as drying, BamBuddy refuses the start (409):
+    said in the user's words, with the way out. A 409 for a unit without a parked countdown stays BamBuddy's."""
+    bambuddy_api.statuses[H2D]["ams"][1]["dry_countdown_stalled"] = True
+    bambuddy_api.start_drying.side_effect = BamBuddyApiError(409, "AMS is already drying")
+    entry = await set_up(hass, H2D)
+
+    with pytest.raises(ServiceValidationError) as raised:
+        await _act(hass, "start_drying", device_id=device_id(hass, entry, ams_device(entry, H2D, 128)), temperature=55, duration=8)
+
+    assert raised.value.translation_key == "drying_parked"
+
+
+@pytest.mark.parametrize(
+    "detail",
+    [
+        "Insufficient power: too many AMS drying or external PSU required",
+        "Plug in the external AMS power adapter to start drying",
+        "Filament is at the AMS outlet, retract it first",
+    ],
+)
+async def test_a_parked_countdown_keeps_bambuddys_other_reasons(hass: HomeAssistant, bambuddy_api: SimpleNamespace, detail: str) -> None:
+    """BamBuddy's 409 names the printer's reason (power and the filament at the outlet come first); only
+    "AMS is already drying" is the parked countdown's -- the others say what to do."""
+    bambuddy_api.statuses[H2D]["ams"][1]["dry_countdown_stalled"] = True
+    bambuddy_api.start_drying.side_effect = BamBuddyApiError(409, detail)
+    entry = await set_up(hass, H2D)
+
+    with pytest.raises(ServiceValidationError) as raised:
+        await _act(hass, "start_drying", device_id=device_id(hass, entry, ams_device(entry, H2D, 128)), temperature=55, duration=8)
+
+    assert raised.value.translation_key == "command_failed"
+    assert detail in str(raised.value.translation_placeholders)
+
+
+@pytest.mark.parametrize(("running", "key"), [(True, "dry_while_printing"), (False, "command_failed")])
+async def test_a_printer_that_cannot_dry_while_it_prints_is_said_so(
+    hass: HomeAssistant, bambuddy_api: SimpleNamespace, running: bool, key: str
+) -> None:
+    """BamBuddy's "Printer is busy" (the printer's reason 0) during a job: the firmware cannot dry while it
+    prints -- said in the user's words. The same refusal outside a job stays BamBuddy's own text."""
+    bambuddy_api.statuses[H2D]["state"] = "RUNNING" if running else "IDLE"
+    bambuddy_api.start_drying.side_effect = BamBuddyApiError(409, "Printer is busy")
+    entry = await set_up(hass, H2D)
+
+    with pytest.raises(ServiceValidationError) as raised:
+        await _act(hass, "start_drying", device_id=device_id(hass, entry, ams_device(entry, H2D, 0)), temperature=55, duration=8)
+
+    assert raised.value.translation_key == key
+
+
+def test_the_answer_field_offers_the_answers() -> None:
+    """The action field's choices are the answers the integration sends."""
+    actions = yaml.safe_load((INTEGRATION / "services.yaml").read_text(encoding="utf-8"))
+    select = actions["answer_hms"]["fields"]["action"]["selector"]["select"]
+    assert (set(select["options"]), select["custom_value"]) == (set(HMS_ANSWERS), True)
+
+
+async def test_a_load_through_the_filament_track_switch_is_refused(hass: HomeAssistant, bambuddy_api: SimpleNamespace) -> None:
+    """With the switch fitted every AMS is bound to a switch inlet: a load must name its nozzle, or the
+    firmware drops it (BamBuddy's ams_load_filament). The external spools name their side."""
+    bambuddy_api.statuses[H2D].update(
+        {
+            "state": "IDLE",
+            "tray_now": 255,
+            "extruder_slots": {},
+            "ams_extruder_map": {},
+            "fila_switch": {"installed": True, "in_slots": [-1, -1], "out_extruders": [0, 1], "stat": 0, "info": 0, "ready": True},
+        }
+    )
+    for spool in bambuddy_api.statuses[H2D]["vt_tray"]:
+        spool.update({"tray_type": "PETG", "tray_sub_brands": "", "exists": True})
+    entry = await set_up(hass, H2D)
+
+    with pytest.raises(ServiceValidationError) as raised:
+        await _act(hass, "load_filament", entity_id=entity_id(hass, "sensor", ams_uid(entry, 0, "slot_1", H2D)))
+    assert raised.value.translation_key == "load_track_switch"
+    bambuddy_api.load_filament.assert_not_awaited()
+
+    await _act(hass, "load_filament", entity_id=entity_id(hass, "sensor", printer_uid(entry, "external_spool", H2D)))
+    bambuddy_api.load_filament.assert_awaited_once()
+
+
+async def test_an_a1_mini_dries_on_its_own_screen(hass: HomeAssistant, bambuddy_api: SimpleNamespace) -> None:
+    """The A1 and the A1 mini dry an AMS 2 Pro / AMS HT behind the AMS hub from their screen only:
+    no update helps (Bambu's drying guide; BamBuddy files them as unsupported)."""
+    bambuddy_api.statuses[A1_MINI]["ams"][0]["module_type"] = "n3f"
+    entry = await set_up(hass, A1_MINI)
+
+    with pytest.raises(ServiceValidationError) as raised:
+        await _act(hass, "start_drying", device_id=device_id(hass, entry, ams_device(entry, A1_MINI, 0)), temperature=55, duration=8)
+
+    assert raised.value.translation_key == "dry_on_screen"
+
+
+@pytest.mark.parametrize(("code", "action"), [("0700_2000_0002_0099", "RESUME_PRINTING"), ("0700_2000_0002_0012", "STOP_PRINTING")])
+async def test_an_hms_answer_to_an_offline_printer_says_offline(
+    hass: HomeAssistant, bambuddy_api: SimpleNamespace, freezer: FrozenDateTimeFactory, code: str, action: str
+) -> None:
+    """Its messages are stale offline: the printer's state is the reason to name."""
+    entry = await set_up(hass, P1S)
+    bambuddy_api.statuses[P1S]["connected"] = False
+    await next_refresh(hass, freezer)
+
+    with pytest.raises(ServiceValidationError) as raised:
+        await hass.services.async_call(
+            DOMAIN, "answer_hms", {"device_id": device_id(hass, entry, printer_device(entry, P1S)), "code": code, "action": action}, blocking=True
+        )
+
+    assert raised.value.translation_key == "printer_offline"
+
+
+async def test_an_hms_answer_the_printer_did_not_acknowledge_is_said_so(hass: HomeAssistant, bambuddy_api: SimpleNamespace) -> None:
+    """BamBuddy's 502: the printer sent nothing back -- not BamBuddy refusing."""
+    entry = await set_up(hass, P1S)
+    bambuddy_api.execute_hms_action.side_effect = BamBuddyApiError(502, "Printer did not acknowledge HMS action within 2.5s")
+
+    with pytest.raises(ServiceValidationError) as raised:
+        await hass.services.async_call(
+            DOMAIN,
+            "answer_hms",
+            {"device_id": device_id(hass, entry, printer_device(entry, P1S)), "code": "0700_2000_0002_0012", "action": "RESUME_PRINTING"},
+            blocking=True,
+        )
+
+    assert raised.value.translation_key == "hms_answer_not_taken"
+
+
+async def test_reading_a_chip_waits_for_a_print_first(hass: HomeAssistant, bambuddy_api: SimpleNamespace) -> None:
+    """During a running print the reason is the print, not the filament loaded."""
+    entry = await set_up(hass, X1C)
+
+    with pytest.raises(ServiceValidationError) as raised:
+        await _act(hass, "refresh_rfid", entity_id=entity_id(hass, "sensor", ams_uid(entry, 0, "slot_3")))
+
+    assert raised.value.translation_key == "slot_pause_first"
+
+
+async def test_reading_a_chip_waits_for_a_filament_change(
+    hass: HomeAssistant, bambuddy_api: SimpleNamespace, freezer: FrozenDateTimeFactory
+) -> None:
+    entry = await set_up(hass, A1_MINI)
+    bambuddy_api.statuses[A1_MINI].update({"ams_status_main": 1, "ams_status_sub": 3, "tray_now": 1})
+    await next_refresh(hass, freezer)
+
+    with pytest.raises(ServiceValidationError) as raised:
+        await _act(hass, "refresh_rfid", entity_id=entity_id(hass, "sensor", ams_uid(entry, 0, "slot_1", A1_MINI)))
+
+    assert raised.value.translation_key == "filament_change"
+
+
+async def test_reading_the_chip_of_an_empty_slot_is_refused(hass: HomeAssistant, bambuddy_api: SimpleNamespace) -> None:
+    """No spool in slot 4 (BamBuddy's exists false): nothing to read."""
+    entry = await set_up(hass, A1_MINI)
+
+    with pytest.raises(ServiceValidationError) as raised:
+        await _act(hass, "refresh_rfid", entity_id=entity_id(hass, "sensor", ams_uid(entry, 0, "slot_4", A1_MINI)))
+
+    assert raised.value.translation_key == "slot_empty"
+    bambuddy_api.refresh_rfid.assert_not_awaited()
+
+
+async def test_stopping_drying_on_a_unit_that_cannot_dry_says_so(hass: HomeAssistant, bambuddy_api: SimpleNamespace) -> None:
+    """The X1C's first AMS has no heater: it cannot dry, so it cannot stop either."""
+    entry = await set_up(hass, X1C)
+
+    with pytest.raises(ServiceValidationError) as raised:
+        await _act(hass, "stop_drying", device_id=device_id(hass, entry, ams_device(entry, X1C, 0)))
+
+    assert raised.value.translation_key == "cannot_dry"
+    bambuddy_api.stop_drying.assert_not_awaited()
+
+
+@pytest.mark.parametrize("service", ["reset_slot", "refresh_rfid"])
+async def test_a_slot_tool_on_an_offline_printer_says_offline(
+    hass: HomeAssistant, bambuddy_api: SimpleNamespace, freezer: FrozenDateTimeFactory, service: str
+) -> None:
+    entry = await set_up(hass, X1C)
+    bambuddy_api.statuses[X1C] = load_fixture("status_offline.json")
+    await next_refresh(hass, freezer)
+
+    with pytest.raises(ServiceValidationError) as raised:
+        await _slot_action(hass, service, ams_uid(entry, 0, "slot_2", X1C))
+
+    assert raised.value.translation_key == "printer_offline"
+    getattr(bambuddy_api, service).assert_not_awaited()
+
+
+async def test_an_hms_answer_bambuddy_fails_says_the_command_failed(hass: HomeAssistant, bambuddy_api: SimpleNamespace) -> None:
+    entry = await set_up(hass, P1S)
+    bambuddy_api.execute_hms_action.side_effect = BamBuddyApiError(404, "Printer not found")
+
+    with pytest.raises(HomeAssistantError) as raised:
+        await hass.services.async_call(
+            DOMAIN,
+            "answer_hms",
+            {"device_id": _printer(hass, entry, P1S), "code": "0700_2000_0002_0012", "action": "RESUME_PRINTING"},
+            blocking=True,
+        )
+
+    assert raised.value.translation_key == "command_failed"

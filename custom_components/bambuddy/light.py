@@ -1,4 +1,4 @@
-"""BamBuddy's light: the printer's chamber light."""
+"""BamBuddy's light: the printer's light (the chamber light of an enclosed printer)."""
 from __future__ import annotations
 
 from collections.abc import Awaitable, Callable
@@ -33,6 +33,10 @@ class BamBuddyChamberLight(BamBuddyToggle, LightEntity):
     _attr_supported_color_modes = {ColorMode.ONOFF}
 
     def __init__(self, coordinator: BamBuddyPrinterCoordinator) -> None:
+        # An open frame's light is no chamber light; before the base names
+        # the entity ID after it. The unique ID's key stays.
+        if not coordinator.data.enclosed():
+            self._attr_translation_key = "light"
         super().__init__(coordinator, "chamber_light")
 
     def _reported(self) -> Any:

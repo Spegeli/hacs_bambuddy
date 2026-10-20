@@ -13,7 +13,7 @@ from pytest_homeassistant_custom_component.typing import ClientSessionGenerator
 
 from custom_components.bambuddy.api import BamBuddyApiError, BamBuddyConnectionError
 
-from tests.conftest import A1_MINI, X1C, entity_id, next_refresh, printer_uid, set_up, state_of
+from tests.conftest import A1_MINI, X1C, entity_id, next_refresh, printer_uid, set_up, state_at, state_of
 
 
 async def test_the_cover_of_the_running_job(
@@ -42,13 +42,13 @@ async def test_a_new_job_brings_a_new_cover(
     cover = entity_id(hass, "image", printer_uid(entry, "cover"))
     client = await hass_client()
     await client.get(f"/api/image_proxy/{cover}")
-    before = hass.states.get(cover).state  # type: ignore[union-attr]
+    before = state_at(hass, cover).state
 
     bambuddy_api.statuses[X1C]["subtask_name"] = "Wall bracket"
     await next_refresh(hass, freezer)
     await client.get(f"/api/image_proxy/{cover}")
 
-    assert hass.states.get(cover).state != before  # type: ignore[union-attr]
+    assert state_at(hass, cover).state != before
     assert bambuddy_api.get_cover.await_count == 2
 
 
@@ -78,7 +78,7 @@ async def test_the_cover_stays_after_the_job(
     bambuddy_api.statuses[X1C]["state"] = "IDLE"
     await next_refresh(hass, freezer)
 
-    assert hass.states.get(cover).state == STATE_UNAVAILABLE  # type: ignore[union-attr]
+    assert state_at(hass, cover).state == STATE_UNAVAILABLE
 
 
 async def test_a_finished_job_at_setup_has_its_cover(
@@ -100,7 +100,7 @@ async def test_no_cover_while_idle(hass: HomeAssistant, bambuddy_api: SimpleName
     # No picture to ask for: the frontend shows the icon, not an error.
     assert "entity_picture" not in state_of(hass, "image", printer_uid(entry, "cover", A1_MINI)).attributes
 
-    assert hass.states.get(entity_id(hass, "image", printer_uid(entry, "cover", A1_MINI))).state == STATE_UNAVAILABLE  # type: ignore[union-attr]
+    assert state_at(hass, entity_id(hass, "image", printer_uid(entry, "cover", A1_MINI))).state == STATE_UNAVAILABLE
 
 
 async def test_a_cover_bambuddy_cannot_find(
@@ -149,12 +149,12 @@ async def test_a_cover_that_failed_comes_later(
     assert (await client.get(f"/api/image_proxy/{cover}")).status != HTTPStatus.OK
     await client.get(f"/api/image_proxy/{cover}")
     assert bambuddy_api.get_cover.await_count == 1
-    before = hass.states.get(cover).state  # type: ignore[union-attr]
+    before = state_at(hass, cover).state
 
     # A minute later the entity says it has a new picture: the frontend asks.
     for _ in range(6):
         await next_refresh(hass, freezer)
-    assert hass.states.get(cover).state != before  # type: ignore[union-attr]
+    assert state_at(hass, cover).state != before
     assert (await client.get(f"/api/image_proxy/{cover}")).status != HTTPStatus.OK
     assert bambuddy_api.get_cover.await_count == 2
 

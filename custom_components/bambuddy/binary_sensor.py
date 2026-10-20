@@ -1,5 +1,7 @@
 """BamBuddy's binary sensors: whether BamBuddy and each printer are online,
-the door, the plate, and an AMS unit drying."""
+the door, the plate, the storage, developer mode, the wired network, the
+timelapse, an AMS unit drying, and a smart plug's state where it cannot be
+switched."""
 from __future__ import annotations
 
 from collections.abc import Callable
@@ -17,8 +19,10 @@ from homeassistant.components.binary_sensor import (  # type: ignore[attr-define
 )
 from homeassistant.const import EntityCategory
 from homeassistant.core import HomeAssistant
+from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 
+from .const import DOMAIN
 from .coordinator import BamBuddyConfigEntry, BamBuddyInstanceCoordinator, BamBuddyPlugCoordinator, BamBuddyPrinterCoordinator
 from .entity import (
     BamBuddyAmsEntity,
@@ -28,7 +32,7 @@ from .entity import (
     async_add_ams_entities,
     async_add_plug_entities,
 )
-from .models import PrinterData, can_dry, has_heater
+from .models import PrinterData, can_dry, has_heater, is_drying
 from .plugs import Plug
 
 PARALLEL_UPDATES = 0
@@ -113,15 +117,21 @@ async def async_setup_entry(
 ) -> None:
     runtime = entry.runtime_data
     entities: list[BinarySensorEntity] = [BamBuddyOnlineSensor(runtime.instance)]
+    registry = er.async_get(hass)
     for coordinator in runtime.printers.values():
+        # 1.x gave every printer a Wired network sensor; a model without a
+        # network port (all but the X1E and the H2D Pro) keeps none.
+        if coordinator.data.model.strip() and not coordinator.data.has_ethernet():
+            stale = registry.async_get_entity_id("binary_sensor", DOMAIN, coordinator.entity_unique_id("wired_network"))
+            if stale is not None:
+                registry.async_remove(stale)
         entities.extend(
             BamBuddyPrinterBinarySensor(coordinator, description.for_printer(coordinator.data))
             for description in PRINTER_BINARY_SENSORS
             if description.exists_fn(coordinator.data)
         )
         _add_drying_sensors(coordinator, async_add_entities)
-    if runtime.plugs is not None:
-        _add_plug_states(runtime.plugs, async_add_entities, can_switch=runtime.can_control_plugs)
+    _add_plug_states(runtime.plugs, async_add_entities, can_switch=runtime.can_control_plugs)
     async_add_entities(entities)
 
 
@@ -187,9 +197,7 @@ class BamBuddyDryingSensor(BamBuddyAmsEntity, BinarySensorEntity):
 
     @property
     def is_on(self) -> bool | None:
-        unit: dict[str, Any] = self.unit or {}
-        minutes = unit.get("dry_time")
-        return isinstance(minutes, int) and minutes > 0 and not unit.get("dry_countdown_stalled")
+        return is_drying(self.unit or {})
 
 
 def _add_plug_states(

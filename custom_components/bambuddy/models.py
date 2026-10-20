@@ -4,6 +4,7 @@ slots, and what each printer model has."""
 from __future__ import annotations
 
 from dataclasses import dataclass
+import re
 from datetime import UTC, datetime
 from typing import Any
 
@@ -26,6 +27,8 @@ PRINT_STATUSES = [
 ]
 _STATUS_BY_STATE = {
     "IDLE": "idle",
+    # A printer starting up: no job yet.
+    "INIT": "idle",
     "PREPARE": "preparing",
     "SLICING": "slicing",
     "RUNNING": "printing",
@@ -39,6 +42,10 @@ JOB_STATES = frozenset({"PREPARE", "SLICING", "RUNNING", "PAUSE"})
 # A job under way, not paused: it can be paused, and its end can be told
 # (a paused one ends whenever it is resumed). Every job can be stopped.
 ACTIVE_STATES = frozenset({"PREPARE", "SLICING", "RUNNING"})
+# A print on the bed: running or paused (objects can be skipped).
+PRINTING_STATES = frozenset({"RUNNING", "PAUSE"})
+# A job that ended: the plate waits to be cleared.
+ENDED_STATES = frozenset({"FINISH", "FAILED"})
 
 # BamBuddy's stage numbers (Bambu Studio's DeviceManager) with our slugs.
 STAGES: dict[int, str] = {
@@ -120,31 +127,54 @@ _DERIVED_STAGES = {
 }
 STAGE_OPTIONS = sorted({"idle", *STAGES.values(), *_DERIVED_STAGES.values()})
 
-# Model strings as BamBuddy stores them (upper case here) and the codes it
-# keeps for printers its discovery did not name.
-_A1_FAMILY = frozenset({"A1", "A1 MINI", "A2L", "N1", "N2S", "N9", "A11", "A12", "A04"})
-_DOOR = frozenset(
-    {
-        "X1", "X1C", "X1E", "X2D", "P2S", "H2D", "H2D PRO", "H2C", "H2S",
-        "BL-P001", "BL-P002", "BL-P003", "C13", "N6", "N7", "O1D", "O1E", "O2D", "O1C", "O1C2", "O1S",
-    }
-)  # fmt: skip
-_AIRDUCT = frozenset(
-    {"P2S", "X2D", "H2C", "H2D", "H2D PRO", "H2S", "N6", "N7", "O1C", "O1C2", "O1D", "O1E", "O2D", "O1S"}
-)
-_ETHERNET = frozenset(
-    {
-        "X1C", "X1E", "X2D", "P1S", "P2S", "H2D", "H2D PRO", "H2C", "H2S",
-        "BL-P001", "BL-P003", "C12", "C13", "N6", "N7", "O1D", "O1E", "O2D", "O1C", "O1C2", "O1S",
-    }
-)  # fmt: skip
+# BamBuddy may store a printer under its model code (utils/printer_models.py PRINTER_MODEL_ID_MAP; BL-P003
+# from its discovery): device names and models say the model, and it has the model's capabilities.
+_MODEL_NAMES = {
+    "BL-P001": "X1C", "BL-P002": "X1", "BL-P003": "X1E", "C13": "X1E", "C11": "P1P", "C12": "P1S", "N7": "P2S",
+    "N6": "X2D", "N9": "A2L", "A11": "A1", "A12": "A1 Mini", "N1": "A1 Mini", "N2S": "A1", "A04": "A1 Mini",
+    "O1D": "H2D", "O1E": "H2D Pro", "O2D": "H2D Pro", "O1C": "H2C", "O1C2": "H2C", "O1S": "H2S",
+}  # fmt: skip
+_CANONICAL = {code: name.upper() for code, name in _MODEL_NAMES.items()}
+
+# The models by their names in upper case (`model_key` maps a code to its model).
+_A1_FAMILY = frozenset({"A1", "A1 MINI", "A2L"})
+_DOOR = frozenset({"X1", "X1C", "X1E", "X2D", "P2S", "H2D", "H2D PRO", "H2C", "H2S"})
+_AIRDUCT = frozenset({"P2S", "X2D", "H2C", "H2D", "H2D PRO", "H2S"})
+# An Ethernet port: only the X1E and the H2D Pro (Bambu's spec pages and FAQs, 2026-10-19). BamBuddy's own
+# list holds more models; a printer without a port never reports a cable.
+_ETHERNET = frozenset({"X1E", "H2D PRO"})
 # No SD slot but a USB port (and internal storage): BamBuddy's SD card flag
 # tells a USB drive.
-_USB_DRIVE = frozenset(
-    {"P2S", "X2D", "H2C", "H2D", "H2D PRO", "H2S", "N6", "N7", "O1C", "O1C2", "O1D", "O1E", "O2D", "O1S"}
-)
-# "Exhaust fan" is Bambu's name for the chamber fan of these.
-_EXHAUST_FAN = frozenset({"P2S", "X2D", "N6", "N7"})
+_USB_DRIVE = frozenset({"P2S", "X2D", "H2C", "H2D", "H2D PRO", "H2S"})
+# "Exhaust fan" is Bambu's name for the chamber fan of these; on the P2S it is the External Exhaust Fan
+# kit, there only when BamBuddy reports it (`exhaust_fan_present`: airduct part 3, bambu_mqtt.py).
+_EXHAUST_FAN = frozenset({"P2S", "X2D"})
+_EXHAUST_KIT = frozenset({"P2S"})
+# Fans the stock printer lacks -- the X1 an auxiliary fan, the P1P that and a chamber fan (Bambu's pages);
+# kits add them and BamBuddy cannot tell: offered, disabled at first.
+_NO_STOCK_AUX_FAN = frozenset({"X1", "P1P"})
+_NO_STOCK_CHAMBER_FAN = frozenset({"P1P"})
+# Open frames: no chamber around the print.
+_OPEN_FRAME = _A1_FAMILY | {"P1P"}
+# The A1 and the A1 mini dry an AMS 2 Pro / AMS HT from their screen only
+# (Bambu's drying guide); BamBuddy files them as unsupported.
+_SCREEN_DRYING = frozenset({"A1", "A1 MINI"})
+# The most each model's nozzle and bed heat to (Bambu Studio's printer
+# profiles, Bambu's spec pages). The X1 and X1C bed: 110 °C on 220 V, 120 °C
+# on 110 V -- the higher, so no printer is refused what it reaches.
+_HEATER_MAX: dict[str, dict[str, int]] = {
+    "nozzle": {
+        **dict.fromkeys(("A1", "A1 MINI", "A2L", "P1P", "P1S", "P2S", "X1", "X1C", "X2D"), 300),
+        "X1E": 320,
+        **dict.fromkeys(("H2D", "H2D PRO", "H2C", "H2S"), 350),
+    },
+    "bed": {
+        **dict.fromkeys(("A1 MINI", "A2L"), 80),
+        **dict.fromkeys(("A1", "P1P", "P1S"), 100),
+        **dict.fromkeys(("X1E", "P2S"), 110),
+        **dict.fromkeys(("X1", "X1C", "X2D", "H2D", "H2D PRO", "H2C", "H2S"), 120),
+    },
+}
 
 # Tray ids BamBuddy uses for the external spool holder(s).
 EXTERNAL_LEFT = 254
@@ -215,18 +245,44 @@ def _older(found: Any, version: str) -> bool:
 # support_build_plate_marker_detect) and the detectors the printers report
 # (print.fun bits 42-45). BamBuddy passes none of this on, and reads a
 # detector a printer lacks as on.
-_X1_SERIES = frozenset({"X1", "X1C", "X1E", "BL-P001", "BL-P002", "C13"})
-_H2D = frozenset({"H2D", "O1D"})
-_SINGLE_DETECTORS = frozenset(
-    {"P2S", "X2D", "H2D PRO", "H2S", "H2C", "N6", "N7", "O1E", "O2D", "O1S", "O1C", "O1C2"}
-)
-_AIR_PRINTING = frozenset({"H2D PRO", "H2C", "O1E", "O2D", "O1C", "O1C2"})
+_X1_SERIES = frozenset({"X1", "X1C", "X1E"})
+_H2D = frozenset({"H2D"})
+_SINGLE_DETECTORS = frozenset({"P2S", "X2D", "H2D PRO", "H2S", "H2C"})
+_AIR_PRINTING = frozenset({"H2D PRO", "H2C"})
 # Before it, the H2D had the X1's single AI monitoring switch.
 _H2D_SINGLE_DETECTORS = "01.01.02.08"
 
 
-def _model_key(model: str | None) -> str:
-    return (model or "").strip().upper()
+def model_key(model: str | None) -> str:
+    """A model as the integration compares it: trimmed, in capitals, a code
+    as its model."""
+    key = (model or "").strip().upper()
+    return _CANONICAL.get(key, key)
+
+
+def heater_max(model: str | None, heater: str) -> int | None:
+    """The most a model's `heater` ("nozzle", "bed") heats to; None for a
+    model the table does not know."""
+    return _HEATER_MAX.get(heater, {}).get(model_key(model))
+
+
+# 1.x named a printer's device model "BamBuddy Printer (<model>)", without one "BamBuddy Printer".
+_1X_MODEL = re.compile(r"BamBuddy Printer(?: \((?P<model>.*)\))?")
+
+
+def model_changed(stored: str | None, model: str | None) -> bool:
+    """Whether BamBuddy's model is another than the one the device has: a
+    model corrected in BamBuddy. A model that comes for a printer without
+    one only adds; 1.x's words for the same model are no change."""
+    if stored and (old := _1X_MODEL.fullmatch(stored)):
+        stored = old.group("model")
+    return bool(stored) and model_key(stored) != model_key(model)
+
+
+def display_model(model: str | None) -> str:
+    """The model to show: a code as its model, anything else as BamBuddy stores it (trimmed)."""
+    text = str(model or "").strip()
+    return _MODEL_NAMES.get(text.upper(), text)
 
 
 # The camera's frame rate, as BamBuddy streams it (services/camera.py
@@ -324,33 +380,71 @@ class PrinterData:
     def external_spools(self) -> list[dict[str, Any]]:
         return [tray for tray in self.status.get("vt_tray") or [] if isinstance(tray, dict)]
 
-    # An unknown model gets only what every printer has: fans or an SD card
-    # an A1 lacks would stay behind unavailable once the model is known.
+    # An unknown model gets only what every printer has: fans an A1 lacks
+    # would stay behind unavailable once the model is known, and the
+    # storage sensor would bear the wrong name (SD card or USB drive).
     def has_aux_fans(self) -> bool:
-        model = _model_key(self.model)
+        model = model_key(self.model)
         return bool(model) and model not in _A1_FAMILY
 
+    def enclosed(self) -> bool:
+        """A chamber around the print: all but the open frames (the A1
+        series, the P1P); a printer of unknown model counts as enclosed."""
+        model = model_key(self.model)
+        return not model or model not in _OPEN_FRAME
+
     def has_door(self) -> bool:
-        return _model_key(self.model) in _DOOR
+        return model_key(self.model) in _DOOR
 
     def has_airduct(self) -> bool:
-        return _model_key(self.model) in _AIRDUCT
+        return model_key(self.model) in _AIRDUCT
 
     def has_ethernet(self) -> bool:
-        return _model_key(self.model) in _ETHERNET
+        return model_key(self.model) in _ETHERNET
+
+    @property
+    def wired(self) -> bool:
+        """On a cable: BamBuddy's flag (-90 dBm on the models of its list), where the printer has a port."""
+        return self.has_ethernet() and bool(self.status.get("wired_network"))
 
     def has_sd_card(self) -> bool:
         """Every printer has a slot for its storage: microSD, or USB."""
-        return bool(_model_key(self.model))
+        return bool(model_key(self.model))
 
     def stores_on_usb(self) -> bool:
-        return _model_key(self.model) in _USB_DRIVE
+        return model_key(self.model) in _USB_DRIVE
+
+    def has_chamber_fan(self) -> bool:
+        """A chamber fan Bambu calls so (on the P2S and the X2D it is the exhaust fan)."""
+        return self.has_aux_fans() and model_key(self.model) not in _EXHAUST_FAN
 
     def has_exhaust_fan(self) -> bool:
-        return _model_key(self.model) in _EXHAUST_FAN
+        model = model_key(self.model)
+        if model in _EXHAUST_KIT:
+            return bool(self.status.get("exhaust_fan_present"))
+        return model in _EXHAUST_FAN
+
+    def fan_kits(self) -> frozenset[str]:
+        """The fans BamBuddy learns of from the printer's airduct report -- the P2S's exhaust fan kit,
+        a left auxiliary fan: a moment after it connects."""
+        kits = set()
+        if model_key(self.model) in _EXHAUST_KIT and self.status.get("exhaust_fan_present"):
+            kits.add("exhaust")
+        if self.status.get("left_aux_fan_speed") is not None:
+            kits.add("left_aux")
+        return frozenset(kits)
+
+    def stock_aux_fan(self) -> bool:
+        return self.has_aux_fans() and model_key(self.model) not in _NO_STOCK_AUX_FAN
+
+    def stock_chamber_fan(self) -> bool:
+        return self.has_chamber_fan() and model_key(self.model) not in _NO_STOCK_CHAMBER_FAN
 
     def is_a1_family(self) -> bool:
-        return _model_key(self.model) in _A1_FAMILY
+        return model_key(self.model) in _A1_FAMILY
+
+    def dries_on_screen_only(self) -> bool:
+        return model_key(self.model) in _SCREEN_DRYING
 
 
 def bambuddy_name(printer: dict[str, Any]) -> str | None:
@@ -364,19 +458,19 @@ def printer_name(printer: dict[str, Any]) -> str:
     a name in BamBuddy, model and serial; a printer BamBuddy has no model
     for yet goes by its name or its number."""
     name = bambuddy_name(printer)
-    model = str(printer.get("model") or "").strip()
+    model = display_model(printer.get("model"))
     serial = str(printer.get("serial_number") or "").strip()
     if name:
         details = " / ".join(part for part in (model, serial) if part)
         return f"{name} ({details})" if details else name
-    base = model or f"Printer {printer['id']}"
+    base = short_name(printer)
     return f"{base} ({serial})" if serial else base
 
 
 def short_name(printer: dict[str, Any]) -> str:
     """The printer's name in BamBuddy, else its model: what its AMS units
     are named after."""
-    return bambuddy_name(printer) or str(printer.get("model") or f"Printer {printer['id']}")
+    return bambuddy_name(printer) or display_model(printer.get("model")) or f"Printer {printer['id']}"
 
 
 def printer_key(printer: dict[str, Any]) -> str:
@@ -436,7 +530,10 @@ def ams_key(unit: dict[str, Any]) -> str:
 
 def ams_label(unit_id: int) -> str:
     """An AMS unit's place, lettered as Bambu Lab and BamBuddy do: AMS A-D,
-    AMS HT A-H."""
+    AMS HT A-H; an A2L's AMS Lite (unit 6) "AMS Lite", without a letter
+    (BamBuddy's amsHelpers.ts): an AMS at place 0 is AMS A beside it."""
+    if unit_id == 6:
+        return "AMS Lite"
     kind = "AMS HT" if unit_id >= 128 else "AMS"
     return f"{kind} {chr(ord('A') + ams_number(unit_id) - 1)}"
 
@@ -444,15 +541,17 @@ def ams_label(unit_id: int) -> str:
 def ams_name(printer: dict[str, Any], unit_id: int, model: str, serial: str | None) -> str:
     """An AMS unit's device name: after its printer's BamBuddy name, so it
     sorts right under the printer, then its place, model and serial."""
-    details = " / ".join(part for part in (model, serial) if part)
-    base = f"{short_name(printer)} {ams_label(unit_id)}"
+    label = ams_label(unit_id)
+    # A label that is the model already says it once.
+    details = " / ".join(part for part in (model, serial) if part and part != label)
+    base = f"{short_name(printer)} {label}"
     return f"{base} ({details})" if details else base
 
 
 def detectors(data: PrinterData) -> list[str]:
     """The AI detectors of the printer, as BamBuddy's print options name
     them. An H2D of unknown firmware counts as a current one."""
-    model = _model_key(data.model)
+    model = model_key(data.model)
     firmware = data.status.get("firmware_version")
     old_h2d = model in _H2D and _older(firmware, _H2D_SINGLE_DETECTORS)
     single = model in _SINGLE_DETECTORS or (model in _H2D and not old_h2d)
@@ -474,7 +573,7 @@ def plate_position_only(data: PrinterData) -> bool:
     """Whether the build plate detection checks the plate's position only
     (the X1 and A series), not its type too -- Bambu Studio names the two
     apart."""
-    return _model_key(data.model) in _X1_SERIES | _A1_FAMILY
+    return model_key(data.model) in _X1_SERIES | _A1_FAMILY
 
 
 def print_status(data: PrinterData) -> str | None:
@@ -490,9 +589,13 @@ def print_stage(status: dict[str, Any]) -> str | None:
     moment of a job, which is no idle printer; a stage number we do not know
     yet is unknown."""
     name = status.get("stg_cur_name")
+    stage = status.get("stg_cur")
+    # Stage 0 is "Printing": the A series and the P1 report it while idle
+    # too (BamBuddy clears it for the A1, A1 mini and P1 only).
+    if stage == 0 and status.get("state") not in PRINTING_STATES:
+        name = None
     if name is None:
         return None if status.get("state") in JOB_STATES else "idle"
-    stage = status.get("stg_cur")
     if isinstance(stage, int) and stage in STAGES:
         return STAGES[stage]
     return _DERIVED_STAGES.get(str(name))
@@ -555,14 +658,26 @@ def ams_model(unit: dict[str, Any], printer: PrinterData) -> str:
     return "AMS Lite" if printer.is_a1_family() else "AMS"
 
 
-# The AMS units with a heater; BamBuddy's `supports_drying` tells whether the
-# printer's firmware lets it dry remotely.
-DRYING_AMS_MODELS = frozenset({"AMS 2 Pro", "AMS HT"})
+# The AMS units with a heater, and the hottest each dries at (Bambu Lab's
+# specifications); BamBuddy's `supports_drying` tells whether the printer's
+# firmware lets it dry remotely.
+DRYING_MAX = {"AMS 2 Pro": 65, "AMS HT": 85}
+
+
+def drying_minutes(unit: dict[str, Any]) -> int:
+    """The minutes of drying BamBuddy reports for the unit, 0 when it reports none."""
+    minutes = unit.get("dry_time")
+    return minutes if isinstance(minutes, int) and minutes > 0 else 0
+
+
+def is_drying(unit: dict[str, Any]) -> bool:
+    """The unit dries: minutes left, and not a countdown that stands still."""
+    return drying_minutes(unit) > 0 and not unit.get("dry_countdown_stalled")
 
 
 def has_heater(unit: dict[str, Any], printer: PrinterData) -> bool:
     """Whether the unit dries: it reports its drying, whoever started it."""
-    return ams_model(unit, printer) in DRYING_AMS_MODELS
+    return ams_model(unit, printer) in DRYING_MAX
 
 
 def can_dry(unit: dict[str, Any], printer: PrinterData) -> bool:
@@ -703,12 +818,13 @@ def hms_answers(error: dict[str, Any]) -> list[str]:
 
 def hms_code(error: dict[str, Any]) -> str:
     """A message's full code, as the printer and BamBuddy take it back."""
-    return str(error.get("full_code") or error.get("code") or "").removeprefix("0x").upper()
+    # In capitals first: a leading 0X goes as a 0x does (the action's code too).
+    return str(error.get("full_code") or error.get("code") or "").upper().removeprefix("0X")
 
 
 # The materials a slot or an external spool can be set to: Bambu's generic
 # profiles (BamBuddy's list of them), with Bambu Studio's nozzle ranges of
-# each profile (his word, 2026-10-18: the more, the better).
+# each profile.
 MATERIALS: dict[str, Material] = {
     "PLA": Material("PLA", "GFL99", 190, 240),
     "PLA Silk": Material("PLA", "GFL96", 190, 240),
@@ -742,11 +858,17 @@ MATERIALS: dict[str, Material] = {
 }
 
 
-def active_tray(status: dict[str, Any]) -> int | None:
-    """The global id of the loaded slot, None with nothing loaded."""
-    tray_now = status.get("tray_now")
+def active_tray(data: PrinterData) -> int | None:
+    """The global id of the loaded slot, None with nothing loaded. A
+    two-nozzle printer's 254 is "an external spool" (BamBuddy reads both
+    holders so): the active nozzle tells which -- the left one feeds from
+    the left spool (254), the right one from the right (255), as
+    BamBuddy's printer card reads it."""
+    tray_now = data.status.get("tray_now")
     if not isinstance(tray_now, int) or tray_now == NOTHING_LOADED:
         return None
+    if data.is_dual_nozzle and tray_now == EXTERNAL_LEFT:
+        return EXTERNAL_LEFT if data.status.get("active_extruder") == 1 else EXTERNAL_RIGHT
     return tray_now
 
 

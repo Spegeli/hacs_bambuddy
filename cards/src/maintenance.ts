@@ -4,8 +4,9 @@
 // first visit often marks several). BamBuddy counts a task never marked
 // done from 0 h: such a task says so instead of a huge number.
 import { html, nothing, type TemplateResult } from "lit";
+import { repeat } from "lit/directives/repeat.js";
 
-import { formatDuration, formatNumber, formatState, stateOf } from "./format";
+import { formatDuration, formatNumber, formatState, hasValue, stateOf } from "./format";
 import { icon } from "./icons";
 import { t, type TextKey } from "./i18n";
 import { dialogNote, type CardContext } from "./parts";
@@ -35,10 +36,12 @@ export interface MaintenanceDialog {
   kind: "maintenance";
   /** The task whose row asks "Mark as done?". */
   confirming?: number;
-  /** The task being marked done now. */
-  marking?: number;
+  /** The tasks being marked done now. */
+  marking?: readonly number[];
   /** Why the last try failed: said in the dialog, which stays open. */
   error?: string;
+  /** The task marked done last: said to a screen reader. */
+  marked?: string;
 }
 
 /** BamBuddy's default tasks, which it names in English. */
@@ -77,7 +80,7 @@ function taskOf(item: unknown): MaintenanceTask | undefined {
  * printer offline: BamBuddy keeps it. */
 export function maintenanceOf(ctx: CardContext): Maintenance | undefined {
   const state = stateOf(ctx.hass, ctx.refs.maintenance);
-  if (!state || ctx.unreachable || ["unavailable", "unknown"].includes(state.state)) return undefined;
+  if (!state || ctx.unreachable || !hasValue(ctx.hass, ctx.refs.maintenance)) return undefined;
   const listed = state.attributes["tasks"];
   const tasks = (Array.isArray(listed) ? (listed as unknown[]) : []).map(taskOf).filter((task): task is MaintenanceTask => task !== undefined);
   return {
@@ -101,7 +104,7 @@ export function maintenancePill(ctx: CardContext, open: () => void): TemplateRes
   const count = due + soon;
   const tone = due > 0 ? "err" : soon > 0 ? "warn" : "ok";
   const label = count ? t(hass, "maint_due_aria", { n: count, overdue: due, soon }) : t(hass, "maint_ok_aria");
-  return html`<button class="pill maintenance tone-${tone}" aria-label=${label} title=${label} @click=${open}>
+  return html`<button class="pill maintenance tone-${tone}" aria-label=${label} title=${label} aria-haspopup="dialog" @click=${open}>
     ${icon("wrench")}<span>${count ? t(hass, "maint_due", { n: count }) : t(hass, "maint_ok")}</span>
   </button>`;
 }
@@ -132,15 +135,17 @@ function ordered(tasks: MaintenanceTask[]): MaintenanceTask[] {
 
 export interface MaintenanceActions {
   confirmTask: (id: number | undefined) => void;
-  markDone: (id: number) => void;
+  /** Marks the task done; its name as the row shows it, to say it afterwards. */
+  markDone: (id: number, name: string) => void;
 }
 
 function taskRow(ctx: CardContext, task: MaintenanceTask, dialog: MaintenanceDialog, actions: MaintenanceActions, canMark: boolean): TemplateResult {
   const { hass } = ctx;
-  const key = TASK_NAMES[task.name];
+  // A task named like a property of every object (toString) is no text key.
+  const key = Object.hasOwn(TASK_NAMES, task.name) ? TASK_NAMES[task.name] : undefined;
   const name = key ? t(hass, key) : task.name;
   const used = task.interval > 0 ? Math.min(1, Math.max(0, (task.interval - task.left) / task.interval)) : 1;
-  const pending = dialog.marking === task.id;
+  const pending = dialog.marking?.includes(task.id) ?? false;
   const confirming = dialog.confirming === task.id;
   return html`<div class="maint-row tone-${toneOf(task)}">
     <div class="maint-text">
@@ -165,7 +170,7 @@ function taskRow(ctx: CardContext, task: MaintenanceTask, dialog: MaintenanceDia
           <span id="maint-ask-${task.id}">${t(hass, "maint_confirm")}</span>
           <span class="maint-confirm-actions">
             <button class="btn plain" @click=${() => actions.confirmTask(undefined)}>${t(hass, "cancel")}</button>
-            <button class="btn primary" @click=${() => actions.markDone(task.id)}>${t(hass, "maint_done")}</button>
+            <button class="btn primary" @click=${() => actions.markDone(task.id, name)}>${t(hass, "maint_done")}</button>
           </span>
         </div>`
       : nothing}
@@ -184,12 +189,15 @@ export function maintenanceContent(ctx: CardContext, dialog: MaintenanceDialog, 
   return html`<h2 id="dlg-title">${t(hass, "maint_title")}</h2>
     ${tasks.some((task) => !task.done) ? dialogNote(t(hass, canMark ? "maint_all_never" : ctx.settings.readOnly ? "maint_all_never_hidden" : "maint_all_never_elsewhere")) : nothing}
     ${tasks.length
-      ? html`<div class="maint-list">${tasks.map((task) => taskRow(ctx, task, dialog, actions, canMark))}</div>`
-      : html`<p class="hms-empty">${t(hass, "maint_none")}</p>`}
+      ? html`<div class="maint-list">${repeat(tasks, (task) => task.id, (task) => taskRow(ctx, task, dialog, actions, canMark))}</div>`
+      : ctx.unreachable
+        ? dialogNote(t(hass, "unreachable_short"))
+        : html`<p class="hms-empty">${t(hass, "maint_none")}</p>`}
     ${maintenance && !maintenance.canMarkDone && !ctx.settings.readOnly && tasks.length ? dialogNote(t(hass, "maint_no_permission")) : nothing}
     ${dialog.error ? html`<div class="dlg-error" role="alert">${icon("error")}<span>${dialog.error}</span></div>` : nothing}
+    <p class="maint-said sr-only" role="status">${dialog.marked ? t(hass, "maint_marked", { task: dialog.marked }) : ""}</p>
     <p class="maint-foot">
-      ${hours && !["unavailable", "unknown"].includes(hours.state)
+      ${hours && hasValue(hass, refs.printHours)
         ? html`<span>${t(hass, "maint_hours", { hours: formatState(hass, refs.printHours, hours.state) ?? hours.state })}</span>`
         : nothing}
       <span>${t(hass, "maint_note")}</span>

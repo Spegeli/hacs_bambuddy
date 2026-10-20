@@ -2,6 +2,7 @@
 shown, never installed."""
 from __future__ import annotations
 
+from datetime import timedelta
 from types import SimpleNamespace
 
 from freezegun.api import FrozenDateTimeFactory
@@ -10,6 +11,7 @@ from homeassistant.components.update import ATTR_INSTALLED_VERSION, ATTR_LATEST_
 from homeassistant.const import STATE_OFF, STATE_ON, STATE_UNKNOWN
 from homeassistant.core import HomeAssistant
 from homeassistant.setup import async_setup_component
+from pytest_homeassistant_custom_component.common import async_fire_time_changed
 from pytest_homeassistant_custom_component.typing import WebSocketGenerator
 
 from custom_components.bambuddy.api import BamBuddyConnectionError
@@ -82,10 +84,51 @@ async def test_failed_checks_cost_only_the_update_entities(
     hass: HomeAssistant, bambuddy_api: SimpleNamespace
 ) -> None:
     bambuddy_api.get_firmware_updates.side_effect = BamBuddyConnectionError("refused")
+    bambuddy_api.get_update_check.side_effect = BamBuddyConnectionError("refused")
     entry = await set_up(hass, X1C)
 
     assert state_of(hass, "update", instance_uid(entry, "bambuddy_update")).state == "unavailable"
+    assert state_of(hass, "update", printer_uid(entry, "firmware")).state == "unavailable"
     assert state_of(hass, "sensor", printer_uid(entry, "status")).state == "printing"
+
+
+async def test_one_failed_check_leaves_the_other(hass: HomeAssistant, bambuddy_api: SimpleNamespace) -> None:
+    """The firmware check timing out at Bambu Lab's pages: BamBuddy's own release still shows."""
+    bambuddy_api.get_firmware_updates.side_effect = BamBuddyConnectionError("timed out")
+    entry = await set_up(hass, X1C)
+
+    assert state_of(hass, "update", instance_uid(entry, "bambuddy_update")).state == STATE_ON
+    assert state_of(hass, "update", printer_uid(entry, "firmware")).state == "unavailable"
+
+
+async def test_a_failed_check_keeps_its_last_answer_and_comes_again_sooner(
+    hass: HomeAssistant, bambuddy_api: SimpleNamespace, freezer: FrozenDateTimeFactory
+) -> None:
+    """A check that fails later keeps what it last said; it is asked again after a quarter of an hour,
+    not six hours, and back on its six hours once it answers."""
+    entry = await set_up(hass, X1C)
+    firmware = bambuddy_api.get_firmware_updates.return_value
+    bambuddy_api.get_firmware_updates.side_effect = BamBuddyConnectionError("timed out")
+
+    freezer.tick(timedelta(hours=6, minutes=1))
+    async_fire_time_changed(hass)
+    await hass.async_block_till_done()
+    assert state_of(hass, "update", printer_uid(entry, "firmware")).state == STATE_ON
+    assert state_of(hass, "update", instance_uid(entry, "bambuddy_update")).state == STATE_ON
+    assert bambuddy_api.get_firmware_updates.await_count == 2
+
+    bambuddy_api.get_firmware_updates.side_effect = None
+    bambuddy_api.get_firmware_updates.return_value = {**firmware, "updates": []}
+    freezer.tick(timedelta(minutes=16))
+    async_fire_time_changed(hass)
+    await hass.async_block_till_done()
+    assert bambuddy_api.get_firmware_updates.await_count == 3
+    assert state_of(hass, "update", printer_uid(entry, "firmware")).state == STATE_UNKNOWN
+
+    freezer.tick(timedelta(minutes=16))
+    async_fire_time_changed(hass)
+    await hass.async_block_till_done()
+    assert bambuddy_api.get_firmware_updates.await_count == 3
 
 
 async def test_the_release_notes(
@@ -104,3 +147,12 @@ async def test_the_release_notes(
         notes[key] = (await client.receive_json())["result"]
 
     assert notes == {"bambuddy": "Printer access per group.", "firmware": "Improved first layer inspection."}
+
+
+
+async def test_the_updates_say_what_they_update(hass: HomeAssistant, bambuddy_api: SimpleNamespace) -> None:
+    """Home Assistant's list of updates shows the title beside the device: BamBuddy's own, a printer's firmware."""
+    entry = await set_up(hass, X1C)
+
+    assert state_of(hass, "update", instance_uid(entry, "bambuddy_update")).attributes["title"] == "BamBuddy"
+    assert state_of(hass, "update", printer_uid(entry, "firmware")).attributes["title"] == "Firmware"

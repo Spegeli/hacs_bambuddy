@@ -1,7 +1,8 @@
 """Diagnostics for bug reports: what BamBuddy reports about the instance,
-each printer and its smart plugs -- without the API key, the printers'
-access codes, camera addresses or serial numbers, and without a plug's
-address, login, URLs, headers or Home Assistant entities."""
+each printer and its smart plugs -- without the API key, BamBuddy's
+address, the printers' network addresses, access codes, camera addresses or
+serial numbers, and without a plug's address, login, URLs, headers or Home
+Assistant entities."""
 from __future__ import annotations
 
 from typing import Any
@@ -10,12 +11,15 @@ from homeassistant.components.diagnostics import async_redact_data
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers import device_registry as dr
 
-from .const import CONF_API_KEY, CONF_PRINTER_NAME
+from .const import CONF_API_KEY, CONF_PRINTER_NAME, CONF_URL
 from .coordinator import BamBuddyConfigEntry, BamBuddyData, BamBuddyPrinterCoordinator
 from .plugs import Plug
 
 TO_REDACT = {
     CONF_API_KEY,
+    # Addresses: a domain may name its owner, and the report is public.
+    CONF_URL,
+    "ip_address",
     CONF_PRINTER_NAME,  # "<BamBuddy name> (<model> / <serial>)"
     "access_code",
     "external_camera_url",
@@ -109,21 +113,21 @@ async def async_get_config_entry_diagnostics(hass: HomeAssistant, entry: BamBudd
             "can_control_plugs": runtime.can_control_plugs,
         },
         "printers": {str(printer_id): _printer(coordinator) for printer_id, coordinator in runtime.printers.items()},
-        "plugs": {str(plug_id): _plug(runtime, plug) for plug_id, plug in ((runtime.plugs.data or {}) if runtime.plugs else {}).items()},
+        "plugs": {str(plug_id): _plug(runtime, plug) for plug_id, plug in (runtime.plugs.data or {}).items()},
     }
 
 
 async def async_get_device_diagnostics(
     hass: HomeAssistant, entry: BamBuddyConfigEntry, device: dr.DeviceEntry
 ) -> dict[str, Any]:
-    """One printer's part; the whole entry's for its other devices -- and
-    for every device of an entry that did not load."""
+    """One printer's part, or one smart plug's; the whole entry's for its
+    other devices -- and for every device of an entry that did not load."""
     runtime: BamBuddyData | None = getattr(entry, "runtime_data", None)
-    for coordinator in runtime.printers.values() if runtime else ():
-        if coordinator.identifier in device.identifiers:
-            return _printer(coordinator)
-    plugs = runtime.plugs if runtime else None
-    for plug in (plugs.data or {}).values() if plugs else ():
-        if plugs is not None and runtime is not None and plugs.identifier(plug.id) in device.identifiers:
-            return _plug(runtime, plug)
+    if runtime is not None:
+        for coordinator in runtime.printers.values():
+            if coordinator.identifier in device.identifiers:
+                return _printer(coordinator)
+        for plug in (runtime.plugs.data or {}).values():
+            if runtime.plugs.identifier(plug.id) in device.identifiers:
+                return _plug(runtime, plug)
     return await async_get_config_entry_diagnostics(hass, entry)

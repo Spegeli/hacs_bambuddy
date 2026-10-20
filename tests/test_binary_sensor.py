@@ -2,25 +2,32 @@
 door, plate and the AMS units drying."""
 from __future__ import annotations
 
+import json
 from types import SimpleNamespace
 
 from freezegun.api import FrozenDateTimeFactory
 import pytest
-from homeassistant.const import STATE_OFF, STATE_ON, STATE_UNAVAILABLE
+from homeassistant.const import STATE_OFF, STATE_ON, STATE_UNAVAILABLE, STATE_UNKNOWN
 from homeassistant.core import HomeAssistant
+from homeassistant.helpers import entity_registry as er
 
 from custom_components.bambuddy.api import BamBuddyConnectionError
+from custom_components.bambuddy.const import DOMAIN
 
 from tests.conftest import (
     A1_MINI,
     H2D,
+    INTEGRATION,
     X1C,
     ams_uid,
     instance_uid,
+    load_fixture,
+    make_entry,
     next_refresh,
     no_entity,
     printer_uid,
     set_up,
+    setup_integration,
     state_of,
 )
 
@@ -82,6 +89,26 @@ async def test_an_ams_unit_drying(hass: HomeAssistant, bambuddy_api: SimpleNames
     assert state_of(hass, "binary_sensor", ams_uid(entry, 0, "drying", H2D)).state == STATE_OFF
 
 
+async def test_a_wired_network_sensor_left_from_1x_goes_where_there_is_no_port(
+    hass: HomeAssistant, bambuddy_api: SimpleNamespace
+) -> None:
+    """1.x gave every printer a Wired network sensor; only the X1E and the H2D Pro have a port."""
+    printers = load_fixture("printers.json")
+    for printer in printers:
+        if printer["id"] == X1C:
+            printer["model"] = "X1E"
+    bambuddy_api.get_printers.return_value = printers
+    entry = make_entry(hass, X1C, A1_MINI)
+    registry = er.async_get(hass)
+    for printer in (X1C, A1_MINI):
+        registry.async_get_or_create("binary_sensor", DOMAIN, printer_uid(entry, "wired_network", printer), config_entry=entry)
+
+    await setup_integration(hass, entry)
+
+    assert registry.async_get_entity_id("binary_sensor", DOMAIN, printer_uid(entry, "wired_network", X1C)) is not None
+    assert registry.async_get_entity_id("binary_sensor", DOMAIN, printer_uid(entry, "wired_network", A1_MINI)) is None
+
+
 async def test_a_stalled_countdown_is_no_drying(
     hass: HomeAssistant, bambuddy_api: SimpleNamespace, freezer: FrozenDateTimeFactory
 ) -> None:
@@ -91,6 +118,15 @@ async def test_a_stalled_countdown_is_no_drying(
     await next_refresh(hass, freezer)
 
     assert state_of(hass, "binary_sensor", ams_uid(entry, 128, "drying", H2D)).state == STATE_OFF
+    # A timer that does not count down leaves no time to wait for.
+    assert state_of(hass, "sensor", ams_uid(entry, 128, "drying_remaining_time", H2D)).state == STATE_UNKNOWN
+
+
+def test_the_drying_sensor_says_drying_not_running() -> None:
+    """Home Assistant's words for its device class read "Außer Betrieb" in German -- out of service."""
+    for name, on, off in (("strings.json", "Drying", "Not drying"), ("translations/de.json", "Trocknet", "Trocknet nicht")):
+        texts = json.loads((INTEGRATION / name).read_text(encoding="utf-8"))
+        assert texts["entity"]["binary_sensor"]["drying"]["state"] == {"on": on, "off": off}, name
 
 
 async def test_bambuddy_unreachable_is_told_not_hidden(
@@ -120,10 +156,17 @@ async def test_the_sd_card_is_plugged_in(hass: HomeAssistant, bambuddy_api: Simp
 async def test_a_wired_printer_says_so(
     hass: HomeAssistant, bambuddy_api: SimpleNamespace, freezer: FrozenDateTimeFactory
 ) -> None:
-    """On a cable the Wi-Fi signal is empty; this sensor tells why."""
-    entry = await set_up(hass, X1C)
+    """On a cable the Wi-Fi signal is empty; this sensor tells why. Only the X1E and the H2D Pro have a
+    port (Bambu's spec pages): an H2D has no such sensor."""
+    printers = load_fixture("printers.json")
+    for printer in printers:
+        if printer["id"] == X1C:
+            printer["model"] = "X1E"
+    bambuddy_api.get_printers.return_value = printers
+    entry = await set_up(hass, X1C, H2D)
     bambuddy_api.statuses[X1C]["wired_network"] = True
 
     await next_refresh(hass, freezer)
 
     assert state_of(hass, "binary_sensor", printer_uid(entry, "wired_network")).state == STATE_ON
+    assert no_entity(hass, "binary_sensor", printer_uid(entry, "wired_network", H2D))

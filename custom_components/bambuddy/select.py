@@ -20,7 +20,9 @@ from .models import JOB_STATES, PrinterData
 PARALLEL_UPDATES = 1
 
 _SPEED_MODES = {name: mode for mode, name in PRINT_SPEEDS.items()}
-_AIRDUCT_MODES = {0: "cooling", 1: "heating"}
+_AIRDUCT_MODES = {0: "cooling", 1: "heating", 2: "laser"}
+# BamBuddy sets only these; the laser mode (2, the H2 series' laser module) comes from the printer.
+_AIRDUCT_SETTABLE = ["cooling", "heating"]
 # BamBuddy's extruders: 0 is the right nozzle, 1 the left one.
 _NOZZLES = {1: "left", 0: "right"}
 _NOZZLE_INDEX = {name: index for index, name in _NOZZLES.items()}
@@ -50,7 +52,7 @@ SELECTS: tuple[BamBuddySelectDescription, ...] = (
     BamBuddySelectDescription(
         key="airduct_mode",
         translation_key="airduct_mode",
-        options=list(_AIRDUCT_MODES.values()),
+        options=_AIRDUCT_SETTABLE,
         entity_category=EntityCategory.CONFIG,
         exists_fn=lambda data: data.has_airduct(),
         value_fn=lambda data: _AIRDUCT_MODES.get(data.status.get("airduct_mode")),  # type: ignore[arg-type]
@@ -94,8 +96,17 @@ class BamBuddySelect(BamBuddyDescribedEntity, SelectEntity):
     def current_option(self) -> str | None:
         return self.entity_description.value_fn(self.data)
 
+    @property
+    def options(self) -> list[str]:
+        """The choices; a mode only the printer sets (the airduct's laser mode) while it is in it."""
+        options = list(self.entity_description.options or [])
+        current = self.current_option
+        return [*options, current] if current is not None and current not in options else options
+
     async def async_select_option(self, option: str) -> None:
         description = self.entity_description
+        if option not in (description.options or []):
+            return  # the mode it is in, which only the printer sets
         await async_run_command(
             self.coordinator,
             partial(description.select_fn, self.coordinator.client, self.coordinator.printer_id, option),

@@ -22,12 +22,17 @@ body:
     attributes:
       label: Which area does this affect?
       options:
-        - Setup (host, port, API key)
+        - Setup (address, API key)
         - Printers (add, remove)
         - Printer sensors and binary sensors
+        - AMS units and filament
         - Camera or cover image
-        - Print controls (buttons, print speed, chamber light)
-        - BamBuddy instance sensors
+        - Print controls (buttons, print speed, chamber light, temperatures, fans)
+        - Actions
+        - Smart plugs
+        - Maintenance
+        - Dashboard card
+        - BamBuddy instance sensors and updates
         - Documentation
         - Other
     validations:

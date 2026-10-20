@@ -170,7 +170,7 @@ describe("finding a printer's entities", () => {
     expect(printerDevices(hass).map((device) => device.id)).toEqual(["dev-x1c"]);
   });
 
-  it("finds a printer that a model without a model name reports", () => {
+  it("finds a printer whose device has no model", () => {
     const [printer] = offlineP1s() as [FakeDevice];
     const refs = findPrinter(makeHass({ devices: [{ ...printer, model: "" }] }), "dev-p1s");
     expect(refs?.model).toBe("");
@@ -192,7 +192,7 @@ describe("which devices are printers", () => {
     expect(printerDevices(hass).map((device) => device.id)).toEqual(["dev-x1c", "dev-h2d"]);
   });
 
-  it("uses the device's model for a device without one, and its name for a nameless one", () => {
+  it("gives an empty name and model for a device without them", () => {
     const [printer] = x1c() as [FakeDevice];
     const bare = makeHass({ devices: [printer] });
     const device = bare.devices["dev-x1c"];

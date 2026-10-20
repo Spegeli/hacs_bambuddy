@@ -22,6 +22,9 @@ _SYSTEM_TIMEOUT = aiohttp.ClientTimeout(total=30, connect=5)
 _COVER_TIMEOUT = aiohttp.ClientTimeout(total=30, connect=5)
 # Without a copy in its archive BamBuddy downloads the whole job first.
 _OBJECTS_TIMEOUT = aiohttp.ClientTimeout(total=60, connect=5)
+# The update checks: BamBuddy asks GitHub (with 10 s of its own) and Bambu
+# Lab's pages for each printer model, live.
+_UPDATE_TIMEOUT = aiohttp.ClientTimeout(total=60, connect=5)
 # The connection check probes the printer's ports and waits up to ten
 # seconds for a report: some 26 s at worst.
 _DIAGNOSTIC_TIMEOUT = aiohttp.ClientTimeout(total=40, connect=5)
@@ -191,8 +194,10 @@ class BamBuddyClient:
                 if response.status >= 400:
                     detail = await _detail(response)
                     # A proxy in front of a BamBuddy that does not answer (it
-                    # restarts): the proxy's page, no text of BamBuddy's.
-                    if response.status in _GATEWAY and detail == f"HTTP {response.status}":
+                    # restarts): the proxy's page, no text of BamBuddy's -- a
+                    # 404 too (Traefik: "404 page not found"); BamBuddy's own
+                    # 404s always carry its JSON detail.
+                    if response.status in (*_GATEWAY, 404) and detail == f"HTTP {response.status}":
                         raise BamBuddyConnectionError(f"{method} {path}: HTTP {response.status}")
                     error = _ERRORS.get(response.status, BamBuddyApiError)
                     raise error(response.status, detail)
@@ -211,6 +216,12 @@ class BamBuddyClient:
             raise BamBuddyApiError(200, "Unexpected answer")
         return answer
 
+    async def _list(self, path: str) -> list[dict[str, Any]]:
+        answer = await self._request("GET", path)
+        if not isinstance(answer, list):
+            raise BamBuddyApiError(200, "Unexpected answer")
+        return answer
+
     async def _command(self, path: str, **params: str | int | float) -> None:
         await self._request("POST", path, params=params or None)
 
@@ -222,10 +233,6 @@ class BamBuddyClient:
 
     async def get_auth_status(self) -> dict[str, Any]:
         return await self._object("/auth/status", key=False)
-
-    async def can_control(self) -> bool:
-        """Whether the key may control printers."""
-        return (await self.permissions()).control
 
     async def permissions(self) -> Permissions:
         """What the key may do: with BamBuddy's authentication off every
@@ -248,20 +255,19 @@ class BamBuddyClient:
         where something waits for it (setup, a flow)."""
         return await self._object("/system/info", timeout=_SYSTEM_TIMEOUT if patient else _TIMEOUT)
 
-    async def get_statistics(self) -> dict[str, Any]:
-        return await self._object("/archives/stats")
+    async def get_statistics(self, *, patient: bool = True) -> dict[str, Any]:
+        """BamBuddy's statistics ask every smart plug for its energy, one
+        after another: up to 30 s, 10 s where the setup waits for them."""
+        return await self._object("/archives/stats", timeout=_SYSTEM_TIMEOUT if patient else _TIMEOUT)
 
     async def get_update_check(self) -> dict[str, Any]:
-        return await self._object("/updates/check")
+        return await self._object("/updates/check", timeout=_UPDATE_TIMEOUT)
 
     async def get_firmware_updates(self) -> dict[str, Any]:
-        return await self._object("/firmware/updates")
+        return await self._object("/firmware/updates", timeout=_UPDATE_TIMEOUT)
 
     async def get_printers(self) -> list[dict[str, Any]]:
-        answer = await self._request("GET", "/printers/")
-        if not isinstance(answer, list):
-            raise BamBuddyApiError(200, "Unexpected answer")
-        return answer
+        return await self._list("/printers/")
 
     async def get_printer(self, printer_id: int) -> dict[str, Any]:
         return await self._object(f"/printers/{printer_id}")
@@ -301,18 +307,12 @@ class BamBuddyClient:
     async def get_smart_plugs(self) -> list[dict[str, Any]]:
         """BamBuddy's smart plugs, from its database. The answer holds a
         plug's address and login: never logged."""
-        answer = await self._request("GET", "/smart-plugs/")
-        if not isinstance(answer, list):
-            raise BamBuddyApiError(200, "Unexpected answer")
-        return answer
+        return await self._list("/smart-plugs/")
 
     async def get_plug_status(self, plug_id: int, *, patient: bool = True) -> dict[str, Any]:
         """A plug's state, reachability and energy figures: BamBuddy asks the
         plug itself -- 30 s, or 5 where Home Assistant's start waits for it."""
-        answer = await self._request("GET", f"/smart-plugs/{plug_id}/status", timeout=_PLUG_TIMEOUT if patient else _PLUG_QUICK)
-        if not isinstance(answer, dict):
-            raise BamBuddyApiError(200, "Unexpected answer")
-        return answer
+        return await self._object(f"/smart-plugs/{plug_id}/status", timeout=_PLUG_TIMEOUT if patient else _PLUG_QUICK)
 
     async def get_cover(self, printer_id: int) -> bytes:
         """The current job's cover, with the key."""

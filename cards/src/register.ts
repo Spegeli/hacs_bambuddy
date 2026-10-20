@@ -1,7 +1,7 @@
 // Defines the card's elements and lists it in the dashboard's card picker,
 // with a preview and, from Home Assistant 2026.6 on, as a suggestion for
-// the entities of a BamBuddy printer and its AMS units. A module loaded
-// twice defines nothing twice.
+// the entities of a BamBuddy printer and of the devices under it (its AMS
+// units, its smart plugs). A module loaded twice defines nothing twice.
 import { isPrinter, PLATFORM } from "./discovery";
 import type { Hass } from "./types";
 
@@ -52,8 +52,8 @@ interface PickerEntry {
   getEntitySuggestion: (hass: Hass, entityId: string) => Suggestion | null;
 }
 
-/** The card for an entity of a BamBuddy printer, or of one of its AMS
- * units; null for any other entity. Home Assistant adds it as it is: the
+/** The card for an entity of a BamBuddy printer, or of a device under it
+ * (its AMS units, its smart plugs); null for any other entity. Home Assistant adds it as it is: the
  * printer, as a card from the picker -- its editor shows the defaults. */
 export function suggestCard(hass: Hass, entityId: string, tag: string): Suggestion | null {
   const entry = hass.entities[entityId];

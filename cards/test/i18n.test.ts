@@ -66,3 +66,10 @@ describe("the card's texts", () => {
     expect(languageOf()).toBe("en");
   });
 });
+
+describe("the frame rate's note in German", () => {
+  it("says the highest is set at first", () => {
+    expect(LANGUAGES.de.fps_note).toContain("eingestellt ist zunächst die höchste.");
+    expect(LANGUAGES.de.editor_show_auto_off_help).toContain("und im Dialog des Strom-Chips");
+  });
+});

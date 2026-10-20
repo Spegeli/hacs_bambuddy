@@ -1,6 +1,7 @@
 """BamBuddy's switches: the AMS filament backup -- with it on, the printer
-switches to a slot with the same filament when one runs out -- and the AI
-detectors the printer has."""
+switches to a slot with the same filament when one runs out --, the AI
+detectors the printer has, the smart plugs, and the switch-off after the
+print with its "after every print"."""
 from __future__ import annotations
 
 from collections.abc import Awaitable, Callable
@@ -11,7 +12,7 @@ from homeassistant.components.switch import SwitchEntity
 from homeassistant.const import EntityCategory
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
-from homeassistant.helpers.restore_state import RestoreEntity
+from homeassistant.helpers.restore_state import RestoredExtraData, RestoreEntity
 from homeassistant.util import dt as dt_util
 
 from .auto_off import AutoOff, auto_off_for
@@ -39,7 +40,7 @@ async def async_setup_entry(
     hass: HomeAssistant, entry: BamBuddyConfigEntry, async_add_entities: AddConfigEntryEntitiesCallback
 ) -> None:
     runtime = entry.runtime_data
-    if runtime.plugs is not None and runtime.can_control_plugs:
+    if runtime.can_control_plugs:
         _add_plug_switches(runtime.plugs, async_add_entities)
     if not runtime.can_control:
         return
@@ -70,7 +71,7 @@ def _add_filament_backup(coordinator: BamBuddyPrinterCoordinator, async_add_enti
 
 class BamBuddyFilamentBackup(BamBuddyToggle, SwitchEntity):
     """BamBuddy 1.2.5.7 reads the setting only where the printer reports it
-    in `cfg`: not on the A1 and P1 series (they report it elsewhere; read
+    in `cfg`: not on the A1, the A1 mini and the P1 series (they report it elsewhere; read
     from BamBuddy 1.2.6 on). Unknown there -- and it still switches."""
 
     _attr_translation_key = "ams_filament_backup"
@@ -211,10 +212,23 @@ class BamBuddyAutoOffSwitch(_AutoOffEntity, SwitchEntity):
 
     def __init__(self, coordinator: BamBuddyPlugCoordinator, plug: Plug, auto_off: AutoOff) -> None:
         super().__init__(coordinator, plug, "auto_off", auto_off)
+        self._stored_printer: str | None = None
 
     @property
     def is_on(self) -> bool:
         return self.auto_off.armed
+
+    @property
+    def extra_restore_state_data(self) -> RestoredExtraData:
+        # The printer the phase belongs to (its key: kept out of the
+        # attributes, a serial number).
+        return RestoredExtraData({"printer": self.auto_off.printer.key})
+
+    async def async_added_to_hass(self) -> None:
+        extra = await self.async_get_last_extra_data()
+        printer = extra.as_dict().get("printer") if extra is not None else None
+        self._stored_printer = printer if isinstance(printer, str) else None
+        await super().async_added_to_hass()
 
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
@@ -231,7 +245,13 @@ class BamBuddyAutoOffSwitch(_AutoOffEntity, SwitchEntity):
 
     def _restore(self, state: str, attributes: dict[str, Any]) -> None:
         since = attributes.get("since")
-        self.auto_off.restore(state == "on", attributes.get("phase"), dt_util.parse_datetime(since) if isinstance(since, str) else None)
+        self.auto_off.restore(
+            state == "on",
+            attributes.get("phase"),
+            dt_util.parse_datetime(since) if isinstance(since, str) else None,
+            every_print=attributes.get("every_print") is True,
+            printer=self._stored_printer,
+        )
 
     async def async_turn_on(self, **kwargs: Any) -> None:
         self.auto_off.arm()
@@ -241,8 +261,8 @@ class BamBuddyAutoOffSwitch(_AutoOffEntity, SwitchEntity):
 
 
 class BamBuddyAutoOffEveryPrint(_AutoOffEntity, SwitchEntity):
-    """After every print, or only after the next one (BamBuddy's
-    "einmalig")."""
+    """After every print, or only after the next one (BamBuddy's one-shot:
+    its "Keep Enabled" off)."""
 
     _attr_translation_key = "auto_off_every_print"
     _attr_entity_category = EntityCategory.CONFIG

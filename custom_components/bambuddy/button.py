@@ -1,5 +1,6 @@
 """BamBuddy's buttons: pause, resume and stop a print, tell BamBuddy the
-plate is clear, clear HMS errors, refresh the status."""
+plate is clear, clear HMS errors, refresh the status; a smart plug's script,
+and "not this time" for the switch-off after the print."""
 from __future__ import annotations
 
 from collections.abc import Awaitable, Callable
@@ -14,9 +15,9 @@ from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 
 from .api import BamBuddyClient
 from .auto_off import AutoOff, auto_off_for
-from .coordinator import BamBuddyConfigEntry, BamBuddyPlugCoordinator, BamBuddyPrinterCoordinator
+from .coordinator import BamBuddyConfigEntry, BamBuddyPlugCoordinator
 from .entity import BamBuddyDescribedEntity, BamBuddyPlugEntity, async_add_plug_entities, async_run_command, async_switch_plug
-from .models import ACTIVE_STATES, JOB_STATES, PrinterData
+from .models import ACTIVE_STATES, ENDED_STATES, JOB_STATES, PrinterData
 from .plugs import Plug
 
 PARALLEL_UPDATES = 1
@@ -32,13 +33,13 @@ class BamBuddyButtonDescription(ButtonEntityDescription):
     # Needs the key's Control Printer permission.
     control: bool = True
     # BamBuddy acts without the printer: the button stays available.
-    offline_ok: bool = False
+    available_when_offline: bool = False
 
 
 def _plate_waits(data: PrinterData) -> bool:
     """BamBuddy takes the plate as cleared after a print, or while its queue
     waits for it."""
-    return bool(data.status.get("awaiting_plate_clear")) or data.state in ("FINISH", "FAILED")
+    return bool(data.status.get("awaiting_plate_clear")) or data.state in ENDED_STATES
 
 
 BUTTONS: tuple[BamBuddyButtonDescription, ...] = (
@@ -73,7 +74,7 @@ BUTTONS: tuple[BamBuddyButtonDescription, ...] = (
         refusal="plate_not_waiting",
         # A finished print on a printer switched off: BamBuddy's queue waits
         # all the same, and BamBuddy sends the printer nothing.
-        offline_ok=True,
+        available_when_offline=True,
     ),
     BamBuddyButtonDescription(
         key="clear_hms",
@@ -102,7 +103,7 @@ async def async_setup_entry(
         for description in BUTTONS
         if runtime.can_control or not description.control
     )
-    if runtime.plugs is not None and runtime.can_control_plugs:
+    if runtime.can_control_plugs:
         plugs = runtime.plugs
 
         def create(plug: Plug) -> list[tuple[str, Callable[[], ButtonEntity]]]:
@@ -123,10 +124,6 @@ class BamBuddyButton(BamBuddyDescribedEntity, ButtonEntity):
 
     entity_description: BamBuddyButtonDescription
 
-    def __init__(self, coordinator: BamBuddyPrinterCoordinator, description: BamBuddyButtonDescription) -> None:
-        super().__init__(coordinator, description)
-        self.available_when_offline = description.offline_ok
-
     async def async_press(self) -> None:
         description = self.entity_description
         await async_run_command(
@@ -134,7 +131,7 @@ class BamBuddyButton(BamBuddyDescribedEntity, ButtonEntity):
             partial(description.press_fn, self.coordinator.client, self.coordinator.printer_id),
             allowed=description.allowed,
             refusal=description.refusal_fn(self.coordinator.data) if description.refusal_fn else description.refusal,
-            offline_ok=description.offline_ok,
+            offline_ok=description.available_when_offline,
         )
 
 

@@ -230,7 +230,7 @@
     "rest_energy_multiplier": 1.0,
     "rest_energy_total_path": null,
     "rest_energy_total_multiplier": 1.0,
-    "controls_printer_power": false,
+    "controls_printer_power": true,
     "enabled": true,
     "auto_on": true,
     "auto_off": false,

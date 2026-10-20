@@ -6,8 +6,9 @@ from types import SimpleNamespace
 
 from freezegun.api import FrozenDateTimeFactory
 import pytest
-from homeassistant.const import STATE_UNAVAILABLE, STATE_UNKNOWN
-from homeassistant.core import HomeAssistant
+from homeassistant.const import EVENT_STATE_CHANGED, STATE_UNAVAILABLE, STATE_UNKNOWN
+from homeassistant.core import Event, HomeAssistant, callback
+from homeassistant.util.unit_system import US_CUSTOMARY_SYSTEM
 from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers import entity_registry as er
 
@@ -31,6 +32,7 @@ from tests.conftest import (
     printer_uid,
     set_up,
     setup_integration,
+    state_at,
     state_of,
 )
 
@@ -83,8 +85,9 @@ async def test_the_instance_figures_with_units(hass: HomeAssistant, bambuddy_api
     filament = state_of(hass, "sensor", instance_uid(entry, "total_filament_used"))
     assert (float(filament.state), filament.attributes["unit_of_measurement"]) == (stats["total_filament_grams"], "g")
     disk = state_of(hass, "sensor", instance_uid(entry, "disk_free"))
-    assert disk.attributes["unit_of_measurement"] == "GB"
-    assert float(disk.state) == pytest.approx(system["storage"]["disk_free_bytes"] / 1e9, abs=0.01)
+    # In GiB, as BamBuddy shows it (its "GB" are 1024³ bytes).
+    assert disk.attributes["unit_of_measurement"] == "GiB"
+    assert float(disk.state) == pytest.approx(system["storage"]["disk_free_bytes"] / 2**30, abs=0.01)
 
 
 @pytest.mark.parametrize(
@@ -238,7 +241,13 @@ async def test_the_ams_climate(hass: HomeAssistant, bambuddy_api: SimpleNamespac
 
 async def test_a_wired_printer_s_wifi_signal_is_off_at_first(hass: HomeAssistant, bambuddy_api: SimpleNamespace) -> None:
     """On a cable from the start: no signal to show, nothing unavailable on
-    its device page."""
+    its device page. The H2D's fixture reads -90 "wired" as BamBuddy does, here as an H2D Pro (which has
+    a port)."""
+    printers = load_fixture("printers.json")
+    for printer in printers:
+        if printer["id"] == H2D:
+            printer["model"] = "H2D Pro"
+    bambuddy_api.get_printers.return_value = printers
     entry = await set_up(hass, H2D)
 
     wifi = er.async_get(hass).async_get(entity_id(hass, "sensor", printer_uid(entry, "wifi_signal", H2D)))
@@ -420,6 +429,22 @@ async def test_two_external_spools_by_their_ids(
     assert state_of(hass, "sensor", printer_uid(entry, "external_spool_2", H2D)).state == "TPU"
 
 
+@pytest.mark.parametrize(("extruder", "feeding"), [(0, "external_spool_2"), (1, "external_spool")])
+async def test_the_active_nozzle_tells_which_external_spool_feeds(
+    hass: HomeAssistant, bambuddy_api: SimpleNamespace, extruder: int, feeding: str
+) -> None:
+    """On two-nozzle printers BamBuddy names every external spool 254: the right nozzle (0) feeds
+    from the right spool, the left one (1) from the left -- as BamBuddy's printer card reads it."""
+    for spool in bambuddy_api.statuses[H2D]["vt_tray"]:
+        spool.update({"tray_type": "PETG" if spool["id"] == 254 else "TPU", "tray_sub_brands": "", "exists": True})
+    bambuddy_api.statuses[H2D].update({"tray_now": 254, "active_extruder": extruder})
+    entry = await set_up(hass, H2D)
+
+    active = {key: state_of(hass, "sensor", printer_uid(entry, key, H2D)).attributes["active"] for key in ("external_spool", "external_spool_2")}
+    assert active == {"external_spool": feeding == "external_spool", "external_spool_2": feeding == "external_spool_2"}
+    assert state_of(hass, "sensor", printer_uid(entry, "active_filament", H2D)).state == ("TPU" if extruder == 0 else "PETG")
+
+
 async def test_an_ams_without_a_humidity_yet_gets_the_sensor(hass: HomeAssistant, bambuddy_api: SimpleNamespace) -> None:
     """BamBuddy reports the humidity once the AMS sent it; the sensor waits
     for it instead of never existing."""
@@ -441,6 +466,26 @@ async def test_the_end_time_holds_still_between_estimates(
     await next_refresh(hass, freezer)
 
     assert state_of(hass, "sensor", printer_uid(entry, "end_time")).state == "2026-10-16T12:37:00+00:00"
+
+
+async def test_the_end_time_follows_an_estimate_that_stands_still(
+    hass: HomeAssistant, bambuddy_api: SimpleNamespace, freezer: FrozenDateTimeFactory
+) -> None:
+    """The printer keeps its estimate while it prepares or changes filament: the end moves on with
+    the clock once it is 2 minutes behind, not into the past."""
+    freezer.move_to(datetime(2026, 10, 16, 12, 0, 50, tzinfo=timezone.utc))
+    entry = await set_up(hass, X1C)
+    end_time = printer_uid(entry, "end_time")
+    assert state_of(hass, "sensor", end_time).state == "2026-10-16T12:37:00+00:00"
+
+    # Under 2 minutes behind: held.
+    for _ in range(6):
+        await next_refresh(hass, freezer)
+    assert state_of(hass, "sensor", end_time).state == "2026-10-16T12:37:00+00:00"
+    # 2 minutes behind with the same estimate: it moves with the clock.
+    for _ in range(2):
+        await next_refresh(hass, freezer)
+    assert state_of(hass, "sensor", end_time).state == "2026-10-16T12:39:00+00:00"
 
 
 async def test_a_pause_drops_the_held_end_time(
@@ -468,7 +513,12 @@ async def test_no_end_time_while_paused(hass: HomeAssistant, bambuddy_api: Simpl
 
 
 async def test_no_wifi_signal_on_a_cable(hass: HomeAssistant, bambuddy_api: SimpleNamespace, freezer: FrozenDateTimeFactory) -> None:
-    """BamBuddy reports -90 dBm for a printer on Ethernet."""
+    """BamBuddy reports -90 dBm for a printer on Ethernet (the X1E here)."""
+    printers = load_fixture("printers.json")
+    for printer in printers:
+        if printer["id"] == X1C:
+            printer["model"] = "X1E"
+    bambuddy_api.get_printers.return_value = printers
     entry = await set_up(hass, X1C)
     bambuddy_api.statuses[X1C].update({"wired_network": True, "wifi_signal": -90})
 
@@ -503,7 +553,7 @@ async def test_a_slot_tells_its_drying_recommendation(hass: HomeAssistant, bambu
 
 
 async def test_a_two_nozzle_printers_slot_tells_its_nozzle(hass: HomeAssistant, bambuddy_api: SimpleNamespace) -> None:
-    """His word: which nozzle an AMS unit feeds (BamBuddy's ams_extruder_map:
+    """Which nozzle an AMS unit feeds (BamBuddy's ams_extruder_map:
     0 right, 1 left) -- only where a printer has two."""
     entry = await set_up(hass, H2D, X1C)
 
@@ -514,7 +564,7 @@ async def test_a_two_nozzle_printers_slot_tells_its_nozzle(hass: HomeAssistant, 
 
 async def test_a_unit_on_the_filament_track_switch_names_no_nozzle(hass: HomeAssistant, bambuddy_api: SimpleNamespace) -> None:
     """BamBuddy leaves a unit that reaches both nozzles out of its map: it
-    must not be called left or right (review I1)."""
+    must not be called left or right."""
     bambuddy_api.statuses[H2D]["ams_extruder_map"] = {"128": 1}
     entry = await set_up(hass, H2D)
 
@@ -562,3 +612,133 @@ async def test_the_status_tells_bambuddys_name(hass: HomeAssistant, bambuddy_api
     entry = await set_up(hass, X1C)
 
     assert state_of(hass, "sensor", printer_uid(entry, "status")).attributes["bambuddy_name"] == "Workshop"
+
+
+
+async def test_a_printer_without_a_port_is_never_on_a_cable(
+    hass: HomeAssistant, bambuddy_api: SimpleNamespace, freezer: FrozenDateTimeFactory
+) -> None:
+    """BamBuddy calls -90 dBm "wired" for models in its list that have no port (an X1C at the edge of its
+    Wi-Fi): the signal stays a signal."""
+    bambuddy_api.statuses[X1C].update({"wired_network": True, "wifi_signal": -90})
+    entry = await set_up(hass, X1C)
+
+    state = state_of(hass, "sensor", printer_uid(entry, "wifi_signal"))
+    assert state.state == "-90"
+
+
+async def test_print_hours_may_go_down(hass: HomeAssistant, bambuddy_api: SimpleNamespace) -> None:
+    """BamBuddy's print hours offset can be lowered: a total, not a meter that only rises."""
+    entry = await set_up(hass, X1C)
+
+    assert state_of(hass, "sensor", printer_uid(entry, "print_hours")).attributes["state_class"] == "total"
+
+
+
+async def test_a_silent_unit_of_a_printer_without_a_model_gets_no_climate_sensors(
+    hass: HomeAssistant, bambuddy_api: SimpleNamespace
+) -> None:
+    """It may be an AMS Lite, which measures neither: the reload when the model comes adds them for a
+    real AMS -- none stay behind for a Lite."""
+    printers = load_fixture("printers.json")
+    for printer in printers:
+        if printer["id"] == A1_MINI:
+            printer["model"] = None
+    bambuddy_api.get_printers.return_value = printers
+    entry = await set_up(hass, A1_MINI)
+
+    assert no_entity(hass, "sensor", ams_uid(entry, 0, "humidity", A1_MINI))
+    assert no_entity(hass, "sensor", ams_uid(entry, 0, "temperature", A1_MINI))
+
+
+def _ams_climate(hass: HomeAssistant, entry_id: str) -> list[str]:
+    """The unique IDs of the entry's AMS humidity and temperature sensors."""
+    return [
+        item.unique_id
+        for item in er.async_entries_for_config_entry(er.async_get(hass), entry_id)
+        if "_ams" in item.unique_id and item.unique_id.endswith(("_humidity", "_temperature"))
+    ]
+
+
+async def test_an_ams_lite_gets_no_climate_sensors(hass: HomeAssistant, bambuddy_api: SimpleNamespace) -> None:
+    """The AMS Lite measures neither; it sends a fixed temperature of 0 (BamBuddy passes "0.0" on)."""
+    entry = await set_up(hass, A1_MINI)
+
+    assert bambuddy_api.statuses[A1_MINI]["ams"][0]["temp"] == 0.0
+    assert _ams_climate(hass, entry.entry_id) == []
+
+
+async def test_the_a2l_s_ams_lite_gets_no_climate_sensors(hass: HomeAssistant, bambuddy_api: SimpleNamespace) -> None:
+    """The A2L's Lite (BamBuddy's unit 6) also sends a humidity of 0."""
+    printers = load_fixture("printers.json")
+    for printer in printers:
+        if printer["id"] == A1_MINI:
+            printer["model"] = "A2L"
+    bambuddy_api.get_printers.return_value = printers
+    bambuddy_api.statuses[A1_MINI]["ams"][0].update({"id": 6, "humidity": 0.0, "temp": 0.0})
+    entry = await set_up(hass, A1_MINI)
+
+    assert _ams_climate(hass, entry.entry_id) == []
+
+
+async def test_an_ams_ht_of_a_printer_without_a_model_gets_its_climate_sensors(
+    hass: HomeAssistant, bambuddy_api: SimpleNamespace
+) -> None:
+    """An AMS HT is told by its id: no Lite, whatever BamBuddy named."""
+    printers = load_fixture("printers.json")
+    for printer in printers:
+        if printer["id"] == A1_MINI:
+            printer["model"] = None
+    bambuddy_api.get_printers.return_value = printers
+    bambuddy_api.statuses[A1_MINI]["ams"][0].update({"id": 128, "module_type": "", "humidity": 12.0, "temp": 30.0})
+    entry = await set_up(hass, A1_MINI)
+
+    assert len(_ams_climate(hass, entry.entry_id)) == 2
+
+
+async def test_a_named_unit_of_a_printer_without_a_model_gets_its_climate_sensors(
+    hass: HomeAssistant, bambuddy_api: SimpleNamespace
+) -> None:
+    """BamBuddy named it an AMS: no Lite, whatever the printer is."""
+    printers = load_fixture("printers.json")
+    for printer in printers:
+        if printer["id"] == A1_MINI:
+            printer["model"] = None
+    bambuddy_api.get_printers.return_value = printers
+    bambuddy_api.statuses[A1_MINI]["ams"][0].update({"module_type": "ams", "humidity": 31.0, "temp": 24.0})
+    entry = await set_up(hass, A1_MINI)
+
+    assert len(_ams_climate(hass, entry.entry_id)) == 2
+
+
+
+async def test_a_trigger_on_the_print_status_reads_the_poll_new(
+    hass: HomeAssistant, bambuddy_api: SimpleNamespace, freezer: FrozenDateTimeFactory
+) -> None:
+    """Home Assistant starts an automation at once: the print status is written last, so a "print
+    finished" trigger reads the printer's other entities of the same poll."""
+    entry = await set_up(hass, X1C)
+    status_id = entity_id(hass, "sensor", printer_uid(entry, "status"))
+    progress_id = entity_id(hass, "sensor", printer_uid(entry, "progress"))
+    seen: list[str] = []
+
+    @callback
+    def changed(event: Event) -> None:
+        if event.data["entity_id"] == status_id:
+            seen.append(state_at(hass, progress_id).state)
+
+    hass.bus.async_listen(EVENT_STATE_CHANGED, changed)
+    bambuddy_api.statuses[X1C].update({"state": "FINISH", "progress": 100})
+    await next_refresh(hass, freezer)
+
+    assert seen == ["100"]
+
+
+async def test_the_nozzle_diameter_stays_in_millimetres(hass: HomeAssistant, bambuddy_api: SimpleNamespace) -> None:
+    """A nozzle is told by its millimetres also where Home Assistant uses inches (0.4 mm would read
+    "0.0 in")."""
+    hass.config.units = US_CUSTOMARY_SYSTEM
+    entry = await set_up(hass, X1C)
+
+    state = state_of(hass, "sensor", printer_uid(entry, "nozzle_diameter"))
+    assert (state.state, state.attributes["unit_of_measurement"]) == ("0.4", "mm")

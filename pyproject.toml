@@ -9,6 +9,12 @@ asyncio_mode = "auto"
 # Set explicitly: pytest-asyncio before 1.0 -- the minimum Home Assistant's
 # test package brings 0.26 -- warns while it is unset.
 asyncio_default_fixture_loop_scope = "function"
+# A coroutine nobody awaits is only a warning, raised from its finalizer:
+# an error here, on every run -- in CI and locally alike.
+filterwarnings = [
+    "error::RuntimeWarning",
+    "error::pytest.PytestUnraisableExceptionWarning",
+]
 
 # Strict typing of the integration (quality scale rule strict-typing):
 # `mypy --strict` over custom_components.bambuddy, run from the repository

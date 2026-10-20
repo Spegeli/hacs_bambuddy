@@ -4,7 +4,7 @@
 // tappable piece is a button, so it works by keyboard.
 import { html, nothing, type TemplateResult } from "lit";
 
-import { filamentColor, formatPercent, formatState, hasValue, needsOutline, stateOf } from "./format";
+import { filamentColor, formatPercent, formatState, hasValue, needsOutline, numericState, stateOf } from "./format";
 import { icon, type IconName } from "./icons";
 import { LANGUAGES, t, type TextKey } from "./i18n";
 import type { Settings } from "./forms";
@@ -25,6 +25,18 @@ export interface Confirmation {
   action: [string, string, Record<string, unknown>];
   key: string;
 }
+
+/** The question before a print is stopped -- the card's Stop and the HMS
+ * answer that does it ask alike; the safe button keeps the print. */
+export const stopQuestion = (hass: Hass, action: Confirmation["action"], key: string): Confirmation => ({
+  title: t(hass, "stop_title"),
+  text: t(hass, "stop_text"),
+  confirm: t(hass, "stop_confirm"),
+  keep: t(hass, "stop_keep"),
+  danger: true,
+  action,
+  key,
+});
 
 /** What a view needs from the card. */
 export interface CardContext {
@@ -92,12 +104,13 @@ export interface CardContext {
   show: (view: View) => void;
   /** Opens the connection check, which runs at once. */
   checkConnection: () => void;
-  /** Opens a dialog of the plugs: their rows (the chip), or the settings of
-   * the switch-off after the print. */
-  openDialog: (kind: "power" | "auto_off") => void;
+  /** Opens the switch-off's settings; opened from the plugs dialog, they go back to it. */
+  openAutoOff: () => void;
 }
 
-/** A button with an icon and, unless `iconOnly`, its label. */
+/** A button with an icon and, unless `iconOnly`, its label. While its
+ * command runs it is marked, not disabled -- a disabled button drops the
+ * keyboard's focus to the page -- and takes no press. */
 export function actionButton(options: {
   label: string;
   iconName: IconName;
@@ -110,16 +123,20 @@ export function actionButton(options: {
   className?: string;
   /** The element that says more about what the button does. */
   describedBy?: string;
+  /** Which of several alike buttons this is: a question comes back to it. */
+  answer?: string;
 }): TemplateResult {
-  const { label, iconName, onClick, kind = "tonal", disabled = false, pending = false, iconOnly = false, aria, className = "", describedBy } = options;
+  const { label, iconName, onClick, kind = "tonal", disabled = false, pending = false, iconOnly = false, aria, className = "", describedBy, answer } = options;
   return html`<button
     class="btn ${kind} ${iconOnly ? "icon-only" : ""} ${pending ? "pending" : ""} ${className}"
-    ?disabled=${disabled || pending}
+    ?disabled=${disabled}
+    aria-disabled=${pending ? "true" : nothing}
     aria-busy=${pending ? "true" : "false"}
     aria-label=${aria ?? label}
     aria-describedby=${describedBy ?? nothing}
+    data-answer=${answer ?? nothing}
     title=${aria ?? label}
-    @click=${onClick}
+    @click=${pending ? nothing : onClick}
   >
     ${icon(iconName)}${iconOnly ? nothing : html`<span>${label}</span>`}
   </button>`;
@@ -134,7 +151,20 @@ export function radioKeys(event: KeyboardEvent): void {
   const moves: Record<string, number> = { ArrowRight: index + 1, ArrowDown: index + 1, ArrowLeft: index - 1, ArrowUp: index - 1, Home: 0, End: radios.length - 1 };
   if (index < 0 || !(event.key in moves)) return;
   event.preventDefault();
-  radios[((moves[event.key] as number) + radios.length) % radios.length]?.focus();
+  const next = radios[((moves[event.key] as number) + radios.length) % radios.length];
+  // Tab leaves the group from where the focus is.
+  for (const radio of radios) radio.tabIndex = radio === next ? 0 : -1;
+  next?.focus();
+}
+
+/** A group of radios the focus leaves: Tab comes back in on the chosen
+ * option, else the first (the stop `radioKeys` moved goes back). */
+export function radioLeave(event: FocusEvent): void {
+  const group = event.currentTarget as HTMLElement;
+  if (event.relatedTarget instanceof Node && group.contains(event.relatedTarget)) return;
+  const radios = [...group.querySelectorAll<HTMLElement>("[role=radio]")];
+  const chosen = radios.find((radio) => radio.getAttribute("aria-checked") === "true") ?? radios[0];
+  for (const radio of radios) radio.tabIndex = radio === chosen ? 0 : -1;
 }
 
 /** The option of a group of radios the tab key stops at: the chosen one,
@@ -217,6 +247,34 @@ export function heaters(ctx: CardContext): { label: string; heater: Heater; kind
   ];
 }
 
+/** A dialog's "− value +": its two buttons, and the value said to a screen
+ * reader as it changes. */
+export function stepControl(options: {
+  lower: { label: string; disabled: boolean; onClick: () => void };
+  raise: { label: string; disabled: boolean; onClick: () => void };
+  value: TemplateResult | string;
+  /** The element that names what the stepper changes: a group then. */
+  labelledBy?: string;
+}): TemplateResult {
+  const { lower, raise, value, labelledBy } = options;
+  return html`<div class="stepper" role=${labelledBy ? "group" : nothing} aria-labelledby=${labelledBy ?? nothing}>
+    ${actionButton({ ...lower, iconName: "minus", iconOnly: true })}
+    <output class="step-value" aria-live="polite">${value}</output>
+    ${actionButton({ ...raise, iconName: "plus", iconOnly: true })}
+  </div>`;
+}
+
+/** The nozzle that reads hottest now: its temperature sensor, its figure
+ * and its place (of two, 0 left). */
+export function hottestNozzle(ctx: CardContext): { sensor: string; value: number; index: number } | undefined {
+  return ctx.refs.nozzles
+    .flatMap(({ sensor }, index) => {
+      const value = numericState(ctx.hass, sensor);
+      return sensor && value !== undefined ? [{ sensor, value, index }] : [];
+    })
+    .sort((a, b) => b.value - a.value)[0];
+}
+
 /** The most common reason why every command "does nothing": with developer
  * LAN mode off, BamBuddy takes commands and the printer ignores them. Only
  * "off" says so; an unknown mode (some printers never report it) does not. */
@@ -228,8 +286,8 @@ export function developerHint(ctx: CardContext): TemplateResult | typeof nothing
 
 /** An entity's name in the card: the card's own text for it, in the
  * viewer's language -- Home Assistant names entities in the server's --,
- * unless the user renamed the entity; then his name, without the
- * printer's name in front where he typed it. The entity registry holds the
+ * unless the user renamed the entity; then their name, without the
+ * printer's name in front where they typed it. The entity registry holds the
  * integration's own name where the user gave none: the card's text for it
  * in one of its languages, which are the integration's. */
 export function entityName(ctx: CardContext, entityId: string, key: TextKey): string {
@@ -251,7 +309,8 @@ export const AMS_HT = "AMS HT";
  * every AMS where the printer has AMS units of two models -- "AMS A" beside
  * "AMS B" (AMS 2 Pro) says it is the first AMS. "AMS HT A" says its own. */
 export function unitModel(ams: AmsRefs[], unit: AmsRefs): string | undefined {
-  if (!unit.model) return undefined;
+  // An A2L's AMS Lite is named so: its name says it.
+  if (!unit.model || unit.name === unit.model) return undefined;
   const models = new Set(ams.filter((item) => item.model && item.model !== AMS_HT).map((item) => item.model));
   return !unit.name.includes(unit.model) || (models.size > 1 && unit.model !== AMS_HT) ? unit.model : undefined;
 }
@@ -297,6 +356,18 @@ export interface Slot {
   /** A spool sits there, described or not. */
   present: boolean;
 }
+
+/** A slot's number in its unit: its own (the sensor's `slot`), the place
+ * in the list only without one -- a slot whose sensor is disabled is not
+ * in the list. */
+function slotNumber(hass: Hass, entityId: string, index: number): number {
+  const slot = stateOf(hass, entityId)?.attributes["slot"];
+  return typeof slot === "number" && Number.isInteger(slot) && slot > 0 ? slot : index + 1;
+}
+
+/** A slot's place by the names the dialogs and questions give it: "Slot 2 · AMS A". */
+export const slotPlace = (hass: Hass, unit: AmsRefs, entityId: string, index: number): string =>
+  t(hass, "slot_label", { slot: slotNumber(hass, entityId, index), unit: unit.name });
 
 /** A slot sensor's filament: state = its name or "empty"; the attributes
  * say the rest (the integration's slot attributes). Without a state the

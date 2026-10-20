@@ -214,9 +214,9 @@ def test_parse_legacy_tag_reads_date_and_sequence():
     assert parse_legacy_tag("v2026.09.28-1") == (2026, 9, 28, 1)
     # One tag from before the "v" convention: still legacy.
     assert parse_legacy_tag("2025.10.06") == (2025, 10, 6, 0)
-    # Two real tags in this repository's history with a single-digit day --
-    # must still classify as legacy, never leak into parse_stable_tag as a
-    # syntactically-valid but wrong SemVer (2026.5.1).
+    # A date tag with a single-digit day must still classify as legacy,
+    # never leak into parse_stable_tag as a syntactically-valid but wrong
+    # SemVer (2026.5.1).
     assert parse_legacy_tag("v2026.05.1") == (2026, 5, 1, 0)
     assert parse_legacy_tag("v2.0.0") is None
 
@@ -613,10 +613,9 @@ def test_plan_stable_from_legacy_tags_only(monkeypatch):
 
 
 def test_plan_prerelease_with_only_date_tags_falls_back_to_the_newest_one(monkeypatch):
-    """The real repository's first beta, cut before v2.0.0_redesign
-    exists: previous must be the newest date tag, not empty -- an empty
-    previous would republish everything already shipped under
-    v2026.05.29 and v2026.06.04 as if it were new."""
+    """The first beta, cut before v2.0.0_redesign exists: previous must be
+    the newest date tag, not empty -- an empty previous would publish
+    everything the date versions shipped as if it were new."""
     monkeypatch.setattr(release, "git_tags", lambda: ["v2026.05.17", "v2026.06.04"])
     monkeypatch.setattr(release, "list_commits", lambda from_ref, to_ref: [])
     assert release.plan("prerelease", "major") == {
@@ -835,8 +834,7 @@ def test_the_notes_are_utf_8_whatever_the_locale(repository):
     """The runner's locale is UTF-8; a maintainer's machine may not be --
     Windows reads and writes cp1252. So git's output is read as UTF-8, and
     the notes are written as UTF-8, regardless: here under the C locale
-    with Python's UTF-8 mode off, where both would otherwise be ASCII.
-    Final review 2 m5."""
+    with Python's UTF-8 mode off, where both would otherwise be ASCII."""
     _git_commit(repository, "docs: explain the Größe of a wallet ✨", second=1)
     env = {
         name: value

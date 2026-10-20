@@ -1,5 +1,6 @@
 // What the card shares: the subset of Home Assistant's frontend object it
-// reads, its configuration, and the integration's entities as it finds them.
+// reads (and some fields its tests set), its configuration, and the
+// integration's entities as it finds them.
 
 export interface HassEntityState {
   entity_id: string;
@@ -224,6 +225,8 @@ export interface PrinterRefs {
   /** The AI detection switches the model has. */
   detectors: { key: DetectorKey; entityId: string }[];
   light?: string;
+  /** The integration names it a light, not a chamber light: a printer without a chamber. */
+  plainLight?: boolean;
   camera?: string;
   /** The live view's frame rate, where the camera gives more than 5. */
   cameraFps?: string;
@@ -234,7 +237,7 @@ export interface PrinterRefs {
   wifiSignal?: string;
   /** On while the printer is on Ethernet. */
   wiredNetwork?: string;
-  /** Off by default in Home Assistant: often missing. */
+  /** The printer's address as BamBuddy knows it: a diagnostic sensor. */
   ipAddress?: string;
   /** The printer's firmware update entity. */
   firmware?: string;
@@ -246,7 +249,7 @@ export interface PrinterRefs {
   storageUsb: boolean;
   /** BamBuddy's maintenance of the printer: state and tasks. */
   maintenance?: string;
-  /** The airduct mode: cooling or heating (P2S, X2D, H2 series). */
+  /** The airduct mode: cooling or heating (P2S, X2D, H2 series); laser while the printer has set it for its laser module. */
   airduct?: string;
   /** The AMS filament backup switch: with an AMS unit. */
   filamentBackup?: string;
@@ -255,7 +258,7 @@ export interface PrinterRefs {
   nozzleTypes: (string | undefined)[];
   /** Every AMS unit of the printer, also one unplugged now (see shownUnits). */
   ams: AmsRefs[];
-  /** Its smart plugs: the one that powers it first. */
+  /** Its smart plugs, by name (the card puts the printer's own first). */
   plugs: PlugRefs[];
   /** Every entity of the printer and its AMS units: their changes redraw the card. */
   watched: string[];

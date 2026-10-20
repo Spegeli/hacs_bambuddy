@@ -1,6 +1,8 @@
 import { afterEach, describe, expect, it } from "vitest";
 
 import { changedConfig, configForm, DEFAULTS, editorData, settingsOf, startViewNote, validateConfig } from "../src/forms";
+import { de } from "../src/translations/de";
+import { en } from "../src/translations/en";
 import type { HeaderChip } from "../src/types";
 import { makeHass } from "./fixtures";
 
@@ -115,7 +117,7 @@ describe("what the editor shows and writes", () => {
     expect(editorData({ type: TYPE })["status_blocks"]).not.toBe(DEFAULTS.blocks);
   });
 
-  it("writes only what the user changed: a list left out stays out until he edits it", () => {
+  it("writes only what the user changed: a list left out stays out until the user edits it", () => {
     const config = { type: TYPE, printer: "dev-x1c", grid_options: { columns: 6 } };
     const shown = editorData(config);
     // A chip hidden: the list is written as the editor shows it now.
@@ -307,16 +309,16 @@ describe("the visual editor", () => {
     expect(form.computeHelper({ name: "printer" })).toBe("A printer of the BamBuddy integration, not an AMS unit.");
     // Each list's help says first which list it is.
     expect(form.computeHelper({ name: "status_blocks" })).toBe(
-      "The sections of the “Status” tab below the print job: drag to reorder, × hides a section. Print controls and print speed show only during a print. Power appears only when BamBuddy links a plug to the printer.",
+      "The sections of the “Status” tab below the print job. Drag a section where you want it; × hides it. Print controls and print speed show only during a print, Power only when BamBuddy links a plug to the printer.",
     );
     expect(form.computeHelper({ name: "start_view" })).toBeUndefined();
     expect(form.computeLabel({ name: "header_chips" })).toBe("Add chip");
     expect(form.computeHelper({ name: "header_chips" })).toBe(
-      "The chips below the name: drag to reorder, × hides a chip. Door, storage and drying appear only while the door is open, the storage is missing or an AMS dries; Power only with a smart plug. An HMS error always shows.",
+      "The chips below the name. Drag a chip where you want it; × hides it. Door, SD card / USB drive and drying appear only while the door is open, the storage is missing or an AMS dries; Power only with a smart plug. An HMS error always shows.",
     );
-    expect(form.computeHelper({ name: "control_sections" })).toBe("The sections of the “Control” tab: drag to reorder, × hides a section.");
+    expect(form.computeHelper({ name: "control_sections" })).toBe("The sections of the “Control” tab. Drag a section where you want it; × hides it.");
     expect(form.computeHelper({ name: "read_only" })).toBe(
-      "Shows the printer only: the light, heating, the airduct mode and the print options as states, without buttons; the print and filament buttons, drying, and the axes and extruder go. No lock: actions, automations and the device page still control it. Only an API key without “Control Printer” locks the controls.",
+      "Shows the printer only: the light, heating, the airduct mode and the print options as states, without buttons; the print and filament buttons, drying, the plugs' switches, and the axes and extruder go. No lock: actions, automations and the device page still control it. Only an API key without “Control Printer” locks the controls.",
     );
   });
 
@@ -330,23 +332,23 @@ describe("the visual editor", () => {
     expect(form.computeLabel({ name: "header_chips" })).toBe("Chip hinzufügen");
     expect(form.computeLabel({ name: "read_only" })).toBe("Steuerelemente ausblenden");
     expect(form.computeHelper({ name: "header_chips" })).toBe(
-      "Die Chips unter dem Namen: Ziehen ändert die Reihenfolge, × blendet einen Chip aus. Tür, Speicher und Trocknen erscheinen nur, wenn die Tür offen ist, der Speicher fehlt oder ein AMS trocknet; Strom nur mit einer Steckdose. Eine HMS-Fehlermeldung zeigt die Karte immer.",
+      "Die Chips unter dem Namen. Ziehe einen Chip an die gewünschte Stelle; × blendet ihn aus. Tür, SD-Karte / USB-Stick und Trocknen erscheinen nur, wenn die Tür offen ist, der Speicher fehlt oder ein AMS trocknet; Strom nur mit einer Steckdose. Eine HMS-Fehlermeldung zeigt die Karte immer.",
     );
-    expect(form.computeHelper({ name: "control_sections" })).toBe("Die Bereiche im Tab „Steuerung“: Ziehen ändert die Reihenfolge, × blendet einen Bereich aus.");
+    expect(form.computeHelper({ name: "control_sections" })).toBe("Die Bereiche im Tab „Steuerung“. Ziehe einen Bereich an die gewünschte Stelle; × blendet ihn aus.");
     expect(form.computeHelper({ name: "read_only" })).toBe(
-      "Zeigt den Drucker nur an: Licht, Heizen, Luftführung und Druckoptionen als Zustand, ohne Knöpfe; Druck- und Filamentknöpfe, Trocknen sowie Achsen und Extruder fallen weg. Keine Sperre: Aktionen, Automationen und die Geräteseite steuern ihn weiter. Sperren geht nur mit einem API-Schlüssel ohne „Drucker steuern“.",
+      "Zeigt den Drucker nur an: Licht, Heizen, Luftführung und Druckoptionen als Zustand, ohne Knöpfe; Druck- und Filamentknöpfe, Trocknen, die Schalter der Steckdosen sowie Achsen und Extruder fallen weg. Keine Sperre: Aktionen, Automationen und die Geräteseite steuern ihn weiter. Sperren geht nur mit einem API-Schlüssel ohne „Drucker steuern“.",
     );
     expect(form.computeHelper({ name: "status_blocks" })).toBe(
-      "Die Bereiche im Tab „Status“ unter dem Druckauftrag: Ziehen ändert die Reihenfolge, × blendet einen Bereich aus. Drucksteuerung und Druckgeschwindigkeit erscheinen nur während eines Drucks. Strom erscheint nur, wenn BamBuddy dem Drucker eine Steckdose zuordnet.",
+      "Die Bereiche im Tab „Status“ unter dem Druckauftrag. Ziehe einen Bereich an die gewünschte Stelle; × blendet ihn aus. Drucksteuerung und Druckgeschwindigkeit erscheinen nur während eines Drucks, Strom nur, wenn BamBuddy dem Drucker eine Steckdose zuordnet.",
     );
-    // Each toggle's text says what it does (his word, 2026-10-18).
+    // Each toggle's text says what it does.
     expect(form.computeHelper({ name: "show_control_tab" })).toBe("Blendet den Tab mit Heizen, Druckoptionen, Achsen und Extruder ein oder aus.");
     expect(form.computeHelper({ name: "show_filament_tab" })).toBe(
       "Blendet den Tab mit den AMS-Einheiten und der externen Spule ein oder aus – zum Laden, Entladen, Festlegen und Trocknen des Filaments.",
     );
     expect(form.computeLabel({ name: "show_auto_off" })).toBe("Zeile „Nach dem Druck ausschalten“");
     expect(form.computeHelper({ name: "show_auto_off" })).toBe(
-      "Blendet im Bereich „Strom“ die Zeile unter der Steckdose des Druckers ein oder aus. Mit ihr lässt sich wählen, ob sich der Drucker nach dem Druck von selbst ausschaltet. Ist die Zeile ausgeblendet, schaltet er trotzdem aus, wenn es so eingestellt ist.",
+      "Blendet im Bereich „Strom“ und im Dialog des Strom-Chips die Zeile unter der Steckdose des Druckers ein oder aus. Mit ihr lässt sich wählen, ob sich der Drucker nach dem Druck von selbst ausschaltet. Ist die Zeile ausgeblendet, schaltet er trotzdem aus, wenn es so eingestellt ist.",
     );
     expect(JSON.stringify(form.schema)).toContain("Automatisch (ab 3 eingeklappt)");
     expect(form.schema[1]?.["title"]).toBe("Allgemein");
@@ -362,5 +364,39 @@ describe("the visual editor", () => {
     expect(configForm(makeHass({ language: "en" })).computeHelper({ name: "camera" })).toBe(
       "On tap: a tap on the picture starts it. Automatically: it runs while the dashboard is open, using bandwidth all the time. Never: only the job's picture.",
     );
+  });
+});
+
+describe("every field of the editor", () => {
+  // Each field by its own label and help: a swapped or wrong text shows here.
+  const FIELDS = {
+    printer: ["editor_printer", "editor_printer_help"],
+    camera: ["editor_camera", "editor_camera_help"],
+    status_blocks: ["editor_blocks", "editor_blocks_help"],
+    header_chips: ["editor_chips", "editor_chips_help"],
+    start_view: ["editor_start_view", undefined],
+    show_control_tab: ["editor_control_tab", "editor_control_tab_help"],
+    control_sections: ["editor_sections", "editor_sections_help"],
+    read_only: ["editor_read_only", "editor_read_only_help"],
+    show_filament_tab: ["editor_filament_tab", "editor_filament_tab_help"],
+    ams_folding: ["editor_ams_folding", "editor_ams_folding_help"],
+    show_auto_off: ["editor_show_auto_off", "editor_show_auto_off_help"],
+  } as const;
+
+  it("has its own label and help, in English", () => {
+    const form = configForm();
+    for (const [name, [label, help]] of Object.entries(FIELDS)) {
+      expect(form.computeLabel({ name }), name).toBe(en[label]);
+      expect(form.computeHelper({ name }), name).toBe(help ? en[help] : undefined);
+    }
+    expect(new Set(Object.values(FIELDS).map(([label]) => en[label])).size).toBe(10);
+  });
+
+  it("has its German label", () => {
+    const root = document.createElement("home-assistant") as HTMLElement & { hass?: unknown };
+    root.hass = makeHass({ language: "de" });
+    document.body.append(root);
+    const form = configForm();
+    for (const [name, [label]] of Object.entries(FIELDS)) expect(form.computeLabel({ name }), name).toBe(de[label]);
   });
 });

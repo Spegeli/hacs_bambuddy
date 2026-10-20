@@ -38,10 +38,12 @@ from tests.conftest import (
     load_fixture,
     make_entry,
     next_refresh,
+    no_entity,
     printer_serial,
     printer_uid,
     set_up,
     setup_integration,
+    state_at,
     state_of,
 )
 
@@ -124,7 +126,7 @@ async def test_no_stream_without_a_token(
 
     response = await client.get(f"/api/camera_proxy_stream/{camera}")
 
-    assert response.status != HTTPStatus.OK
+    assert response.status == HTTPStatus.BAD_GATEWAY
 
 
 async def test_a_refused_stream_token_is_renewed(
@@ -164,7 +166,7 @@ async def test_a_stream_bambuddy_refuses_is_no_stream(
 
     response = await client.get(f"/api/camera_proxy_stream/{camera}")
 
-    assert response.status != HTTPStatus.OK
+    assert response.status == HTTPStatus.BAD_GATEWAY
 
 
 async def test_a_failed_stream_keeps_its_token_out_of_the_log(
@@ -184,7 +186,7 @@ async def test_a_failed_stream_keeps_its_token_out_of_the_log(
 
     response = await client.get(f"/api/camera_proxy_stream/{camera}")
 
-    assert response.status != HTTPStatus.OK
+    assert response.status == HTTPStatus.BAD_GATEWAY
     assert "No camera stream" in caplog.text
     assert STREAM_TOKEN not in caplog.text
 
@@ -242,7 +244,7 @@ async def _set_rate(hass: HomeAssistant, entry: MockConfigEntry, fps: int, print
 async def test_a_camera_that_can_do_more_streams_at_its_most(
     hass: HomeAssistant, bambuddy_api: SimpleNamespace, aioclient_mock: AiohttpClientMocker, hass_client: ClientSessionGenerator
 ) -> None:
-    """His word: a printer whose camera does more than 5 frames a second
+    """A printer whose camera does more than 5 frames a second
     streams at its most unless the user chooses less; the A1 and P1 series
     stay at 5."""
     entry = await set_up(hass, X1C, A1_MINI)
@@ -258,7 +260,7 @@ async def test_a_camera_that_can_do_more_streams_at_its_most(
 
 
 async def test_the_frame_rate_setting(hass: HomeAssistant, bambuddy_api: SimpleNamespace) -> None:
-    """From 5 to the camera's most in steps of 5 (his word), a setting of
+    """From 5 to the camera's most in steps of 5, a setting of
     Home Assistant's: the key needs no right to control, and it stays while
     the printer is offline. None for a camera that does only 5."""
     bambuddy_api.get_auth_me.return_value = load_fixture("auth_me_read.json")
@@ -489,7 +491,7 @@ async def test_the_camera_says_what_arrives(
     seen: list[object] = []
 
     def on_read() -> None:
-        seen.append(hass.states.get(camera).attributes.get("streamed_frame_rate"))  # type: ignore[union-attr]
+        seen.append(state_at(hass, camera).attributes.get("streamed_frame_rate"))
 
     upstream = _Upstream(48, 8, clock, on_read)
     with patch.object(BamBuddyClient, "open_stream", AsyncMock(return_value=upstream)):
@@ -591,3 +593,17 @@ async def test_an_external_camera_switched_on_later(
     assert (number.state, number.attributes["max"]) == ("15", 15)
     assert state_of(hass, "camera", printer_uid(entry, "camera")).attributes["frame_rate"] == 15
     reload.assert_called_once_with(entry.entry_id)
+
+
+async def test_the_frame_rate_setting_goes_with_the_external_camera(hass: HomeAssistant, bambuddy_api: SimpleNamespace) -> None:
+    """An A1 mini whose camera BamBuddy takes from elsewhere has the setting;
+    once the camera is taken away in BamBuddy, the reload leaves none behind."""
+    _with_info(bambuddy_api, A1_MINI, **_EXTERNAL)
+    entry = await set_up(hass, A1_MINI)
+    assert not no_entity(hass, "number", printer_uid(entry, "camera_fps", A1_MINI))
+
+    _with_info(bambuddy_api, A1_MINI, external_camera_enabled=False)
+    await hass.config_entries.async_reload(entry.entry_id)
+    await hass.async_block_till_done()
+
+    assert no_entity(hass, "number", printer_uid(entry, "camera_fps", A1_MINI))

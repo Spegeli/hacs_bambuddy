@@ -5,6 +5,7 @@
 // do; what passed and what was not checked fold into a line each.
 import { html, nothing, type TemplateResult } from "lit";
 
+import { entriesOf, responseOf } from "./actions";
 import { icon, type IconName } from "./icons";
 import { LANGUAGES, languageOf, t, type TextKey } from "./i18n";
 import type { CardContext } from "./parts";
@@ -38,17 +39,13 @@ const STATUSES: readonly CheckStatus[] = ["pass", "fail", "warn", "skip"];
 
 /** BamBuddy's connection check of the printer, as the integration answers. */
 export async function runCheck(hass: Hass, deviceId: string): Promise<CheckResult> {
-  const result = await hass.callService("bambuddy", "run_diagnostic", { device_id: deviceId }, undefined, false, true);
-  const response = (result as { response?: { overall?: unknown; checks?: unknown } | null } | undefined)?.response;
-  const listed = response?.checks;
-  const checks = (Array.isArray(listed) ? (listed as unknown[]) : [])
-    .filter((item): item is Record<string, unknown> => typeof item === "object" && item !== null && typeof (item as { id?: unknown }).id === "string")
-    .map((item) => ({
-      id: item["id"] as string,
-      status: STATUSES.includes(item["status"] as CheckStatus) ? (item["status"] as CheckStatus) : "skip",
-      params: typeof item["params"] === "object" && item["params"] !== null ? (item["params"] as Record<string, unknown>) : {},
-    }));
-  return { overall: typeof response?.overall === "string" ? response.overall : "ok", checks };
+  const response = await responseOf(hass, "run_diagnostic", { device_id: deviceId });
+  const checks = entriesOf(response["checks"], "id", "string").map((item) => ({
+    id: item["id"] as string,
+    status: STATUSES.includes(item["status"] as CheckStatus) ? (item["status"] as CheckStatus) : "skip",
+    params: typeof item["params"] === "object" && item["params"] !== null ? (item["params"] as Record<string, unknown>) : {},
+  }));
+  return { overall: typeof response["overall"] === "string" ? response["overall"] : "ok", checks };
 }
 
 /** A text the card has, by a key built from BamBuddy's ids. */
@@ -64,12 +61,17 @@ const title = (hass: Hass, check: Check): string => text(hass, `check_${check.id
 
 /** What a check found, and what to do: the most specific text there is. A
  * check not run says why where BamBuddy tells -- else only that it was not
- * run: a cause BamBuddy did not name would send the user the wrong way. */
-function detail(hass: Hass, check: Check): string | undefined {
+ * run: a cause BamBuddy did not name would send the user the wrong way. A
+ * text's remedy (its key with `_fix`) where asked: not for a check that
+ * follows from another problem. */
+function detail(hass: Hass, check: Check, withFix = false): string | undefined {
   const reason = typeof check.params["reason"] === "string" ? check.params["reason"] : undefined;
   if (check.id === "developer_mode" && check.status === "fail") return t(hass, "developer_off");
-  const own = (reason ? text(hass, `check_${check.id}_${check.status}_${reason}`, vars(check)) : undefined) ?? text(hass, `check_${check.id}_${check.status}`, vars(check));
-  return own ?? (check.status === "skip" ? t(hass, "check_skip") : undefined);
+  const specific = reason ? `check_${check.id}_${check.status}_${reason}` : undefined;
+  const key = specific && text(hass, specific) !== undefined ? specific : `check_${check.id}_${check.status}`;
+  const own = text(hass, key, vars(check));
+  const fix = withFix ? text(hass, `${key}_fix`, vars(check)) : undefined;
+  return own ? [own, fix].filter(Boolean).join(" ") : check.status === "skip" ? t(hass, "check_skip") : undefined;
 }
 
 const ICONS: Record<CheckStatus, IconName> = { pass: "check", fail: "error", warn: "warning", skip: "minus" };
@@ -77,11 +79,12 @@ const SEVERITY: Record<CheckStatus, string> = { pass: "ok", fail: "error", warn:
 
 function item(ctx: CardContext, check: Check, follows: boolean): TemplateResult {
   const { hass } = ctx;
-  const about = detail(hass, check);
+  const about = detail(hass, check, !follows);
+  const said = check.status === "fail" ? "hms_error" : check.status === "warn" ? "hms_warning" : undefined;
   return html`<div class="check-item hms-item sev-${SEVERITY[check.status]}">
     ${icon(ICONS[check.status])}
     <div class="hms-body">
-      <span class="check-title">${title(hass, check)}</span>
+      ${said ? html`<span class="sr-only">${t(hass, said)}: </span>` : nothing}<span class="check-title">${title(hass, check)}</span>
       ${about ? html`<span class="check-detail">${about}</span>` : nothing}
       ${follows ? html`<span class="check-detail">${t(hass, "check_follows")}</span>` : nothing}
     </div>
@@ -156,7 +159,10 @@ export function checkContent(ctx: CardContext, dialog: CheckDialog, actions: Che
   const { hass } = ctx;
   const checks = !dialog.running && dialog.result ? dialog.result.checks : [];
   const mqttFailed = checks.some((check) => check.id === "port_mqtt" && check.status === "fail");
-  const problems = checks.filter((check) => check.status === "fail" || check.status === "warn");
+  // Failures before warnings, each kind in BamBuddy's order.
+  const problems = checks
+    .filter((check) => check.status === "fail" || check.status === "warn")
+    .sort((a, b) => Number(b.status === "fail") - Number(a.status === "fail"));
   return html`<h2 id="dlg-title">${t(hass, "check_connection")}</h2>
     <div class="check-status" role="status">${state(ctx, dialog, now)}</div>
     ${problems.length

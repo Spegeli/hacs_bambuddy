@@ -1,11 +1,12 @@
 """Polling BamBuddy: one coordinator per printer for its live status, one for
-the instance's figures, one for the update checks."""
+the instance's figures, one for the update checks, one for the smart plugs."""
 from __future__ import annotations
 
 import asyncio
 from collections.abc import Awaitable
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timedelta
+import hashlib
 import logging
 from typing import TYPE_CHECKING, Any, TypeVar
 
@@ -20,6 +21,7 @@ from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, Upda
 from homeassistant.util import dt as dt_util
 
 from .api import (
+    BamBuddyApiError,
     BamBuddyAuthError,
     BamBuddyClient,
     BamBuddyConnectionError,
@@ -45,6 +47,7 @@ from .const import (
     RUNTIME_INTERVAL,
     SYSTEM_INTERVAL,
     UPDATE_INTERVAL,
+    UPDATE_RETRY_INTERVAL,
 )
 from .models import (
     CAMERA_MIN_FPS,
@@ -54,11 +57,14 @@ from .models import (
     ams_model,
     ams_name,
     camera_max_fps,
+    find_printers,
+    model_key,
     printer_key,
     printer_name,
     short_name,
+    stored_key,
 )
-from .plugs import ENERGY_FIELDS, Plug, plug_device_name, plug_identifier, sort_plugs
+from .plugs import ENERGY_FIELDS, Plug, main_of, plug_device_name, plug_identifier
 
 if TYPE_CHECKING:
     from .auto_off import AutoOff
@@ -81,20 +87,57 @@ def failure(err: BamBuddyError, kind: type[_E]) -> _E:
     return kind(translation_domain=DOMAIN, translation_key="bad_answer", translation_placeholders={"error": str(err)})
 
 
-async def _fetch(call: Awaitable[_T]) -> _T:
+async def fetch(call: Awaitable[_T], *, figures: bool = False, kind: type[HomeAssistantError] = UpdateFailed) -> _T:
     """A read for a coordinator: a refused key starts a reauthentication,
-    anything else marks the data unavailable until the next poll."""
+    anything else marks the data unavailable until the next poll. `figures`:
+    BamBuddy's statistics and update checks, which a key's owner may lack
+    the right to (403) though the key works -- the reauthentication would
+    pass the same key again: those fail, the printers go on. `kind`: what
+    any other failure raises."""
     try:
         return await call
-    except (BamBuddyAuthError, BamBuddyPermissionError) as err:
+    except BamBuddyPermissionError as err:
+        if figures:
+            raise failure(err, UpdateFailed) from err
+        # BamBuddy accepts the key; it or its owner lost a permission.
+        raise ConfigEntryAuthFailed(translation_domain=DOMAIN, translation_key="auth_permission") from err
+    except BamBuddyAuthError as err:
         raise ConfigEntryAuthFailed(translation_domain=DOMAIN, translation_key="auth_failed") from err
     except BamBuddyError as err:
-        raise failure(err, UpdateFailed) from err
+        raise failure(err, kind) from err
+
+
+@callback
+def async_schedule_reload(hass: HomeAssistant, entry: BamBuddyConfigEntry) -> None:
+    """One reload for the entry, however many parts of it ask for one."""
+    runtime: BamBuddyData | None = getattr(entry, "runtime_data", None)
+    if runtime is not None:
+        if runtime.reloading:
+            return
+        runtime.reloading = True
+    hass.config_entries.async_schedule_reload(entry.entry_id)
+
+
+def _issue_part(key: str) -> str:
+    """A printer in an issue's ID: Home Assistant writes the IDs of the
+    domain's issues into every diagnostics download -- not its serial number
+    (the issue's data keeps the key)."""
+    return hashlib.sha256(key.encode()).hexdigest()[:12]
+
+
+def issue_prefixes(entry_id: str) -> tuple[str, str]:
+    """The beginnings of an entry's "printer missing" and names notices."""
+    return f"printer_missing_{entry_id}_", f"names_from_bambuddy_{entry_id}_"
+
+
+def names_issue(entry_id: str, key: str) -> str:
+    """The notice that a printer's names come from BamBuddy: one per printer."""
+    return f"{issue_prefixes(entry_id)[1]}{_issue_part(key)}"
 
 
 def missing_issue(entry_id: str, key: str) -> str:
     """By the printer's key: BamBuddy's numbers may change under it."""
-    return f"printer_missing_{entry_id}_{key}"
+    return f"{issue_prefixes(entry_id)[0]}{_issue_part(key)}"
 
 
 @callback
@@ -173,14 +216,25 @@ class BamBuddyPrinterCoordinator(DataUpdateCoordinator[PrinterData]):
             hass,
             _LOGGER,
             config_entry=entry,
-            name=f"{DOMAIN} printer {info['id']}",
+            # The log names it as the user knows it, not by BamBuddy's number.
+            name=f"{DOMAIN} {short_name(info)}",
             update_interval=PRINTER_INTERVAL,
         )
         self.client = client
         self.info = info
         self.printer_id: int = info["id"]
+        # The unique IDs of the entities this setup built for the printer,
+        # and whether its model changed since the last: then the entities
+        # the model no longer has leave the registry.
+        self.created: set[str] = set()
+        self.model_changed = False
         # What the device and the entities are known by: the serial number.
         self.key = printer_key(info)
+        # The names given in Home Assistant that went back to BamBuddy's --
+        # those an earlier setup reset too: the notice keeps listing them.
+        issue = ir.async_get(hass).async_get_issue(DOMAIN, names_issue(entry.entry_id, self.key))
+        given = (issue.translation_placeholders or {}).get("given") if issue else None
+        self._given: list[str] = given.split("\n- ") if given else []
         self._firmware: str | None = None
         self._refresh_later: CALLBACK_TYPE | None = None
         self._hours: float | None = None
@@ -190,6 +244,8 @@ class BamBuddyPrinterCoordinator(DataUpdateCoordinator[PrinterData]):
         self.kprofiles: dict[str, tuple[float, list[dict[str, Any]]]] = {}
         # The camera's frame rate the user chose; None: its most.
         self.camera_fps: int | None = None
+        # The fan kits BamBuddy reported at setup (`PrinterData.fan_kits`).
+        self._kits_at_setup: frozenset[str] = frozenset()
         self._hours_read = -RUNTIME_INTERVAL
         self._maintenance: dict[str, Any] | None = None
         self._maintenance_read = -MAINTENANCE_INTERVAL
@@ -220,13 +276,12 @@ class BamBuddyPrinterCoordinator(DataUpdateCoordinator[PrinterData]):
             raise self._replaced_error()
         commands = self._commands
         try:
-            # The runtime counter once a minute, beside the status: it must
-            # not delay the status, nor the read after a command.
+            # The runtime counter once a minute, beside the status, not after
+            # it: a slow one delays this refresh by no more than its own read.
             status, read, _ = await asyncio.gather(self._read_status(), self._read_hours(), self._read_maintenance())
         except UpdateFailed as err:
             if isinstance(err.__cause__, BamBuddyNotFoundError):
-                # Deleted in BamBuddy: tell the user now, not at the next restart.
-                async_raise_missing_issue(self.hass, self.config_entry.entry_id, self.key, self.printer_name)
+                await self._look_up()
             raise
         # Another name under this number: renamed in BamBuddy, or another
         # printer -- ask now, not at the next minute.
@@ -244,8 +299,13 @@ class BamBuddyPrinterCoordinator(DataUpdateCoordinator[PrinterData]):
         data = PrinterData(self.info, status, self._hours, self._maintenance)
         if self.data is None:
             self._blank_at_setup = data.blank
+            self._kits_at_setup = data.fan_kits()
         elif self._blank_at_setup and not data.blank:
             self._blank_at_setup = False
+            self._schedule_reload()
+        elif not data.fan_kits() <= self._kits_at_setup:
+            # A fan kit BamBuddy learnt of after the setup: its fan comes with one reload.
+            self._kits_at_setup = data.fan_kits()
             self._schedule_reload()
         self._follow_serials(data)
         self._follow_firmware(data)
@@ -256,7 +316,15 @@ class BamBuddyPrinterCoordinator(DataUpdateCoordinator[PrinterData]):
 
     def _follow_serials(self, data: PrinterData) -> None:
         now = self.hass.loop.time()
-        waiting = {int(unit.get("id", 0)) for unit in data.ams_units if not str(unit.get("serial_number") or "").strip()}
+        # BamBuddy reads the AMS serials with the printer's firmware version
+        # (get_version): with the version there, a unit without a serial --
+        # an AMS Lite never has one -- will not get one.
+        versions_read = bool(data.status.get("firmware_version"))
+        waiting = {
+            int(unit.get("id", 0))
+            for unit in data.ams_units
+            if not versions_read and not str(unit.get("serial_number") or "").strip()
+        }
         self._unserialised = {place: self._unserialised.get(place, now) for place in waiting}
 
     def ams_unit_ready(self, unit: dict[str, Any]) -> bool:
@@ -293,10 +361,15 @@ class BamBuddyPrinterCoordinator(DataUpdateCoordinator[PrinterData]):
         """The identifier of the device of the printer's AMS unit `unit_key`."""
         return ams_identifier(self.config_entry.entry_id, self.key, unit_key)
 
+    def entity_unique_id(self, key: str) -> str:
+        """What the printer's entity `key` is known by: the entry, the
+        printer's serial number and the key."""
+        return f"{self.config_entry.entry_id}_p{self.key}_{key}"
+
     async def _read_status(self) -> dict[str, Any]:
         # A method of its own: the request comes into being only when its
         # task runs, so a reload cutting the refresh short leaves none behind.
-        return await _fetch(self.client.get_status(self.printer_id))
+        return await fetch(self.client.get_status(self.printer_id))
 
     async def _read_hours(self) -> bool:
         """The print hours and the printer's name in BamBuddy, once a
@@ -372,7 +445,9 @@ class BamBuddyPrinterCoordinator(DataUpdateCoordinator[PrinterData]):
             self._schedule_reload()
             return
         model = str(info.get("model") or "").strip()
-        new_model = bool(model) and not str(self.info.get("model") or "").strip()
+        # A model that comes later, or another one (corrected in BamBuddy): the device and the model's
+        # entities follow with one reload.
+        new_model = bool(model) and model_key(model) != model_key(self.info.get("model"))
         had_rate_setting = camera_max_fps(self.info) > CAMERA_MIN_FPS
         # Kept at once: a refresh before the reload neither asks nor reloads again.
         name = str(info.get("name") or "").strip()
@@ -391,28 +466,41 @@ class BamBuddyPrinterCoordinator(DataUpdateCoordinator[PrinterData]):
         if new_model or had_rate_setting != (camera_max_fps(self.info) > CAMERA_MIN_FPS):
             self._schedule_reload()
 
+    async def _look_up(self) -> None:
+        """BamBuddy has no printer under this number: deleted, or numbered
+        anew (a restored database). Its list tells: the reload finds the
+        printer by its serial, or raises the issue and looks for it once a
+        minute, as at setup -- now, not at the next restart. Still listed
+        under this number, or no list: the next poll asks again."""
+        try:
+            listed = await self.client.get_printers()
+        except BamBuddyError as err:
+            _LOGGER.debug("No printer list after a 404 for %s: %s", self.printer_name, err)
+            return
+        stored: list[dict[str, Any]] = self.config_entry.options.get(CONF_PRINTERS, [])
+        found = dict(zip((stored_key(printer) for printer in stored), find_printers(listed, stored), strict=True))
+        info = found.get(self.key)
+        if info is None or info.get("id") != self.printer_id:
+            _LOGGER.debug("BamBuddy no longer lists %s under its number: the entry reloads", self.printer_name)
+            self._schedule_reload()
+
     def _replaced_error(self) -> UpdateFailed:
         return UpdateFailed(
             translation_domain=DOMAIN, translation_key="printer_replaced", translation_placeholders={"printer": short_name(self.info)}
         )
 
     def _schedule_reload(self) -> None:
-        """One reload for the entry, however many printers ask for it."""
-        runtime: BamBuddyData | None = getattr(self.config_entry, "runtime_data", None)
-        if runtime is not None:
-            if runtime.reloading:
-                return
-            runtime.reloading = True
-        self.hass.config_entries.async_schedule_reload(self.config_entry.entry_id)
+        async_schedule_reload(self.hass, self.config_entry)
 
     @callback
     def async_name_devices(self, data: PrinterData) -> None:
-        """BamBuddy's name is the one (his decision): the printer's and its
+        """BamBuddy's name is the one: the printer's and its
         AMS units' device names follow it, and a name given in Home
         Assistant goes back to it. An AMS device stands for its unit (by
         its serial): its letter follows the place it is plugged in now, its
         model and firmware what it reports; an unplugged one keeps what was
         known."""
+        self.name = f"{DOMAIN} {short_name(self.info)}"
         registry = dr.async_get(self.hass)
         entry_id = self.config_entry.entry_id
         printer = self.identifier
@@ -439,24 +527,31 @@ class BamBuddyPrinterCoordinator(DataUpdateCoordinator[PrinterData]):
                     details["name"] = ams_name(self.info, int(unit.get("id", 0)), model, details["serial_number"])
             changed = {key: value for key, value in details.items() if getattr(device, key) != value}
             if device.name_by_user is not None:
-                self._tell_names_come_from_bambuddy(device.name_by_user, str(details.get("name") or device.name))
+                self._tell_names_come_from_bambuddy(device.name_by_user)
+            elif printer in device.identifiers and "name" in changed and self._given:
+                # Renamed in BamBuddy: the notice's title follows.
+                self._tell_names_come_from_bambuddy()
             if changed or device.name_by_user is not None:
                 registry.async_update_device(device.id, name_by_user=None, **changed)  # type: ignore[arg-type]
 
     @callback
-    def _tell_names_come_from_bambuddy(self, given: str, name: str) -> None:
-        """A name given in Home Assistant went back to BamBuddy's (his
-        decision): say why, once -- in Repairs, where the user can dismiss
-        it for good."""
+    def _tell_names_come_from_bambuddy(self, given: str | None = None) -> None:
+        """A name given in Home Assistant went back to BamBuddy's: say why,
+        once -- in Repairs, where the user can dismiss it for good. One
+        notice per printer, naming every name that went back (the printer's
+        and its AMS units'), under the printer's name of now."""
+        if given is not None and given not in self._given:
+            self._given.append(given)
         ir.async_create_issue(
             self.hass,
             DOMAIN,
-            f"names_from_bambuddy_{self.config_entry.entry_id}",
+            names_issue(self.config_entry.entry_id, self.key),
             is_fixable=False,
             is_persistent=False,
             severity=ir.IssueSeverity.WARNING,
             translation_key="names_from_bambuddy",
-            translation_placeholders={"given": given, "name": name},
+            # A list in the text: one name a line.
+            translation_placeholders={"given": "\n- ".join(self._given), "name": self.printer_name},
         )
 
     def _follow_firmware(self, data: PrinterData) -> None:
@@ -512,21 +607,43 @@ class BamBuddyInstanceCoordinator(_BamBuddyCoordinator):
         super().__init__(hass, entry, client, "instance", INSTANCE_INTERVAL)
         self._system: dict[str, Any] = {}
         self._system_read: float | None = None
+        # The setup's read: the printers wait for it.
+        self._at_setup = True
 
     async def _async_update_data(self) -> dict[str, Any]:
+        at_setup, self._at_setup = self._at_setup, False
         now = self.hass.loop.time()
         if self._system_read is None or now - self._system_read >= SYSTEM_INTERVAL.total_seconds():
             self._system_read = now
             try:
                 # At setup the printers wait for it: 10 s there, 30 s later.
-                self._system = await _fetch(self.client.get_system_info(patient=self.data is not None))
+                self._system = await fetch(self.client.get_system_info(patient=not at_setup))
                 self._follow_version(self._system)
             except UpdateFailed as err:
                 # Its archive walk is BamBuddy's slowest answer: the last one
                 # stands -- none yet: its figures stay unknown until the next
                 # read --, and the statistics still come.
                 _LOGGER.debug("BamBuddy's system information failed (%s); its figures wait for the next read", err)
-        return {"system": self._system, "stats": await _fetch(self.client.get_statistics())}
+        try:
+            stats = await fetch(self.client.get_statistics(patient=not at_setup), figures=True)
+        except UpdateFailed as err:
+            cause = err.__cause__
+            if isinstance(cause, BamBuddyPermissionError):
+                # The key's owner may not read them: they stay unknown,
+                # BamBuddy still answers.
+                _LOGGER.debug("The API key may not read BamBuddy's statistics: %s", err)
+                stats = {}
+            elif not at_setup and (
+                isinstance(cause, BamBuddyApiError) or (isinstance(cause, BamBuddyConnectionError) and timed_out(cause))
+            ):
+                # BamBuddy took the request but did not finish it (it asks
+                # every smart plug in turn): the last statistics stand --
+                # none yet: they stay unknown.
+                _LOGGER.debug("BamBuddy's statistics failed (%s); the last ones stand", err)
+                stats = self.data["stats"] if self.data is not None else {}
+            else:
+                raise
+        return {"system": self._system, "stats": stats}
 
     def _follow_version(self, system: dict[str, Any]) -> None:
         version = (system.get("app") or {}).get("version")
@@ -538,16 +655,32 @@ class BamBuddyInstanceCoordinator(_BamBuddyCoordinator):
 
 class BamBuddyUpdateCoordinator(_BamBuddyCoordinator):
     """New versions of BamBuddy and of the printers' firmware, every six
-    hours: each check makes BamBuddy ask GitHub and Bambu Lab."""
+    hours: each check makes BamBuddy ask GitHub and Bambu Lab. Each check
+    on its own: one that fails keeps its last answer (none yet: its
+    entities are unavailable) and is asked again after a quarter of an
+    hour; both failing without an answer fail the refresh."""
 
     def __init__(self, hass: HomeAssistant, entry: BamBuddyConfigEntry, client: BamBuddyClient) -> None:
         super().__init__(hass, entry, client, "updates", UPDATE_INTERVAL)
+        self._answers: dict[str, dict[str, Any]] = {}
 
     async def _async_update_data(self) -> dict[str, Any]:
-        firmware = await _fetch(self.client.get_firmware_updates())
+        failed: UpdateFailed | None = None
+        for key, read in (("bambuddy", self.client.get_update_check), ("firmware", self.client.get_firmware_updates)):
+            try:
+                self._answers[key] = await fetch(read(), figures=True)
+            except UpdateFailed as err:
+                _LOGGER.debug("BamBuddy's %s check failed (%s); asked again in %s", key, err, UPDATE_RETRY_INTERVAL)
+                failed = err
+        self.update_interval = UPDATE_INTERVAL if failed is None else UPDATE_RETRY_INTERVAL
+        if failed is not None and not self._answers:
+            raise failed
+        firmware = self._answers.get("firmware")
         return {
-            "bambuddy": await _fetch(self.client.get_update_check()),
-            "firmware": {
+            "bambuddy": self._answers.get("bambuddy"),
+            "firmware": None
+            if firmware is None
+            else {
                 update["printer_id"]: update
                 for update in firmware.get("updates") or []
                 if isinstance(update, dict) and "printer_id" in update
@@ -579,7 +712,7 @@ class BamBuddyPlugCoordinator(DataUpdateCoordinator[dict[int, Plug]]):
         self._seen: dict[int, set[str]] = {}
         # What each linked plug is: a change (moved to another printer, no
         # longer powering it, another kind) reloads the entry.
-        self._roles: dict[int, tuple[int | None, bool, str]] | None = None
+        self._roles: dict[int, tuple[int | None, bool, str, bool]] | None = None
         # Since when a plug is on, once it went from off to on: the card
         # counts while the printer starts.
         self._on_since: dict[int, datetime] = {}
@@ -596,7 +729,9 @@ class BamBuddyPlugCoordinator(DataUpdateCoordinator[dict[int, Plug]]):
     async def _async_update_data(self) -> dict[int, Plug]:
         commands = self._commands
         now = self.hass.loop.time()
-        if self._listed_at is None or now - self._listed_at >= PLUG_LIST_INTERVAL:
+        # Half a read's slack: the reads come a little more than 15 seconds
+        # apart, so the third of them is due -- within a minute.
+        if self._listed_at is None or now - self._listed_at >= PLUG_LIST_INTERVAL - PLUG_INTERVAL.total_seconds() / 2:
             listed = await self._read_list()
             # A key that may not read the list sees none -- which is no
             # list that lost its plugs.
@@ -650,12 +785,13 @@ class BamBuddyPlugCoordinator(DataUpdateCoordinator[dict[int, Plug]]):
 
     def _follow_roles(self) -> None:
         """A plug moved to another printer in BamBuddy, no longer powering
-        it, of another kind, or deleted there: its device, its card and its
-        switch-off after the print follow through one reload (a deleted
-        one's device goes then, his word)."""
-        roles: dict[int, tuple[int | None, bool, str]] = {
-            plug.id: (plug.printer_id, plug.powers_printer, plug.kind)
-            for plug in map(Plug, self._listed)
+        it, of another kind, no longer or now the printer's own, or deleted
+        there: its device, its card and its switch-off after the print follow
+        through one reload (a deleted one's device goes then)."""
+        listed = [Plug(info) for info in self._listed]
+        roles: dict[int, tuple[int | None, bool, str, bool]] = {
+            plug.id: (plug.printer_id, plug.powers_printer, plug.kind, main_of(listed, plug.printer_id) == plug.id)
+            for plug in listed
             if plug.printer_id in self.printers or plug.id in (self._roles or {})
         }
         changed = self._roles is not None and (
@@ -665,23 +801,16 @@ class BamBuddyPlugCoordinator(DataUpdateCoordinator[dict[int, Plug]]):
         self._roles = roles
         if changed:
             _LOGGER.debug("A smart plug changed its printer or role in BamBuddy, or was deleted there: the entry reloads")
-            runtime: BamBuddyData | None = getattr(self.config_entry, "runtime_data", None)
-            if runtime is not None and runtime.reloading:
-                return
-            if runtime is not None:
-                runtime.reloading = True
-            self.hass.config_entries.async_schedule_reload(self.config_entry.entry_id)
+            async_schedule_reload(self.hass, self.config_entry)
 
     async def _read_list(self) -> list[dict[str, Any]] | None:
         try:
-            listed = await self.client.get_smart_plugs()
-        except BamBuddyPermissionError:
+            listed = await fetch(self.client.get_smart_plugs(), figures=True)
+        except UpdateFailed as err:
+            if not isinstance(err.__cause__, BamBuddyPermissionError):
+                raise
             _LOGGER.debug("The API key may not read BamBuddy's smart plugs")
             return None
-        except BamBuddyAuthError as err:
-            raise ConfigEntryAuthFailed(translation_domain=DOMAIN, translation_key="auth_failed") from err
-        except BamBuddyError as err:
-            raise failure(err, UpdateFailed) from err
         return [info for info in listed if isinstance(info, dict) and isinstance(info.get("id"), int)]
 
     async def _read_status(self, plug_id: int, patient: bool) -> dict[str, Any] | None:
@@ -691,10 +820,6 @@ class BamBuddyPlugCoordinator(DataUpdateCoordinator[dict[int, Plug]]):
             _LOGGER.debug("No status of smart plug %s: %s", plug_id, err)
             return None
 
-    def plugs_of(self, printer_id: int) -> list[Plug]:
-        """A printer's plugs: the one that powers it first, then by name."""
-        return sort_plugs([plug for plug in (self.data or {}).values() if plug.printer_id == printer_id])
-
     def reported(self, plug_id: int, field: str) -> bool:
         """Whether the plug has reported this figure once."""
         return field in self._seen.get(plug_id, set())
@@ -702,19 +827,25 @@ class BamBuddyPlugCoordinator(DataUpdateCoordinator[dict[int, Plug]]):
     def identifier(self, plug_id: int) -> tuple[str, str]:
         return plug_identifier(self.config_entry.entry_id, plug_id)
 
+    def main_plug(self, printer_id: int | None) -> int | None:
+        """The printer's own plug: BamBuddy's choice among the plugs that
+        power it (`Plug.main_rank`); None where none does."""
+        return main_of((self.data or {}).values(), printer_id)
+
     def device_name(self, plug: Plug) -> str:
         printer = self.printers.get(plug.printer_id or -1)
         return plug_device_name(short_name(printer.info), plug) if printer else plug.name
 
     def _follow_names(self) -> None:
-        """Renamed in BamBuddy -- the plug or its printer: the device follows."""
+        """Renamed in BamBuddy -- the plug or its printer -- or another type
+        (still a switch, so no reload): the device follows."""
         registry = dr.async_get(self.hass)
         for info in self._listed:
             plug = Plug(info)
             device = find_device(self.hass, self.config_entry.entry_id, self.identifier(plug.id))
             name = self.device_name(plug)
-            if device is not None and device.name != name:
-                registry.async_update_device(device.id, name=name)
+            if device is not None and (device.name, device.model) != (name, plug.model):
+                registry.async_update_device(device.id, name=name, model=plug.model)
 
     @callback
     def async_refresh_soon(self) -> None:
@@ -744,10 +875,10 @@ class BamBuddyData:
     updates: BamBuddyUpdateCoordinator
     printers: dict[int, BamBuddyPrinterCoordinator]
     can_control: bool
-    # The key may mark maintenance done ("Manage Maintenance").
+    # The smart plugs of the printers.
+    plugs: BamBuddyPlugCoordinator
+    # The key may mark maintenance done ("Manage Maintenance"), and switch plugs.
     can_manage_maintenance: bool = False
-    # The smart plugs of the printers; the key may switch them.
-    plugs: BamBuddyPlugCoordinator | None = None
     can_control_plugs: bool = False
     # The switch-offs after the print, by plug.
     auto_offs: dict[int, AutoOff] = field(default_factory=dict)

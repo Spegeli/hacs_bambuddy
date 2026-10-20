@@ -1,6 +1,7 @@
 """The BamBuddy integration: Bambu Lab printers through a BamBuddy server."""
 from __future__ import annotations
 
+import asyncio
 from datetime import datetime
 from functools import partial
 import logging
@@ -10,7 +11,7 @@ from typing import Any
 from homeassistant.config_entries import ConfigEntry, ConfigEntryState
 from homeassistant.const import Platform
 from homeassistant.core import HomeAssistant, callback
-from homeassistant.exceptions import ConfigEntryAuthFailed, ConfigEntryError, ConfigEntryNotReady, HomeAssistantError
+from homeassistant.exceptions import ConfigEntryError, ConfigEntryNotReady, HomeAssistantError
 from homeassistant.helpers import config_validation as cv
 from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers import entity_registry as er
@@ -18,13 +19,8 @@ from homeassistant.helpers import issue_registry as ir
 from homeassistant.helpers.event import async_track_time_interval
 from homeassistant.helpers.typing import ConfigType
 
-from .api import (
-    BamBuddyAuthError,
-    BamBuddyError,
-    BamBuddyNotFoundError,
-    BamBuddyPermissionError,
-    normalise_url,
-)
+from .api import BamBuddyClient, BamBuddyError, BamBuddyNotFoundError, normalise_url
+from .auto_off import ENTITIES as AUTO_OFF_ENTITIES, gets_auto_off
 from .cards import async_register_card
 from .const import (
     CONF_API_KEY,
@@ -47,13 +43,18 @@ from .coordinator import (
     BamBuddyUpdateCoordinator,
     async_raise_missing_issue,
     async_remove_printer,
+    async_schedule_reload,
     create_client,
     failure,
+    fetch,
+    find_device,
+    issue_prefixes,
     missing_issue,
+    names_issue,
     printer_identifier,
 )
 from .entity import instance_device_info, printer_device_info
-from .models import ams_key, find_printers, stored_key, stored_printer, too_old
+from .models import ams_key, display_model, find_printers, model_changed, stored_key, stored_printer, too_old
 from .plugs import plug_identifier
 from .services import async_setup_services
 
@@ -118,18 +119,13 @@ async def async_setup_entry(hass: HomeAssistant, entry: BamBuddyConfigEntry) -> 
             translation_key="bambuddy_too_old",
             translation_placeholders={"version": version, "minimum": MIN_BAMBUDDY_VERSION},
         )
-    try:
-        listed = await client.get_printers()
-        granted = await client.permissions()
-        can_control = granted.control
-        if not can_control:
-            _remove_control_entities(hass, entry)
-        if not granted.plugs:
-            _remove_control_entities(hass, entry, plugs=True)
-    except (BamBuddyAuthError, BamBuddyPermissionError) as err:
-        raise ConfigEntryAuthFailed(translation_domain=DOMAIN, translation_key="auth_failed") from err
-    except BamBuddyError as err:
-        raise failure(err, ConfigEntryNotReady) from err
+    listed = await fetch(client.get_printers(), kind=ConfigEntryNotReady)
+    granted = await fetch(client.permissions(), kind=ConfigEntryNotReady)
+    can_control = granted.control
+    if not can_control:
+        _remove_control_entities(hass, entry)
+    if not granted.plugs:
+        _remove_control_entities(hass, entry, plugs=True)
 
     # BamBuddy's figures and its update checks (they ask GitHub and Bambu
     # Lab through BamBuddy): when they fail, only their entities wait.
@@ -137,49 +133,90 @@ async def async_setup_entry(hass: HomeAssistant, entry: BamBuddyConfigEntry) -> 
     updates = BamBuddyUpdateCoordinator(hass, entry, client)
     devices = dr.async_get(hass)
     devices.async_get_or_create(config_entry_id=entry.entry_id, **instance_device_info(entry, version))
-    await instance.async_refresh()
-    await updates.async_refresh()
-
-    printers: dict[int, BamBuddyPrinterCoordinator] = {}
-    missing: set[str] = set()
-    stored: list[dict[str, Any]] = entry.options.get(CONF_PRINTERS, [])
-    current: list[dict[str, Any]] = []
-    found = find_printers(listed, stored)
-    for printer, info in zip(stored, found, strict=True):
-        if info is None:
-            current.append(printer)
-            missing.add(missing_issue(entry.entry_id, stored_key(printer)))
-            async_raise_missing_issue(hass, entry.entry_id, stored_key(printer), printer[CONF_PRINTER_NAME])
-            continue
-        # BamBuddy may number its printers anew, and rename them; the serial stays.
-        current.append(stored_printer(info))
-        coordinator = BamBuddyPrinterCoordinator(hass, entry, client, info)
-        await coordinator.async_config_entry_first_refresh()
-        devices.async_get_or_create(config_entry_id=entry.entry_id, **printer_device_info(hass, coordinator))
-        printers[info["id"]] = coordinator
-    if current != stored:
-        # Before the update listener: no reload for it.
-        hass.config_entries.async_update_entry(entry, options={**entry.options, CONF_PRINTERS: current})
-    # The printers' smart plugs: when BamBuddy cannot list them, only their
-    # entities wait.
-    plugs = BamBuddyPlugCoordinator(hass, entry, client, printers)
-    await plugs.async_refresh()
-    _delete_issues(hass, entry, keep=missing)
+    # Beside the printers' first reads, not before them: the statistics wait
+    # for BamBuddy's plugs.
+    figures = asyncio.ensure_future(instance.async_refresh())
+    try:
+        printers, absent = await _async_read_printers(hass, entry, client, listed)
+        # Configure may save while this setup runs, before its listener.
+        taken = dict(entry.options)
+        # The printers' smart plugs: when BamBuddy cannot list them, only
+        # their entities wait.
+        plugs = BamBuddyPlugCoordinator(hass, entry, client, printers)
+        await asyncio.gather(figures, plugs.async_refresh())
+    except BaseException:
+        figures.cancel()
+        raise
+    missing = {missing_issue(entry.entry_id, stored_key(printer)) for printer in absent}
+    # A removed printer's names notice goes; a stored one's stays until Home Assistant restarts.
+    named = {names_issue(entry.entry_id, stored_key(printer)) for printer in entry.options.get(CONF_PRINTERS, [])}
+    _delete_issues(hass, entry, keep=missing | named)
     _remove_stale_devices(hass, entry, set(plugs.data or {}) if plugs.last_update_success and plugs.readable else None)
+    if plugs.last_update_success and plugs.readable:
+        _remove_spare_switch_offs(hass, entry, plugs)
     if granted.plugs:
         _remove_plug_states(hass, entry, plugs)
 
     entry.runtime_data = BamBuddyData(
-        client, instance, updates, printers, can_control, granted.maintenance, plugs=plugs, can_control_plugs=granted.plugs
+        client, instance, updates, printers, can_control, plugs, can_manage_maintenance=granted.maintenance, can_control_plugs=granted.plugs
     )
+    # The update checks ask GitHub and Bambu Lab through BamBuddy, up to a
+    # minute each: the setup does not wait for them, their entities do.
+    entry.async_create_background_task(hass, updates.async_refresh(), "bambuddy update checks")
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
+    _remove_what_the_model_lacks(hass, entry, printers)
     entry.async_on_unload(entry.add_update_listener(_async_reload))
-    absent = [printer for printer, info in zip(stored, found, strict=True) if info is None]
+    if entry.options != taken:
+        # Saved in Configure while this setup ran: it reloads once for it.
+        async_schedule_reload(hass, entry)
     if absent:
         entry.async_on_unload(
             async_track_time_interval(hass, partial(_async_look_for, hass, entry, absent), MISSING_INTERVAL)
         )
     return True
+
+
+async def _async_read_printers(
+    hass: HomeAssistant, entry: BamBuddyConfigEntry, client: BamBuddyClient, listed: list[dict[str, Any]]
+) -> tuple[dict[int, BamBuddyPrinterCoordinator], list[dict[str, Any]]]:
+    """The stored printers BamBuddy lists, each read once, with their
+    devices; and those it does not list (as stored), with a repair issue."""
+    devices = dr.async_get(hass)
+    printers: dict[int, BamBuddyPrinterCoordinator] = {}
+    absent: list[dict[str, Any]] = []
+    stored: list[dict[str, Any]] = entry.options.get(CONF_PRINTERS, [])
+    current: list[dict[str, Any]] = []
+    for printer, info in zip(stored, find_printers(listed, stored), strict=True):
+        if info is None:
+            # By the name its device has now: BamBuddy may have renamed it since
+            # the last start. Stored under it, the repair's dialog and the
+            # actions' refusals say it too.
+            device = find_device(hass, entry.entry_id, printer_identifier(entry.entry_id, stored_key(printer)))
+            name = device.name if device is not None and device.name else printer[CONF_PRINTER_NAME]
+            current.append({**printer, CONF_PRINTER_NAME: name})
+            absent.append(printer)
+            async_raise_missing_issue(hass, entry.entry_id, stored_key(printer), name)
+            continue
+        # BamBuddy may number its printers anew, and rename them; the serial stays.
+        current.append(stored_printer(info))
+        coordinator = BamBuddyPrinterCoordinator(hass, entry, client, info)
+        await coordinator.async_config_entry_first_refresh()
+        # Corrected in BamBuddy since the last setup (a model that comes for
+        # a printer without one only adds).
+        device = find_device(hass, entry.entry_id, coordinator.identifier)
+        coordinator.model_changed = model_changed(device.model if device else None, info.get("model"))
+        details = printer_device_info(hass, coordinator)
+        if coordinator.model_changed and device is not None:
+            # The new model reaches the device with its entities
+            # (_remove_what_the_model_lacks): a setup that fails before
+            # it, or meets the printer blank, sees the change again.
+            details["model"] = device.model
+        devices.async_get_or_create(config_entry_id=entry.entry_id, **details)
+        printers[info["id"]] = coordinator
+    if current != stored:
+        # Before the update listener: no reload for it.
+        hass.config_entries.async_update_entry(entry, options={**entry.options, CONF_PRINTERS: current})
+    return printers, absent
 
 
 async def _async_look_for(hass: HomeAssistant, entry: BamBuddyConfigEntry, absent: list[dict[str, Any]], _now: datetime) -> None:
@@ -202,8 +239,30 @@ async def _async_look_for(hass: HomeAssistant, entry: BamBuddyConfigEntry, absen
     missing = {stored_key(printer) for printer in absent}
     if any(info is not None and stored_key(printer) in missing for printer, info in zip(stored, find_printers(listed, stored), strict=True)):
         _LOGGER.debug("BamBuddy lists a missing printer again: the entry reloads")
-        runtime.reloading = True
-        hass.config_entries.async_schedule_reload(entry.entry_id)
+        async_schedule_reload(hass, entry)
+
+
+def _remove_what_the_model_lacks(hass: HomeAssistant, entry: ConfigEntry, printers: dict[int, BamBuddyPrinterCoordinator]) -> None:
+    """A printer's model corrected in BamBuddy (a P1S that is an A1): its
+    entities the new model lacks would stay as entities no longer provided.
+    Only after a model change -- a printer offline at the setup reports less
+    and keeps its entities -- and only with the printer's report: BamBuddy
+    reconnects a printer it edited, and a blank one waits for the setup
+    after its first report (its reload). Never an AMS unit's entities or the
+    left auxiliary fan, which come with later reports. The device takes the
+    new model once its entities followed."""
+    registry = er.async_get(hass)
+    devices = dr.async_get(hass)
+    for printer in printers.values():
+        if not printer.model_changed or printer.data.blank:
+            continue
+        prefix = printer.entity_unique_id("")
+        for entity in er.async_entries_for_config_entry(registry, entry.entry_id):
+            key = entity.unique_id.removeprefix(prefix)
+            if key != entity.unique_id and not key.startswith(("ams", "left_aux_fan")) and entity.unique_id not in printer.created:
+                registry.async_remove(entity.entity_id)
+        if (device := find_device(hass, entry.entry_id, printer.identifier)) is not None:
+            devices.async_update_device(device.id, model=display_model(printer.info.get("model")) or None)
 
 
 def _remove_plug_states(hass: HomeAssistant, entry: ConfigEntry, plugs: BamBuddyPlugCoordinator) -> None:
@@ -218,11 +277,25 @@ def _remove_plug_states(hass: HomeAssistant, entry: ConfigEntry, plugs: BamBuddy
             registry.async_remove(entity_id)
 
 
+def _remove_spare_switch_offs(hass: HomeAssistant, entry: ConfigEntry, plugs: BamBuddyPlugCoordinator) -> None:
+    """A plug that no longer gets the switch-off after the print -- another
+    became the printer's own in BamBuddy, or it no longer powers the
+    printer -- loses its entities: they would stay as entities no longer
+    provided."""
+    registry = er.async_get(hass)
+    for plug in (plugs.data or {}).values():
+        if gets_auto_off(plugs, plug):
+            continue
+        for domain, key in AUTO_OFF_ENTITIES:
+            if entity_id := registry.async_get_entity_id(domain, DOMAIN, f"{entry.entry_id}_plug{plug.id}_{key}"):
+                registry.async_remove(entity_id)
+
+
 def _delete_issues(hass: HomeAssistant, entry: ConfigEntry, keep: set[str] | None = None) -> None:
-    """The entry's "printer missing" issues, but those still true."""
-    prefix = missing_issue(entry.entry_id, "")
+    """The entry's "printer missing" and names notices, but those still true."""
+    prefixes = issue_prefixes(entry.entry_id)
     for domain, issue_id in list(ir.async_get(hass).issues):
-        if domain == DOMAIN and issue_id.startswith(prefix) and issue_id not in (keep or set()):
+        if domain == DOMAIN and issue_id.startswith(prefixes) and issue_id not in (keep or set()):
             ir.async_delete_issue(hass, DOMAIN, issue_id)
 
 
@@ -283,7 +356,6 @@ def _remove_control_entities(hass: HomeAssistant, entry: BamBuddyConfigEntry, *,
 
 async def async_remove_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
     _delete_issues(hass, entry)
-    ir.async_delete_issue(hass, DOMAIN, f"names_from_bambuddy_{entry.entry_id}")
 
 
 async def async_migrate_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
@@ -384,11 +456,11 @@ async def async_remove_config_entry_device(
             return True
     # Not loaded (BamBuddy cannot be reached): nothing reports a unit.
     runtime: BamBuddyData | None = getattr(entry, "runtime_data", None)
-    plugs = runtime.plugs if runtime else None
-    for plug_id in (plugs.data or {}) if plugs else ():
-        if plugs is not None and plugs.identifier(plug_id) in device.identifiers:
-            raise HomeAssistantError(translation_domain=DOMAIN, translation_key="cannot_delete_plug")
-    for coordinator in runtime.printers.values() if runtime else ():
+    if runtime is None:
+        return True
+    if any(runtime.plugs.identifier(plug_id) in device.identifiers for plug_id in runtime.plugs.data or {}):
+        raise HomeAssistantError(translation_domain=DOMAIN, translation_key="cannot_delete_plug")
+    for coordinator in runtime.printers.values():
         for unit in coordinator.data.ams_units:
             if coordinator.ams_identifier(ams_key(unit)) in device.identifiers:
                 raise HomeAssistantError(translation_domain=DOMAIN, translation_key="cannot_delete_ams")

@@ -24,8 +24,8 @@ from .coordinator import (
     failure,
     find_device,
 )
-from .models import PrinterData, ams_key, ams_label, ams_model, ams_name, short_name
-from .plugs import PLUG_TYPES, Plug
+from .models import PrinterData, ams_key, ams_label, ams_model, ams_name, display_model, short_name
+from .plugs import Plug
 
 _T = TypeVar("_T")
 
@@ -62,7 +62,7 @@ def printer_device_info(hass: HomeAssistant, coordinator: BamBuddyPrinterCoordin
         identifiers={coordinator.identifier},
         name=coordinator.printer_name,
         manufacturer="Bambu Lab",
-        model=info.get("model") or None,
+        model=display_model(info.get("model")) or None,
         serial_number=info.get("serial_number") or None,
         sw_version=coordinator.data.status.get("firmware_version") or None,
         configuration_url=entry.data[CONF_URL],
@@ -86,34 +86,39 @@ def _domain_of(entity: object) -> str | None:
     return None
 
 
-def suggest_entity_id(entity: Any, coordinator: BamBuddyPrinterCoordinator, *parts: str) -> None:
-    """The entity ID a new entity gets: model, serial number and key --
-    the same whatever the printer is called in BamBuddy, in any language.
-    Home Assistant keeps the ID of an entity it knows."""
+def _suggest(entity: Any, *words: str) -> None:
+    """The entity ID a new entity gets: its platform and the words, in
+    Home Assistant's form. Home Assistant keeps the ID of an entity it knows."""
     domain = _domain_of(entity)
-    info = coordinator.info
     if domain:
-        serial = str(info.get("serial_number") or "").strip() or coordinator.key
-        entity.entity_id = f"{domain}.{slugify(' '.join((str(info.get('model') or ''), serial, *parts)))}"
+        entity.entity_id = f"{domain}.{slugify(' '.join(words))}"
+
+
+def suggest_entity_id(entity: Any, coordinator: BamBuddyPrinterCoordinator, *parts: str) -> None:
+    """The ID a new printer entity gets: model, serial number and key --
+    the same whatever the printer is called in BamBuddy, in any language."""
+    info = coordinator.info
+    serial = str(info.get("serial_number") or "").strip() or coordinator.key
+    # Without a model, "printer" in its place: no entity ID begins with a digit.
+    _suggest(entity, display_model(info.get("model")) or "printer", serial, *parts)
 
 
 def suggest_instance_entity_id(entity: Any, key: str) -> None:
-    """The entity ID a new entity of the instance gets: BamBuddy and the
-    English key -- not its address, which may change. A second instance's
-    get Home Assistant's `_2`."""
-    domain = _domain_of(entity)
-    if domain:
-        entity.entity_id = f"{domain}.{slugify(' '.join(('bambuddy', key.removeprefix('bambuddy_'))))}"
+    """The ID a new entity of the instance gets: BamBuddy and the English
+    key -- not its address, which may change. A second instance's get Home
+    Assistant's `_2`."""
+    _suggest(entity, "bambuddy", key.removeprefix("bambuddy_"))
 
 
 def suggest_plug_entity_id(entity: Any, plug_id: int, key: str) -> None:
-    """The entity ID a new entity of a smart plug gets: BamBuddy's number of
-    the plug and the English key -- it stays when the plug is renamed or
-    moved to another printer in BamBuddy (his word); a second instance's
-    get Home Assistant's `_2`."""
-    domain = _domain_of(entity)
-    if domain:
-        entity.entity_id = f"{domain}.{slugify(f'bambuddy smart plug {plug_id} {key}')}"
+    """The ID a new entity of a smart plug gets: BamBuddy's number of the
+    plug and the English key -- it stays when the plug is renamed or moved
+    to another printer in BamBuddy; a second instance's get Home
+    Assistant's `_2`. The plug's own switch or state is named as its device,
+    without the key: `switch.bambuddy_smart_plug_3` beside its power sensor
+    `sensor.bambuddy_smart_plug_3_power`."""
+    own = key == "power" and _domain_of(entity) in ("switch", "binary_sensor")
+    _suggest(entity, "bambuddy smart plug", str(plug_id), *(() if own else (key,)))
 
 
 class BamBuddyInstanceEntity(CoordinatorEntity[BamBuddyInstanceCoordinator]):
@@ -152,8 +157,8 @@ class BamBuddyPrinterEntity(CoordinatorEntity[BamBuddyPrinterCoordinator]):
 
     def __init__(self, coordinator: BamBuddyPrinterCoordinator, key: str, *, object_id: tuple[str, ...] = ()) -> None:
         super().__init__(coordinator)
-        entry_id = coordinator.config_entry.entry_id
-        self._attr_unique_id = f"{entry_id}_p{coordinator.key}_{key}"
+        self._attr_unique_id = coordinator.entity_unique_id(key)
+        coordinator.created.add(self._attr_unique_id)
         self._attr_device_info = DeviceInfo(identifiers={coordinator.identifier})
         # The English translation key reads as the entity's English name;
         # an AMS unit's entities name their place and key.
@@ -350,7 +355,10 @@ async def async_run_command(
             raise HomeAssistantError(
                 translation_domain=DOMAIN, translation_key="read_failed", translation_placeholders={"error": str(err)}
             ) from err
-        raise HomeAssistantError(
+        # BamBuddy said no (4xx): a validation error -- no ERROR in the log,
+        # and an automation can tell it from a BamBuddy that fails.
+        kind = ServiceValidationError if isinstance(err, BamBuddyApiError) and 400 <= err.status < 500 else HomeAssistantError
+        raise kind(
             translation_domain=DOMAIN,
             translation_key="command_failed",
             translation_placeholders={"error": str(err)},
@@ -386,6 +394,9 @@ class BamBuddyPlugEntity(CoordinatorEntity[BamBuddyPlugCoordinator]):
             return None
         return {
             "powers_printer": plug.powers_printer,
+            # Of two plugs that power the printer, which is its own (the card's
+            # tag, switch-off row and offline view): BamBuddy's choice.
+            "printer_main": plug.id == self.coordinator.main_plug(plug.printer_id),
             "on_printer_card": plug.on_card,
             "bambuddy_auto_off": plug.bambuddy_auto_off,
             "plug_type": plug.plug_type,
@@ -411,7 +422,7 @@ class BamBuddyPlugEntity(CoordinatorEntity[BamBuddyPlugCoordinator]):
         device = DeviceInfo(
             identifiers={coordinator.identifier(self.plug_id)},
             name=coordinator.device_name(plug),
-            model=PLUG_TYPES.get(plug.plug_type, plug.plug_type),
+            model=plug.model,
         )
         printer = coordinator.printers.get(plug.printer_id or -1)
         if printer is None:
@@ -447,7 +458,7 @@ async def async_switch_plug(coordinator: BamBuddyPlugCoordinator, plug: Plug, on
     """A plug on or off (a script runs); BamBuddy's refusals as translated
     errors; the plug read again shortly after, and its printer: off, a plug
     that powers the printer takes it offline. Off is never refused -- the
-    plug is an emergency stop (his decision); the card asks first."""
+    plug is an emergency stop; the card asks first."""
     coordinator.note_command()
     try:
         await coordinator.client.control_plug(plug.id, on)

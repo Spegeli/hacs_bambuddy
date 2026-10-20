@@ -1,17 +1,18 @@
 // The card's head and what it opens: the printer's name in BamBuddy with
-// its model, nozzle and print hours below, the chips the user chose for the
-// network, the HMS messages and the firmware, a line under them while an
-// HMS message matters, and the contents of the dialogs the chips and the
-// menu open -- the HMS messages, the firmware, the printer information.
+// its model, nozzle and print hours below, the chips the user chose (the
+// network, the HMS messages, the firmware, maintenance, the door, the
+// storage, drying, the power), a line under them while an HMS message
+// matters, and the contents of the dialogs the chips and the menu open --
+// the HMS messages, the firmware, the storage, the printer information.
 import { html, nothing, type TemplateResult } from "lit";
 
 import { deviceName, hasControls } from "./discovery";
-import { formatDuration, formatNumber, formatState, hasValue, numericState, stateOf, textOrUndefined } from "./format";
+import { formatDuration, formatNumber, formatState, hasValue, minutesOf, numericState, stateOf, textOrUndefined } from "./format";
 import { icon, type IconName } from "./icons";
 import { t, type TextKey } from "./i18n";
 import { maintenancePill } from "./maintenance";
 import { powerPill } from "./power";
-import { actionButton, connection, dialogNote, sideName, snack, type CardContext } from "./parts";
+import { actionButton, connection, dialogNote, sideName, snack, stopQuestion, type CardContext } from "./parts";
 import type { HassEntityState, HeaderChip } from "./types";
 
 // --- Title ------------------------------------------------------------------
@@ -44,7 +45,8 @@ function nozzleText(ctx: CardContext): string | undefined {
   if (new Set(known).size === 1) return `${known[0]} mm`;
   // Two sizes: which side is which (the nozzles in the order left, right).
   const [left, right] = sizes;
-  return `${t(hass, "side_left_short")} ${left ?? "—"} / ${t(hass, "side_right_short")} ${right ?? "—"} mm`;
+  // No break inside a value: "L 0,6", "R 0,4 mm".
+  return `${t(hass, "side_left_short")} ${left ?? "—"} / ${t(hass, "side_right_short")} ${right ?? "—"} mm`;
 }
 
 /** The print hours as Home Assistant shows them -- in the unit the user
@@ -100,9 +102,14 @@ const HMS_ANSWERS: Record<string, TextKey> = {
   DISABLE_PURIFICATION: "hms_answer_disable_purification",
 };
 
+/** The answers of a message the card sends. */
+function answersOf(error: HmsError): string[] {
+  return Array.isArray(error.actions) ? error.actions.filter((action): action is string => typeof action === "string" && Object.hasOwn(HMS_ANSWERS, action)) : [];
+}
+
 /** Whether a message the dialog shows offers an answer the card sends. */
 export function hmsAnswered(ctx: CardContext): boolean {
-  return ctx.canControl && ctx.online && hmsOf(ctx).errors.some((error) => Array.isArray(error.actions) && error.actions.some((action) => typeof action === "string" && Object.hasOwn(HMS_ANSWERS, action)));
+  return ctx.canControl && ctx.online && hmsOf(ctx).errors.some((error) => answersOf(error).length > 0);
 }
 
 /** Bambu Lab's wiki on HMS messages: BamBuddy links every message there
@@ -113,9 +120,7 @@ const HMS_WIKI = "https://wiki.bambulab.com/en/hms/home";
  * card's own stop does. */
 function hmsAnswers(ctx: CardContext, error: HmsError, textId: string): TemplateResult | typeof nothing {
   const { hass, refs } = ctx;
-  const actions = Array.isArray(error.actions)
-    ? error.actions.filter((action): action is string => typeof action === "string" && Object.hasOwn(HMS_ANSWERS, action))
-    : [];
+  const actions = answersOf(error);
   if (!actions.length || !ctx.canControl || !ctx.online || typeof error.code !== "string") return nothing;
   const code = error.code;
   return html`<div class="hms-answers">
@@ -130,17 +135,9 @@ function hmsAnswers(ctx: CardContext, error: HmsError, textId: string): Template
         kind: stop ? "danger" : "tonal",
         pending: ctx.isPending(key),
         describedBy: textId,
-        onClick: () =>
-          stop
-            ? ctx.confirm({
-                title: t(hass, "stop_title"),
-                text: t(hass, "stop_text"),
-                confirm: t(hass, "stop_confirm"),
-                danger: true,
-                action: ["bambuddy", "answer_hms", data],
-                key,
-              })
-            : ctx.run(key, "bambuddy", "answer_hms", data),
+        // Two messages may offer the same answer: the question comes back to this one.
+        answer: key,
+        onClick: () => (stop ? ctx.confirm(stopQuestion(hass, ["bambuddy", "answer_hms", data], key)) : ctx.run(key, "bambuddy", "answer_hms", data)),
       });
     })}
   </div>`;
@@ -244,8 +241,8 @@ function hmsPill(ctx: CardContext, open: (pill: Pill) => void): TemplateResult |
   if (!ctx.online || count === undefined) return nothing;
   const worst = worstFirst(errors)[0];
   const tone = count > 0 ? (CHIP_TONES[worst ? severityOf(worst) : "unknown"] as string) : "ok";
-  const label = count > 0 ? t(hass, "hms_pill_aria", { count }) : t(hass, "hms_pill_none");
-  return html`<button class="pill hms tone-${tone}" aria-label=${label} title=${label} @click=${() => open("hms")}>
+  const label = count > 1 ? t(hass, "hms_pill_aria", { count }) : count === 1 ? t(hass, "hms_pill_aria_one") : t(hass, "hms_pill_none");
+  return html`<button class="pill hms tone-${tone}" aria-label=${label} title=${label} aria-haspopup="dialog" @click=${() => open("hms")}>
     ${icon(count > 0 ? "shieldAlert" : "shieldCheck")}<span>${count > 0 ? t(hass, "hms_pill", { count }) : t(hass, "hms_ok")}</span>
   </button>`;
 }
@@ -277,9 +274,16 @@ function firmwarePill(ctx: CardContext, open: (pill: Pill) => void): TemplateRes
       : firmware.current
         ? ["ok", "check", "firmware_current"]
         : ["neutral", "memory", "firmware_version"];
-  const text = firmware.installed ?? t(hass, "firmware");
-  const label = firmware.installed ? t(hass, key, { version: firmware.installed }) : text;
-  return html`<button class="pill firmware tone-${tone}" aria-label=${label} title=${label} @click=${() => open("firmware")}>
+  // An update says so on the chip, with the version it brings.
+  const text = firmware.update && firmware.latest ? t(hass, "firmware_update_chip", { version: firmware.latest }) : (firmware.installed ?? t(hass, "firmware"));
+  // The name starts with what the chip shows (voice control, screen readers).
+  const label =
+    firmware.update && firmware.latest && firmware.installed
+      ? t(hass, "firmware_update_label", { latest: firmware.latest, version: firmware.installed })
+      : firmware.installed
+        ? t(hass, key, { version: firmware.installed })
+        : text;
+  return html`<button class="pill firmware tone-${tone}" aria-label=${label} title=${label} aria-haspopup="dialog" @click=${() => open("firmware")}>
     ${icon(iconName)}<span>${text}</span>
   </button>`;
 }
@@ -301,7 +305,7 @@ function hmsLine(ctx: CardContext, open: (pill: Pill) => void): TemplateResult |
   const description = textOrUndefined(worst?.description);
   const message = worst ? (description ?? t(hass, `hms_${severity}` as TextKey)) : t(hass, "hms_count", { count });
   const more = sorted.length - 1;
-  return html`<button class="hms-line tone-${CHIP_TONES[severity]}" title=${message} @click=${() => open("hms")}>
+  return html`<button class="hms-line tone-${CHIP_TONES[severity]}" title=${message} aria-haspopup="dialog" @click=${() => open("hms")}>
     ${icon(SEVERITY_ICONS[severity] as IconName)}<span class="hms-line-text">${message}</span>${more > 0
       ? html`<span class="hms-line-more">${t(hass, "hms_more", { n: more })}</span>`
       : nothing}<span class="hms-line-go">${icon("chevronRight")}</span>
@@ -322,7 +326,7 @@ function doorPill(ctx: CardContext): TemplateResult | typeof nothing {
 function storagePill(ctx: CardContext, open: (pill: Pill) => void): TemplateResult | typeof nothing {
   const { hass, refs } = ctx;
   if (!ctx.online || stateOf(hass, refs.storage)?.state !== "off") return nothing;
-  return html`<button class="pill storage tone-warn" @click=${() => open("storage")}>
+  return html`<button class="pill storage tone-warn" aria-haspopup="dialog" @click=${() => open("storage")}>
     ${icon(refs.storageUsb ? "usb" : "sd")}<span>${t(hass, refs.storageUsb ? "storage_usb" : "storage_sd")}</span>
   </button>`;
 }
@@ -336,7 +340,7 @@ function dryingPill(ctx: CardContext): TemplateResult | typeof nothing {
   const drying = ctx.ams.filter((unit) => unit.drying && stateOf(hass, unit.drying)?.state === "on");
   const first = drying[0];
   if (!first) return nothing;
-  const times = drying.map((unit) => numericState(hass, unit.dryingRemaining)).filter((value): value is number => value !== undefined && value > 0);
+  const times = drying.map((unit) => minutesOf(hass, unit.dryingRemaining)).filter((value): value is number => value !== undefined && value > 0);
   // Number and unit stay together when the chip wraps.
   const time = times.length ? formatDuration(hass, Math.max(...times)).replace(/ /g, "\u00a0") : undefined;
   const n = drying.length;
@@ -351,7 +355,7 @@ function dryingPill(ctx: CardContext): TemplateResult | typeof nothing {
 }
 
 /** The chips under the title the user chose -- by default network, HMS,
- * firmware --, in his order, each where known; the row announces a
+ * firmware --, in their order, each where known; the row announces a
  * change, a new HMS message say. Door, storage and drying show only while
  * they matter. Below it the HMS line where a message matters, whatever the
  * chips. */
@@ -366,8 +370,7 @@ export function pills(ctx: CardContext, open: (pill: Pill) => void): TemplateRes
     drying: () => dryingPill(ctx),
     power: () => powerPill(ctx, () => open("power")),
   };
-  const chip = (name: HeaderChip): TemplateResult | typeof nothing => chips[name]();
-  const items = ctx.settings.chips.map(chip).filter((item) => item !== nothing);
+  const items = ctx.settings.chips.map((name: HeaderChip) => chips[name]()).filter((item) => item !== nothing);
   return html`${items.length ? html`<div class="pills" aria-live="polite">${items}</div>` : nothing}${hmsLine(ctx, open)}`;
 }
 
@@ -377,23 +380,27 @@ export function hmsContent(ctx: CardContext): TemplateResult {
   const { hass } = ctx;
   const { count = 0, errors } = hmsOf(ctx);
   const sorted = worstFirst(errors);
-  const list = sorted.length
-    ? html`<div class="hms-list">
-        ${sorted.map((error, index) => {
-          const severity = severityOf(error);
-          const code = hmsCode(error.code);
-          const description = textOrUndefined(error.description);
-          return html`<div class="hms-item sev-${severityTone(severity)}">
-            ${icon(SEVERITY_ICONS[severity] as IconName)}
-            <div class="hms-body">
-              <span class="hms-text" id="hms-text-${index}">${description ?? t(hass, "hms_no_text", { severity: t(hass, `hms_${severity}` as TextKey) })}</span>
-              ${code ? html`<span class="hms-code">${code}</span>` : nothing}
-              ${hmsAnswers(ctx, error, `hms-text-${index}`)}
-            </div>
-          </div>`;
-        })}
-      </div>`
-    : html`<p class="hms-empty">${count > 0 ? t(hass, "hms_count", { count }) : t(hass, "hms_none")}</p>`;
+  // No answer from BamBuddy: no messages known, none to deny.
+  const list =
+    ctx.unreachable || !ctx.online
+      ? dialogNote(t(hass, ctx.unreachable ? "unreachable_short" : "offline_text"))
+      : sorted.length
+        ? html`<div class="hms-list">
+            ${sorted.map((error, index) => {
+              const severity = severityOf(error);
+              const code = hmsCode(error.code);
+              const description = textOrUndefined(error.description);
+              return html`<div class="hms-item sev-${severityTone(severity)}">
+                ${icon(SEVERITY_ICONS[severity] as IconName)}
+                <div class="hms-body">
+                  ${description ? html`<span class="sr-only">${t(hass, `hms_${severity}` as TextKey)}: </span>` : nothing}<span class="hms-text" id="hms-text-${index}">${description ?? t(hass, "hms_no_text", { severity: t(hass, `hms_${severity}` as TextKey) })}</span>
+                  ${code ? html`<span class="hms-code">${code}</span>` : nothing}
+                  ${hmsAnswers(ctx, error, `hms-text-${index}`)}
+                </div>
+              </div>`;
+            })}
+          </div>`
+        : html`<p class="hms-empty">${count > 0 ? t(hass, "hms_count", { count }) : t(hass, "hms_none_dialog")}</p>`;
   // While a message holds the print paused: what to do next -- and where,
   // when the card offers neither: Home Assistant too with the controls hidden.
   // Clearing, where offered, does not fix what the printer sees.
@@ -407,7 +414,7 @@ export function hmsContent(ctx: CardContext): TemplateResult {
   const next = ctx.status === "paused" && count > 0 ? dialogNote(t(hass, where)) : nothing;
   return html`<h2 id="dlg-title">${t(hass, "hms_title")}</h2>
     ${list}
-    ${sorted.length ? html`<a class="hms-wiki" href=${HMS_WIKI} target="_blank" rel="noopener noreferrer">${icon("openNew")}<span>${t(hass, "hms_wiki")}</span></a>` : nothing}
+    ${sorted.length ? html`<a class="hms-wiki" href=${HMS_WIKI} target="_blank" rel="noopener noreferrer">${icon("openInNew")}<span>${t(hass, "hms_wiki")}</span></a>` : nothing}
     ${next}${canClearHms(ctx) ? dialogNote(t(hass, "hms_clear_note")) : nothing}`;
 }
 
@@ -423,8 +430,12 @@ function specRow(label: string, value: TemplateResult | string, extra: TemplateR
 /** Why the storage matters: the chip's dialog. */
 export function storageContent(ctx: CardContext): TemplateResult {
   const { hass, refs } = ctx;
-  return html`<h2 id="dlg-title">${t(hass, refs.storageUsb ? "storage_usb" : "storage_sd")}</h2>
-    <p>${t(hass, refs.storageUsb ? "storage_usb_text" : "storage_sd_text")}</p>`;
+  // It follows the storage while open: inserted, it says so.
+  const present = stateOf(hass, refs.storage)?.state === "on";
+  const text = refs.storageUsb ? (present ? "storage_usb_in" : "storage_usb_text") : present ? "storage_sd_in" : "storage_sd_text";
+  const title = refs.storageUsb ? (present ? "storage_usb_title_in" : "storage_usb") : present ? "storage_sd_title_in" : "storage_sd";
+  return html`<h2 id="dlg-title">${t(hass, title)}</h2>
+    <p>${t(hass, text)}</p>`;
 }
 
 /** The firmware dialog. With an update, its release notes are a tap away
@@ -505,7 +516,7 @@ export function infoContent(ctx: CardContext, copied: boolean, copy: (text: stri
       ${bambuddyName ? specRow(t(hass, "info_name"), bambuddyName) : nothing}
       ${server && deviceName(server) ? specRow(t(hass, "info_server"), deviceName(server)) : nothing}
       ${specRow(t(hass, "info_status"), chip(ctx.online ? "ok" : ctx.unreachable ? "warn" : "off", t(hass, connection(ctx))))}
-      ${ctx.unreachable ? nothing : specRow(t(hass, "info_print_status"), formatState(hass, refs.status, ctx.status) ?? ctx.status)}
+      ${ctx.online ? specRow(t(hass, "info_print_status"), formatState(hass, refs.status, ctx.status) ?? ctx.status) : nothing}
       ${ip ? specRow(t(hass, "info_ip"), ip, copyButton("copy_ip", ip)) : nothing}
       ${serial ? specRow(t(hass, "info_serial"), serial, copyButton("copy_serial", serial)) : nothing}
       ${network ? specRow(t(hass, "info_network"), network.iconName === "wifi" ? `${t(hass, "wifi")} · ${network.text}` : t(hass, "lan_wired")) : nothing}

@@ -7,14 +7,22 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from functools import partial
 
-from homeassistant.components.number import NumberDeviceClass, NumberEntity, NumberEntityDescription, NumberMode
+from homeassistant.components.number import (
+    NumberDeviceClass,
+    NumberEntity,
+    NumberEntityDescription,
+    NumberMode,
+    RestoreNumber,
+)
 from homeassistant.const import EntityCategory, UnitOfTemperature
 from homeassistant.core import HomeAssistant
+from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 from homeassistant.helpers.restore_state import RestoreEntity
 
 from .api import BamBuddyClient
 from .auto_off import MAX_TEMPERATURE, MIN_TEMPERATURE, AutoOff, auto_off_for
+from .const import DOMAIN
 from .coordinator import BamBuddyConfigEntry, BamBuddyPlugCoordinator, BamBuddyPrinterCoordinator
 from .entity import (
     BamBuddyDescribedEntity,
@@ -23,7 +31,7 @@ from .entity import (
     async_add_plug_entities,
     async_run_command,
 )
-from .models import CAMERA_FPS_STEP, CAMERA_MIN_FPS, PrinterData, camera_max_fps
+from .models import CAMERA_FPS_STEP, CAMERA_MIN_FPS, PrinterData, camera_max_fps, heater_max
 from .plugs import Plug
 
 PARALLEL_UPDATES = 1
@@ -35,6 +43,8 @@ class BamBuddyTemperatureDescription(NumberEntityDescription):
 
     set_fn: Callable[[BamBuddyClient, int, int], Awaitable[None]]
     exists_fn: Callable[[PrinterData], bool] = lambda _: True
+    # The heater in the model table: its maximum where the model reaches less.
+    heater: str | None = None
     device_class: NumberDeviceClass = NumberDeviceClass.TEMPERATURE
     native_unit_of_measurement: str = UnitOfTemperature.CELSIUS
     native_min_value: float = 0
@@ -51,12 +61,13 @@ def _nozzle(nozzle: int) -> Callable[[BamBuddyClient, int, int], Awaitable[None]
     return set_target
 
 
-# BamBuddy's limits; the printer's firmware clamps to its own.
+# BamBuddy's limits, or the model's where it heats less.
 NUMBERS: tuple[BamBuddyTemperatureDescription, ...] = (
     BamBuddyTemperatureDescription(
         key="nozzle_target",
         translation_key="nozzle_target_temperature",
         native_max_value=320,
+        heater="nozzle",
         set_fn=_nozzle(0),
         exists_fn=lambda data: not data.is_dual_nozzle,
     ),
@@ -65,6 +76,7 @@ NUMBERS: tuple[BamBuddyTemperatureDescription, ...] = (
         key="nozzle_target",
         translation_key="left_nozzle_target_temperature",
         native_max_value=320,
+        heater="nozzle",
         set_fn=_nozzle(1),
         exists_fn=lambda data: data.is_dual_nozzle,
     ),
@@ -72,6 +84,7 @@ NUMBERS: tuple[BamBuddyTemperatureDescription, ...] = (
         key="nozzle_2_target",
         translation_key="right_nozzle_target_temperature",
         native_max_value=320,
+        heater="nozzle",
         set_fn=_nozzle(0),
         exists_fn=lambda data: data.is_dual_nozzle,
     ),
@@ -79,6 +92,7 @@ NUMBERS: tuple[BamBuddyTemperatureDescription, ...] = (
         key="bed_target",
         translation_key="bed_target_temperature",
         native_max_value=140,
+        heater="bed",
         set_fn=lambda client, printer, target: client.set_bed_temperature(printer, target),
     ),
     BamBuddyTemperatureDescription(
@@ -95,20 +109,22 @@ async def async_setup_entry(
     hass: HomeAssistant, entry: BamBuddyConfigEntry, async_add_entities: AddConfigEntryEntitiesCallback
 ) -> None:
     runtime = entry.runtime_data
-    if runtime.plugs is not None:
-        plugs = runtime.plugs
+    plugs = runtime.plugs
 
-        def create(plug: Plug) -> list[tuple[str, Callable[[], NumberEntity]]]:
-            auto_off = auto_off_for(entry, plug)
-            return [("auto_off_temperature", partial(BamBuddyAutoOffTemperature, plugs, plug, auto_off))] if auto_off else []
+    def create(plug: Plug) -> list[tuple[str, Callable[[], NumberEntity]]]:
+        auto_off = auto_off_for(entry, plug)
+        return [("auto_off_temperature", partial(BamBuddyAutoOffTemperature, plugs, plug, auto_off))] if auto_off else []
 
-        async_add_plug_entities(plugs, async_add_entities, create)
-    # Home Assistant's setting, not the printer's: with any key.
-    async_add_entities(
-        BamBuddyCameraFrameRate(coordinator)
-        for coordinator in runtime.printers.values()
-        if camera_max_fps(coordinator.info) > CAMERA_MIN_FPS
-    )
+    async_add_plug_entities(plugs, async_add_entities, create)
+    # Home Assistant's setting, not the printer's: with any key; where the
+    # camera gives no more than the least (an external camera taken away in
+    # BamBuddy), it goes.
+    registry = er.async_get(hass)
+    for coordinator in runtime.printers.values():
+        if camera_max_fps(coordinator.info) > CAMERA_MIN_FPS:
+            async_add_entities([BamBuddyCameraFrameRate(coordinator)])
+        elif stale := registry.async_get_entity_id("number", DOMAIN, coordinator.entity_unique_id("camera_fps")):
+            registry.async_remove(stale)
     if not runtime.can_control:
         return
     async_add_entities(
@@ -125,6 +141,12 @@ class BamBuddyTemperature(BamBuddyDescribedEntity, NumberEntity):
 
     entity_description: BamBuddyTemperatureDescription
 
+    def __init__(self, coordinator: BamBuddyPrinterCoordinator, description: BamBuddyTemperatureDescription) -> None:
+        super().__init__(coordinator, description)
+        most = heater_max(coordinator.info.get("model"), description.heater) if description.heater else None
+        if most is not None and description.native_max_value is not None:
+            self._attr_native_max_value = min(description.native_max_value, most)
+
     @property
     def native_value(self) -> float | None:
         value = self.data.temperatures.get(self.entity_description.key)
@@ -137,9 +159,9 @@ class BamBuddyTemperature(BamBuddyDescribedEntity, NumberEntity):
         )
 
 
-class BamBuddyAutoOffTemperature(BamBuddyPlugEntity, NumberEntity, RestoreEntity):
+class BamBuddyAutoOffTemperature(BamBuddyPlugEntity, RestoreNumber):
     """The switch-off after the print waits until every nozzle is below
-    this (his decision: 50 °C unless the user sets it)."""
+    this: 50 °C unless the user sets another."""
 
     _attr_translation_key = "auto_off_temperature"
     _attr_entity_category = EntityCategory.CONFIG
@@ -161,11 +183,10 @@ class BamBuddyAutoOffTemperature(BamBuddyPlugEntity, NumberEntity, RestoreEntity
 
     async def async_added_to_hass(self) -> None:
         await super().async_added_to_hass()
-        last = await self.async_get_last_state()
-        try:
-            value = float(last.state) if last is not None else None
-        except ValueError:
-            value = None
+        # Its own value in °C: Home Assistant stores the state in the user's
+        # unit (°F with US customary units).
+        stored = await self.async_get_last_number_data()
+        value = stored.native_value if stored is not None else None
         if value is not None and MIN_TEMPERATURE <= value <= MAX_TEMPERATURE:
             self.auto_off.set_threshold(value)
         self.async_on_remove(self.auto_off.async_add_listener(self.async_write_ha_state))
@@ -179,7 +200,7 @@ class BamBuddyAutoOffTemperature(BamBuddyPlugEntity, NumberEntity, RestoreEntity
 
 
 class BamBuddyCameraFrameRate(BamBuddyPrinterEntity, NumberEntity, RestoreEntity):
-    """The live view's frames a second (his word): from 5 to the most the
+    """The live view's frames a second: from 5 to the most the
     camera gives, in steps of 5; the most until the user chooses less. A
     camera that gives only 5 has none."""
 

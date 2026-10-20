@@ -17,6 +17,7 @@ from homeassistant.helpers import issue_registry as ir
 
 from custom_components.bambuddy.api import BamBuddyConnectionError
 from custom_components.bambuddy.const import DOMAIN
+from custom_components.bambuddy.coordinator import names_issue
 from custom_components.bambuddy.diagnostics import async_get_device_diagnostics
 
 from tests.conftest import (
@@ -27,12 +28,16 @@ from tests.conftest import (
     ams_device,
     device_id,
     entity_id,
+    instance_uid,
     load_fixture,
     next_refresh,
     no_entity,
     printer_device,
+    printer_info,
+    printer_key,
     printer_uid,
     set_up,
+    state_of,
 )
 
 
@@ -168,7 +173,7 @@ async def test_the_names_notice_goes_with_its_entry(
     dr.async_get(hass).async_update_device(printer.id, name_by_user="Mine")
     for _ in range(6):
         await next_refresh(hass, freezer)
-    issue_id = f"names_from_bambuddy_{entry.entry_id}"
+    issue_id = names_issue(entry.entry_id, printer_key(X1C))
     assert ir.async_get(hass).async_get_issue(DOMAIN, issue_id) is not None
 
     await hass.config_entries.async_remove(entry.entry_id)
@@ -197,7 +202,7 @@ async def test_the_replaced_refusal_names_this_printer(
     """The newcomer's name never becomes this printer's: the serial is
     checked first."""
     entry = await set_up(hass, X1C)
-    a1_mini = next(printer for printer in load_fixture("printers.json") if printer["id"] == 2)
+    a1_mini = printer_info(2)
     bambuddy_api.get_printer.side_effect = None
     bambuddy_api.get_printer.return_value = {**a1_mini, "id": X1C}
     bambuddy_api.get_runtime.return_value = {"total_hours": 3.0, "printer_name": a1_mini["name"]}
@@ -221,7 +226,7 @@ async def test_another_name_under_the_number_is_checked_at_once(
     printer, so its details are read in the same refresh -- no command
     reaches the newcomer."""
     entry = await set_up(hass, X1C)
-    a1_mini = next(printer for printer in load_fixture("printers.json") if printer["id"] == 2)
+    a1_mini = printer_info(2)
     for _ in range(6):
         await next_refresh(hass, freezer)
     bambuddy_api.get_printer.side_effect = None
@@ -257,11 +262,15 @@ async def test_bambuddys_system_information_may_fail_once(
     """Its archive walk is BamBuddy's slowest answer: the last one stands,
     the statistics still come, BamBuddy still reads as connected."""
     entry = await set_up(hass, X1C)
+    free = state_of(hass, "sensor", instance_uid(entry, "disk_free")).state
     bambuddy_api.get_system_info.side_effect = BamBuddyConnectionError("GET /system/info: TimeoutError")
     bambuddy_api.get_statistics.return_value = {**load_fixture("archives_stats.json"), "total_prints": 900}
 
     for _ in range(30):
         await next_refresh(hass, freezer)
 
+    assert bambuddy_api.get_system_info.await_count == 2
     assert entry.runtime_data.instance.last_update_success
     assert entry.runtime_data.instance.data["stats"]["total_prints"] == 900
+    assert state_of(hass, "sensor", instance_uid(entry, "printers_connected")).state == "2"
+    assert state_of(hass, "sensor", instance_uid(entry, "disk_free")).state == free

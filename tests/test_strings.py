@@ -3,21 +3,20 @@ true to its English original in what it must carry over unchanged."""
 from __future__ import annotations
 
 import json
-from pathlib import Path
 import re
-import string
 from typing import Any
 
-_DIR = Path(__file__).parent.parent / "custom_components" / "bambuddy"
+from tests.conftest import INTEGRATION, placeholders
+
 # Every language file under translations/, found the way the integration
 # itself finds them (language.async_shipped_languages): a new one is guarded by
 # every test below as soon as it exists.
-_LANGUAGES = sorted(path.stem for path in (_DIR / "translations").glob("*.json"))
+_LANGUAGES = sorted(path.stem for path in (INTEGRATION / "translations").glob("*.json"))
 _FILES = ("strings.json", *(f"translations/{language}.json" for language in _LANGUAGES))
 
 
 def _load(name: str) -> dict[str, Any]:
-    data: dict[str, Any] = json.loads((_DIR / name).read_text(encoding="utf-8"))
+    data: dict[str, Any] = json.loads((INTEGRATION / name).read_text(encoding="utf-8"))
     return data
 
 
@@ -47,7 +46,7 @@ def test_the_shipped_languages():
 
 def test_string_files_have_no_bom():
     for name in _FILES:
-        assert not (_DIR / name).read_bytes().startswith(b"\xef\xbb\xbf"), name
+        assert not (INTEGRATION / name).read_bytes().startswith(b"\xef\xbb\xbf"), name
 
 
 def test_string_files_share_one_structure():
@@ -59,12 +58,6 @@ def test_string_files_share_one_structure():
         )
 
 
-def _placeholders(text: str) -> set[str]:
-    """The {placeholders} of a string, parsed as Home Assistant parses them
-    when it checks a translation against English (string.Formatter)."""
-    return {field for _, field, _, _ in string.Formatter().parse(text) if field is not None}
-
-
 def test_every_string_has_the_placeholders_of_its_english_original():
     """Home Assistant discards a translated string whose placeholders differ
     from the English one and shows English instead; and a value only appears
@@ -72,7 +65,7 @@ def test_every_string_has_the_placeholders_of_its_english_original():
     english = _texts(_load("strings.json"))
     for name in _FILES:
         for key, text in _texts(_load(name)).items():
-            assert _placeholders(text) == _placeholders(english[key]), (name, key)
+            assert placeholders(text) == placeholders(english[key]), (name, key)
 
 
 def test_no_apostrophe_directly_precedes_a_placeholder():
@@ -129,8 +122,8 @@ def test_no_language_is_an_untranslated_copy_of_english():
 
 
 def test_english_translation_is_the_strings_file():
-    strings = json.loads((_DIR / "strings.json").read_text(encoding="utf-8"))
-    english = json.loads((_DIR / "translations/en.json").read_text(encoding="utf-8"))
+    strings = _load("strings.json")
+    english = _load("translations/en.json")
     assert strings == english
 
 
@@ -151,7 +144,7 @@ def test_every_exception_text_is_one_the_code_raises():
     text no code raises is dead."""
     raised = {
         key
-        for module in _DIR.glob("*.py")
+        for module in INTEGRATION.glob("*.py")
         for pattern in _RAISED
         for found in pattern.findall(module.read_text(encoding="utf-8"))
         for key in ((found,) if isinstance(found, str) else found)
@@ -162,11 +155,21 @@ def test_every_exception_text_is_one_the_code_raises():
 
 def test_every_error_the_flows_set_has_a_text() -> None:
     """A key without a text shows raw in the form."""
-    source = (Path(__file__).parent.parent / "custom_components" / "bambuddy" / "config_flow.py").read_text(encoding="utf-8")
+    source = (INTEGRATION / "config_flow.py").read_text(encoding="utf-8")
     errors = set(re.findall(r'\{"base": "(\w+)"\}', source)) | set(re.findall(r'\{CONF_URL: "(\w+)"\}', source))
     reasons = set(re.findall(r'async_abort\(reason="(\w+)"', source))
-    strings = json.loads((Path(__file__).parent.parent / "custom_components" / "bambuddy" / "strings.json").read_text(encoding="utf-8"))
+    strings = _load("strings.json")
     assert errors and reasons
     assert errors <= set(strings["config"]["error"]), errors - set(strings["config"]["error"])
     known = set(strings["config"]["abort"]) | set(strings["options"]["abort"])
     assert reasons <= known, reasons - known
+
+
+def test_configure_is_named_as_every_supported_version_shows_it():
+    """Home Assistant 2025.5 shows "Configure" as a button with its name;
+    only later versions draw a gear: the texts name it, never the gear."""
+    for name in _FILES:
+        for key, text in _texts(_load(name)).items():
+            assert not re.search(r"\bgear\b|Zahnrad", text), (name, key)
+    readme = (INTEGRATION.parent.parent / "README.md").read_text(encoding="utf-8")
+    assert "choose **Configure** (⚙)" not in readme

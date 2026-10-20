@@ -28,12 +28,17 @@ body:
     attributes:
       label: Affected area
       options:
-        - Setup (host, port, API key)
+        - Setup (address, API key)
         - Printers (add, remove)
         - Printer sensors and binary sensors
+        - AMS units and filament
         - Camera or cover image
-        - Print controls (buttons, print speed, chamber light)
-        - BamBuddy instance sensors
+        - Print controls (buttons, print speed, chamber light, temperatures, fans)
+        - Actions
+        - Smart plugs
+        - Maintenance
+        - Dashboard card
+        - BamBuddy instance sensors and updates
         - Documentation
         - Other
     validations:
@@ -44,7 +49,7 @@ body:
     attributes:
       label: Integration version
       description: HACS → BamBuddy, or the `version` field in `manifest.json`.
-      placeholder: e.g. 2026.05.17
+      placeholder: e.g. 2.0.0-beta.1
     validations:
       required: true
 
@@ -71,7 +76,7 @@ body:
     id: bambuddy_version
     attributes:
       label: BamBuddy version
-      description: The BamBuddy instance's **Version** sensor, or BamBuddy's own interface.
+      description: Settings → Devices & services → BamBuddy → the BamBuddy device (its software version), or BamBuddy's own interface.
       placeholder: e.g. 1.2.5.7
     validations:
       required: true
@@ -147,7 +152,7 @@ body:
     id: diagnostics
     attributes:
       label: Diagnostics
-      description: Settings → Devices & services → BamBuddy → ⋮ on your BamBuddy entry (**BamBuddy (<host>)**) → Download diagnostics. The API key is left out automatically.
+      description: Settings → Devices & services → BamBuddy → ⋮ on your BamBuddy entry (**BamBuddy (<host>)**) → Download diagnostics. The API key, addresses and serial numbers are left out automatically; the names of printers, plugs and print jobs stay in. Use the entry's, not a device's (a device's file is named after the device, serial number included).
       render: json
     validations:
       required: false

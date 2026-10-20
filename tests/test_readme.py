@@ -73,3 +73,37 @@ def test_the_release_badge_opens_the_release_it_shows():
     )
     assert link == "https://github.com/Spegeli/hacs_bambuddy/releases/latest"
     assert "include_prereleases" not in badge
+
+
+def test_the_switch_off_trigger_fires_once():
+    """A state trigger on the switch-off's `phase` "to done" alone fires
+    again at every reload of the entry while it is done (the restored state
+    comes from one without attributes): the README's trigger names `from`."""
+    assert "`phase` from `waiting` to `done`" in _README
+
+
+def test_every_mention_of_the_floor_names_the_minimum_of_hacs_json():
+    """The floor is raised in one go: hacs.json, the README's requirements,
+    CONTRIBUTING and the pull request template say the same."""
+    minimum = json.loads((_ROOT / "hacs.json").read_text(encoding="utf-8"))["homeassistant"]
+    floor = ".".join(minimum.split(".")[:2])
+    contributing = (_ROOT / "CONTRIBUTING.md").read_text(encoding="utf-8")
+    template = (_ROOT / ".github" / "pull_request_template.md").read_text(encoding="utf-8")
+    assert f"Home Assistant **{floor}** or newer" in _README
+    assert f"**Home Assistant {floor} is the floor**" in contributing
+    assert f"the Python of the {floor} floor" in contributing
+    assert f"exist in {floor}, the supported floor" in template
+
+
+def test_the_issue_forms_link_to_sections_of_the_readme():
+    """The bug form's first checkbox and the chooser's contact link send the
+    user into the README: a renamed heading would break them unseen."""
+    text = re.sub(r"```.*?```", "", _README, flags=re.DOTALL)
+    sections = {_github_anchor(heading) for heading in re.findall(r"^#{1,6} (.+)$", text, re.MULTILINE)}
+    links = {
+        link
+        for form in sorted((_ROOT / ".github" / "ISSUE_TEMPLATE").glob("*.yml"))
+        for link in re.findall(r"github\.com/Spegeli/hacs_bambuddy#([^)\s\"']+)", form.read_text(encoding="utf-8"))
+    }
+    assert {"-troubleshooting", "create-an-api-key"} <= links
+    assert sorted(links - sections) == []

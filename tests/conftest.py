@@ -27,9 +27,12 @@ from homeassistant.config_entries import (
     OptionsFlowManager,
 )
 from homeassistant.core import HomeAssistant
-from homeassistant.data_entry_flow import FlowManager, FlowResultType
+from homeassistant.components.repairs.issue_handler import RepairsFlowManager
+from homeassistant.data_entry_flow import FlowManager, FlowResultType, section
 from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers import entity_registry as er
+from homeassistant.helpers import issue_registry as ir
+from homeassistant.helpers.selector import SelectSelector
 import pytest
 from pytest_homeassistant_custom_component.common import MockConfigEntry, async_fire_time_changed
 
@@ -50,7 +53,7 @@ _STATUSES = {
 }
 
 _FIXTURES = Path(__file__).parent / "fixtures"
-_INTEGRATION = Path(__file__).parent.parent / "custom_components" / "bambuddy"
+INTEGRATION = Path(__file__).parent.parent / "custom_components" / "bambuddy"
 
 
 @pytest.fixture(autouse=True)
@@ -63,9 +66,19 @@ def load_fixture(name: str) -> Any:
     return json.loads((_FIXTURES / name).read_text(encoding="utf-8"))
 
 
+def printer_info(printer_id: int) -> dict[str, Any]:
+    """BamBuddy's answer for one printer of tests/fixtures/printers.json."""
+    return next(p for p in load_fixture("printers.json") if p["id"] == printer_id)
+
+
+def printers_but(*printer_ids: int) -> list[dict[str, Any]]:
+    """BamBuddy's printer list without these printers."""
+    return [p for p in load_fixture("printers.json") if p["id"] not in printer_ids]
+
+
 def printer_serial(printer_id: int) -> str:
     """A printer's serial number, as BamBuddy lists it."""
-    printer = next(p for p in load_fixture("printers.json") if p["id"] == printer_id)
+    printer = printer_info(printer_id)
     return str(printer.get("serial_number") or "")
 
 
@@ -90,7 +103,7 @@ def printer_entry(printer_id: int) -> dict[str, Any]:
 def printer_name(printer_id: int) -> str:
     """The device name a printer gets: its name in BamBuddy, then model and
     serial."""
-    printer = next(p for p in load_fixture("printers.json") if p["id"] == printer_id)
+    printer = printer_info(printer_id)
     return f"{printer['name']} ({printer['model']} / {printer['serial_number']})"
 
 
@@ -153,7 +166,7 @@ def bambuddy_api() -> Iterator[SimpleNamespace]:
         "get_firmware_updates": AsyncMock(return_value=load_fixture("firmware_updates.json")),
         "get_printers": AsyncMock(return_value=load_fixture("printers.json")),
         "get_printer": AsyncMock(
-            side_effect=lambda printer_id: next(p for p in load_fixture("printers.json") if p["id"] == printer_id)
+            side_effect=lambda printer_id: printer_info(printer_id)
         ),
         "get_status": AsyncMock(side_effect=lambda printer_id: copy.deepcopy(statuses[printer_id])),
         "get_stream_token": AsyncMock(return_value=STREAM_TOKEN),
@@ -206,7 +219,8 @@ def config_entry(hass: HomeAssistant) -> MockConfigEntry:
 async def setup_integration(hass: HomeAssistant, entry: MockConfigEntry) -> None:
     """Set `entry` up and wait until it is loaded."""
     assert await hass.config_entries.async_setup(entry.entry_id)
-    await hass.async_block_till_done()
+    # The update checks run beside the setup.
+    await hass.async_block_till_done(wait_background_tasks=True)
     assert entry.state is ConfigEntryState.LOADED
 
 
@@ -217,10 +231,10 @@ async def set_up(hass: HomeAssistant, *printer_ids: int) -> MockConfigEntry:
     return entry
 
 
-async def next_refresh(hass: HomeAssistant, freezer: FrozenDateTimeFactory) -> None:
+async def next_refresh(hass: HomeAssistant, freezer: FrozenDateTimeFactory, seconds: float = 11) -> None:
     """Past the printers' next poll: a coordinator's next refresh comes 9 to
-    10.5 seconds after the last."""
-    freezer.tick(timedelta(seconds=11))
+    10.5 seconds after the last (other intervals: `seconds`)."""
+    freezer.tick(timedelta(seconds=seconds))
     async_fire_time_changed(hass)
     # The coordinators refresh in background tasks.
     await hass.async_block_till_done(wait_background_tasks=True)
@@ -273,24 +287,52 @@ def device_id(hass: HomeAssistant, entry: MockConfigEntry, identifier: str) -> s
     raise AssertionError(identifier)
 
 
-def state_of(hass: HomeAssistant, platform: str, unique_id: str) -> Any:
-    """The state object of an entity found by its unique ID."""
-    state = hass.states.get(entity_id(hass, platform, unique_id))
-    assert state is not None, unique_id
+def state_at(hass: HomeAssistant, entity: str) -> Any:
+    """The state object of an entity found by its entity ID."""
+    state = hass.states.get(entity)
+    assert state is not None, entity
     return state
 
 
-def _placeholders(template: str) -> frozenset[str]:
+def state_of(hass: HomeAssistant, platform: str, unique_id: str) -> Any:
+    """The state object of an entity found by its unique ID."""
+    return state_at(hass, entity_id(hass, platform, unique_id))
+
+
+def placeholders(template: str) -> frozenset[str]:
     """The {placeholders} of a text, parsed as Home Assistant parses them."""
     return frozenset(
         field for _, field, _, _ in string.Formatter().parse(template) if field is not None
     )
 
 
-def flow_text_problems(texts: dict, result: Mapping[str, Any]) -> list[tuple]:
+def _field_problems(step: dict, result: Mapping[str, Any], selectors: dict) -> list[tuple]:
+    """A form's fields without a label, and a choice of a translated
+    selector without its text: the user would read the raw key."""
+    problems: list[tuple] = []
+    schema = result.get("data_schema")
+    for key, value in (schema.schema.items() if schema is not None else ()):
+        name = str(key)
+        if isinstance(value, section):
+            labels = step.get("sections", {}).get(name, {}).get("data", {})
+            problems += [("no field label", result["step_id"], f"{name}.{inner}") for inner in map(str, value.schema.schema) if inner not in labels]
+            continue
+        if name not in step.get("data", {}):
+            problems.append(("no field label", result["step_id"], name))
+        if isinstance(value, SelectSelector) and (translation := value.config.get("translation_key")):
+            texts = selectors.get(translation, {}).get("options", {})
+            for option in value.config.get("options", []):
+                choice = option["value"] if isinstance(option, dict) else option
+                if choice not in texts:
+                    problems.append(("no choice text", translation, choice))
+    return problems
+
+
+def flow_text_problems(texts: dict, result: Mapping[str, Any], selectors: dict | None = None) -> list[tuple]:
     """What the flow result `result` shows without a text, and every
     placeholder a text it shows uses that the code did not supply. `texts`
-    are the flow's part of the English strings: `config` or `options`."""
+    are the flow's part of the English strings: `config`, `options` or a
+    repair's `fix_flow`; `selectors` the strings' translated choices."""
     problems: list[tuple] = []
     shown: list[str] = []
     if result["type"] in (FlowResultType.FORM, FlowResultType.MENU):
@@ -299,6 +341,7 @@ def flow_text_problems(texts: dict, result: Mapping[str, Any]) -> list[tuple]:
             return [("no step texts", result["step_id"])]
         shown += [step.get("title", ""), step.get("description", "")]
     if result["type"] == FlowResultType.FORM:
+        problems += _field_problems(step, result, selectors or {})
         shown += step.get("data_description", {}).values()
         for part in step.get("sections", {}).values():
             shown += [part.get("description", ""), *part.get("data_description", {}).values()]
@@ -308,7 +351,10 @@ def flow_text_problems(texts: dict, result: Mapping[str, Any]) -> list[tuple]:
             else:
                 problems.append(("no error text", result["step_id"], error))
     elif result["type"] == FlowResultType.MENU:
-        # The frontend fills the placeholders into the button labels too.
+        # The frontend fills no placeholder into a menu's title (it shows
+        # the braces), but into its description and button labels.
+        if placeholders(step.get("title", "")):
+            problems.append(("placeholder in a menu title", result["step_id"]))
         labels = step.get("menu_options", {})
         for option in result["menu_options"]:
             if option in labels:
@@ -320,11 +366,17 @@ def flow_text_problems(texts: dict, result: Mapping[str, Any]) -> list[tuple]:
             shown.append(texts["abort"][result["reason"]])
         else:
             problems.append(("no abort text", result["reason"]))
+    elif result["type"] == FlowResultType.CREATE_ENTRY and result.get("description"):
+        # The success dialog's text.
+        if result["description"] in texts.get("create_entry", {}):
+            shown.append(texts["create_entry"][result["description"]])
+        else:
+            problems.append(("no create_entry text", result["description"]))
     supplied = set(result.get("description_placeholders") or {})
     problems.extend(
-        ("placeholder not supplied", result.get("step_id") or result["reason"], missing)
+        ("placeholder not supplied", result.get("step_id") or result.get("reason") or result.get("description"), missing)
         for text in shown
-        if (missing := _placeholders(text) - supplied)
+        if (missing := placeholders(text) - supplied)
     )
     return problems
 
@@ -337,13 +389,13 @@ def check_flow_texts() -> Iterator[None]:
     Home Assistant core checks this with its check_translations fixture,
     which pytest-homeassistant-custom-component does not ship. Without the
     check, a dropped text or a renamed placeholder shows the user a raw key
-    or a literal {placeholder}. Checked for the config and the options flow:
-    the step's title and texts, a form's errors and sections, a menu's
-    option labels, and the abort reason.
+    or a literal {placeholder}. Checked for the config, the options and the
+    repair flows: the step's title and texts, a form's fields, choices,
+    errors and sections, a menu's option labels, and the abort reason.
     Read from translations/en.json, which equals strings.json (test_strings).
     """
     english = json.loads(
-        (_INTEGRATION / "translations" / "en.json").read_text(encoding="utf-8")
+        (INTEGRATION / "translations" / "en.json").read_text(encoding="utf-8")
     )
     problems: list[tuple] = []
     original = FlowManager._async_handle_step
@@ -356,13 +408,18 @@ def check_flow_texts() -> Iterator[None]:
             return english["options"] if entry and entry.domain == DOMAIN else None
         if isinstance(manager, ConfigEntriesFlowManager) and flow.handler == DOMAIN:
             return english["config"]
+        if isinstance(manager, RepairsFlowManager) and flow.handler == DOMAIN:
+            issue_id = getattr(flow, "issue_id", None) or flow.context.get("issue_id")
+            issue = ir.async_get(manager.hass).async_get_issue(DOMAIN, issue_id)
+            return english["issues"][issue.translation_key]["fix_flow"] if issue and issue.translation_key else None
         return None
 
     async def _checked(self: FlowManager, flow: Any, *args: Any, **kwargs: Any) -> Any:
-        result = await original(self, flow, *args, **kwargs)
+        # Before the step: a repair that finishes deletes its issue.
         texts = _texts(self, flow)
+        result = await original(self, flow, *args, **kwargs)
         if texts is not None:
-            problems.extend(flow_text_problems(texts, result))
+            problems.extend(flow_text_problems(texts, result, english.get("selector", {})))
         return result
 
     with patch.object(FlowManager, "_async_handle_step", _checked):

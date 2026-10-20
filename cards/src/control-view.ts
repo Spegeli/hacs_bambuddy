@@ -1,30 +1,37 @@
 // The control view: its sections in the user's order -- the heaters, the
 // print options, moving the axes, homing and the extruder. Every move waits
 // while a print is on the printer or the AMS changes filament; homing asks
-// first. The card offers the view only where it may control the printer; an
-// offline printer's tab shows the offline view instead (card.ts).
+// first. The card offers the view where the API key may control the printer
+// -- with Hide controls as states only; an offline printer's tab shows the
+// offline view instead (card.ts).
 import { html, nothing, type TemplateResult } from "lit";
 
-import { formatNumber, formatState, listedOptions, numericState, stateOf } from "./format";
+import { formatNumber, formatState, formatTemperature, fromCelsius, listedOptions, numericState, stateOf, temperatureUnit } from "./format";
 import { detectionSection } from "./detection";
 import { heatingSection } from "./heating";
 import { type IconName } from "./icons";
 import { t, type TextKey } from "./i18n";
-import { actionButton, activeNozzleIndex, developerHint, note, NOZZLE_SIDES, radioKeys, radioStop, type CardContext } from "./parts";
+import { actionButton, activeNozzleIndex, developerHint, hottestNozzle, note, NOZZLE_SIDES, radioKeys, radioLeave, radioStop, type CardContext } from "./parts";
 import type { ControlSection, Heater, PrinterRefs } from "./types";
 
-// His word (2026-10-18): 0.1 mm too, for fine steps of the bed.
+// 0.1 mm too, for fine steps of Z.
 const STEPS = [0.1, 1, 10] as const;
 export type Step = (typeof STEPS)[number];
 
 /** The filament length one tap extrudes or retracts. */
 const EXTRUDE_LENGTH = 10;
 
-/** Below this, the printer refuses to extrude. */
+/** Below this, in °C, the printer refuses to extrude. */
 const MIN_EXTRUDE_TEMPERATURE = 170;
+
+/** The printers whose Z moves the nozzle, not the bed (bed slingers: the
+ * A1, A1 mini and A2L). */
+const NOZZLE_Z = /^A(1|2L)\b/i;
 
 /** The hint for a cold nozzle that names the active one of two. */
 const COLD_HINTS: TextKey[] = ["cold_nozzle_left", "cold_nozzle_right"];
+/** The same, where the card shows no heating section to point to. */
+const COLD_PLAIN: TextKey[] = ["cold_nozzle_left_plain", "cold_nozzle_right_plain"];
 
 /** Left or right on a printer with two nozzles: the one that extrudes and
  * loads. The printer switches only without a print. */
@@ -37,13 +44,14 @@ function activeNozzle(ctx: CardContext, disabled: boolean): TemplateResult | typ
   const stop = radioStop(options, state.state);
   return html`<div class="nozzle-row">
     <span class="step-label">${t(hass, "active_nozzle")}</span>
-    <div class="seg" role="radiogroup" aria-label=${t(hass, "active_nozzle")} @keydown=${radioKeys}>
+    <div class="seg" role="radiogroup" aria-label=${t(hass, "active_nozzle")} @keydown=${radioKeys} @focusout=${radioLeave}>
       ${options.map(
         (option, index) => html`<button
           role="radio"
           aria-checked=${option === state.state ? "true" : "false"}
           tabindex=${index === stop ? 0 : -1}
-          ?disabled=${disabled || pending || state.state === "unavailable"}
+          aria-disabled=${pending ? "true" : nothing}
+          ?disabled=${disabled || state.state === "unavailable"}
           @click=${() => ctx.run("active_nozzle", "select", "select_option", { entity_id: refs.activeNozzle, option })}
         >
           ${formatState(hass, refs.activeNozzle, option)}
@@ -53,17 +61,14 @@ function activeNozzle(ctx: CardContext, disabled: boolean): TemplateResult | typ
   </div>`;
 }
 
-/** The temperature of the nozzle that extrudes: the active one of two, else
- * the hottest (the integration decides where it knows better). */
-function extrudingNozzle(ctx: CardContext): number | undefined {
-  const { hass, refs } = ctx;
+/** The temperature sensor of the nozzle that extrudes: the active one of
+ * two, else the hottest (the integration decides where it knows better). */
+function extrudingNozzle(ctx: CardContext): string | undefined {
   const active = activeNozzleIndex(ctx);
-  if (active !== undefined) return numericState(hass, (refs.nozzles[active] as Heater).sensor);
-  const temperatures = refs.nozzles.map((nozzle) => numericState(hass, nozzle.sensor)).filter((value): value is number => value !== undefined);
-  return temperatures.length ? Math.max(...temperatures) : undefined;
+  return active !== undefined ? (ctx.refs.nozzles[active] as Heater).sensor : hottestNozzle(ctx)?.sensor;
 }
 
-/** Moving: the active nozzle, the jog pad with its step, homing, the bed
+/** Moving: the active nozzle, the jog pad with its step, homing, Z
  * and the extruder. */
 function motionSection(ctx: CardContext, step: Step, setStep: (step: Step) => void): TemplateResult {
   const { hass, refs } = ctx;
@@ -84,22 +89,31 @@ function motionSection(ctx: CardContext, step: Step, setStep: (step: Step) => vo
       onClick: () => ctx.run(key, "bambuddy", "move_axis", { device_id: device, axis, distance }),
     });
   };
+  // The A series moves the nozzle on Z, the others the bed; Z+ parts them.
+  const nozzleMoves = NOZZLE_Z.test(refs.model);
   const bed = (direction: 1 | -1): TemplateResult =>
     actionButton({
       label: t(hass, direction > 0 ? "bed_away" : "bed_closer"),
-      aria: t(hass, direction > 0 ? "bed_away_aria" : "bed_closer_aria", { step: formatNumber(hass, step, 1) }),
-      iconName: direction > 0 ? "down" : "up",
+      aria: nozzleMoves
+        ? t(hass, direction > 0 ? "nozzle_away_aria" : "nozzle_closer_aria", { step: formatNumber(hass, step, 1) })
+        : t(hass, direction > 0 ? "bed_away_aria" : "bed_closer_aria", { step: formatNumber(hass, step, 1) }),
+      iconName: direction > 0 === nozzleMoves ? "up" : "down",
       disabled,
       pending: ctx.isPending("move_z"),
       className: "stack",
       onClick: () => ctx.run("move_z", "bambuddy", "move_axis", { device_id: device, axis: "z", distance: direction * step }),
     });
 
-  const nozzle = extrudingNozzle(ctx);
-  const cold = nozzle !== undefined && nozzle < MIN_EXTRUDE_TEMPERATURE;
+  const sensor = extrudingNozzle(ctx);
+  const nozzle = numericState(hass, sensor);
+  // In the sensor's unit: Home Assistant may show it in °F.
+  const unit = temperatureUnit(hass, sensor);
+  const minimum = fromCelsius(MIN_EXTRUDE_TEMPERATURE, unit);
+  const cold = nozzle !== undefined && nozzle < minimum;
   // Of two nozzles, the hint names the one to heat.
   const side = activeNozzleIndex(ctx);
-  const coldHint = side === undefined ? "cold_nozzle" : (COLD_HINTS[side] as TextKey);
+  const heating = ctx.settings.sections.includes("heating");
+  const coldHint = side === undefined ? (heating ? "cold_nozzle" : "cold_nozzle_plain") : ((heating ? COLD_HINTS : COLD_PLAIN)[side] as TextKey);
   const extruder = (direction: 1 | -1): TemplateResult =>
     actionButton({
       label: t(hass, direction > 0 ? "extrude" : "retract"),
@@ -113,6 +127,7 @@ function motionSection(ctx: CardContext, step: Step, setStep: (step: Step) => vo
 
   const home = actionButton({
     label: t(hass, "home"),
+    aria: t(hass, "home_aria"),
     iconName: "home",
     iconOnly: true,
     // Filled only while it can be pressed: disabled, it looks like the arrows.
@@ -132,13 +147,13 @@ function motionSection(ctx: CardContext, step: Step, setStep: (step: Step) => vo
 
   // A print or a filament change stops what moves (the heaters stay); a
   // change is a wait, said as a note.
-  // The step applies to X, Y and the bed; the extruder always moves 10 mm.
+  // The step applies to X, Y and Z; the extruder always moves 10 mm.
   return html`${ctx.online && ctx.busy ? note(t(hass, "busy_reason"), "warning") : ctx.changing ? note(t(hass, "changing_reason")) : nothing}
     ${activeNozzle(ctx, disabled)}
     <div class="control">
       <div class="step-row">
         <span class="step-label">${t(hass, "step")}</span>
-        <div class="seg" role="radiogroup" aria-label=${t(hass, "step")} @keydown=${radioKeys}>
+        <div class="seg" role="radiogroup" aria-label=${t(hass, "step")} @keydown=${radioKeys} @focusout=${radioLeave}>
           ${STEPS.map(
             (value) => html`<button
               role="radio"
@@ -156,15 +171,15 @@ function motionSection(ctx: CardContext, step: Step, setStep: (step: Step) => vo
         ${jog("y", 1, "up", "n")}${jog("x", -1, "left", "w")}${home}${jog("x", 1, "right", "e")}${jog("y", -1, "down", "s")}
       </div>
       <div class="axis-col bed">
-        <span class="axis-label">${t(hass, "bed_axis")}</span>
-        ${bed(-1)}${bed(1)}
+        <span class="axis-label">${t(hass, nozzleMoves ? "nozzle_height" : "bed_axis")}</span>
+        ${nozzleMoves ? html`${bed(1)}${bed(-1)}` : html`${bed(-1)}${bed(1)}`}
       </div>
       <div class="axis-col ext">
         <span class="axis-label">${t(hass, "extruder")} · ${formatNumber(hass, EXTRUDE_LENGTH)} mm</span>
         <div class="ext-buttons">${extruder(-1)}${extruder(1)}</div>
       </div>
     </div>
-    ${cold && !disabled ? note(t(hass, coldHint)) : nothing}
+    ${cold && !disabled ? note(t(hass, coldHint, { temperature: formatTemperature(hass, minimum, unit) })) : nothing}
     <p class="hint">${t(hass, "jog_note")}</p>`;
 }
 

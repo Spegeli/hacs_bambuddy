@@ -89,19 +89,11 @@ def test_the_readme_documents_what_the_bundle_takes() -> None:
     options = re.findall(r"^\| `(\w+)` \|", section, flags=re.MULTILINE)
     bundle = CARD_FILE.read_text(encoding="utf-8")
 
-    assert options == [
-        "printer",
-        "camera",
-        "status_blocks",
-        "header_chips",
-        "start_view",
-        "show_control_tab",
-        "control_sections",
-        "read_only",
-        "show_filament_tab",
-        "ams_folding",
-        "show_auto_off",
-    ]
+    forms = (Path(__file__).parent.parent / "cards" / "src" / "forms.ts").read_text(encoding="utf-8")
+    declared = re.search(r"const OPTIONS: Record<string, Validator> = \{(.*?)\n\};", forms, flags=re.DOTALL)
+    assert declared
+    assert options == re.findall(r"^  (\w+):", declared.group(1), flags=re.MULTILINE)
+    assert len(options) == 11
     for option in options:
         assert option in bundle, option
     assert "bambuddy-printer-card" in bundle

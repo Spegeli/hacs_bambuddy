@@ -16,7 +16,9 @@ from custom_components.bambuddy.models import (
     ams_number,
     camera_max_fps,
     detectors,
+    display_model,
     find_tray,
+    heater_max,
     nozzle_type,
     printer_name,
     print_stage,
@@ -43,6 +45,8 @@ def _printer(status: dict[str, Any], model: str = "X1C", **info: Any) -> Printer
         ({"connected": True, "state": "FINISH"}, "finished"),
         ({"connected": True, "state": "FAILED"}, "failed"),
         ({"connected": True, "state": "unknown"}, "unknown"),
+        # A printer starting up: no job yet.
+        ({"connected": True, "state": "INIT"}, "idle"),
         # BamBuddy keeps the last state of a printer it lost.
         ({"connected": False, "state": "RUNNING"}, "offline"),
         ({"connected": False, "state": None}, "offline"),
@@ -58,7 +62,12 @@ def test_print_status(status: dict[str, Any], expected: str | None) -> None:
 @pytest.mark.parametrize(
     ("status", "expected"),
     [
-        ({"stg_cur": 0, "stg_cur_name": "Printing"}, "printing"),
+        ({"stg_cur": 0, "stg_cur_name": "Printing", "state": "RUNNING"}, "printing"),
+        ({"stg_cur": 0, "stg_cur_name": "Printing", "state": "PAUSE"}, "printing"),
+        # Stage 0 outside a print: the A series and the P1 report it while
+        # idle too (BamBuddy clears it for the A1, A1 mini and P1 only).
+        ({"stg_cur": 0, "stg_cur_name": "Printing", "state": "IDLE"}, "idle"),
+        ({"stg_cur": 0, "stg_cur_name": "Printing", "state": "FINISH"}, "idle"),
         ({"stg_cur": 2, "stg_cur_name": "Heatbed preheating"}, "heatbed_preheating"),
         ({"stg_cur": 16, "stg_cur_name": "Paused by the user"}, "paused_by_user"),
         ({"stg_cur": 77, "stg_cur_name": "Preparing AMS"}, "preparing_ams"),
@@ -182,7 +191,14 @@ def test_an_empty_slot_tells_no_filament() -> None:
 
 @pytest.mark.parametrize(("tray_now", "expected"), [(255, None), (None, None), (5, 5), (254, 254)])
 def test_active_tray(tray_now: int | None, expected: int | None) -> None:
-    assert active_tray({"tray_now": tray_now}) == expected
+    assert active_tray(_printer({"tray_now": tray_now})) == expected
+
+
+@pytest.mark.parametrize(("extruder", "expected"), [(1, 254), (0, 255), (None, 255)])
+def test_a_two_nozzle_printer_s_external_spool_by_its_nozzle(extruder: int | None, expected: int) -> None:
+    """BamBuddy names both holders 254 there: the left nozzle (1) feeds from the left spool."""
+    status = {"tray_now": 254, "active_extruder": extruder, "temperatures": {"nozzle": 25, "nozzle_2": 25}}
+    assert active_tray(_printer(status, "H2D")) == expected
 
 
 def test_find_tray() -> None:
@@ -200,14 +216,22 @@ def test_find_tray() -> None:
 @pytest.mark.parametrize(
     ("model", "aux", "door", "airduct", "ethernet", "sd", "exhaust", "usb"),
     [
-        ("X1C", True, True, False, True, True, False, False),
+        # Ethernet only on the X1E and the H2D Pro (Bambu's spec pages and FAQs, 2026-10-19).
+        ("X1C", True, True, False, False, True, False, False),
+        ("X1E", True, True, False, True, True, False, False),
+        ("C13", True, True, False, True, True, False, False),
         # The A1 series has a microSD slot.
         ("A1 Mini", False, False, False, False, True, False, False),
         ("a1", False, False, False, False, True, False, False),
-        ("P1S", True, False, False, True, True, False, False),
+        ("P1S", True, False, False, False, True, False, False),
         # No SD slot: BamBuddy's flag tells a USB drive.
-        ("H2D", True, True, True, True, True, False, True),
-        ("P2S", True, True, True, True, True, True, True),
+        ("H2D", True, True, True, False, True, False, True),
+        ("H2D Pro", True, True, True, True, True, False, True),
+        ("O1E", True, True, True, True, True, False, True),
+        # The P2S's exhaust fan is a kit: here without it (see the next test).
+        ("P2S", True, True, True, False, True, False, True),
+        # The X2D's is fitted.
+        ("X2D", True, True, True, False, True, True, True),
         # An unknown model: only what every printer has.
         ("", False, False, False, False, False, False, False),
     ],
@@ -225,6 +249,56 @@ def test_model_capabilities(
         printer.has_exhaust_fan(),
         printer.stores_on_usb(),
     ) == (aux, door, airduct, ethernet, sd, exhaust, usb)
+
+
+_T, _F = True, False
+
+
+@pytest.mark.parametrize(
+    ("model", "expected"),
+    [
+        # aux fans, enclosed, door, airduct, Ethernet, USB drive, chamber fan, exhaust fan (no kit), stock aux,
+        # stock chamber, A1 family, drying from the screen only -- after Bambu's spec pages and FAQs.
+        ("X1", (_T, _T, _T, _F, _F, _F, _T, _F, _F, _T, _F, _F)),
+        ("BL-P002", (_T, _T, _T, _F, _F, _F, _T, _F, _F, _T, _F, _F)),
+        ("X1C", (_T, _T, _T, _F, _F, _F, _T, _F, _T, _T, _F, _F)),
+        ("X1E", (_T, _T, _T, _F, _T, _F, _T, _F, _T, _T, _F, _F)),
+        ("P1P", (_T, _F, _F, _F, _F, _F, _T, _F, _F, _F, _F, _F)),
+        ("P1S", (_T, _T, _F, _F, _F, _F, _T, _F, _T, _T, _F, _F)),
+        ("C12", (_T, _T, _F, _F, _F, _F, _T, _F, _T, _T, _F, _F)),
+        ("P2S", (_T, _T, _T, _T, _F, _T, _F, _F, _T, _F, _F, _F)),
+        ("N7", (_T, _T, _T, _T, _F, _T, _F, _F, _T, _F, _F, _F)),
+        ("A1", (_F, _F, _F, _F, _F, _F, _F, _F, _F, _F, _T, _T)),
+        ("A1 Mini", (_F, _F, _F, _F, _F, _F, _F, _F, _F, _F, _T, _T)),
+        ("A04", (_F, _F, _F, _F, _F, _F, _F, _F, _F, _F, _T, _T)),
+        ("A2L", (_F, _F, _F, _F, _F, _F, _F, _F, _F, _F, _T, _F)),
+        ("N9", (_F, _F, _F, _F, _F, _F, _F, _F, _F, _F, _T, _F)),
+        ("H2D", (_T, _T, _T, _T, _F, _T, _T, _F, _T, _T, _F, _F)),
+        ("H2D Pro", (_T, _T, _T, _T, _T, _T, _T, _F, _T, _T, _F, _F)),
+        ("O1E", (_T, _T, _T, _T, _T, _T, _T, _F, _T, _T, _F, _F)),
+        ("H2S", (_T, _T, _T, _T, _F, _T, _T, _F, _T, _T, _F, _F)),
+        ("H2C", (_T, _T, _T, _T, _F, _T, _T, _F, _T, _T, _F, _F)),
+        ("O1C2", (_T, _T, _T, _T, _F, _T, _T, _F, _T, _T, _F, _F)),
+        ("X2D", (_T, _T, _T, _T, _F, _T, _F, _T, _T, _F, _F, _F)),
+    ],
+)
+def test_every_model_has_what_it_has(model: str, expected: tuple[bool, ...]) -> None:
+    """Every model BamBuddy knows, and some of their codes: what it is given, and what not."""
+    printer = _printer({}, model)
+    assert (
+        printer.has_aux_fans(),
+        printer.enclosed(),
+        printer.has_door(),
+        printer.has_airduct(),
+        printer.has_ethernet(),
+        printer.stores_on_usb(),
+        printer.has_chamber_fan(),
+        printer.has_exhaust_fan(),
+        printer.stock_aux_fan(),
+        printer.stock_chamber_fan(),
+        printer.is_a1_family(),
+        printer.dries_on_screen_only(),
+    ) == expected
 
 
 @pytest.mark.parametrize(
@@ -304,6 +378,13 @@ def test_a_spool_with_a_chip_describes_itself() -> None:
             ["buildplate_marker_detector", "spaghetti_detector", "pileup_detector", "clump_detector", "airprint_detector"],
         ),
         ("H2D", "01.01.01.00", ["printing_monitor", "buildplate_marker_detector"]),
+        ("X1", None, ["printing_monitor", "first_layer_inspector", "buildplate_marker_detector"]),
+        (
+            "H2D Pro",
+            None,
+            ["buildplate_marker_detector", "spaghetti_detector", "pileup_detector", "clump_detector", "airprint_detector"],
+        ),
+        ("X2D", None, ["buildplate_marker_detector", "spaghetti_detector", "pileup_detector", "clump_detector"]),
         # A firmware that is no version counts as a current one.
         (
             "H2D",
@@ -324,6 +405,12 @@ def test_a_spool_nobody_described_is_there() -> None:
     assert (attributes["empty"], attributes["present"]) == (True, True)
 
 
+def test_a_printer_without_a_name_is_named_by_its_model_not_its_code() -> None:
+    printer = {"id": 4, "name": " ", "model": "C12", "serial_number": "01P00A000000004"}
+    assert short_name(printer) == "P1S"
+    assert ams_name(printer, 0, "AMS", "006000000000001").startswith("P1S AMS A")
+
+
 def test_the_names_trim_bambuddys_blanks() -> None:
     printer = {"id": 1, "name": " Lab ", "model": "X1C", "serial_number": "00M00A000000001"}
     assert (printer_name(printer), short_name(printer)) == ("Lab (X1C / 00M00A000000001)", "Lab")
@@ -336,8 +423,11 @@ def test_the_names_trim_bambuddys_blanks() -> None:
         (1, "AMS 2 Pro", "19C06A000000003", "Studio AMS B (AMS 2 Pro / 19C06A000000003)"),
         (128, "AMS HT", "19F06A000000002", "Studio AMS HT A (AMS HT / 19F06A000000002)"),
         (129, "AMS HT", "", "Studio AMS HT B (AMS HT)"),
-        # An A2L's AMS Lite: BamBuddy's unit 6.
-        (6, "AMS Lite", "", "Studio AMS A (AMS Lite)"),
+        # An A2L's AMS Lite: BamBuddy's unit 6, "AMS Lite" without a letter (amsHelpers.ts) -- an AMS
+        # at place 0 is AMS A beside it.
+        (6, "AMS Lite", "", "Studio AMS Lite"),
+        # An A1's AMS Lite is the A1's AMS A.
+        (0, "AMS Lite", "", "Studio AMS A (AMS Lite)"),
     ],
 )
 def test_ams_names(unit_id: int, model: str, serial: str, name: str) -> None:
@@ -385,3 +475,105 @@ def test_a_camera_bambuddy_takes_from_elsewhere_gives_15() -> None:
     # On without an address, or an address switched off: the printer's own.
     assert camera_max_fps({"model": "A1 Mini", "external_camera_enabled": True, "external_camera_url": None}) == 5
     assert camera_max_fps({"model": "X1C", **external, "external_camera_enabled": False}) == 30
+
+
+@pytest.mark.parametrize(
+    ("model", "status", "chamber", "exhaust"),
+    [
+        # BamBuddy reports the P2S's External Exhaust Fan kit as exhaust_fan_present (bambu_mqtt.py 4730-4737):
+        # the base P2S has neither a chamber nor an exhaust fan.
+        ("P2S", {}, False, False),
+        ("P2S", {"exhaust_fan_present": False}, False, False),
+        ("P2S", {"exhaust_fan_present": True}, False, True),
+        ("N7", {"exhaust_fan_present": True}, False, True),
+        ("X2D", {}, False, True),
+        ("H2D", {}, True, False),
+        ("X1C", {}, True, False),
+        ("A1", {}, False, False),
+    ],
+)
+def test_the_chamber_and_the_exhaust_fan(model: str, status: dict[str, Any], chamber: bool, exhaust: bool) -> None:
+    printer = _printer(status, model)
+    assert (printer.has_chamber_fan(), printer.has_exhaust_fan()) == (chamber, exhaust)
+
+
+@pytest.mark.parametrize(
+    ("model", "aux", "chamber"),
+    [("X1", False, True), ("BL-P002", False, True), ("P1P", False, False), ("C11", False, False), ("X1C", True, True),
+     ("P1S", True, True), ("H2D", True, True)],
+)
+def test_fans_the_stock_printer_lacks(model: str, aux: bool, chamber: bool) -> None:
+    """The stock X1 has no auxiliary fan, the P1P neither that nor a chamber fan (Bambu's pages);
+    kits add them, so the integration still offers them, disabled at first."""
+    printer = _printer({}, model)
+    assert (printer.stock_aux_fan(), printer.stock_chamber_fan()) == (aux, chamber)
+
+
+# BamBuddy's PRINTER_MODEL_ID_MAP (utils/printer_models.py) and the discovery's BL-P003 (printerModel.ts).
+_CODES = {
+    "BL-P001": "X1C", "BL-P002": "X1", "BL-P003": "X1E", "C13": "X1E", "C11": "P1P", "C12": "P1S", "N7": "P2S",
+    "N6": "X2D", "N9": "A2L", "A11": "A1", "A12": "A1 Mini", "N1": "A1 Mini", "N2S": "A1", "A04": "A1 Mini",
+    "O1D": "H2D", "O1E": "H2D Pro", "O2D": "H2D Pro", "O1C": "H2C", "O1C2": "H2C", "O1S": "H2S",
+}
+
+
+@pytest.mark.parametrize(("code", "model"), list(_CODES.items()))
+def test_a_model_code_has_its_models_capabilities(code: str, model: str) -> None:
+    """BamBuddy may store a printer under its code: it has what the model has."""
+    def capabilities(name: str) -> tuple:
+        printer = _printer({"firmware_version": "01.09.00.00", "exhaust_fan_present": True}, name)
+        return (printer.has_aux_fans(), printer.has_chamber_fan(), printer.has_exhaust_fan(), printer.stock_aux_fan(),
+                printer.stock_chamber_fan(), printer.has_door(), printer.has_airduct(), printer.has_ethernet(),
+                printer.has_sd_card(), printer.stores_on_usb(), printer.is_a1_family(), detectors(printer))
+
+    assert capabilities(code) == capabilities(model)
+
+
+
+@pytest.mark.parametrize(
+    ("model", "shown"),
+    [("BL-P002", "X1"), ("O1S", "H2S"), ("C12", "P1S"), ("N7", "P2S"), ("X1C", "X1C"), ("", ""), ("Something", "Something")],
+)
+def test_a_model_code_shows_as_its_model(model: str, shown: str) -> None:
+    """BamBuddy may store a printer under its model code: device names and models say the model."""
+    assert display_model(model) == shown
+    printer = {"id": 1, "name": "Lab", "model": model, "serial_number": "00W00A000000001"}
+    assert printer_name(printer) == (f"Lab ({shown} / 00W00A000000001)" if shown else "Lab (00W00A000000001)")
+
+
+
+@pytest.mark.parametrize(
+    ("model", "enclosed"),
+    [("X1C", True), ("P1S", True), ("H2D", True), ("P2S", True), ("A1", False), ("A1 Mini", False), ("A2L", False),
+     ("P1P", False), ("C11", False), ("N1", False), ("", True)],
+)
+def test_which_printers_have_a_chamber(model: str, enclosed: bool) -> None:
+    """The A1 series and the P1P are open frames; a printer of unknown model counts as enclosed."""
+    assert _printer({}, model).enclosed() is enclosed
+
+
+@pytest.mark.parametrize(
+    ("model", "nozzle", "bed"),
+    [
+        ("A1 Mini", 300, 80),
+        ("A2L", 300, 80),
+        ("A1", 300, 100),
+        ("P1P", 300, 100),
+        ("C12", 300, 100),
+        ("P2S", 300, 110),
+        ("X1E", 320, 110),
+        # 110 °C on 220 V, 120 °C on 110 V: the higher.
+        ("X1C", 300, 120),
+        ("X1", 300, 120),
+        ("X2D", 300, 120),
+        ("H2D", 350, 120),
+        ("H2D Pro", 350, 120),
+        ("H2C", 350, 120),
+        ("H2S", 350, 120),
+        # A model nobody knows: BamBuddy's limits alone.
+        ("", None, None),
+        ("Z9", None, None),
+    ],
+)
+def test_every_model_heats_as_far_as_it_can(model: str, nozzle: int | None, bed: int | None) -> None:
+    assert (heater_max(model, "nozzle"), heater_max(model, "bed")) == (nozzle, bed)

@@ -21,6 +21,13 @@ class _BamBuddyUpdate(BamBuddyUpdatesEntity, UpdateEntity):
 
     _attr_supported_features = UpdateEntityFeature.RELEASE_NOTES
 
+    # The check the entity follows: unavailable until it answered once.
+    _source = ""
+
+    @property
+    def available(self) -> bool:
+        return super().available and (self.coordinator.data or {}).get(self._source) is not None
+
     @property
     def _check(self) -> dict[str, Any]:
         raise NotImplementedError
@@ -48,6 +55,9 @@ class BamBuddyUpdate(_BamBuddyUpdate):
     """BamBuddy's own check against its GitHub releases."""
 
     _attr_translation_key = "bambuddy_update"
+    # Home Assistant's list of updates shows it beside the device.
+    _attr_title = "BamBuddy"
+    _source = "bambuddy"
 
     def __init__(self, coordinator: BamBuddyUpdateCoordinator) -> None:
         entry_id = coordinator.config_entry.entry_id
@@ -72,14 +82,13 @@ class FirmwareUpdate(_BamBuddyUpdate):
 
     _attr_translation_key = "firmware"
     _attr_entity_category = EntityCategory.DIAGNOSTIC
+    _attr_title = "Firmware"
+    _source = "firmware"
 
     def __init__(self, coordinator: BamBuddyUpdateCoordinator, printer: BamBuddyPrinterCoordinator) -> None:
-        entry_id = coordinator.config_entry.entry_id
-        super().__init__(
-            coordinator,
-            f"{entry_id}_p{printer.key}_firmware",
-            printer.identifier,
-        )
+        unique_id = printer.entity_unique_id("firmware")
+        super().__init__(coordinator, unique_id, printer.identifier)
+        printer.created.add(unique_id)
         self.printer = printer
         suggest_entity_id(self, printer, "firmware")
 

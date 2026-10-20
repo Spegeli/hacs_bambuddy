@@ -22,6 +22,38 @@ export function numericState(hass: Hass, entityId: string | undefined): number |
   return Number.isFinite(value) ? value : undefined;
 }
 
+/** Minutes in a duration sensor's unit: the user may show it in hours. */
+const MINUTES_PER: Readonly<Record<string, number>> = { d: 1440, h: 60, min: 1, s: 1 / 60, ms: 1 / 60000 };
+
+/** A duration sensor's state in minutes, whatever unit the user chose. */
+export function minutesOf(hass: Hass, entityId: string | undefined): number | undefined {
+  const value = numericState(hass, entityId);
+  const unit = stateOf(hass, entityId)?.attributes["unit_of_measurement"];
+  return value === undefined ? undefined : value * (MINUTES_PER[typeof unit === "string" ? unit : "min"] ?? 1);
+}
+
+/** A temperature entity's unit: Home Assistant shows temperatures in the
+ * user's unit system (°F with US customary units). */
+export function temperatureUnit(hass: Hass, entityId: string | undefined): string {
+  const unit = stateOf(hass, entityId)?.attributes["unit_of_measurement"];
+  return unit === "°F" || unit === "K" ? unit : "°C";
+}
+
+/** A Celsius figure of the card's own -- a start, a limit -- in that unit, whole. */
+export const fromCelsius = (celsius: number, unit: string): number =>
+  Math.round(unit === "°F" ? celsius * 1.8 + 32 : unit === "K" ? celsius + 273.15 : celsius);
+
+/** A temperature entity's figure in °C: a heater's sensor and its number
+ * may show different units (Home Assistant keeps a registered sensor in its
+ * unit when the unit system changes). */
+export const toCelsius = (value: number, unit: string): number => (unit === "°F" ? (value - 32) / 1.8 : unit === "K" ? value - 273.15 : value);
+
+/** The lowest value a heater's target takes: off (0 °C, 32 °F). */
+export function targetFloor(hass: Hass, entityId: string | undefined): number {
+  const min = stateOf(hass, entityId)?.attributes["min"];
+  return typeof min === "number" ? min : 0;
+}
+
 /** A value that is a text with something in it, else undefined. */
 export const textOrUndefined = (value: unknown): string | undefined => (typeof value === "string" && value ? value : undefined);
 
@@ -66,7 +98,13 @@ export function formatNumber(hass: Hass, value: number, maximumFractionDigits = 
   }).format(value);
 }
 
-export const formatTemperature = (hass: Hass, value: number): string => `${formatNumber(hass, value)}\u00a0°C`;
+/** A temperature in its entity's unit; the card's own figures and the
+ * integration's attributes are in °C. */
+export const formatTemperature = (hass: Hass, value: number, unit = "°C"): string => `${formatNumber(hass, value)}\u00a0${unit}`;
+
+/** A figure of a temperature entity, in that entity's unit. */
+export const formatTemperatureOf = (hass: Hass, entityId: string | undefined, value: number): string =>
+  formatTemperature(hass, value, temperatureUnit(hass, entityId));
 
 /** A number with exactly `digits` decimals: a K value as 0.020. */
 export function formatFixed(hass: Hass, value: number, digits: number): string {
@@ -75,7 +113,7 @@ export function formatFixed(hass: Hass, value: number, digits: number): string {
 
 export const formatPercent = (hass: Hass, value: number): string => `${formatNumber(hass, value)}\u00a0%`;
 
-/** Power in W, from 1000 W in kW (his decision). */
+/** Power in W, from 1000 W in kW. */
 export const formatPower = (hass: Hass, watts: number): string =>
   Math.abs(watts) >= 1000 ? `${formatNumber(hass, watts / 1000, 1)}\u00a0kW` : `${formatNumber(hass, watts)}\u00a0W`;
 
@@ -192,3 +230,6 @@ export function needsOutline(color: string): boolean {
   const value = brightness(color);
   return value > 0.85 || value < 0.12;
 }
+
+/** A job's name without the file's extension: "Benchy.gcode.3mf" -> "Benchy". */
+export const jobName = (name: string): string => name.replace(/(\.gcode)?\.(3mf|gcode)$/i, "") || name;

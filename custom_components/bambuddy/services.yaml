@@ -190,9 +190,37 @@ answer_hms:
         text:
     action:
       required: true
-      example: "RESUME_PRINTING"
+      example: "RESUME_PRINTING_PROBELM_SOLVED"
       selector:
-        text:
+        select:
+          custom_value: true
+          mode: dropdown
+          options:
+            - "RESUME_PRINTING"
+            - "RESUME_PRINTING_DEFECTS"
+            - "RESUME_PRINTING_PROBELM_SOLVED"
+            - "PROBLEM_SOLVED_RESUME"
+            - "FILAMENT_LOAD_RESUME"
+            - "PROCEED"
+            - "DBL_CHECK_RESUME"
+            - "STOP_PRINTING"
+            - "IGNORE_RESUME"
+            - "IGNORE_NO_REMINDER_NEXT_TIME"
+            - "DONT_REMIND_NEXT_TIME"
+            - "NO_REMINDER_NEXT_TIME"
+            - "FILAMENT_EXTRUDED"
+            - "DBL_CHECK_DONE"
+            - "RETRY_FILAMENT_EXTRUDED"
+            - "CONTINUE"
+            - "RETRY_PROBLEM_SOLVED"
+            - "DBL_CHECK_RETRY"
+            - "ABORT"
+            - "OK_BUTTON"
+            - "DBL_CHECK_OK"
+            - "REFRESH_NOZZLE"
+            - "TURN_OFF_FIRE_ALARM"
+            - "STOP_DRYING"
+            - "DISABLE_PURIFICATION"
 skip_objects:
   fields:
     device_id:

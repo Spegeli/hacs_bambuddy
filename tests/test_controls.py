@@ -32,6 +32,7 @@ from tests.conftest import (
     printer_uid,
     set_up,
     setup_integration,
+    state_at,
     state_of,
 )
 
@@ -192,7 +193,7 @@ async def test_nothing_reaches_an_offline_printer(
 async def test_the_print_speed(hass: HomeAssistant, bambuddy_api: SimpleNamespace) -> None:
     entry = await set_up(hass, X1C)
     entity = entity_id(hass, "select", printer_uid(entry, "print_speed"))
-    assert hass.states.get(entity).state == "standard"  # type: ignore[union-attr]
+    assert state_at(hass, entity).state == "standard"
 
     await _call(hass, "select", "select_option", entity, option="sport")
 
@@ -202,8 +203,9 @@ async def test_the_print_speed(hass: HomeAssistant, bambuddy_api: SimpleNamespac
 async def test_the_print_speed_needs_a_print(hass: HomeAssistant, bambuddy_api: SimpleNamespace) -> None:
     entry = await set_up(hass, A1_MINI)
 
-    with pytest.raises(ServiceValidationError):
+    with pytest.raises(ServiceValidationError) as raised:
         await _call(hass, "select", "select_option", entity_id(hass, "select", printer_uid(entry, "print_speed", A1_MINI)), option="silent")
+    assert raised.value.translation_key == "not_printing"
 
 
 async def test_the_airduct_mode(
@@ -213,7 +215,7 @@ async def test_the_airduct_mode(
     -- the print sets it at its start, as Bambu Studio says."""
     entry = await set_up(hass, H2D, X1C)
     entity = entity_id(hass, "select", printer_uid(entry, "airduct_mode", H2D))
-    assert hass.states.get(entity).state == "heating"  # type: ignore[union-attr]
+    assert state_at(hass, entity).state == "heating"
     assert no_entity(hass, "select", printer_uid(entry, "airduct_mode"))
 
     with pytest.raises(ServiceValidationError) as raised:
@@ -327,7 +329,7 @@ async def test_an_h2d_has_an_exhaust_fan_name_only_where_bambu_uses_it(
 async def test_the_chamber_light(hass: HomeAssistant, bambuddy_api: SimpleNamespace, service: str, on: bool) -> None:
     entry = await set_up(hass, X1C)
     entity = entity_id(hass, "light", printer_uid(entry, "chamber_light"))
-    assert hass.states.get(entity).state == "on"  # type: ignore[union-attr]
+    assert state_at(hass, entity).state == "on"
 
     await _call(hass, "light", service, entity)
 
@@ -359,7 +361,7 @@ async def test_the_active_nozzle(
     left one. Not while a print runs: the job decides then."""
     entry = await set_up(hass, H2D, X1C)
     entity = entity_id(hass, "select", printer_uid(entry, "active_nozzle", H2D))
-    assert hass.states.get(entity).state == "left"  # type: ignore[union-attr]
+    assert state_at(hass, entity).state == "left"
     assert no_entity(hass, "select", printer_uid(entry, "active_nozzle"))
 
     with pytest.raises(ServiceValidationError) as raised:
@@ -381,7 +383,7 @@ async def test_the_ams_filament_backup(
     when one runs out."""
     entry = await set_up(hass, X1C)
     entity = entity_id(hass, "switch", printer_uid(entry, "ams_filament_backup"))
-    assert hass.states.get(entity).state == "on"  # type: ignore[union-attr]
+    assert state_at(hass, entity).state == "on"
 
     await _call(hass, "switch", service, entity)
 
@@ -439,7 +441,7 @@ async def test_the_ai_detection(hass: HomeAssistant, bambuddy_api: SimpleNamespa
     as on. Switchable during a print -- a false alarm is when it matters."""
     entry = await set_up(hass, X1C, P1S)
     for key in ("ai_monitoring", "first_layer_inspection", "build_plate_detection"):
-        assert hass.states.get(entity_id(hass, "switch", printer_uid(entry, key))).state == "on"  # type: ignore[union-attr]
+        assert state_at(hass, entity_id(hass, "switch", printer_uid(entry, key))).state == "on"
     for key in ("spaghetti_detection", "clumping_detection"):
         assert no_entity(hass, "switch", printer_uid(entry, key)), key
     for key in ("ai_monitoring", "build_plate_detection", "spaghetti_detection"):
@@ -476,9 +478,98 @@ async def test_the_single_detectors_of_an_h2d(
     clumping = entity_id(hass, "switch", printer_uid(entry, "clumping_detection", H2D))
     bambuddy_api.statuses[H2D]["print_options"]["nozzle_clumping_detector"] = False
     await next_refresh(hass, freezer)
-    assert hass.states.get(clumping).state == "off"  # type: ignore[union-attr]
+    assert state_at(hass, clumping).state == "off"
 
     await _call(hass, "switch", "turn_on", clumping)
 
     bambuddy_api.set_print_option.assert_awaited_once_with(H2D, "clump_detector", True)
     assert no_entity(hass, "switch", printer_uid(entry, "ai_monitoring", H2D))
+
+
+
+def _as_model(bambuddy_api: SimpleNamespace, model: str) -> None:
+    """The X1C's place listed as another model."""
+    printers = load_fixture("printers.json")
+    for printer in printers:
+        if printer["id"] == X1C:
+            printer["model"] = model
+    bambuddy_api.get_printers.return_value = printers
+
+
+@pytest.mark.parametrize(("kit", "fans"), [(False, {"part_cooling_fan", "aux_fan"}), (True, {"part_cooling_fan", "aux_fan", "chamber_fan"})])
+async def test_a_p2s_has_an_exhaust_fan_only_with_the_kit(
+    hass: HomeAssistant, bambuddy_api: SimpleNamespace, kit: bool, fans: set[str]
+) -> None:
+    """The base P2S has no chamber fan; the External Exhaust Fan kit is one, which BamBuddy reports
+    (exhaust_fan_present)."""
+    _as_model(bambuddy_api, "P2S")
+    bambuddy_api.statuses[X1C]["exhaust_fan_present"] = kit
+    entry = await set_up(hass, X1C)
+
+    entities = {e.unique_id for e in er.async_entries_for_config_entry(er.async_get(hass), entry.entry_id) if e.domain == "fan"}
+    assert entities == {printer_uid(entry, key) for key in fans}
+    if kit:
+        assert state_of(hass, "fan", printer_uid(entry, "chamber_fan")).attributes["friendly_name"].endswith("Exhaust fan")
+
+
+@pytest.mark.parametrize(("model", "disabled"), [("X1", {"aux_fan"}), ("P1P", {"aux_fan", "chamber_fan"}), ("X1C", set())])
+async def test_fans_the_stock_printer_lacks_start_disabled(
+    hass: HomeAssistant, bambuddy_api: SimpleNamespace, model: str, disabled: set[str]
+) -> None:
+    """A kit may add them; BamBuddy cannot tell: there, but disabled at first."""
+    _as_model(bambuddy_api, model)
+    entry = await set_up(hass, X1C)
+
+    registry = er.async_get(hass)
+    for key in ("part_cooling_fan", "aux_fan", "chamber_fan"):
+        entity = registry.async_get(registry.async_get_entity_id("fan", "bambuddy", printer_uid(entry, key)) or "")
+        assert entity is not None, key
+        assert (entity.disabled_by is not None) == (key in disabled), key
+
+
+
+async def test_the_laser_airduct_mode_is_shown_not_offered(
+    hass: HomeAssistant, bambuddy_api: SimpleNamespace, freezer: FrozenDateTimeFactory
+) -> None:
+    """The H2 series' laser mode (airduct mode 2) comes from the printer; BamBuddy sets only cooling and
+    heating. Shown as such; picked again it does nothing; cooling or heating go as always."""
+    bambuddy_api.statuses[H2D].update({"state": "IDLE", "airduct_mode": 2})
+    entry = await set_up(hass, H2D)
+    entity = entity_id(hass, "select", printer_uid(entry, "airduct_mode", H2D))
+
+    state = hass.states.get(entity)
+    assert state is not None
+    assert (state.state, state.attributes["options"]) == ("laser", ["cooling", "heating", "laser"])
+    await _call(hass, "select", "select_option", entity, option="laser")
+    bambuddy_api.set_airduct_mode.assert_not_awaited()
+    await _call(hass, "select", "select_option", entity, option="heating")
+    bambuddy_api.set_airduct_mode.assert_awaited_once_with(H2D, "heating")
+
+    bambuddy_api.statuses[H2D]["airduct_mode"] = 1
+    await next_refresh(hass, freezer)
+    assert state_at(hass, entity).attributes["options"] == ["cooling", "heating"]
+
+
+
+async def test_a_printer_without_a_chamber_has_a_light(hass: HomeAssistant, bambuddy_api: SimpleNamespace) -> None:
+    """The A1 series and the P1P are open frames: their light is no chamber light. Its unique ID stays."""
+    entry = await set_up(hass, X1C, A1_MINI)
+
+    enclosed = entity_id(hass, "light", printer_uid(entry, "chamber_light"))
+    open_frame = entity_id(hass, "light", printer_uid(entry, "chamber_light", A1_MINI))
+    assert state_of(hass, "light", printer_uid(entry, "chamber_light")).attributes["friendly_name"].endswith("Chamber light")
+    assert state_of(hass, "light", printer_uid(entry, "chamber_light", A1_MINI)).attributes["friendly_name"].endswith(" Light")
+    assert (enclosed.endswith("_chamber_light"), open_frame.endswith("_chamber_light"), open_frame.endswith("_light")) == (True, False, True)
+
+
+async def test_a_target_goes_as_high_as_the_model_heats(hass: HomeAssistant, bambuddy_api: SimpleNamespace) -> None:
+    """BamBuddy takes up to 320 °C for a nozzle and 140 °C for a bed; an A1
+    mini heats its bed to 80 °C, an H2D its nozzles to 350 °C."""
+    entry = await set_up(hass, A1_MINI, H2D)
+
+    assert state_of(hass, "number", printer_uid(entry, "bed_target", A1_MINI)).attributes["max"] == 80
+    assert state_of(hass, "number", printer_uid(entry, "nozzle_target", A1_MINI)).attributes["max"] == 300
+    assert state_of(hass, "number", printer_uid(entry, "nozzle_target", H2D)).attributes["max"] == 320
+    assert state_of(hass, "number", printer_uid(entry, "nozzle_2_target", H2D)).attributes["max"] == 320
+    assert state_of(hass, "number", printer_uid(entry, "bed_target", H2D)).attributes["max"] == 120
+    assert state_of(hass, "number", printer_uid(entry, "chamber_target", H2D)).attributes["max"] == 65

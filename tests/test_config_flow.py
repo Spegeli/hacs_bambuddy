@@ -2,6 +2,7 @@
 printers."""
 from __future__ import annotations
 
+import json
 import ssl
 from types import SimpleNamespace
 from typing import Any
@@ -15,7 +16,7 @@ from homeassistant.data_entry_flow import FlowResultType
 from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers import issue_registry as ir
-from pytest_homeassistant_custom_component.common import async_mock_service
+from pytest_homeassistant_custom_component.common import MockConfigEntry, async_mock_service
 
 from custom_components.bambuddy.api import (
     BamBuddyApiError,
@@ -28,8 +29,10 @@ from custom_components.bambuddy.api import (
 )
 from custom_components.bambuddy.config_flow import printer_name as flow_printer_name
 from custom_components.bambuddy.const import DOMAIN
+from custom_components.bambuddy.coordinator import missing_issue
 
 from tests.conftest import (
+    INTEGRATION,
     A1_MINI,
     API_KEY,
     H2D,
@@ -40,10 +43,12 @@ from tests.conftest import (
     load_fixture,
     make_entry,
     printer_entry,
+    printer_info,
     printer_key,
     printer_name,
     printer_serial,
     printer_uid,
+    printers_but,
     set_up,
     setup_integration,
 )
@@ -53,6 +58,11 @@ _INPUT = {"url": "bambuddy.local:8000/", "api_key": API_KEY, "verify_ssl": True}
 
 async def _start(hass: HomeAssistant) -> dict[str, Any]:
     result: dict[str, Any] = await hass.config_entries.flow.async_init(DOMAIN, context={"source": SOURCE_USER})
+    return result
+
+
+async def _reconfigure(hass: HomeAssistant, entry: MockConfigEntry) -> dict[str, Any]:
+    result: dict[str, Any] = await entry.start_reconfigure_flow(hass)  # type: ignore[assignment]
     return result
 
 
@@ -100,6 +110,8 @@ async def test_a_bambuddy_without_printers_needs_no_choice(
 
     assert result["type"] is FlowResultType.CREATE_ENTRY
     assert result["options"] == {"printers": []}
+    # Said, with where to add them later.
+    assert result["description"] == "no_printers"
 
 
 @pytest.mark.parametrize(
@@ -287,7 +299,7 @@ async def test_a_read_key_at_a_new_address_says_so(hass: HomeAssistant, bambuddy
     entry = await set_up(hass, X1C)
     bambuddy_api.get_auth_me.return_value = load_fixture("auth_me_read.json")
 
-    result: dict[str, Any] = await entry.start_reconfigure_flow(hass)  # type: ignore[assignment]
+    result = await _reconfigure(hass, entry)
     result = await _submit(hass, result["flow_id"], {**_INPUT, "url": "https://bambuddy.example", "api_key": "bb_read"})
     result = await _submit(hass, result["flow_id"], {"bambuddy": "same"})
     await hass.async_block_till_done()
@@ -314,8 +326,10 @@ async def test_reconfiguring_to_a_key_that_may_only_read_says_so(
     entry = await set_up(hass, X1C)
     bambuddy_api.get_auth_me.return_value = load_fixture("auth_me_read.json")
 
-    result: dict[str, Any] = await entry.start_reconfigure_flow(hass)  # type: ignore[assignment]
+    result = await _reconfigure(hass, entry)
     result = await _submit(hass, result["flow_id"], {**_INPUT, "url": URL, "api_key": "bb_read"})
+    # The reload it started, done before the test ends.
+    await hass.async_block_till_done()
 
     assert (result["type"], result["reason"]) == (FlowResultType.ABORT, "reconfigure_successful_read_only")
 
@@ -325,6 +339,28 @@ async def test_a_key_pasted_with_spaces(hass: HomeAssistant, bambuddy_api: Simpl
     result = await _submit(hass, result["flow_id"], {"printers": [str(X1C)]})
 
     assert result["data"]["api_key"] == API_KEY
+
+
+async def test_the_same_bambuddy_at_another_address_sets_up_no_printer_twice(
+    hass: HomeAssistant, bambuddy_api: SimpleNamespace
+) -> None:
+    """Its host name typed once, its IP now: every printer is set up already -- said, with where."""
+    make_entry(hass, X1C, A1_MINI, P1S, H2D, X1E)
+
+    result = await _submit(hass, (await _start(hass))["flow_id"], {**_INPUT, "url": "http://192.168.1.20:8000"})
+
+    assert (result["type"], result["reason"]) == (FlowResultType.ABORT, "printers_in_use")
+    assert result["description_placeholders"] == {"entries": "BamBuddy (bambuddy.local)"}
+
+
+async def test_printers_another_entry_holds_are_not_offered(hass: HomeAssistant, bambuddy_api: SimpleNamespace) -> None:
+    """A device per printer and entry: one held already would come twice, under the same name."""
+    make_entry(hass, X1C, H2D)
+
+    result = await _submit(hass, (await _start(hass))["flow_id"], {**_INPUT, "url": "http://192.168.1.20:8000"})
+
+    [field] = result["data_schema"].schema
+    assert field.default() == ["2", "3", "5"]
 
 
 @pytest.mark.parametrize("typed", ["http://bambuddy.local:8000", "HTTP://BamBuddy.local:8000/", "bambuddy.local:8000/api/v1"])
@@ -377,7 +413,7 @@ async def test_a_new_address_brings_a_failed_entry_back(hass: HomeAssistant, bam
     assert entry.state is ConfigEntryState.SETUP_RETRY
     bambuddy_api.get_printers.side_effect = None
 
-    result: dict[str, Any] = await entry.start_reconfigure_flow(hass)  # type: ignore[assignment]
+    result = await _reconfigure(hass, entry)
     result = await _submit(hass, result["flow_id"], {**_INPUT, "url": "http://192.0.2.99:8000"})
     result = await _submit(hass, result["flow_id"], {"bambuddy": "same"})
     await hass.async_block_till_done()
@@ -423,7 +459,7 @@ async def test_reconfiguration(hass: HomeAssistant, bambuddy_api: SimpleNamespac
     """A new address: the entry keeps its printers and follows."""
     entry = await set_up(hass, X1C)
 
-    result: dict[str, Any] = await entry.start_reconfigure_flow(hass)  # type: ignore[assignment]
+    result = await _reconfigure(hass, entry)
     assert result["step_id"] == "reconfigure"
     result = await _submit(hass, result["flow_id"], {**_INPUT, "url": "not an address://"})
     assert result["errors"] == {"url": "invalid_url"}
@@ -464,7 +500,7 @@ async def test_reconfiguration_never_shows_the_key(hass: HomeAssistant, bambuddy
     error."""
     entry = await set_up(hass, X1C)
 
-    result: dict[str, Any] = await entry.start_reconfigure_flow(hass)  # type: ignore[assignment]
+    result = await _reconfigure(hass, entry)
     assert _suggested(result) == {"url": URL, "verify_ssl": True}
     # A domain as an example too, filled in: hassfest refuses a URL in a string.
     assert result["description_placeholders"] == {"example_url": "https://bambuddy.example.com"}
@@ -484,7 +520,7 @@ async def test_a_new_key_survives_an_error(hass: HomeAssistant, bambuddy_api: Si
     never shows."""
     entry = await set_up(hass, X1C)
 
-    result: dict[str, Any] = await entry.start_reconfigure_flow(hass)  # type: ignore[assignment]
+    result = await _reconfigure(hass, entry)
     result = await _submit(hass, result["flow_id"], {"url": "not an address://", "api_key": "bb_new", "verify_ssl": True})
     assert result["errors"] == {"url": "invalid_url"}
     assert result["description_placeholders"]["example_url"] == "https://bambuddy.example.com"
@@ -500,7 +536,7 @@ async def test_the_stored_key_refused(hass: HomeAssistant, bambuddy_api: SimpleN
     entry = await set_up(hass, X1C)
     bambuddy_api.get_system_info.side_effect = BamBuddyAuthError(401, "Invalid API key")
 
-    result: dict[str, Any] = await entry.start_reconfigure_flow(hass)  # type: ignore[assignment]
+    result = await _reconfigure(hass, entry)
     result = await _submit(hass, result["flow_id"], {"url": URL, "verify_ssl": True})
 
     assert result["errors"] == {"base": "stored_key_refused"}
@@ -515,7 +551,7 @@ async def test_the_stored_key_goes_only_to_a_bambuddy(hass: HomeAssistant, bambu
     bambuddy_api.get_system_info.reset_mock()
     bambuddy_api.get_version.side_effect = BamBuddyNotFoundError(404, "Not Found")
 
-    result: dict[str, Any] = await entry.start_reconfigure_flow(hass)  # type: ignore[assignment]
+    result = await _reconfigure(hass, entry)
     result = await _submit(hass, result["flow_id"], {"url": "http://192.0.2.98:8000", "verify_ssl": True})
     assert result["errors"] == {"base": "not_bambuddy"}
     bambuddy_api.get_system_info.assert_not_awaited()
@@ -533,8 +569,9 @@ async def test_reconfiguration_with_the_same_address(hass: HomeAssistant, bambud
     """Only the key changes."""
     entry = await set_up(hass, X1C)
 
-    result: dict[str, Any] = await entry.start_reconfigure_flow(hass)  # type: ignore[assignment]
+    result = await _reconfigure(hass, entry)
     result = await _submit(hass, result["flow_id"], {**_INPUT, "api_key": "bb_other"})
+    await hass.async_block_till_done()
 
     assert result["reason"] == "reconfigure_successful"
     assert entry.data["api_key"] == "bb_other"
@@ -547,7 +584,7 @@ async def test_reconfiguration_to_another_entrys_address(
     other = make_entry(hass, A1_MINI)
     hass.config_entries.async_update_entry(other, unique_id="http://other:8000")
 
-    result: dict[str, Any] = await other.start_reconfigure_flow(hass)  # type: ignore[assignment]
+    result = await _reconfigure(hass, other)
     result = await _submit(hass, result["flow_id"], {**_INPUT, "url": URL})
 
     # A field error: the user can correct the address.
@@ -576,12 +613,54 @@ async def test_adding_printers(hass: HomeAssistant, bambuddy_api: SimpleNamespac
     assert set(entry.runtime_data.printers) == {X1C, P1S, X1E}
 
 
+def _other_entry(hass: HomeAssistant, *printer_ids: int) -> MockConfigEntry:
+    """A second BamBuddy entry -- the same BamBuddy at its IP -- holding these printers."""
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        title="BamBuddy (192.168.1.20)",
+        data={"url": "http://192.168.1.20:8000", "api_key": API_KEY, "verify_ssl": True},
+        options={"printers": [printer_entry(printer_id) for printer_id in printer_ids]},
+        unique_id="http://192.168.1.20:8000",
+        version=2,
+        minor_version=2,
+    )
+    entry.add_to_hass(hass)
+    return entry
+
+
+async def test_adding_printers_another_entry_holds(hass: HomeAssistant, bambuddy_api: SimpleNamespace) -> None:
+    """Not offered; when only those are left, said with where."""
+    entry = await set_up(hass, X1C)
+    _other_entry(hass, A1_MINI, P1S)
+
+    result = await _options(hass, entry, "add_printer")
+    [field] = result["data_schema"].schema
+    assert [option["value"] for option in result["data_schema"].schema[field].config["options"]] == ["4", "5"]
+
+    _other_entry(hass, H2D, X1E)
+    result = await _options(hass, entry, "add_printer")
+    assert (result["type"], result["reason"]) == (FlowResultType.ABORT, "printers_in_use")
+    assert result["description_placeholders"] == {"entries": "BamBuddy (192.168.1.20)"}
+
+
 async def test_adding_when_all_are_added(hass: HomeAssistant, bambuddy_api: SimpleNamespace) -> None:
     entry = make_entry(hass, X1C, A1_MINI, P1S, H2D, X1E)
 
     result = await _options(hass, entry, "add_printer")
 
     assert (result["type"], result["reason"]) == (FlowResultType.ABORT, "all_printers_added")
+    assert result["description_placeholders"] == {"name": entry.title}
+
+
+async def test_adding_when_bambuddy_has_none(hass: HomeAssistant, bambuddy_api: SimpleNamespace) -> None:
+    """None to add because BamBuddy has none: not "all are added"."""
+    entry = make_entry(hass)
+    bambuddy_api.get_printers.return_value = []
+
+    result = await _options(hass, entry, "add_printer")
+
+    assert (result["type"], result["reason"]) == (FlowResultType.ABORT, "no_printers")
+    assert result["description_placeholders"] == {"name": entry.title}
 
 
 async def test_adding_without_bambuddy(hass: HomeAssistant, bambuddy_api: SimpleNamespace) -> None:
@@ -592,6 +671,7 @@ async def test_adding_without_bambuddy(hass: HomeAssistant, bambuddy_api: Simple
     result = await _options(hass, entry, "add_printer")
 
     assert (result["type"], result["reason"]) == (FlowResultType.ABORT, "cannot_connect")
+    assert result["description_placeholders"] == {"name": entry.title}
 
 
 async def test_removing_printers(hass: HomeAssistant, bambuddy_api: SimpleNamespace) -> None:
@@ -610,7 +690,7 @@ async def test_removing_one_of_two_printers_with_one_number(hass: HomeAssistant,
     X1C waits for BamBuddy to list it again. Each printer is its own choice,
     named as it is: ticking one removes that one."""
     entry = make_entry(hass, A1_MINI, X1C)
-    a1_mini = next(printer for printer in load_fixture("printers.json") if printer["id"] == A1_MINI)
+    a1_mini = printer_info(A1_MINI)
     bambuddy_api.get_printers.return_value = [{**a1_mini, "id": X1C}]
     bambuddy_api.statuses[X1C] = load_fixture("status_a1mini.json")
     await setup_integration(hass, entry)
@@ -659,7 +739,8 @@ async def test_removing_without_a_connection_names_the_stored_printers(
     [field] = result["data_schema"].schema
 
     labels = [option["label"] for option in result["data_schema"].schema[field].config["options"]]
-    assert labels == [printer_name(X1C), printer_name(A1_MINI)]
+    # By name: Desk before Workshop.
+    assert labels == [printer_name(A1_MINI), printer_name(X1C)]
 
 
 async def test_removing_starts_with_nothing_chosen(hass: HomeAssistant, bambuddy_api: SimpleNamespace) -> None:
@@ -672,7 +753,8 @@ async def test_removing_starts_with_nothing_chosen(hass: HomeAssistant, bambuddy
     [field] = result["data_schema"].schema
     assert field.default() == []
     labels = [option["label"] for option in result["data_schema"].schema[field].config["options"]]
-    assert labels == [printer_name(X1C), printer_name(A1_MINI)]
+    # By name: Desk before Workshop.
+    assert labels == [printer_name(A1_MINI), printer_name(X1C)]
     result = await hass.config_entries.options.async_configure(result["flow_id"], {})
     await hass.async_block_till_done()
 
@@ -702,7 +784,7 @@ async def test_moving_to_another_bambuddy(hass: HomeAssistant, bambuddy_api: Sim
     printers = [{**printer, "serial_number": f"OTHER{printer['id']}"} for printer in load_fixture("printers.json")]
     bambuddy_api.get_printers.return_value = printers
 
-    result: dict[str, Any] = await entry.start_reconfigure_flow(hass)  # type: ignore[assignment]
+    result = await _reconfigure(hass, entry)
     result = await _submit(hass, result["flow_id"], {**_INPUT, "url": "http://192.0.2.99:8000"})
     assert (result["type"], result["step_id"]) == (FlowResultType.FORM, "other_bambuddy")
     assert result["data_schema"]({}) == {"bambuddy": "other", "remove_printers": [], "add_printers": []}
@@ -724,7 +806,7 @@ async def test_the_same_bambuddy_without_its_printers_yet(hass: HomeAssistant, b
     entry = await set_up(hass, X1C)
     bambuddy_api.get_printers.return_value = []
 
-    result: dict[str, Any] = await entry.start_reconfigure_flow(hass)  # type: ignore[assignment]
+    result = await _reconfigure(hass, entry)
     result = await _submit(hass, result["flow_id"], {**_INPUT, "url": "http://192.0.2.99:8000"})
     assert result["step_id"] == "other_bambuddy"
     result = await _submit(hass, result["flow_id"], {"bambuddy": "same", "remove_printers": []})
@@ -743,7 +825,7 @@ async def test_another_bambuddy_starts_its_figures_afresh(hass: HomeAssistant, b
     recorder = MagicMock()
 
     with patch("custom_components.bambuddy.config_flow.get_instance", return_value=recorder):
-        result: dict[str, Any] = await entry.start_reconfigure_flow(hass)  # type: ignore[assignment]
+        result = await _reconfigure(hass, entry)
         result = await _submit(hass, result["flow_id"], {**_INPUT, "url": "http://192.0.2.99:8000"})
         result = await _submit(hass, result["flow_id"], {"bambuddy": "other"})
         await hass.async_block_till_done()
@@ -772,7 +854,7 @@ async def test_an_entry_never_set_up_has_no_figures_to_forget(
     hass.config.components.add("recorder")
     purged = async_mock_service(hass, "recorder", "purge_entities")
 
-    result: dict[str, Any] = await entry.start_reconfigure_flow(hass)  # type: ignore[assignment]
+    result = await _reconfigure(hass, entry)
     result = await _submit(hass, result["flow_id"], {**_INPUT, "url": "http://192.0.2.99:8000"})
     result = await _submit(hass, result["flow_id"], {"bambuddy": "other"})
     await hass.async_block_till_done()
@@ -786,7 +868,7 @@ async def test_the_same_bambuddy_keeps_its_figures(hass: HomeAssistant, bambuddy
     hass.config.components.add("recorder")
     purged = async_mock_service(hass, "recorder", "purge_entities")
 
-    result: dict[str, Any] = await entry.start_reconfigure_flow(hass)  # type: ignore[assignment]
+    result = await _reconfigure(hass, entry)
     result = await _submit(hass, result["flow_id"], {**_INPUT, "url": "http://192.0.2.99:8000"})
     result = await _submit(hass, result["flow_id"], {"bambuddy": "same"})
     await hass.async_block_till_done()
@@ -799,7 +881,7 @@ async def test_another_bambuddy_without_a_recorder(hass: HomeAssistant, bambuddy
     """Nothing recorded, nothing to forget."""
     entry = await set_up(hass, X1C)
 
-    result: dict[str, Any] = await entry.start_reconfigure_flow(hass)  # type: ignore[assignment]
+    result = await _reconfigure(hass, entry)
     result = await _submit(hass, result["flow_id"], {**_INPUT, "url": "http://192.0.2.99:8000"})
     result = await _submit(hass, result["flow_id"], {"bambuddy": "other"})
     await hass.async_block_till_done()
@@ -811,10 +893,10 @@ async def test_a_new_bambuddy_with_some_of_the_printers(hass: HomeAssistant, bam
     """Moved to a new BamBuddy that has one of the two: the move goes through,
     the found printer stays, the other is missing."""
     entry = await set_up(hass, X1C, A1_MINI)
-    printers = [printer for printer in load_fixture("printers.json") if printer["id"] != A1_MINI]
+    printers = printers_but(A1_MINI)
     bambuddy_api.get_printers.return_value = printers
 
-    result: dict[str, Any] = await entry.start_reconfigure_flow(hass)  # type: ignore[assignment]
+    result = await _reconfigure(hass, entry)
     result = await _submit(hass, result["flow_id"], {**_INPUT, "url": "http://192.0.2.99:8000"})
     assert result["step_id"] == "new_address"
     assert result["description_placeholders"]["kept"] == "- Workshop"
@@ -830,9 +912,9 @@ async def test_a_new_address_removes_and_adds_printers(hass: HomeAssistant, bamb
     """Printers missing there removed, with their devices; printers there
     added -- only those ticked, none at first."""
     entry = await set_up(hass, X1C, A1_MINI)
-    bambuddy_api.get_printers.return_value = [printer for printer in load_fixture("printers.json") if printer["id"] != A1_MINI]
+    bambuddy_api.get_printers.return_value = printers_but(A1_MINI)
 
-    result: dict[str, Any] = await entry.start_reconfigure_flow(hass)  # type: ignore[assignment]
+    result = await _reconfigure(hass, entry)
     result = await _submit(hass, result["flow_id"], {**_INPUT, "url": "http://192.0.2.99:8000"})
     assert result["data_schema"]({}) == {"bambuddy": "same", "remove_printers": [], "add_printers": []}
     result = await _submit(
@@ -850,7 +932,7 @@ async def test_a_new_address_removes_and_adds_printers(hass: HomeAssistant, bamb
 async def test_an_entry_without_printers_moves_freely(hass: HomeAssistant, bambuddy_api: SimpleNamespace) -> None:
     entry = await set_up(hass)
 
-    result: dict[str, Any] = await entry.start_reconfigure_flow(hass)  # type: ignore[assignment]
+    result = await _reconfigure(hass, entry)
     result = await _submit(hass, result["flow_id"], {**_INPUT, "url": "http://192.0.2.99:8000"})
 
     assert result["step_id"] == "new_address_no_printers"
@@ -872,7 +954,7 @@ async def test_another_bambuddy_purges_before_clearing(hass: HomeAssistant, bamb
     recorder.async_clear_statistics.side_effect = lambda *_: order.append("clear")
 
     with patch("custom_components.bambuddy.config_flow.get_instance", return_value=recorder):
-        result: dict[str, Any] = await entry.start_reconfigure_flow(hass)  # type: ignore[assignment]
+        result = await _reconfigure(hass, entry)
         result = await _submit(hass, result["flow_id"], {**_INPUT, "url": "http://192.0.2.99:8000"})
         result = await _submit(hass, result["flow_id"], {"bambuddy": "other"})
         await hass.async_block_till_done()
@@ -886,7 +968,7 @@ async def test_a_move_names_the_printers_left_waiting(hass: HomeAssistant, bambu
     entry = await set_up(hass, X1C, A1_MINI, P1S)
     bambuddy_api.get_printers.return_value = [printer for printer in load_fixture("printers.json") if printer["id"] == X1C]
 
-    result: dict[str, Any] = await entry.start_reconfigure_flow(hass)  # type: ignore[assignment]
+    result = await _reconfigure(hass, entry)
     result = await _submit(hass, result["flow_id"], {**_INPUT, "url": "http://192.0.2.99:8000"})
     result = await _submit(hass, result["flow_id"], {"bambuddy": "other", "remove_printers": [printer_key(P1S)]})
     await hass.async_block_till_done()
@@ -894,8 +976,8 @@ async def test_a_move_names_the_printers_left_waiting(hass: HomeAssistant, bambu
     assert result["reason"] == "reconfigure_successful_other_missing"
     assert result["description_placeholders"] == {"printers": "Desk"}
     issues = ir.async_get(hass)
-    assert issues.async_get_issue(DOMAIN, f"printer_missing_{entry.entry_id}_{printer_key(A1_MINI)}") is not None
-    assert issues.async_get_issue(DOMAIN, f"printer_missing_{entry.entry_id}_{printer_key(P1S)}") is None
+    assert issues.async_get_issue(DOMAIN, missing_issue(entry.entry_id, printer_key(A1_MINI))) is not None
+    assert issues.async_get_issue(DOMAIN, missing_issue(entry.entry_id, printer_key(P1S))) is None
 
 
 async def test_the_printers_as_they_were_when_the_address_was_entered(
@@ -905,7 +987,7 @@ async def test_the_printers_as_they_were_when_the_address_was_entered(
     still goes through, with the printers as they were."""
     entry = await set_up(hass, X1C, A1_MINI)
 
-    result: dict[str, Any] = await entry.start_reconfigure_flow(hass)  # type: ignore[assignment]
+    result = await _reconfigure(hass, entry)
     result = await _submit(hass, result["flow_id"], {**_INPUT, "url": "http://192.0.2.99:8000"})
     hass.config_entries.async_update_entry(entry, options={"printers": [printer_entry(X1C)]})
     await hass.async_block_till_done()
@@ -920,7 +1002,7 @@ async def test_an_address_taken_while_choosing(hass: HomeAssistant, bambuddy_api
     """Another entry got the address between the two steps: nothing changes."""
     entry = await set_up(hass, X1C)
 
-    result: dict[str, Any] = await entry.start_reconfigure_flow(hass)  # type: ignore[assignment]
+    result = await _reconfigure(hass, entry)
     result = await _submit(hass, result["flow_id"], {**_INPUT, "url": "http://192.0.2.99:8000"})
     other = make_entry(hass)
     hass.config_entries.async_update_entry(other, unique_id="http://192.0.2.99:8000")
@@ -937,7 +1019,7 @@ async def test_a_title_from_before_follows_in_any_case(hass: HomeAssistant, bamb
     hass.config_entries.async_update_entry(entry, title="BamBuddy (BamBuddy.local)")
     await setup_integration(hass, entry)
 
-    result: dict[str, Any] = await entry.start_reconfigure_flow(hass)  # type: ignore[assignment]
+    result = await _reconfigure(hass, entry)
     result = await _submit(hass, result["flow_id"], {**_INPUT, "url": "http://192.0.2.99:8000"})
     result = await _submit(hass, result["flow_id"], {"bambuddy": "same"})
     await hass.async_block_till_done()
@@ -968,3 +1050,100 @@ async def test_adding_printers_with_a_refused_key_says_so(hass: HomeAssistant, b
     result = await hass.config_entries.options.async_configure(result["flow_id"], {"next_step_id": "add_printer"})
 
     assert (result["type"], result["reason"]) == (FlowResultType.ABORT, "key_refused")
+    assert result["description_placeholders"] == {"name": entry.title}
+
+
+
+async def test_a_setup_left_open_blocks_no_new_one(hass: HomeAssistant, bambuddy_api: SimpleNamespace) -> None:
+    """The browser tab closed during a setup: its flow stays, and Home Assistant lists no user flow to end
+    it. A new setup for the address goes through; the one left ends with it."""
+    left = await _submit(hass, (await _start(hass))["flow_id"], _INPUT)
+    assert left["step_id"] == "printers"
+
+    result = await _submit(hass, (await _start(hass))["flow_id"], _INPUT)
+    assert (result["type"], result["step_id"]) == (FlowResultType.FORM, "printers")
+    result = await _submit(hass, result["flow_id"], {"printers": ["1"]})
+    await hass.async_block_till_done()
+
+    assert result["type"] is FlowResultType.CREATE_ENTRY
+    assert [flow["flow_id"] for flow in hass.config_entries.flow.async_progress()] == []
+
+
+async def test_the_printers_to_remove_by_name(hass: HomeAssistant, bambuddy_api: SimpleNamespace) -> None:
+    """In the order of their names, as when they were added -- not in the order they came."""
+    entry = await set_up(hass, X1C, A1_MINI, H2D)
+
+    result = await _options(hass, entry, "remove_printer")
+    [field] = result["data_schema"].schema
+    labels = [option["label"] for option in result["data_schema"].schema[field].config["options"]]
+    assert labels == sorted(labels, key=str.casefold)
+    assert labels[0].startswith("Desk")
+
+
+async def test_the_printers_kept_at_a_new_address_by_name(hass: HomeAssistant, bambuddy_api: SimpleNamespace) -> None:
+    entry = await set_up(hass, X1C, H2D, A1_MINI)
+    bambuddy_api.get_printers.return_value = printers_but(A1_MINI)
+
+    result = await _reconfigure(hass, entry)
+    result = await _submit(hass, result["flow_id"], {**_INPUT, "url": "http://192.0.2.99:8000"})
+
+    assert result["step_id"] == "new_address"
+    assert result["description_placeholders"]["kept"] == "- Studio\n- Workshop"
+
+
+async def test_an_entry_without_printers_has_its_own_labels(hass: HomeAssistant, bambuddy_api: SimpleNamespace) -> None:
+    """Its "Another BamBuddy" names no printers keeping their history; the labels say what each choice
+    does, under the choice it belongs to."""
+    entry = await set_up(hass)
+
+    result = await _reconfigure(hass, entry)
+    result = await _submit(hass, result["flow_id"], {**_INPUT, "url": "http://192.0.2.99:8000"})
+
+    assert result["step_id"] == "new_address_no_printers"
+    field = next(key for key in result["data_schema"].schema if key == "bambuddy")
+    assert result["data_schema"].schema[field].config["translation_key"] == "bambuddy_alone"
+
+
+async def test_reauthenticating_with_a_read_only_key_says_the_controls_go(hass: HomeAssistant, bambuddy_api: SimpleNamespace) -> None:
+    """BamBuddy's key dialog starts with Control Printer off: the result says what that means."""
+    entry = await set_up(hass, X1C)
+    result: Any = await entry.start_reauth_flow(hass)
+    bambuddy_api.get_auth_me.return_value = load_fixture("auth_me_read.json")
+
+    result = await hass.config_entries.flow.async_configure(result["flow_id"], {"api_key": "bb_new_read_key"})
+    await hass.async_block_till_done()
+
+    assert (result["type"], result["reason"]) == (FlowResultType.ABORT, "reauth_successful_read_only")
+
+
+async def test_configure_names_the_entry_it_belongs_to(hass: HomeAssistant, bambuddy_api: SimpleNamespace) -> None:
+    """Its menu and both steps say which BamBuddy, by the entry's name --
+    renamed in Home Assistant, by that name. The dialog's title cannot: Home
+    Assistant names an ending dialog after the integration."""
+    entry = await set_up(hass, X1C, A1_MINI)
+    hass.config_entries.async_update_entry(entry, title="Werkstatt")
+
+    menu: dict[str, Any] = await hass.config_entries.options.async_init(entry.entry_id)
+    assert (menu["type"], menu["description_placeholders"]) == (FlowResultType.MENU, {"name": "Werkstatt"})
+    for step in ("add_printer", "remove_printer"):
+        result = await _options(hass, entry, step)
+        assert (result["type"], result["step_id"], result["description_placeholders"]) == (FlowResultType.FORM, step, {"name": "Werkstatt"})
+
+
+def test_configure_says_the_entrys_name_and_the_key_help_says_what_control_is_for() -> None:
+    """The names in Configure, and Control Printer as the user's choice to
+    operate the printers from Home Assistant -- not something the
+    integration does by itself. Setup and sign-in again say the same."""
+    for language in ("en", "de"):
+        texts = json.loads((INTEGRATION / "translations" / f"{language}.json").read_text(encoding="utf-8"))
+        options = texts["options"]
+        assert "{name}" not in options["step"]["init"]["title"]
+        for step in ("init", "add_printer", "remove_printer"):
+            assert "{name}" in options["step"][step]["description"], (language, step)
+        for reason in ("cannot_connect", "no_printers", "all_printers_added", "key_refused"):
+            assert "{name}" in options["abort"][reason], (language, reason)
+        steps = texts["config"]["step"]
+        assert steps["user"]["data_description"]["api_key"] == steps["reauth_confirm"]["data_description"]["api_key"]
+        operate = {"en": "operate them from Home Assistant", "de": "aus Home Assistant bedienen"}[language]
+        for step in ("user", "reconfigure"):
+            assert operate in steps[step]["data_description"]["api_key"], (language, step)

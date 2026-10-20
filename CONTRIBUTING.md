@@ -51,7 +51,7 @@ logger:
 
 ### Tests and typing
 
-Tests use `pytest-homeassistant-custom-component`, whose harness does not run on Windows. Each of its releases pins one Home Assistant release; the suite runs against the newest stable Home Assistant that has one, never a beta, as CI does (see [Continuous integration](#continuous-integration)). `python .github/scripts/ha_version.py` names that release and its package release, `--plugin` the package release alone. `tests/requirements.txt` pins mypy and the rest. Install mypy from that file too, never with a bare `pip install mypy`: another mypy release can report errors CI does not, or miss ones it does. The tests and mypy need Python 3.14; the integration itself must still run on 3.13 (see [Things that are easy to get wrong](#things-that-are-easy-to-get-wrong)). On Linux or macOS, with Python 3.14:
+Tests use `pytest-homeassistant-custom-component`, whose harness does not run on Windows. Each of its releases pins one Home Assistant release; the suite runs against the newest stable Home Assistant that has one, never a beta, as CI does (see [Continuous integration](#continuous-integration)). `python .github/scripts/ha_version.py` names that release and its package release, `--plugin` the package release alone. `tests/requirements.txt` pins mypy and sets lower bounds for the rest. Install mypy from that file too, never with a bare `pip install mypy`: another mypy release can report errors CI does not, or miss ones it does. The tests and mypy need Python 3.14; the integration itself must still run on 3.13 (see [Things that are easy to get wrong](#things-that-are-easy-to-get-wrong)). On Linux or macOS, with Python 3.14:
 
 ```bash
 pip install -r tests/requirements.txt "pytest-homeassistant-custom-component==$(python .github/scripts/ha_version.py --plugin)"
@@ -98,16 +98,17 @@ The integration lives in `custom_components/bambuddy/`; the dashboard card's sou
 
 | File | Responsibility |
 |---|---|
-| `__init__.py` | Setup and unload: BamBuddy's printers and the key's permissions, the devices, one coordinator per printer added in the options, a repair issue for a printer BamBuddy no longer lists; the actions and the card, once per run; migrating older entries; deleting a device from its device page (not the instance's, nor an AMS unit its printer still reports) |
+| `__init__.py` | Setup and unload: BamBuddy's printers and the key's permissions, the devices, one coordinator per printer added in the options, a repair issue for a printer BamBuddy no longer lists; the actions and the card, once per run; migrating older entries; deleting a device from its device page (not the instance's, nor a smart plug BamBuddy still links, nor an AMS unit its printer still reports) |
 | `api.py` | `BamBuddyClient` — every HTTP call to BamBuddy, and its errors; `normalise_url` for the address |
-| `binary_sensor.py` | BamBuddy's connection; per printer online, door, build plate, SD card (a USB drive on the P2S, X2D and H2 series), developer mode, wired network, timelapse; per AMS unit drying |
+| `auto_off.py` | The switch-off after the print: Home Assistant's own, for the plug that powers a printer (waits for the nozzles, the AMS, a target; never beside BamBuddy's own auto off) |
+| `binary_sensor.py` | BamBuddy's connection; per printer online, door, build plate, SD card (a USB drive on the P2S, X2D and H2 series), developer mode, wired network, timelapse; per AMS unit drying; a plug's state where no switch shows it |
 | `brand/` | Icon and logo for Home Assistant's brands proxy |
-| `button.py` | Pause, resume, stop, plate cleared, clear HMS errors, refresh status |
+| `button.py` | Pause, resume, stop, plate cleared, clear HMS errors, refresh status; a script plug's Run; "Don't switch off this time" |
 | `camera.py` | MJPEG stream and snapshot through BamBuddy's camera proxy, with a stream token kept for 55 minutes |
 | `cards.py` | Serves the dashboard card's bundle and adds it to every dashboard |
 | `config_flow.py` | Setup (address, API key, certificate check, printers), reauthentication, reconfiguration (a new address, its printers matched by serial number), and the options (Configure): add and remove printers |
 | `const.py` | Domain, config keys, intervals, the minimum BamBuddy version, print speed modes |
-| `coordinator.py` | One coordinator per printer (`/printers/{id}/status` every 10 seconds; print hours, BamBuddy's name and details once a minute, and the device names after them; its maintenance every 10 minutes and after a print), the instance's (`/archives/stats` every minute, `/system/info` every 5 minutes) and the update checks' (`/updates/check`, `/firmware/updates` every 6 hours) |
+| `coordinator.py` | One coordinator per printer (`/printers/{id}/status` every 10 seconds; print hours, BamBuddy's name and details once a minute, and the device names after them; its maintenance every 10 minutes and after a print), the instance's (`/archives/stats` every minute, `/system/info` every 5 minutes), the update checks' (`/updates/check`, `/firmware/updates` every 6 hours) and the smart plugs' (the list every minute, each plug's state every 15 seconds) |
 | `diagnostics.py` | Entry and device diagnostics, redacted (`TO_REDACT`) |
 | `entity.py` | Device infos; the base entities — availability, unique IDs and entity IDs; `async_run_command`, how a command reaches a printer |
 | `fan.py` | Part cooling, auxiliary, chamber or exhaust, and left auxiliary fan |
@@ -116,13 +117,14 @@ The integration lives in `custom_components/bambuddy/`; the dashboard card's sou
 | `image.py` | The cover image of the current print job |
 | `light.py` | Chamber light |
 | `models.py` | What BamBuddy's printer status means, independent of entities: print status and stage, what each model has, AMS units and slots, names and keys |
-| `number.py` | Target temperatures |
+| `number.py` | Target temperatures; the camera's frame rate; the switch-off's temperature |
+| `plugs.py` | A smart plug BamBuddy links to a printer: its kind (switch, script, monitor), its role, its device name |
 | `repairs.py` | The repair that removes a printer BamBuddy no longer lists |
 | `select.py` | Print speed, airduct mode, active nozzle |
-| `sensor.py` | BamBuddy's figures; per printer status, job, temperatures, filament, maintenance and diagnostics; per AMS unit slots, humidity, temperature and drying time |
+| `sensor.py` | BamBuddy's figures; per printer status, job, temperatures, filament, maintenance and diagnostics; per AMS unit slots, humidity, temperature and drying time; a plug's power and energy |
 | `services.py`, `services.yaml` | The actions |
 | `strings.json`, `translations/` | UI strings, two languages (see [Translations](#translations)) |
-| `switch.py` | AMS filament backup (with an AMS unit, also one plugged in later), AI detection |
+| `switch.py` | AMS filament backup (with an AMS unit, also one plugged in later), AI detection; a plug's switch; the switch-off after the print and its "after every print" |
 | `update.py` | New BamBuddy releases and printer firmware |
 
 ## Things that are easy to get wrong
@@ -171,9 +173,9 @@ Write the files as UTF-8 without a BOM, formatted like the others (`json.dumps(.
 Follow the [Home Assistant developer guidelines](https://developers.home-assistant.io/docs/development_guidelines). In short:
 
 - Complete type hints: `mypy --strict` must pass (see [Tests and typing](#tests-and-typing)).
-- Docstrings on modules, classes and public functions.
+- Docstrings on modules and classes, and on public functions whose name does not say it.
 - `async`/`await` for anything touching the network.
-- Constants in `const.py`, not inline.
+- Constants that several modules share in `const.py`, not inline.
 
 ## Continuous integration
 

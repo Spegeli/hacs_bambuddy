@@ -12,6 +12,7 @@ from homeassistant.util import dt as dt_util
 from .api import BamBuddyApiError, BamBuddyError
 from .coordinator import BamBuddyConfigEntry, BamBuddyPrinterCoordinator
 from .entity import BamBuddyPrinterEntity
+from .models import ENDED_STATES
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -22,9 +23,6 @@ PARALLEL_UPDATES = 0
 # twice as late each time, at most MAX_RETRY.
 FIRST_RETRY = timedelta(minutes=1)
 MAX_RETRY = timedelta(minutes=10)
-
-# A job that ended: the printer keeps its name until the next one.
-_ENDED = ("FINISH", "FAILED")
 
 
 async def async_setup_entry(
@@ -66,15 +64,15 @@ class BamBuddyCover(BamBuddyPrinterEntity, ImageEntity):
         """BamBuddy names a cover only for a running or paused job; its
         cover route serves the job after it ended too, until the next."""
         status = self.data.status
-        if not status.get("cover_url") and status.get("state") not in _ENDED:
+        if not status.get("cover_url") and status.get("state") not in ENDED_STATES:
             return None
         return str(status.get("subtask_name") or status.get("gcode_file") or "") or None
 
     def _follow_job(self) -> None:
         state = self.data.status.get("state")
-        if self._ended and state not in _ENDED:
+        if self._ended and state not in ENDED_STATES:
             self._job = self._missing = None
-        self._ended = state in _ENDED
+        self._ended = state in ENDED_STATES
         job = self._current_job()
         if job != self._job:
             self._job = job

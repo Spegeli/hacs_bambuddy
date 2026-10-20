@@ -1,5 +1,6 @@
-"""BamBuddy's sensors: its own figures, each printer's status, and the AMS
-units' slots, humidity and temperature."""
+"""BamBuddy's sensors: its own figures, each printer's status, the AMS
+units' slots, humidity and temperature, and the smart plugs' power and
+energy."""
 from __future__ import annotations
 
 from collections.abc import Callable
@@ -26,7 +27,7 @@ from homeassistant.const import (
     UnitOfTemperature,
     UnitOfTime,
 )
-from homeassistant.core import HomeAssistant
+from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 from homeassistant.helpers.typing import StateType
@@ -42,10 +43,8 @@ from .entity import (
     async_add_ams_entities,
     async_add_plug_entities,
 )
-from .plugs import Plug
 from .models import (
     ACTIVE_STATES,
-    hms_answers,
     AMS_STATUSES,
     EXTERNAL_LEFT,
     EXTERNAL_RIGHT,
@@ -58,6 +57,7 @@ from .models import (
     bambuddy_name,
     find_tray,
     has_heater,
+    hms_answers,
     maintenance_state,
     maintenance_task,
     nozzle_type,
@@ -69,6 +69,7 @@ from .models import (
     tray_id,
     tray_label,
 )
+from .plugs import Plug
 
 PARALLEL_UPDATES = 0
 
@@ -140,7 +141,7 @@ INSTANCE_SENSORS: tuple[BamBuddyInstanceSensorDescription, ...] = (
     ),
     BamBuddyInstanceSensorDescription(
         key="disk_free", translation_key="disk_free", device_class=SensorDeviceClass.DATA_SIZE,
-        native_unit_of_measurement=UnitOfInformation.BYTES, suggested_unit_of_measurement=UnitOfInformation.GIGABYTES,
+        native_unit_of_measurement=UnitOfInformation.BYTES, suggested_unit_of_measurement=UnitOfInformation.GIBIBYTES,
         suggested_display_precision=1, entity_category=EntityCategory.DIAGNOSTIC,
         value_fn=_system("storage", "disk_free_bytes"),
     ),
@@ -163,6 +164,10 @@ def _temperature(key: str) -> Callable[[PrinterData], StateType]:
 def _text(key: str) -> Callable[[PrinterData], StateType]:
     """A text BamBuddy sends empty when there is none."""
     return lambda data: data.status.get(key) or None
+
+
+# How far an estimate that stands still may fall behind the clock.
+END_TIME_DRIFT = timedelta(minutes=2)
 
 
 def _end_time(data: PrinterData) -> datetime | None:
@@ -194,7 +199,7 @@ def _hms_errors(data: PrinterData) -> dict[str, Any]:
 def _active_slot(data: PrinterData) -> tuple[dict[str, Any], int, int] | None:
     """The slot the printer feeds from: its tray, its slot number and
     BamBuddy's global id of it."""
-    loaded = active_tray(data.status)
+    loaded = active_tray(data)
     found = find_tray(data, loaded) if loaded is not None else None
     return None if found is None or loaded is None else (found[0], found[1], loaded)
 
@@ -235,7 +240,7 @@ def _spool_attributes(tray: int | None) -> Callable[[PrinterData], dict[str, Any
         if spool is None:
             return {}
         number = 2 if spool.get("id") == EXTERNAL_RIGHT else 1
-        return slot_attributes(spool, number, int(spool.get("id", EXTERNAL_LEFT)), active_tray(data.status))
+        return slot_attributes(spool, number, int(spool.get("id", EXTERNAL_LEFT)), active_tray(data))
 
     return attributes
 
@@ -298,6 +303,8 @@ def _nozzle_sensors(
             translation_key=f"{translation_prefix}nozzle_diameter",
             device_class=SensorDeviceClass.DISTANCE,
             native_unit_of_measurement=UnitOfLength.MILLIMETERS,
+            # A nozzle is told by its millimetres, also where inches are the unit.
+            suggested_unit_of_measurement=UnitOfLength.MILLIMETERS,
             suggested_display_precision=1,
             entity_category=EntityCategory.DIAGNOSTIC,
             exists_fn=exists_fn,
@@ -315,7 +322,8 @@ PRINTER_SENSORS: tuple[BamBuddyPrinterSensorDescription, ...] = (
     ),
     BamBuddyPrinterSensorDescription(
         key="print_hours", translation_key="print_hours", device_class=SensorDeviceClass.DURATION,
-        native_unit_of_measurement=UnitOfTime.HOURS, state_class=SensorStateClass.TOTAL_INCREASING,
+        # A total: BamBuddy's print hours offset can be lowered.
+        native_unit_of_measurement=UnitOfTime.HOURS, state_class=SensorStateClass.TOTAL,
         suggested_display_precision=0, value_fn=lambda data: data.hours, available_when_offline=True,
     ),
     BamBuddyPrinterSensorDescription(
@@ -403,9 +411,9 @@ PRINTER_SENSORS: tuple[BamBuddyPrinterSensorDescription, ...] = (
         entity_category=EntityCategory.DIAGNOSTIC,
         # BamBuddy reports -90 dBm for a printer on Ethernet: no signal to wait for.
         value_fn=lambda data: data.status.get("wifi_signal"),
-        available_fn=lambda data: not data.status.get("wired_network"),
+        available_fn=lambda data: not data.wired,
         # On a cable from the start: no signal to show.
-        enabled_fn=lambda data: not data.status.get("wired_network"),
+        enabled_fn=lambda data: not data.wired,
     ),
     BamBuddyPrinterSensorDescription(
         key="ip_address", translation_key="ip_address", entity_category=EntityCategory.DIAGNOSTIC,
@@ -418,10 +426,19 @@ PRINTER_SENSORS: tuple[BamBuddyPrinterSensorDescription, ...] = (
 )  # fmt: skip
 
 
-def _has_climate(unit: dict[str, Any], printer: PrinterData, field: str) -> bool:
+def _has_climate(unit: dict[str, Any], printer: PrinterData) -> bool:
     """Every AMS but the AMS Lite measures humidity and temperature;
-    BamBuddy may not have the value yet when the integration starts."""
-    return unit.get(field) is not None or ams_model(unit, printer) != "AMS Lite"
+    BamBuddy may not have the value yet when the integration starts. The
+    Lite sends a fixed 0 instead (temperature, on the A2L humidity too):
+    never a sensor. A unit of a printer without a model may be a Lite: only
+    one BamBuddy has named (AMS, AMS 2 Pro, AMS HT) gets them before the
+    model comes (the entry reloads then)."""
+    if ams_model(unit, printer) == "AMS Lite":
+        return False
+    if printer.model.strip():
+        return True
+    unit_id = unit.get("id", 0)
+    return bool(unit.get("module_type")) or (isinstance(unit_id, int) and unit_id >= 128)
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -434,20 +451,21 @@ AMS_SENSORS: tuple[BamBuddyAmsSensorDescription, ...] = (
     BamBuddyAmsSensorDescription(
         key="humidity", translation_key="ams_humidity", device_class=SensorDeviceClass.HUMIDITY,
         native_unit_of_measurement=PERCENTAGE, state_class=SensorStateClass.MEASUREMENT,
-        exists_fn=lambda unit, printer: _has_climate(unit, printer, "humidity"), value_fn=lambda unit: unit.get("humidity"),
+        exists_fn=_has_climate, value_fn=lambda unit: unit.get("humidity"),
     ),
     BamBuddyAmsSensorDescription(
         key="temperature", translation_key="ams_temperature", device_class=SensorDeviceClass.TEMPERATURE,
         native_unit_of_measurement=UnitOfTemperature.CELSIUS, state_class=SensorStateClass.MEASUREMENT,
         suggested_display_precision=0,
-        exists_fn=lambda unit, printer: _has_climate(unit, printer, "temp"), value_fn=lambda unit: unit.get("temp"),
+        exists_fn=_has_climate, value_fn=lambda unit: unit.get("temp"),
     ),
     BamBuddyAmsSensorDescription(
         key="drying_remaining_time", translation_key="drying_remaining_time",
         device_class=SensorDeviceClass.DURATION, native_unit_of_measurement=UnitOfTime.MINUTES,
         exists_fn=has_heater,
-        # 0 while not drying: nothing left to wait for, no "0 min".
-        value_fn=lambda unit: unit.get("dry_time") or None,
+        # 0 while not drying: nothing left to wait for, no "0 min"; nor
+        # while the countdown stands still (BamBuddy's dry_countdown_stalled).
+        value_fn=lambda unit: None if unit.get("dry_countdown_stalled") else unit.get("dry_time") or None,
     ),
 )  # fmt: skip
 
@@ -466,8 +484,7 @@ async def async_setup_entry(
             if description.exists_fn(coordinator.data)
         )
         _add_ams_units(coordinator, async_add_entities)
-    if runtime.plugs is not None:
-        _add_plug_sensors(runtime.plugs, async_add_entities)
+    _add_plug_sensors(runtime.plugs, async_add_entities)
     async_add_entities(entities)
 
 
@@ -521,6 +538,16 @@ class BamBuddyPrinterSensor(BamBuddyDescribedEntity, SensorEntity):
     def available(self) -> bool:
         return super().available and self.entity_description.available_fn(self.data)
 
+    @callback
+    def _handle_coordinator_update(self) -> None:
+        if self.entity_description.key != "status":
+            super()._handle_coordinator_update()
+            return
+        # The print status last of the poll: Home Assistant starts an
+        # automation at once, and a "print finished" trigger reads the
+        # printer's other entities -- they must be the same poll's.
+        self.hass.loop.call_soon(self.async_write_ha_state)
+
     @property
     def native_value(self) -> StateType | datetime:
         return self.entity_description.value_fn(self.data)
@@ -550,8 +577,10 @@ class BamBuddyMaintenanceSensor(BamBuddyPrinterSensor):
 
 
 class BamBuddyEndTimeSensor(BamBuddyPrinterSensor):
-    """Moves only when the printer's estimate does: computed at each poll,
-    polls on both sides of a minute boundary would flip it back and forth."""
+    """Moves when the printer's estimate does: computed at each poll, polls
+    on both sides of a minute boundary would flip it back and forth. The
+    printer keeps its estimate while it prepares or changes filament: once
+    the clock is 2 minutes past the held end, it moves on with it."""
 
     _remaining: int | None = None
     _end: datetime | None = None
@@ -559,7 +588,12 @@ class BamBuddyEndTimeSensor(BamBuddyPrinterSensor):
     @property
     def native_value(self) -> datetime | None:
         remaining = self.data.status.get("remaining_time")
-        if remaining != self._remaining or self._end is None:
+        behind = (
+            isinstance(remaining, int)
+            and self._end is not None
+            and dt_util.utcnow() + timedelta(minutes=remaining) - self._end >= END_TIME_DRIFT
+        )
+        if remaining != self._remaining or self._end is None or behind:
             self._remaining = remaining if isinstance(remaining, int) else None
             self._end = _end_time(self.data)
         elif self.data.state not in ACTIVE_STATES:
@@ -611,10 +645,10 @@ class BamBuddyAmsSlotSensor(BamBuddyAmsEntity, SensorEntity):
         tray = self.tray
         if tray is None:
             return None
-        attributes = slot_attributes(tray, self.slot + 1, tray_id(self.ams_id, self.slot), active_tray(self.data.status))
+        attributes = slot_attributes(tray, self.slot + 1, tray_id(self.ams_id, self.slot), active_tray(self.data))
         fed = (self.data.status.get("ams_extruder_map") or {}).get(str(self.ams_id))
         if self.data.is_dual_nozzle and fed is not None:
-            # The nozzle the unit feeds (his word): BamBuddy's 0 right, 1 left;
+            # The nozzle the unit feeds: BamBuddy's 0 right, 1 left;
             # a unit on the filament track switch reaches both and has none.
             attributes["nozzle"] = "left" if str(fed) == "1" else "right"
         return attributes
@@ -664,8 +698,8 @@ PLUG_SENSORS = (
 
 
 def _add_plug_sensors(coordinator: BamBuddyPlugCoordinator, async_add_entities: AddConfigEntryEntitiesCallback) -> None:
-    """A sensor for each figure a plug has reported once (his decision: a
-    plug without metering gets none -- no "0 W" for nothing); one known
+    """A sensor for each figure a plug has reported once (a plug without
+    metering gets none -- no "0 W" for nothing); one known
     from before keeps its place while the plug has not answered yet."""
     registry = er.async_get(coordinator.hass)
     entry_id = coordinator.config_entry.entry_id

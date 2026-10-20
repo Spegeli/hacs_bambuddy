@@ -35,6 +35,14 @@ export const findAll = <T extends Element = HTMLElement>(card: FakeCard, selecto
 export const text = (element: Element | ShadowRoot | null | undefined): string => (element?.textContent ?? "").replace(/[ \t\r\n]+/g, " ").trim();
 export const cardText = (card: FakeCard): string => text(root(card));
 
+/** An element's text as it shows: without what only a screen reader hears. */
+export const shownText = (element: Element | null | undefined): string => {
+  if (!element) return "";
+  const copy = element.cloneNode(true) as Element;
+  copy.querySelectorAll(".sr-only").forEach((hidden) => hidden.remove());
+  return text(copy);
+};
+
 /** The button with this accessible name or text. */
 export function button(card: FakeCard, name: string): HTMLButtonElement {
   const found = findAll<HTMLButtonElement>(card, "button").find((item) => item.getAttribute("aria-label") === name || text(item) === name);
@@ -51,6 +59,14 @@ export async function settle(card: FakeCard): Promise<void> {
     await new Promise((resolve) => setTimeout(resolve, 0));
     await card.updateComplete;
   }
+}
+
+/** Opens a view by its tab; a card without the tab fails the test. */
+export async function showView(card: FakeCard, tab: string): Promise<void> {
+  const found = findAll(card, "[role=tab]").find((item) => text(item) === tab);
+  if (!found) throw new Error(`no tab "${tab}" in: ${cardText(card)}`);
+  found.click();
+  await card.updateComplete;
 }
 
 export async function press(card: FakeCard, name: string): Promise<void> {

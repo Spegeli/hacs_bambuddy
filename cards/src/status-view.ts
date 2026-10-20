@@ -1,8 +1,8 @@
 // The main view: what the printer is doing at a glance -- the job with its
 // picture, state, progress and times, always on top; below it the blocks
-// the user chose, in his order: the controls a running print needs,
-// temperatures, the loaded filament, fans, the print speed. The HMS
-// messages are the head's chip.
+// the user chose, in their order: the controls a running print needs, the
+// smart plugs' power, temperatures, the loaded filament, fans, the print
+// speed. The HMS messages are the head's chip.
 import { html, nothing, type TemplateResult } from "lit";
 
 import {
@@ -12,6 +12,12 @@ import {
   formatPercent,
   formatState,
   formatTemperature,
+  formatTemperatureOf,
+  minutesOf,
+  targetFloor,
+  temperatureUnit,
+  toCelsius,
+  jobName,
   listedOptions,
   numericState,
   stateOf,
@@ -33,6 +39,7 @@ import {
   note,
   offlineText,
   radioKeys,
+  radioLeave,
   radioStop,
   resumeButton,
   sample,
@@ -40,6 +47,7 @@ import {
   sideName,
   slotOf,
   slotTitle,
+  stopQuestion,
   swatch,
   unitModel,
   unitNozzle,
@@ -47,6 +55,7 @@ import {
   type Slot,
 } from "./parts";
 import { offlinePower, powerSection } from "./power";
+import { printerTitle } from "./header";
 import type { Heater, StatusBlock } from "./types";
 
 /** The plate to clear before BamBuddy starts the next queued print; the
@@ -71,9 +80,6 @@ function plateCallout(ctx: CardContext): TemplateResult | typeof nothing {
   );
 }
 
-/** A job's name without the file's extension: "Benchy.gcode.3mf" -> "Benchy". */
-const jobName = (name: string): string => name.replace(/(\.gcode)?\.(3mf|gcode)$/i, "") || name;
-
 /** Stages that say no more than the print status: the state line says that. */
 const PLAIN_STAGES = new Set(["idle", "printing", "unknown", "unavailable"]);
 
@@ -93,11 +99,18 @@ const STATE_ICONS: Record<string, IconName> = {
  * the print status ("Heating the bed", "Paused: filament ran out"), else
  * the status. It replaces a chip in the head: it stays with the job, which
  * the user cannot hide, and is announced when it changes. */
-function stateLine(ctx: CardContext, withJob: boolean): TemplateResult {
+export function stateText(ctx: CardContext, withJob: boolean): string {
   const { hass, refs, status } = ctx;
   const stage = stateOf(hass, refs.stage)?.state;
-  const text = withJob && stage && !PLAIN_STAGES.has(stage) ? formatState(hass, refs.stage) : formatState(hass, refs.status, status);
-  return html`<div class="state tone-${toneOf(status)}" role="status">${icon(STATE_ICONS[status] ?? "infoOutline")}<span>${text ?? status}</span></div>`;
+  // After the print the job stays Finished or Failed: loading filament then
+  // is the next print's -- the AMS line says it.
+  const ended = status === "finished" || status === "failed";
+  return (withJob && !ended && stage && !PLAIN_STAGES.has(stage) ? formatState(hass, refs.stage) : formatState(hass, refs.status, status)) ?? status;
+}
+
+function stateLine(ctx: CardContext, withJob: boolean): TemplateResult {
+  const { status } = ctx;
+  return html`<div class="state tone-${toneOf(status)}">${icon(STATE_ICONS[status] ?? "infoOutline")}<span>${stateText(ctx, withJob)}</span></div>`;
 }
 
 /** The printer offline, or no data from BamBuddy: its picture and why --
@@ -106,17 +119,10 @@ function stateLine(ctx: CardContext, withJob: boolean): TemplateResult {
 export function offlineJob(ctx: CardContext, picture: TemplateResult): TemplateResult {
   // The printer's plug says more: off (switch it on), starting, or on.
   const power = offlinePower(ctx);
-  if (power) {
-    return html`<div class="job">${picture}<div class="job-info">${power.info}</div></div>
-      ${power.actions ??
-      html`<div class="offline-actions">${actionButton({ label: t(ctx.hass, "check_connection"), iconName: "lan", onClick: ctx.checkConnection })}</div>`}`;
-  }
+  if (power) return html`<div class="job">${picture}<div class="job-info">${power.info}</div></div>${power.actions}`;
+  const check = html`<div class="offline-actions">${actionButton({ label: t(ctx.hass, "check_connection"), iconName: "lan", onClick: ctx.checkConnection })}</div>`;
   return html`<div class="job">${picture}<div class="job-info">${note(offlineText(ctx, "offline_text"), "warning")}</div></div>
-    ${ctx.unreachable
-      ? nothing
-      : html`<div class="offline-actions">
-          ${actionButton({ label: t(ctx.hass, "check_connection"), iconName: "lan", onClick: ctx.checkConnection })}
-        </div>`}`;
+    ${ctx.unreachable ? nothing : check}`;
 }
 
 function jobBlock(ctx: CardContext, picture: TemplateResult): TemplateResult {
@@ -131,7 +137,7 @@ function jobBlock(ctx: CardContext, picture: TemplateResult): TemplateResult {
   const layer = numericState(hass, refs.layer);
   const total = numericState(hass, refs.totalLayers);
   if (withJob && layer && total) meta.push(["layers", t(hass, "layer", { current: layer, total })]);
-  const remaining = numericState(hass, refs.remaining);
+  const remaining = minutesOf(hass, refs.remaining);
   if (BUSY.has(status) && remaining) meta.push(["timer", t(hass, "remaining", { time: formatDuration(hass, remaining) })]);
   const end = stateOf(hass, refs.endTime)?.state;
   const endText = BUSY.has(status) && end ? formatEndTime(hass, end) : undefined;
@@ -148,7 +154,9 @@ function jobBlock(ctx: CardContext, picture: TemplateResult): TemplateResult {
         ${showBar ? html`<span class="pct tone-${tone}">${formatPercent(hass, progress)}</span>` : nothing}
       </div>
       ${stateLine(ctx, withJob)}
-      ${activity ? html`<div class="ams-activity" role="status">${icon("sync")}<span>${activity}</span></div>` : nothing}
+      ${activity
+        ? html`<div class="ams-activity" role="status">${icon("sync")}<span class="sr-only">${printerTitle(ctx)}: </span><span>${activity}</span></div>`
+        : nothing}
       ${showBar
         ? html`<div
             class="bar tone-${tone}"
@@ -171,9 +179,20 @@ function temperatureTile(ctx: CardContext, label: string, heater: Heater, iconNa
   const { hass } = ctx;
   const current = numericState(hass, heater.sensor);
   const target = numericState(hass, heater.target);
-  const heating = target !== undefined && target > 0 && current !== undefined && target - current > 3;
-  const value = current === undefined ? "—" : formatTemperature(hass, current);
-  const targetText = target === undefined ? undefined : target > 0 ? t(hass, "target", { value: formatTemperature(hass, target) }) : t(hass, "heater_off");
+  // Each in its entity's unit: Home Assistant may show them in °F.
+  const on = target !== undefined && target > targetFloor(hass, heater.target);
+  // 3 °C, compared in one unit.
+  const heating =
+    on &&
+    current !== undefined &&
+    toCelsius(target as number, temperatureUnit(hass, heater.target)) - toCelsius(current, temperatureUnit(hass, heater.sensor)) > 3;
+  const value = current === undefined ? "—" : formatTemperatureOf(hass, heater.sensor, current);
+  const targetText =
+    target === undefined
+      ? undefined
+      : on
+        ? t(hass, "target", { value: formatTemperatureOf(hass, heater.target, target) })
+        : t(hass, "heater_off");
   return html`<button
     class="temp ${heating ? "heating" : ""}"
     aria-label=${[active ? `${label} ${t(hass, "nozzle_active")}` : label, value, targetText].filter(Boolean).join(", ")}
@@ -209,7 +228,10 @@ function fanPercent(ctx: CardContext, entityId: string): number | undefined {
 
 function fans(ctx: CardContext): TemplateResult | typeof nothing {
   const { hass, refs } = ctx;
-  const items: [key: string, entityId: string, percent: number | undefined][] = refs.fans.map((fan) => [fan.key, fan.entityId, fanPercent(ctx, fan.entityId)]);
+  // A fan Home Assistant only restored: the integration no longer creates it.
+  const items: [key: string, entityId: string, percent: number | undefined][] = refs.fans
+    .filter((fan) => stateOf(hass, fan.entityId)?.attributes["restored"] !== true)
+    .map((fan) => [fan.key, fan.entityId, fanPercent(ctx, fan.entityId)]);
   if (refs.hotendFan) items.push(["hotend", refs.hotendFan, numericState(hass, refs.hotendFan)]);
   if (!items.length) return nothing;
   // A short name on a narrow card, the entity's own where there is room;
@@ -251,14 +273,15 @@ function amsStrip(ctx: CardContext): TemplateResult | typeof nothing {
     ...ctx.ams.map((unit) => {
       const model = unitModel(ctx.ams, unit);
       const nozzle = unitNozzle(hass, unit);
-      const said = [model, nozzle ? t(hass, nozzle === "left" ? "strip_nozzle_left" : "strip_nozzle_right") : undefined].filter(Boolean);
+      const extras = [model, nozzle ? t(hass, nozzle === "left" ? "strip_nozzle_left" : "strip_nozzle_right") : undefined].filter(Boolean);
       return {
         name: unit.name,
-        spoken: said.length ? `${unit.name} (${said.join(", ")})` : unit.name,
+        spoken: extras.length ? `${unit.name} (${extras.join(", ")})` : unit.name,
         model,
         nozzle,
         humidity: numericState(hass, unit.humidity),
         temperature: numericState(hass, unit.temperature),
+        temperatureUnit: temperatureUnit(hass, unit.temperature),
         slots: unit.slots,
         fill: unit.model === AMS_HT,
         ht: unit.model === AMS_HT,
@@ -295,23 +318,20 @@ function amsStrip(ctx: CardContext): TemplateResult | typeof nothing {
     const side = dual ? refs.externalSpools.indexOf(entityId) : -1;
     return `${side >= 0 ? `${sideName(hass, side)}: ` : ""}${slotTitle(hass, slot)}${slot.active ? ` · ${t(hass, "in_use")}` : ""}`;
   };
-  const label = [
-    ...[...column, ...fill].map((group) =>
-      t(hass, "strip_unit", {
-        name: [
-          group.spoken,
-          ...(group.humidity === undefined ? [] : [t(hass, "strip_humidity", { humidity: formatPercent(hass, group.humidity) })]),
-          ...(group.temperature === undefined ? [] : [t(hass, "strip_temperature", { temperature: formatTemperature(hass, group.temperature) })]),
-        ].join(", "),
-        slots: group.slots.map(spoken).join(", "),
-      }),
-    ),
-    t(hass, "open_filament"),
-  ].join(". ");
+  const said = [...column, ...fill].map((group) =>
+    t(hass, "strip_unit", {
+      name: [
+        group.spoken,
+        ...(group.humidity === undefined ? [] : [t(hass, "strip_humidity", { humidity: formatPercent(hass, group.humidity) })]),
+        ...(group.temperature === undefined ? [] : [t(hass, "strip_temperature", { temperature: formatTemperature(hass, group.temperature, group.temperatureUnit) })]),
+      ].join(", "),
+      slots: group.slots.map(spoken).join(", "),
+    }),
+  );
   const unit = (group: (typeof groups)[number]): TemplateResult => html`<span class="ams-group">
         <span class="ams-head">
           <span class="ams-line">
-            <span class="ams-name">${group.name}</span>
+            <span class="ams-name" title=${group.spoken}>${group.name}</span>
             ${group.model ? html`<span class="unit-model">${group.model}</span>` : nothing}
             ${group.nozzle
               ? html`<span class="ams-nozzle" aria-hidden="true" title=${t(hass, group.nozzle === "left" ? "nozzle_left" : "nozzle_right")}
@@ -324,7 +344,7 @@ function amsStrip(ctx: CardContext): TemplateResult | typeof nothing {
             : html`<span class="ams-env">
                 ${group.humidity !== undefined ? html`<span class="ams-hum">${icon("humidity")}${formatPercent(hass, group.humidity)}</span>` : nothing}
                 ${group.temperature !== undefined
-                  ? html`<span class="ams-temp">${icon("chamber")}${formatTemperature(hass, group.temperature)}</span>`
+                  ? html`<span class="ams-temp">${icon("chamber")}${formatTemperature(hass, group.temperature, group.temperatureUnit)}</span>`
                   : nothing}
               </span>`}
         </span>
@@ -340,14 +360,18 @@ function amsStrip(ctx: CardContext): TemplateResult | typeof nothing {
           })}
         </span>
       </span>`;
-  const content = html`${column.length ? html`<span class="ams-column">${column.map(unit)}</span>` : nothing}${fill.length
-    ? html`<span class="ams-fill ${fill.some((group) => group.ht) ? "with-ht" : ""}">${fill.map(unit)}</span>`
+  // Shown, not read: the description (the button) or the screen-reader
+  // text (the group) says it whole.
+  const content = html`${column.length ? html`<span class="ams-column" aria-hidden="true">${column.map(unit)}</span>` : nothing}${fill.length
+    ? html`<span class="ams-fill ${fill.some((group) => group.ht) ? "with-ht" : ""}" aria-hidden="true">${fill.map(unit)}</span>`
     : nothing}`;
+  // Named by what it is and where it goes; what it shows is its description,
+  // which a screen reader says after the name and lets the user skip.
   return ctx.filamentTab
-    ? html`<button class="ams-strip" aria-label=${label} @click=${() => ctx.show("filament")}>
-        ${content}<span class="ams-go">${icon("chevronRight")}</span>
+    ? html`<button class="ams-strip" aria-label=${`${t(hass, "block_ams")} – ${t(hass, "open_filament")}`} aria-describedby="ams-said" @click=${() => ctx.show("filament")}>
+        <span class="sr-only" id="ams-said">${said.join(". ")}</span>${content}<span class="ams-go">${icon("chevronRight")}</span>
       </button>`
-    : html`<div class="ams-strip">${content}</div>`;
+    : html`<div class="ams-strip" role="group" aria-label=${t(hass, "block_ams")}><span class="sr-only">${said.join(". ")}</span>${content}</div>`;
 }
 
 const SPEEDS = ["silent", "standard", "sport", "ludicrous"];
@@ -376,7 +400,7 @@ function speedControl(ctx: CardContext): TemplateResult | typeof nothing {
   const stop = radioStop(options, state.state);
   return html`<div class="speed">
     <span class="speed-label">${icon("speed")}${t(hass, "speed")}</span>
-    <div class="seg speeds" role="radiogroup" aria-label=${t(hass, "speed")} @keydown=${radioKeys}>
+    <div class="seg speeds" role="radiogroup" aria-label=${t(hass, "speed")} @keydown=${radioKeys} @focusout=${radioLeave}>
       ${options.map((option, index) => {
         const full = formatState(hass, refs.speed, option) as string;
         const [name, detail] = speedParts(full);
@@ -386,7 +410,8 @@ function speedControl(ctx: CardContext): TemplateResult | typeof nothing {
           tabindex=${index === stop ? 0 : -1}
           aria-label=${full}
           title=${full}
-          ?disabled=${pending || state.state === "unavailable"}
+          aria-disabled=${pending ? "true" : nothing}
+          ?disabled=${state.state === "unavailable"}
           @click=${() => ctx.run("speed", "select", "select_option", { entity_id: refs.speed, option })}
         >
           <span class="opt">${name}</span> ${detail ? html`<span class="opt-sub">${detail}</span>` : nothing}
@@ -431,16 +456,7 @@ function controls(ctx: CardContext): TemplateResult | typeof nothing {
           iconName: "stop",
           kind: "danger",
           pending: ctx.isPending("stop"),
-          onClick: () =>
-            ctx.confirm({
-              title: t(hass, "stop_title"),
-              text: t(hass, "stop_text"),
-              confirm: t(hass, "stop_confirm"),
-              keep: t(hass, "stop_keep"),
-              danger: true,
-              action: ["button", "press", { entity_id: refs.stop }],
-              key: "stop",
-            }),
+          onClick: () => ctx.confirm(stopQuestion(hass, ["button", "press", { entity_id: refs.stop }], "stop")),
         })
       : nothing,
     status === "printing" || paused
@@ -468,22 +484,24 @@ function controls(ctx: CardContext): TemplateResult | typeof nothing {
   return html`<div class="controls">${above}<div class="ctl-buttons">${buttons}</div></div>`;
 }
 
-/** A block of the status view; offline only the controls' block remains,
- * with its notes. */
+/** A block of the status view; offline only the plugs draw -- the
+ * printer's own where the offline view says nothing of it --; without an
+ * answer from BamBuddy nothing. */
 function block(ctx: CardContext, name: StatusBlock): TemplateResult | typeof nothing {
   if (name === "controls") return html`${developerHint(ctx)}${controls(ctx)}`;
+  if (name === "power") return ctx.unreachable ? nothing : powerSection(ctx);
   if (!ctx.online) return nothing;
-  if (name === "power") return powerSection(ctx);
   if (name === "temperatures") return temperatures(ctx);
   if (name === "fans") return fans(ctx);
   if (name === "ams") return amsStrip(ctx);
   return speedControl(ctx);
 }
 
-/** Whether a section shows now: the controls and the speed while a job is
- * on the printer, the others while it is online. */
+/** Whether a section shows now: the plugs whenever their block draws (also
+ * offline), the controls and the speed while a job is on the printer, the
+ * others while it is online. */
 const sectionShowsNow = (ctx: CardContext, name: StatusBlock): boolean =>
-  ctx.online && (name === "controls" || name === "speed" ? ctx.busy : true);
+  name === "power" ? block(ctx, name) !== nothing : ctx.online && (name === "controls" || name === "speed" ? ctx.busy : true);
 
 /** The sections in the card editor's preview: each as it is, or -- with
  * nothing to show now -- as an example of it during a print; none of a

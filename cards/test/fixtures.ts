@@ -415,7 +415,7 @@ export function printerDevice(spec: PrinterSpec): FakeDevice {
   const p = spec.slug;
   const online = spec.online ?? true;
   // An entity's registry name and its friendly name, which Home Assistant
-  // puts after the device's: the user's where he renamed it, else the
+  // puts after the device's: the user's where the user renamed it, else the
   // integration's in the server's language.
   const named = (platform: string, key: string): { name: string; friendly_name: string } => {
     const name = spec.renamed?.[key] ?? INTEGRATION_NAMES[spec.serverLanguage ?? "en"][`${platform}.${key}`] ?? key;
@@ -589,7 +589,8 @@ export function printerDevice(spec: PrinterSpec): FakeDevice {
       { entityId: `number.${p}_bed_target_temperature`, key: "bed_target_temperature", state: value(String(spec.bed[1] ?? 0)) },
     );
     if (spec.airduct !== undefined) {
-      entities.push({ entityId: `select.${p}_airduct_mode`, key: "airduct_mode", state: value(spec.airduct), attributes: { options: ["cooling", "heating"] } });
+      entities.push({ entityId: `select.${p}_airduct_mode`, key: "airduct_mode", state: value(spec.airduct), // The laser mode is listed while the printer is in it (the integration's select).
+        attributes: { options: spec.airduct === "laser" ? ["cooling", "heating", "laser"] : ["cooling", "heating"] } });
     }
 
     spec.nozzles.forEach(([, target], index) => {
@@ -993,6 +994,9 @@ export interface PlugSpec {
   /** "on", "off", "unknown" (a REST plug without status), "unavailable". */
   state?: string;
   powersPrinter?: boolean;
+  /** BamBuddy's choice of the printer's own plug (the integration's
+   * `printer_main`); left out, the attribute is not there. */
+  main?: boolean;
   onCard?: boolean;
   bambuddyAutoOff?: boolean;
   watts?: number;
@@ -1008,6 +1012,7 @@ export function plugDevice(spec: PlugSpec): FakeDevice {
   const p = `${spec.printer.id}_plug_${spec.id}`;
   const attributes = {
     powers_printer: spec.powersPrinter ?? true,
+    ...(spec.main === undefined ? {} : { printer_main: spec.main }),
     on_printer_card: spec.onCard ?? true,
     bambuddy_auto_off: spec.bambuddyAutoOff ?? false,
     plug_type: spec.kind === "script" ? "homeassistant" : spec.kind === "state" ? "mqtt" : "tasmota",

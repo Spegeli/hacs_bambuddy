@@ -2,7 +2,6 @@
 fixtures that stand in for BamBuddy's answers."""
 from __future__ import annotations
 
-from pathlib import Path
 import re
 from typing import Any
 
@@ -10,9 +9,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.data_entry_flow import FlowResultType
 import pytest
 
-from tests.conftest import flow_text_problems, load_fixture
-
-_INTEGRATION = Path(__file__).parent.parent / "custom_components" / "bambuddy"
+from tests.conftest import INTEGRATION, flow_text_problems, load_fixture
 
 # The texts of a made-up flow, for the check every flow test runs through
 # (tests/conftest.py, check_flow_texts).
@@ -72,6 +69,8 @@ def test_the_flow_text_check_accepts_complete_texts():
             [("no menu option text", "menu", "maybe")],
         ),
         ({"type": FlowResultType.ABORT, "reason": "left"}, [("no abort text", "left")]),
+        # The success dialog's text.
+        ({"type": FlowResultType.CREATE_ENTRY, "description": "gone"}, [("no create_entry text", "gone")]),
         (
             {"type": FlowResultType.FORM, "step_id": "form",
              "description_placeholders": {"thing": "x"}},
@@ -89,7 +88,7 @@ def test_the_flow_text_check_accepts_complete_texts():
     ],
     ids=[
         "form_without_texts", "menu_without_texts", "error_without_text",
-        "button_without_label", "abort_without_text", "form_placeholder",
+        "button_without_label", "abort_without_text", "create_entry_without_text", "form_placeholder",
         "menu_placeholder", "button_placeholder",
     ],
 )
@@ -136,6 +135,7 @@ _STATUS = [
     "ams_extruder_map",
     "extruder_slots",
     "tray_now",
+    "fila_switch",
     "ams_status_main",
     "ams_status_sub",
     "printable_objects_count",
@@ -144,6 +144,7 @@ _STATUS = [
     "big_fan2_speed",
     "heatbreak_fan_speed",
     "left_aux_fan_speed",
+    "exhaust_fan_present",
     "firmware_version",
     "developer_mode",
     "ams_filament_backup",
@@ -227,7 +228,7 @@ def test_the_list_names_every_status_field_the_code_reads():
     """The claim above, kept true: every field of the printer status the
     integration's modules read is in `_STATUS`, so the fixtures carry it
     under BamBuddy's name."""
-    modules = {module.name: module.read_text(encoding="utf-8") for module in _INTEGRATION.glob("*.py")}
+    modules = {module.name: module.read_text(encoding="utf-8") for module in INTEGRATION.glob("*.py")}
     # A smart plug's status is another answer, with fields of its own.
     del modules["plugs.py"]
     code ="\n".join(modules.values())

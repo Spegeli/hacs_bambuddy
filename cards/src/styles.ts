@@ -11,6 +11,8 @@ export const cardStyles = css`
     --bb-muted: var(--secondary-text-color, #727272);
     --bb-disabled: var(--disabled-text-color, #9e9e9e);
     --bb-accent: var(--primary-color, #03a9f4);
+    /* The focus ring: the accent mixed with the text, 3:1 also on the light theme's tint. */
+    --bb-ring: color-mix(in srgb, var(--bb-accent) 80%, var(--bb-text));
     --bb-on-accent: var(--text-primary-color, #fff);
     --bb-ok: var(--success-color, #43a047);
     --bb-warn: var(--warning-color, #ffa600);
@@ -21,7 +23,6 @@ export const cardStyles = css`
     --bb-tint-2: rgba(var(--rgb-primary-text-color, 33, 33, 33), 0.09);
     --bb-line: rgba(var(--rgb-primary-text-color, 33, 33, 33), 0.16);
     --bb-heat: var(--deep-orange-color, #ff6f22);
-    --bb-radius: var(--ha-card-border-radius, 12px);
   }
   ha-card {
     display: block;
@@ -77,7 +78,7 @@ export const cardStyles = css`
     color: inherit;
   }
   button:focus-visible {
-    outline: 2px solid var(--bb-accent);
+    outline: 2px solid var(--bb-ring);
     outline-offset: 2px;
   }
 
@@ -278,10 +279,14 @@ export const cardStyles = css`
   .menu [role="menuitem"] .icon {
     color: var(--bb-muted);
   }
-  .menu [role="menuitem"]:hover,
+  .menu [role="menuitem"]:hover {
+    background: var(--bb-tint);
+  }
+  /* The keyboard's place: the card's ring, inside the item. */
   .menu [role="menuitem"]:focus-visible {
     background: var(--bb-tint);
-    outline: none;
+    outline: 2px solid var(--bb-ring);
+    outline-offset: -2px;
   }
   .menu [role="menuitem"]:disabled {
     cursor: default;
@@ -327,9 +332,6 @@ export const cardStyles = css`
   }
   /* With Hide controls: the light's state, nothing to tap. */
   span.icon-btn {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
     cursor: default;
   }
   .icon-btn.light.on {
@@ -416,6 +418,9 @@ export const cardStyles = css`
     opacity: 0.65;
     cursor: progress;
   }
+  .icon-btn.pending {
+    cursor: progress;
+  }
   /* On its way: the icon turns into a small spinner. */
   .btn.pending > .icon,
   .icon-btn.pending > .icon {
@@ -490,10 +495,6 @@ export const cardStyles = css`
   .backup + .unit {
     border-top: 1px solid var(--bb-divider);
     padding-top: 12px;
-  }
-  .backup .seg {
-    flex: none;
-    width: 116px;
   }
   /* Unknown: the choice on a line of its own, outlined -- nothing chosen. */
   .backup .det-row.choosing {
@@ -591,19 +592,21 @@ export const cardStyles = css`
     font-size: 14px;
     line-height: 18px;
     font-weight: 500;
-    overflow-wrap: anywhere;
+    overflow-wrap: break-word;
   }
   .p-sub {
     font-size: 12px;
     line-height: 16px;
     color: var(--bb-muted);
-    overflow-wrap: anywhere;
+    overflow-wrap: break-word;
   }
   .p-sub b {
     color: var(--bb-text);
     font-weight: 600;
   }
-  .p-row.warn .p-sub,
+  .p-row.warn .p-sub {
+    color: color-mix(in srgb, var(--bb-warn) 55%, var(--bb-text));
+  }
   .p-row.warn .p-icon {
     color: var(--bb-warn);
   }
@@ -615,6 +618,9 @@ export const cardStyles = css`
     font-size: 13px;
   }
   .p-auto.waiting .p-name,
+  .p-starting .p-name {
+    color: color-mix(in srgb, var(--bb-accent) 55%, var(--bb-text));
+  }
   .p-auto.waiting .p-icon {
     color: var(--bb-accent);
   }
@@ -625,11 +631,9 @@ export const cardStyles = css`
     gap: 8px;
     padding: 0 0 8px 30px;
   }
-  .p-set {
-    padding-left: 30px;
-  }
   /* A long label wraps on a narrow card rather than leaving it. */
-  .p-skip .btn {
+  .p-skip .btn,
+  .p-set .btn {
     max-width: 100%;
     white-space: normal;
   }
@@ -641,19 +645,11 @@ export const cardStyles = css`
   .p-starting .check-spinner {
     margin-top: 2px;
   }
-  .p-starting .p-name {
-    color: var(--bb-accent);
-  }
   /* The switch-off's dialog: its temperature, then when. */
   .dlg-label {
     margin: 12px 0 6px;
     font-size: 13px;
     color: var(--bb-muted);
-  }
-  .stepper {
-    display: flex;
-    align-items: center;
-    gap: 12px;
   }
   .step-value {
     min-width: 64px;
@@ -671,8 +667,6 @@ export const cardStyles = css`
     display: flex;
     flex-direction: column;
     gap: 8px;
-    max-height: min(55vh, 440px);
-    overflow-y: auto;
   }
   .maint-row {
     display: flex;
@@ -758,17 +752,7 @@ export const cardStyles = css`
     border-radius: 50%;
     border: 2px solid var(--bb-tint-2);
     border-top-color: var(--bb-accent);
-    animation: bb-spin 0.9s linear infinite;
-  }
-  @keyframes bb-spin {
-    to {
-      transform: rotate(360deg);
-    }
-  }
-  @media (prefers-reduced-motion: reduce) {
-    .check-spinner {
-      animation: none;
-    }
+    animation: spin 0.9s linear infinite;
   }
   .check-verdict {
     display: flex;
@@ -1144,24 +1128,23 @@ export const cardStyles = css`
     font-size: 12px;
     color: var(--bb-muted);
     max-width: 100%;
+    flex-wrap: wrap;
   }
-  .temp-head span {
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
+  /* A name too long for a narrow tile wraps at its words, never cut. */
+  .temp-head > span:not(.temp-tag) {
+    min-width: 0;
+    overflow-wrap: anywhere;
   }
   .temp-head .icon {
     width: 15px;
     height: 15px;
   }
   /* The active one of two nozzles, as the Control tab's tag. */
-  .temp-head {
-    flex-wrap: wrap;
-  }
   .temp-head .temp-tag,
   .p-name .temp-tag {
     flex: none;
     overflow: visible;
+    white-space: nowrap;
     font-size: 11px;
     line-height: 16px;
     font-weight: 500;
@@ -1182,9 +1165,12 @@ export const cardStyles = css`
     color: var(--bb-muted);
     white-space: nowrap;
   }
-  .temp.heating .temp-head .icon,
-  .temp.heating .temp-target {
+  .temp.heating .temp-head .icon {
     color: var(--bb-heat);
+  }
+  /* Text in a mix of the tone and the text colour, readable on the tint. */
+  .temp.heating .temp-target {
+    color: color-mix(in srgb, var(--bb-heat) 55%, var(--bb-text));
   }
 
   /* Fans. */
@@ -1295,7 +1281,8 @@ export const cardStyles = css`
     gap: 6px;
     height: 15px;
   }
-  /* The chip a shade darker than the strip it sits on. */
+  /* The chip a shade darker than the strip it sits on; its text between
+     the muted and the text colour, readable on it in both themes. */
   .ams-strip .unit-model,
   .ams-strip .ams-nozzle {
     font-size: 11px;
@@ -1303,6 +1290,7 @@ export const cardStyles = css`
     padding: 0 6px;
     border-radius: 8px;
     background: var(--bb-tint-2);
+    color: color-mix(in srgb, var(--bb-muted) 50%, var(--bb-text));
   }
   .ams-name {
     font-weight: 500;
@@ -1401,7 +1389,7 @@ export const cardStyles = css`
     display: none;
   }
   .swatch.active {
-    outline: 2px solid var(--bb-accent);
+    outline: 2px solid var(--bb-ring);
     outline-offset: 2px;
   }
   .swatch.large {
@@ -1481,6 +1469,11 @@ export const cardStyles = css`
   }
   .seg button:disabled {
     cursor: default;
+    opacity: 0.6;
+  }
+  /* A choice on its way: as disabled, and still where the keyboard is. */
+  .seg button[aria-disabled="true"] {
+    cursor: progress;
     opacity: 0.6;
   }
   /* The speeds: four in a row, two by two on a very narrow card. */
@@ -1568,6 +1561,14 @@ export const cardStyles = css`
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
+  }
+  /* The name itself is never cut ("Right nozzle" beside a thumb's 44 px
+     Off): it wraps in whole words. */
+  .heat-label .heat-text {
+    white-space: normal;
+    overflow: visible;
+    text-overflow: clip;
+    overflow-wrap: break-word;
   }
   .heat-label .icon {
     width: 16px;
@@ -1734,6 +1735,8 @@ export const cardStyles = css`
     height: 20px;
     border-radius: 10px;
     background: color-mix(in srgb, var(--bb-muted) 60%, transparent);
+    /* An edge, so the off track stands out from its box (3:1 and more). */
+    box-shadow: inset 0 0 0 1px var(--bb-muted);
     transition: background 0.15s;
   }
   .toggle .knob {
@@ -1749,6 +1752,7 @@ export const cardStyles = css`
   }
   .det-switch[aria-checked="true"] .toggle {
     background: var(--bb-accent);
+    box-shadow: none;
   }
   .det-switch[aria-checked="true"] .knob {
     transform: translateX(16px);
@@ -1757,6 +1761,12 @@ export const cardStyles = css`
     cursor: default;
   }
   .det-switch:disabled .toggle {
+    opacity: 0.4;
+  }
+  .det-switch[aria-disabled="true"] {
+    cursor: progress;
+  }
+  .det-switch[aria-disabled="true"] .toggle {
     opacity: 0.4;
   }
   .det-state {
@@ -1901,7 +1911,7 @@ export const cardStyles = css`
     background: var(--bb-tint);
   }
   button.unit-head:focus-visible {
-    outline: 2px solid var(--bb-accent);
+    outline: 2px solid var(--bb-ring);
     outline-offset: -2px;
   }
   .unit-title {
@@ -2045,7 +2055,7 @@ export const cardStyles = css`
     font-weight: 500;
     line-height: 18px;
     overflow: hidden;
-    overflow-wrap: anywhere;
+    overflow-wrap: break-word;
     display: -webkit-box;
     -webkit-box-orient: vertical;
     -webkit-line-clamp: 2;
@@ -2054,7 +2064,7 @@ export const cardStyles = css`
   .slot-sub {
     font-size: 12px;
     color: var(--bb-muted);
-    overflow-wrap: anywhere;
+    overflow-wrap: break-word;
   }
   .slot-sub .in-use {
     font-weight: 500;
@@ -2212,6 +2222,9 @@ export const cardStyles = css`
      backdrop, so that they stand out from a dark page too. */
   dialog {
     --bb-surface: var(--ha-dialog-surface-background, var(--mdc-theme-surface, var(--card-background-color, #fff)));
+    /* Scrolled to, a control stays clear of the edge and of the button row
+       at the foot (one row; the card sets it from the row's height). */
+    scroll-padding-block: 12px 80px;
     border: 0;
     padding: 0;
     border-radius: 16px;
@@ -2245,15 +2258,28 @@ export const cardStyles = css`
     line-height: 20px;
     color: var(--bb-muted);
   }
+  /* At the dialog's foot while it scrolls: the buttons stay in reach. */
   .dlg-actions {
+    position: sticky;
+    bottom: 0;
+    z-index: 1;
     display: flex;
+    flex-wrap: wrap;
     justify-content: flex-end;
     gap: 8px;
-    margin-top: 4px;
+    margin: 4px -20px -20px;
+    padding: 12px 20px 20px;
+    background: var(--bb-surface);
   }
+  /* The theme's red, darkened: white on it reaches 4.5:1 (5.6:1 on Home
+   * Assistant's own). */
   .dlg-actions .btn.danger {
     color: #fff;
-    background: var(--bb-err);
+    background: color-mix(in srgb, var(--bb-err) 85%, #000);
+  }
+  .dlg-actions .btn {
+    max-width: 100%;
+    white-space: normal;
   }
   .dlg-actions .btn.safe {
     color: var(--bb-text);
@@ -2288,6 +2314,10 @@ export const cardStyles = css`
   }
   .dlg-warn .icon {
     color: var(--bb-warn);
+  }
+  /* A note, not a warning. */
+  .dlg-warn.info .icon {
+    color: var(--bb-accent);
   }
   .dlg-error {
     display: flex;
@@ -2329,12 +2359,12 @@ export const cardStyles = css`
   .sev-notice {
     --sev: var(--bb-info);
   }
+  /* No scroll box of its own: the dialog scrolls as a whole (a touch
+     screen shows no scrollbar, and a swipe would scroll the inner box). */
   .hms-list {
     display: flex;
     flex-direction: column;
     gap: 8px;
-    max-height: min(50vh, 360px);
-    overflow-y: auto;
   }
   .hms-item > .icon {
     color: var(--sev);
@@ -2367,6 +2397,7 @@ export const cardStyles = css`
   /* The K profile: label above, the select over the dialog's width -- a
      profile's name is long. */
   .field.kfield {
+    flex-wrap: nowrap;
     flex-direction: column;
     align-items: stretch;
     gap: 6px;
@@ -2403,7 +2434,7 @@ export const cardStyles = css`
     margin-top: 4px;
     padding: 6px 0;
     font-size: 13px;
-    color: var(--bb-accent);
+    color: color-mix(in srgb, var(--bb-accent) 55%, var(--bb-text));
     text-decoration: none;
   }
   .hms-wiki .icon {
@@ -2476,20 +2507,30 @@ export const cardStyles = css`
     width: 16px;
     height: 16px;
   }
-  /* "Copied", inside the dialog: the card's own snackbar lies behind it. */
+  /* "Copied", inside the dialog: the card's own snackbar lies behind it.
+     Sticky above the button row, as the card's "Sent": in view while the
+     dialog scrolls too; no gap of its own in the dialog's column. */
   .dlg-snack {
-    position: absolute;
-    left: 0;
-    right: 0;
-    bottom: 15px;
+    position: sticky;
+    bottom: 76px;
     height: 0;
+    margin-top: -14px;
+    /* Above the sticky button row (1). */
+    z-index: 2;
   }
+  /* Its pill a snackbar in the wrapper, not in the flow as a dialog's "Sent". */
+  .dlg-body .dlg-snack .sent {
+    position: absolute;
+    left: 50%;
+    bottom: 10px;
+    transform: translateX(-50%);
+    margin: 0;
+  }
+  /* No scroll box of its own: the dialog scrolls as a whole. */
   .objects {
     display: flex;
     flex-direction: column;
     gap: 2px;
-    max-height: min(50vh, 320px);
-    overflow-y: auto;
     margin: 0 -8px;
   }
   .obj {
@@ -2532,6 +2573,7 @@ export const cardStyles = css`
   }
   .field {
     display: flex;
+    flex-wrap: wrap;
     align-items: center;
     justify-content: space-between;
     gap: 12px;
@@ -2612,7 +2654,7 @@ export const cardStyles = css`
     color: var(--bb-muted);
   }
   .select select:focus-visible {
-    outline: 2px solid var(--bb-accent);
+    outline: 2px solid var(--bb-ring);
     outline-offset: 2px;
   }
   .select option {
@@ -2704,7 +2746,7 @@ export const cardStyles = css`
     cursor: pointer;
   }
   .other-color:focus-within {
-    outline: 2px solid var(--bb-accent);
+    outline: 2px solid var(--bb-ring);
     outline-offset: 2px;
   }
 
@@ -2871,6 +2913,41 @@ export const cardStyles = css`
      the bed, the extruder --, smaller pad buttons, a heater's name and
      temperature above its steppers, two temperature tiles a row. */
   @container (max-width: 280px) {
+    /* The print controls at their own width, wrapping as wholes: no label on two lines beside another. */
+    .ctl-buttons .btn {
+      flex: 1 1 auto;
+    }
+    /* The plugs' rows: the text on its line, the switch or Run under it, at
+       the end; the switch-off's row no longer indented. */
+    .p-row {
+      flex-wrap: wrap;
+      row-gap: 4px;
+    }
+    .p-row .p-text {
+      flex-basis: calc(100% - 30px);
+    }
+    .p-row > .btn,
+    .p-row > .det-switch {
+      margin-left: auto;
+    }
+    .p-auto,
+    .p-set {
+      padding-left: 0;
+    }
+    /* A slot's actions under its name, its sub line wrapping: "In use" in
+       whole words. */
+    .slot {
+      flex-wrap: wrap;
+    }
+    .slot-main {
+      flex: 1 0 100%;
+    }
+    .slot .btn:not(.edit) {
+      flex: 1 0 auto;
+    }
+    .slot-sub {
+      white-space: normal;
+    }
     /* The step's three choices on a line of their own: "10 mm" never cut. */
     .step-row {
       flex-wrap: wrap;
@@ -2893,7 +2970,17 @@ export const cardStyles = css`
     .heat-row + .heat-row {
       padding-top: 6px;
     }
+    /* The name and Off on a row, the steppers below with the whole width:
+       beside a thumb's 44 px Off they would shrink under 24 px. */
     .heat-name {
+      grid-column: 1;
+      grid-row: 1;
+    }
+    .heat-row .heat-off {
+      grid-column: 2;
+      grid-row: 1;
+    }
+    .heat-set {
       grid-column: 1 / -1;
     }
     .heat-now {
@@ -2933,12 +3020,11 @@ export const cardStyles = css`
     }
   }
 
-  /* A half-width card on a phone (under 200 px): every action below its
-     text at full width, the name on a row of its own in whole words with
-     the chips and the HMS line under it, the job's words below its
-     picture, one temperature a row, the tabs' names on two lines. */
-  /* A narrow live view: the chips go to the bottom, clear of the gear and
-     the close button (never cut, his rule). */
+  /* A narrow card (260 px and less, from a desktop's half width down):
+     every action below its text at full width, the job's words below its
+     picture. A narrow live view: the chips
+     go to the bottom, clear of the gear and the close button (chips are
+     never cut). */
   @container (max-width: 260px) {
     .live-tags {
       top: auto;
@@ -2946,19 +3032,61 @@ export const cardStyles = css`
       right: 8px;
       flex-wrap: wrap-reverse;
     }
-  }
-  @container (max-width: 200px) {
-    /* A script's Run goes under its name. */
-    .p-row.p-script {
+    .job {
       flex-wrap: wrap;
-      row-gap: 4px;
+      justify-content: center;
     }
-    .p-row.p-script .p-text {
-      flex-basis: calc(100% - 30px);
+    .job-info {
+      flex: 1 0 100%;
     }
-    .p-row.p-script .btn {
-      margin-left: 0;
+    .seg button {
+      padding: 6px 2px;
+      font-size: 12px;
+      white-space: normal;
     }
+    .ext-buttons {
+      flex-direction: column;
+    }
+    .nozzle-row {
+      flex-wrap: wrap;
+    }
+    .nozzle-row .seg {
+      flex: 1 0 100%;
+    }
+    .ctl-buttons .btn,
+    .drying > .btn {
+      white-space: normal;
+    }
+    .det-head {
+      flex-wrap: wrap;
+      row-gap: 0;
+    }
+    .det-chevron {
+      margin-left: auto;
+    }
+    .callout {
+      padding: 8px 10px;
+    }
+    .callout > .icon {
+      display: none;
+    }
+    .callout > span {
+      flex-basis: 100%;
+    }
+    .callout .btn {
+      padding: 6px 10px;
+      white-space: normal;
+    }
+    /* The backup's "Unknown" under its text, the choice under it. */
+    .backup .det-row.choosing .det-text {
+      flex: 1 0 100%;
+    }
+  }
+
+  /* A half-width card on a phone (under 200 px): the name on a row of its
+     own in whole words with the chips and the HMS line under it, one
+     temperature a row, the tabs as icons. */
+  @container (max-width: 200px) {
     .head {
       flex-wrap: wrap;
       row-gap: 6px;
@@ -3011,10 +3139,6 @@ export const cardStyles = css`
     button.ams-strip {
       padding-right: 28px;
     }
-    /* A slot's sub line wraps rather than being cut. */
-    .slot-sub {
-      white-space: normal;
-    }
     .tabs .tab-text {
       position: absolute;
       width: 1px;
@@ -3022,13 +3146,6 @@ export const cardStyles = css`
       overflow: hidden;
       clip: rect(0 0 0 0);
       white-space: nowrap;
-    }
-    .job {
-      flex-wrap: wrap;
-      justify-content: center;
-    }
-    .job-info {
-      flex: 1 0 100%;
     }
     .temps,
     .temps.n1,
@@ -3039,53 +3156,6 @@ export const cardStyles = css`
     }
     .heat-head {
       flex-wrap: wrap;
-    }
-    .seg button {
-      padding: 6px 2px;
-      font-size: 12px;
-      white-space: normal;
-    }
-    .ext-buttons {
-      flex-direction: column;
-    }
-    .nozzle-row {
-      flex-wrap: wrap;
-    }
-    .nozzle-row .seg {
-      flex: 1 0 100%;
-    }
-    .ctl-buttons .btn,
-    .drying > .btn {
-      white-space: normal;
-    }
-    .det-head {
-      flex-wrap: wrap;
-      row-gap: 0;
-    }
-    .det-chevron {
-      margin-left: auto;
-    }
-    .slot {
-      flex-wrap: wrap;
-    }
-    .slot-main {
-      flex: 1 0 100%;
-    }
-    .slot .btn:not(.edit) {
-      flex: 1 0 auto;
-    }
-    .callout {
-      padding: 8px 10px;
-    }
-    .callout > .icon {
-      display: none;
-    }
-    .callout > span {
-      flex-basis: 100%;
-    }
-    .callout .btn {
-      padding: 6px 10px;
-      white-space: normal;
     }
   }
 
@@ -3101,6 +3171,24 @@ export const cardStyles = css`
       height: 44px;
       min-height: 44px;
     }
+    /* With the 44 px buttons beside it the name gets its own row a little
+       earlier, in whole words. */
+    @container (max-width: 220px) {
+      .head {
+        flex-wrap: wrap;
+        row-gap: 6px;
+      }
+      .names {
+        flex: 1 0 100%;
+        order: -1;
+      }
+      .name {
+        overflow-wrap: break-word;
+      }
+      .head .dot {
+        margin-right: auto;
+      }
+    }
   }
 
   /* Nothing moves for those who ask their system for less motion. */
@@ -3112,6 +3200,7 @@ export const cardStyles = css`
     .ams-activity .icon,
     .activity .icon,
     .activity-bar,
+    .check-spinner,
     .sent {
       animation: none;
     }

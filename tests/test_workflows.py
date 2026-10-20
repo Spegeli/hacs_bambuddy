@@ -15,10 +15,12 @@ from pathlib import Path
 import re
 import shutil
 import subprocess
+import tomllib
 
 import yaml
 
-_WORKFLOWS = Path(__file__).parents[1] / ".github" / "workflows"
+_ROOT = Path(__file__).parents[1]
+_WORKFLOWS = _ROOT / ".github" / "workflows"
 
 
 def _workflow(name: str) -> dict:
@@ -262,20 +264,12 @@ def test_the_checks_run_what_ci_promises():
     ]
     assert checkout["with"] == {"fetch-depth": 0}
     assert "python -m py_compile .github/scripts/release.py" in _script(release_script)
-    assert (
-        "python .github/scripts/release.py plan --type stable --bump auto"
-        in _script(release_script)
-    )
     for job in (tests, typing):
         assert _python(job) == "3.14", job["name"]
         assert (
             'python -m pip install -r tests/requirements.txt'
             ' "pytest-homeassistant-custom-component==${PLUGIN}"'
         ) in _script(job), job["name"]
-    assert "python -m pytest tests/" in _script(tests)
-    assert "--cov=custom_components.bambuddy" in _script(tests)
-    assert "--cov-fail-under=95" in _script(tests)
-    assert "python -m mypy --strict" in _script(typing)
     assert _python(floor) == "3.13"
     assert "python -m compileall" in _script(floor)
     assert "from __future__ import annotations" in _script(floor)
@@ -283,7 +277,6 @@ def test_the_checks_run_what_ci_promises():
     assert _python(minimum) == "3.13"
     assert "python -m pip install -r tests/requirements-floor.txt" in _script(minimum)
     assert "tests/requirements.txt" not in _script(minimum)
-    assert "python -m pytest tests/" in _script(minimum)
     assert "--cov" not in _script(minimum)
 
 
@@ -545,7 +538,7 @@ def test_validation_result_is_the_one_required_check():
 # "commit", which holds the key) -- and creates the GitHub release (job
 # "publish", which does not).
 _RELEASE = "release.yml"
-_RELEASE_SCRIPT = Path(__file__).parents[1] / ".github" / "scripts" / "release.py"
+_RELEASE_SCRIPT = _ROOT / ".github" / "scripts" / "release.py"
 _MANIFEST = "custom_components/bambuddy/manifest.json"
 _DEPLOY_KEY = "${{ secrets.RELEASE_DEPLOY_KEY }}"
 # The condition of every step and job a dry run skips, and the spellings of
@@ -1238,7 +1231,7 @@ def test_release_writes_the_version_into_the_manifest_and_checks_it(tmp_path):
     written.)"""
     job = _workflow(_RELEASE)["jobs"]["commit"]
     assert job["env"]["MANIFEST"] == _MANIFEST
-    assert (Path(__file__).parents[1] / _MANIFEST).is_file()
+    assert (_ROOT / _MANIFEST).is_file()
     steps = job["steps"]
     [plan] = [index for index, step in enumerate(steps) if step.get("id") == "plan"]
     [update] = [index for index, step in enumerate(steps) if "jq " in step.get("run", "")]
@@ -1253,7 +1246,7 @@ def test_release_writes_the_version_into_the_manifest_and_checks_it(tmp_path):
     # The check, right after the update, on the manifest as jq leaves it.
     check = steps[update + 1]
     assert check["env"] == the_version
-    shipped = json.loads((Path(__file__).parents[1] / _MANIFEST).read_text(encoding="utf-8"))
+    shipped = json.loads((_ROOT / _MANIFEST).read_text(encoding="utf-8"))
     written = tmp_path / "written"
     (written / _MANIFEST).parent.mkdir(parents=True)
     checked = {}
@@ -1319,7 +1312,7 @@ def test_a_run_whose_manifest_carries_the_version_commits_nothing(tmp_path):
     it is; a plain git commit would stop the run there."""
     steps = _workflow(_RELEASE)["jobs"]["commit"]["steps"]
     [commit] = [step for step in steps if "git commit" in step.get("run", "")]
-    shipped = json.loads((Path(__file__).parents[1] / _MANIFEST).read_text(encoding="utf-8"))
+    shipped = json.loads((_ROOT / _MANIFEST).read_text(encoding="utf-8"))
     repository = tmp_path / "repository"
     (repository / _MANIFEST).parent.mkdir(parents=True)
     (repository / _MANIFEST).write_text(
@@ -1389,3 +1382,41 @@ def test_a_dry_run_shows_the_release_and_pushes_nothing(tmp_path):
     assert _run_step(dry_run, values, cwd=clone).returncode != 0
     keyless = _run_step(dry_run, {**values, "secrets.RELEASE_DEPLOY_KEY": ""}, cwd=clone)
     assert keyless.returncode == 0, keyless.stderr
+
+
+def _run(check: str, step: str) -> str:
+    [found] = [item["run"] for item in _checks()[check]["steps"] if item.get("name") == step]
+    return found
+
+
+def test_each_gate_runs_exactly_its_command():
+    """A gate held by a substring passes with `|| true` or `--deselect`
+    beside it: each gate's command whole."""
+    assert _run("Newest HA / Tests", "Run the tests") == (
+        "python -m pytest tests/ -q --cov=custom_components.bambuddy --cov-report=term-missing --cov-fail-under=95"
+    )
+    assert _run("Newest HA / Strict typing", "Run mypy --strict") == "python -m mypy --strict"
+    assert _run("Minimum HA / Tests", "Run the tests") == "python -m pytest tests/ -q"
+    assert _run("Repository / Release script", "Plan a stable release with Python 3.12") == (
+        "python .github/scripts/release.py plan --type stable --bump auto"
+    )
+
+
+def test_the_cards_tests_hold_their_coverage_gate():
+    """`npm test` is the card's gate: its tests with coverage, failing under
+    95 % of statements, branches, functions and lines."""
+    package = json.loads((_ROOT / "cards" / "package.json").read_text(encoding="utf-8"))
+    assert package["scripts"]["test"] == "vitest run --coverage"
+    config = (_ROOT / "cards" / "vitest.config.ts").read_text(encoding="utf-8")
+    assert re.search(r"thresholds: \{ lines: 95, branches: 95, functions: 95, statements: 95 \}", config)
+
+
+def test_a_warning_fails_every_run():
+    """A coroutine nobody awaits warns from its finalizer, where
+    `-W error::RuntimeWarning` cannot reach it: pyproject.toml makes both
+    errors for CI and every local run."""
+    settings = tomllib.loads((_ROOT / "pyproject.toml").read_text(encoding="utf-8"))
+    assert settings["tool"]["pytest"]["ini_options"]["filterwarnings"] == [
+        "error::RuntimeWarning",
+        "error::pytest.PytestUnraisableExceptionWarning",
+    ]

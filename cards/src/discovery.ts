@@ -146,7 +146,7 @@ export function plugAttribute(hass: Hass, plug: PlugRefs, name: string): unknown
 }
 
 /** The plugs under the printer -- devices with a plug's switch, state or run
- * button --: the one that powers it first, then by name. */
+ * button --, by name (the card puts the printer's own first). */
 function findPlugs(hass: Hass, printer: HassDevice): PlugRefs[] {
   const byDevice = entitiesByDevice(hass);
   const plugs: PlugRefs[] = [];
@@ -172,8 +172,8 @@ function findPlugs(hass: Hass, printer: HassDevice): PlugRefs[] {
       ...(one("button.auto_off_skip") ? { autoOffSkip: one("button.auto_off_skip") } : {}),
     });
   }
-  // By name; the printer's own plug goes first when the card shows them, by
-  // its state then (it may come without attributes right after a restart).
+  // By name; the printer's own plug goes first where the card shows them
+  // (`power.ts`, by the integration's `printer_main`).
   return plugs.sort((a, b) => a.name.localeCompare(b.name));
 }
 
@@ -250,7 +250,9 @@ export function findPrinter(hass: Hass, deviceId: string | undefined): PrinterRe
     speed: one("select.print_speed"),
     fans,
     detectors,
-    light: one("light.chamber_light"),
+    // A printer without a chamber has a plain light.
+    light: one("light.chamber_light") ?? one("light.light"),
+    plainLight: !one("light.chamber_light") && one("light.light") !== undefined,
     camera: one("camera.camera"),
     cameraFps: one("number.camera_frame_rate"),
     cover: one("image.cover"),

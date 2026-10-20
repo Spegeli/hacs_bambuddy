@@ -18,7 +18,8 @@ Not sure whether it is a vulnerability? Report it privately anyway.
 In scope is the code in this repository, in particular:
 
 - how the integration stores and uses your BamBuddy API key and the camera's stream token, and that it keeps both out of logs and error messages
-- the requests to your BamBuddy server, including the printer commands it sends: pause, resume, stop, print speed, chamber light, clearing HMS errors and clearing the plate
+- the requests to your BamBuddy server, including the commands it sends to your printers and smart plugs: pause, resume and stop, temperatures, fans, the chamber light, moving the axes, filament and drying, answering HMS messages, clearing the plate, and switching a plug (also by itself after a print)
+- what the diagnostics leave out: the API key, addresses, access codes, serial numbers and a plug's login
 - the workflows that check and publish releases
 
 Vulnerabilities in BamBuddy itself, in Bambu Lab's printers, firmware or cloud, in Home Assistant or in HACS are out of scope: report them to BamBuddy (see its [security policy](https://github.com/maziggy/bambuddy/blob/main/SECURITY.md)), to Bambu Lab, to [Home Assistant](https://www.home-assistant.io/security/) or to the HACS project.

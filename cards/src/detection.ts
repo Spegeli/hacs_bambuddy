@@ -30,9 +30,9 @@ function detectionRow(ctx: CardContext, key: DetectorKey, entityId: string): Tem
   </span>`;
   // Without a state the switch is neither on nor off: a line to read.
   if (!hasValue(hass, entityId)) return html`<div class="det-row unknown">${text}<span class="det-state">${t(hass, "unknown")}</span></div>`;
-  // Hide controls: its state in words, nothing to switch.
-  if (ctx.viewOnly) return html`<div class="det-row">${text}<span class="det-state">${t(hass, ctx.switchOn(entityId) ? "on" : "off")}</span></div>`;
   const on = ctx.switchOn(entityId);
+  // Hide controls: its state in words, nothing to switch.
+  if (ctx.viewOnly) return html`<div class="det-row">${text}<span class="det-state">${t(hass, on ? "on" : "off")}</span></div>`;
   const pending = ctx.isPending(`switch_${entityId}`);
   return html`<div class="det-row">
     ${text}
@@ -43,7 +43,8 @@ function detectionRow(ctx: CardContext, key: DetectorKey, entityId: string): Tem
       aria-describedby=${sub ? subId : nothing}
       aria-checked=${on ? "true" : "false"}
       aria-busy=${pending ? "true" : "false"}
-      ?disabled=${!ctx.online || pending}
+      aria-disabled=${pending ? "true" : nothing}
+      ?disabled=${!ctx.online}
       @click=${() => ctx.toggleSwitch(entityId)}
     >
       <span class="toggle" aria-hidden="true"><span class="knob"></span></span>
@@ -58,7 +59,15 @@ export function detectionSection(ctx: CardContext): TemplateResult | typeof noth
   // Only switches with a state count: an unknown one is neither on nor off.
   const known = refs.detectors.filter(({ entityId }) => hasValue(hass, entityId));
   const off = known.filter(({ entityId }) => !ctx.switchOn(entityId)).length;
-  const summary = off === 0 ? t(hass, "detection_all_on") : off === known.length ? t(hass, "detection_all_off") : t(hass, "detection_off", { off });
+  // One detection (the A1 series) says its own state.
+  const summary =
+    known.length === 1
+      ? t(hass, off ? "off" : "on")
+      : off === 0
+        ? t(hass, "detection_all_on")
+        : off === known.length
+          ? t(hass, "detection_all_off")
+          : t(hass, "detection_off", { off });
   const open = ctx.optionsOpen;
   return html`<section class="detection">
     <button class="det-head" aria-expanded=${open ? "true" : "false"} aria-controls=${open ? "det-body" : nothing} @click=${() => ctx.toggleOptions()}>

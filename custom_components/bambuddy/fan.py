@@ -17,7 +17,7 @@ from homeassistant.components.fan import (  # type: ignore[attr-defined]
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 
-from .coordinator import BamBuddyConfigEntry
+from .coordinator import BamBuddyConfigEntry, BamBuddyPrinterCoordinator
 from .entity import BamBuddyDescribedEntity, async_run_command
 from .models import PrinterData
 
@@ -30,6 +30,8 @@ class BamBuddyFanDescription(FanEntityDescription):
     fan: str
     field: str
     exists_fn: Callable[[PrinterData], bool] = lambda _: True
+    # Enabled at first: a fan the stock printer lacks is disabled (a kit may add it).
+    enabled_fn: Callable[[PrinterData], bool] = lambda _: True
 
 
 FANS: tuple[BamBuddyFanDescription, ...] = (
@@ -46,13 +48,15 @@ FANS: tuple[BamBuddyFanDescription, ...] = (
         fan="aux",
         field="big_fan1_speed",
         exists_fn=lambda data: data.has_aux_fans(),
+        enabled_fn=lambda data: data.stock_aux_fan(),
     ),
     BamBuddyFanDescription(
         key="chamber_fan",
         translation_key="chamber_fan",
         fan="chamber",
         field="big_fan2_speed",
-        exists_fn=lambda data: data.has_aux_fans() and not data.has_exhaust_fan(),
+        exists_fn=lambda data: data.has_chamber_fan(),
+        enabled_fn=lambda data: data.stock_chamber_fan(),
     ),
     BamBuddyFanDescription(
         key="chamber_fan",
@@ -93,6 +97,10 @@ class BamBuddyFan(BamBuddyDescribedEntity, FanEntity):
     entity_description: BamBuddyFanDescription
     _attr_supported_features = FanEntityFeature.SET_SPEED | FanEntityFeature.TURN_ON | FanEntityFeature.TURN_OFF
     _attr_speed_count = 15
+
+    def __init__(self, coordinator: BamBuddyPrinterCoordinator, description: BamBuddyFanDescription) -> None:
+        super().__init__(coordinator, description)
+        self._attr_entity_registry_enabled_default = description.enabled_fn(coordinator.data)
 
     @property
     def percentage(self) -> int | None:

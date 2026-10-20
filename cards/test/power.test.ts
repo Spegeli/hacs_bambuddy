@@ -8,8 +8,8 @@ import "../src/index";
 import { findPrinter } from "../src/discovery";
 import { configForm } from "../src/forms";
 
-import { makeHass, mountCard, offlineP1s, plugDevice, x1c, type FakeCard, type FakeDevice, type FakeHass, type PlugSpec, type PrinterSpec } from "./fixtures";
-import { find, findAll, NBSP, styleText, text, update } from "./helpers";
+import { h2d, makeHass, mountCard, offlineP1s, plugDevice, unreachable, x1c, type FakeCard, type FakeDevice, type FakeHass, type PlugSpec, type PrinterSpec } from "./fixtures";
+import { atRule, find, findAll, NBSP, styleText, text, update } from "./helpers";
 
 const NOW = new Date("2026-10-18T14:10:00Z");
 
@@ -102,9 +102,22 @@ describe("the block Power", () => {
     expect(sub(german.card)).toBe(`An · 1,2${NBSP}kW`);
   });
 
-  it("leaves out a plug BamBuddy does not show on the printer card, and the block without plugs", async () => {
-    const hidden = await mount(x1cWith({}, { id: 3, name: "Tasmota", onCard: false }), "dev-x1c");
-    expect(find(hidden.card, ".power")).toBeNull();
+  it("always shows the printer's own plug, and leaves out another BamBuddy does not show on the printer card", async () => {
+    // BamBuddy's "show on the printer card" (Home Assistant plugs only) hides
+    // accessories and a second plug that powers the printer, never its own.
+    const own = await mount(
+      x1cWith({}, { id: 3, name: "Tasmota", onCard: false, main: true }, { id: 5, name: "Second", onCard: false, main: false }, { ...ACCESSORY, onCard: false }),
+      "dev-x1c",
+      { status_blocks: ["power"] },
+    );
+    expect(rows(own.card).map((row) => row.split(" ")[0])).toEqual(["Tasmota"]);
+    expect(own.card.getCardSize()).toBeGreaterThan(4);
+    // Without the integration's choice (right after a restart): the first that powers the printer.
+    const early = await mount(x1cWith({}, { id: 3, name: "Tasmota", onCard: false }, { id: 5, name: "Workshop", onCard: false }), "dev-x1c");
+    expect(rows(early.card).map((row) => row.split(" ")[0])).toEqual(["Tasmota"]);
+    const accessory = await mount(x1cWith({}, { ...ACCESSORY, onCard: false }), "dev-x1c", { status_blocks: ["power"] });
+    expect(find(accessory.card, ".power")).toBeNull();
+    expect(accessory.card.getCardSize()).toBe(4);
     const none = await mount(x1c(), "dev-x1c");
     expect(find(none.card, ".power")).toBeNull();
   });
@@ -130,7 +143,7 @@ describe("the block Power", () => {
     expect(hass.calls.at(-1)).toMatchObject({ domain: "switch", service: "turn_off", data: { entity_id: PLUG } });
   });
 
-  it("asks before an accessory goes off too (his decision)", async () => {
+  it("asks before an accessory goes off too", async () => {
     const { card } = await mount(x1cWith(IDLE, { id: 3, name: "Tasmota – FA3F19" }, ACCESSORY), "dev-x1c");
     toggle(card, 1).click();
     await card.updateComplete;
@@ -147,6 +160,16 @@ describe("the block Power", () => {
     expect(text(find(card, "dialog p"))).toContain("“Benchy_0.2mm_PLA” is at 62");
     expect(find(card, "dialog .btn.danger")).not.toBeNull();
     expect(text(find(card, "dialog .btn.safe"))).toBe("Keep it on");
+  });
+
+  it("names the hot nozzle of two", async () => {
+    const devices = h2d({ status: "idle", stage: "idle", progress: 0, nozzles: [[26, 0], [61, 0]], hms: [] });
+    const plug = plugDevice({ printer: devices[0] as FakeDevice, id: 3, name: "Tasmota – FA3F19", watts: 9 });
+    const { card } = await mount([...devices, plug], "dev-h2d");
+    toggle(card).click();
+    await card.updateComplete;
+
+    expect(text(find(card, "dialog .dlg-note"))).toBe(`The right nozzle is still at 61${NBSP}°C: without power, its fan stops too.`);
   });
 
   it("notes a hot nozzle", async () => {
@@ -184,7 +207,7 @@ describe("the block Power", () => {
   });
 
   it("leaves the switch-off out while the plug cannot be reached, unless it is on", async () => {
-    // His word: nothing to switch, nothing to set -- but one that is on says it waits for the plug.
+    // Nothing to switch, nothing to set -- but one that is on says it waits for the plug.
     const away = await mount(x1cWith(IDLE, { id: 3, name: "T", state: "unavailable", autoOff: { armed: false } }), "dev-x1c");
     expect(find(away.card, ".power .p-auto")).toBeNull();
     const waiting = await mount(
@@ -239,6 +262,14 @@ describe("switching off after the print", () => {
     );
     expect(autoRow(bambuddy.card)).toContain("BamBuddy already switches this plug off after the print (Auto Off). To set it here instead, turn Auto Off off in BamBuddy.");
     expect(find(bambuddy.card, ".power .p-auto [role=switch]")).toBeNull();
+    // A view-only card sets nothing: no "set it here".
+    const view = await mount(
+      x1cWith(IDLE, { id: 3, name: "Tasmota – FA3F19", bambuddyAutoOff: true, autoOff: { armed: false } }),
+      "dev-x1c",
+      { read_only: true },
+    );
+    expect(autoRow(view.card)).toContain("BamBuddy already switches this plug off after the print (Auto Off).");
+    expect(autoRow(view.card)).not.toContain("To set it here");
   });
 
   it("is a toggle, and its settings open from its text", async () => {
@@ -252,7 +283,7 @@ describe("switching off after the print", () => {
     expect(dialogTitle(card)).toBe("Switch off after the print");
     expect(text(find(card, "dialog .stepper .step-value"))).toBe(`50${NBSP}°C`);
     const choices = findAll<HTMLButtonElement>(card, "dialog [role=radio]");
-    // His word: the one-shot first, and the default.
+    // The one-shot first, and the default.
     expect(choices.map((item) => [text(item), item.getAttribute("aria-checked")])).toEqual([
       ["Only after the next print", "true"],
       ["After every print", "false"],
@@ -323,6 +354,25 @@ describe("the chip Power", () => {
     expect(chip((await mount(x1cWith({}, { id: 3, name: "T", state: "unavailable" }), "dev-x1c", { header_chips: ["power"] })).card)).toBe("Plug unreachable");
   });
 
+  it("blames no plug while BamBuddy does not answer", async () => {
+    const { card } = await mount(unreachable(x1cWith()), "dev-x1c", { header_chips: ["power"] });
+    expect(chip(card)).toBe("Power unknown");
+    const pill = find(card, ".pills .pill.power-chip") as HTMLButtonElement;
+    expect(pill.getAttribute("aria-label")).toBe("Power unknown – No data from BamBuddy");
+    expect(pill.getAttribute("aria-haspopup")).toBe("dialog");
+    expect(pill.classList.contains("tone-neutral")).toBe(true);
+    pill.click();
+    await card.updateComplete;
+    const row = find(card, "dialog .p-row") as HTMLElement;
+    expect(text(row.querySelector(".p-sub"))).toBe("No data from BamBuddy");
+    expect(row.classList.contains("warn")).toBe(false);
+  });
+
+  it("names an accessory plug on the chip: its draw is not the printer's", async () => {
+    expect(chip((await mount(x1cWith({}, ACCESSORY), "dev-x1c", { header_chips: ["power"] })).card)).toBe(`Shelly – Abluftfilter · 12${NBSP}W`);
+    expect(chip((await mount(x1cWith({}, { ...ACCESSORY, state: "off" }), "dev-x1c", { header_chips: ["power"] })).card)).toBe("Shelly – Abluftfilter: Off");
+  });
+
   it("is laid out as a chip, not as the Power block", async () => {
     // The block's class lays its children out in a column: the chip's icon
     // stood above its text.
@@ -348,17 +398,17 @@ describe("the editor", () => {
 
     expect(names).toContain('"value":"power"');
     expect(names).toContain('"name":"show_auto_off"');
-    // Each toggle's text says what it does (his word, 2026-10-18).
+    // Each toggle's text says what it does.
     expect(form.computeLabel({ name: "show_auto_off" })).toBe("“Switch off after the print” row");
     expect(form.computeHelper({ name: "show_auto_off" })).toBe(
-      "Shows or hides the row under the printer's plug in the Power section. In it you choose whether the printer switches itself off after the print. With the row hidden, it still switches off if set to.",
+      "Shows or hides the row under the printer's plug in the Power section and the Power chip's dialog. In it you choose whether the printer switches itself off after the print. With the row hidden, it still switches off if set to.",
     );
-    expect(form.computeHelper({ name: "status_blocks" })).toContain("Power appears only when BamBuddy links a plug to the printer.");
+    expect(form.computeHelper({ name: "status_blocks" })).toContain("Power only when BamBuddy links a plug to the printer.");
   });
 });
 
 
-describe("after the review (2026-10-18)", () => {
+describe("a plug's state and the switch-off's row", () => {
   it("says Unknown where a plug does not report its state, in its row and its chip", async () => {
     const { card } = await mount(x1cWith({}, { id: 7, name: "MQTT meter", kind: "state", state: "unknown", watts: 150 }), "dev-x1c", { header_chips: ["power"] });
     expect(sub(card)).toContain(`Unknown · 150${NBSP}W`);
@@ -404,7 +454,7 @@ describe("after the review (2026-10-18)", () => {
   });
 });
 
-describe("after the live review (2026-10-18)", () => {
+describe("the plug's questions and its chip", () => {
   const offline = (plug: Omit<PlugSpec, "printer" | "id" | "name">): FakeDevice[] => {
     const devices = offlineP1s();
     return [...devices, plugDevice({ printer: devices[0] as FakeDevice, id: 5, name: "Steckdose Garage", onSince: "2026-10-18T13:00:00Z", ...plug })];
@@ -424,6 +474,9 @@ describe("after the live review (2026-10-18)", () => {
     expect(find(printing, "dialog .btn.danger")).not.toBeNull();
     const idle = await askOffline({ state: "on", watts: 8 });
     expect(find(idle, "dialog .btn.danger")).toBeNull();
+    expect(text(find(idle, "dialog p"))).toBe(
+      `BamBuddy cannot reach the printer. The plug delivers 8${NBSP}W – about what an idle printer draws, so it is most likely not printing.`,
+    );
     const unknown = await askOffline({ state: "on" });
     expect(text(find(unknown, "dialog p"))).toBe("BamBuddy cannot reach the printer and does not know whether it is printing. A running print would stop without power.");
     expect(find(unknown, "dialog .btn.danger")).not.toBeNull();
@@ -455,7 +508,7 @@ describe("after the live review (2026-10-18)", () => {
   it("names the chip for a screen reader, says Power on without figures, and is grey while the printer is offline", async () => {
     const chipOf = (card: FakeCard): HTMLElement => find(card, ".pills .pill.power-chip") as HTMLElement;
     const watts = await mount(x1cWith(), "dev-x1c", { header_chips: ["power"] });
-    expect(chipOf(watts.card).getAttribute("aria-label")).toBe(`Power: Tasmota – FA3F19, On, 182${NBSP}W`);
+    expect(chipOf(watts.card).getAttribute("aria-label")).toBe(`182${NBSP}W – plug “Tasmota – FA3F19”`);
     const bare = await mount(x1cWith({}, { id: 3, name: "Kids room", today: undefined }), "dev-x1c", { header_chips: ["power"] });
     expect(text(chipOf(bare.card))).toBe("Power on");
     const unknown = await mount(x1cWith({}, { id: 7, name: "MQTT", kind: "state", state: "unknown" }), "dev-x1c", { header_chips: ["power"] });
@@ -516,8 +569,9 @@ describe("after the live review (2026-10-18)", () => {
     const css = styleText();
     expect(/\.offline-actions\s*\{[^}]*flex-wrap:\s*wrap[^}]*gap:\s*8px/.exec(css)).not.toBeNull();
     expect(/\.offline-actions \.btn\s*\{[^}]*white-space:\s*normal/.exec(css)).not.toBeNull();
-    expect(/\.p-row\.p-script\s*\{[^}]*flex-wrap:\s*wrap/.exec(css)).not.toBeNull();
-    expect(/\.p-skip \.btn\s*\{[^}]*white-space:\s*normal/.exec(css)).not.toBeNull();
+    // Under 280 px every plug row wraps: its switch or Run under the text.
+    expect(atRule("@container (max-width: 280px)")).toMatch(/(^|[}\s])\.p-row\s*\{[^}]*flex-wrap:\s*wrap/);
+    expect(/\.p-skip \.btn,\s*\.p-set \.btn\s*\{[^}]*white-space:\s*normal/.exec(css)).not.toBeNull();
     expect(/\.model\s*\{[^}]*\}/.exec(css)?.[0]).not.toContain("ellipsis");
   });
 });

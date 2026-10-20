@@ -4,6 +4,8 @@ import "../src/index";
 import { BamBuddyPrinterCard } from "../src/card";
 import { DRYING } from "../src/dialogs";
 import { ICONS } from "../src/icons";
+import { unitModel } from "../src/parts";
+import type { AmsRefs } from "../src/types";
 import {
   a1mini,
   amsDevice,
@@ -13,6 +15,7 @@ import {
   mountCard,
   offlineP1s,
   p1s,
+  plugDevice,
   readOnlyX1c,
   unreachable,
   x1c,
@@ -22,7 +25,7 @@ import {
   type FakeHassOptions,
   type PrinterSpec,
 } from "./fixtures";
-import { atRule, button, cardText, find, findAll, hasButton, NBSP, press, root, settle, styleText, text, update } from "./helpers";
+import { atRule, button, cardText, find, findAll, hasButton, NBSP, press, root, settle, shownText, showView, styleText, text, update } from "./helpers";
 
 /** The load and unload buttons of the filament view's slots. */
 const loadButtons = (card: FakeCard): HTMLButtonElement[] =>
@@ -41,14 +44,6 @@ function tapBeside(card: FakeCard): void {
   dialog.click();
 }
 
-/** Opens a view by its tab; a card without the tab fails the test. */
-async function showView(card: FakeCard, tab: "Status" | "Control" | "Filament" | "Steuerung"): Promise<void> {
-  const found = findAll(card, "[role=tab]").find((item) => text(item) === tab);
-  if (!found) throw new Error(`no tab "${tab}" in: ${cardText(card)}`);
-  found.click();
-  await card.updateComplete;
-}
-
 const PRINTERS: Record<string, [() => FakeDevice[], string]> = {
   x1c: [x1c, "dev-x1c"],
   h2d: [h2d, "dev-h2d"],
@@ -56,6 +51,9 @@ const PRINTERS: Record<string, [() => FakeDevice[], string]> = {
   p1s: [offlineP1s, "dev-p1s"],
   readOnly: [readOnlyX1c, "dev-x1c"],
 };
+
+/** A key pressed on an element of the card: the keyboard is there. */
+const keyPress = (element: Element): boolean => element.dispatchEvent(new KeyboardEvent("keydown", { key: "Tab", bubbles: true, composed: true }));
 
 async function cardFor(
   name: keyof typeof PRINTERS,
@@ -100,9 +98,10 @@ describe("a card without a printer to show", () => {
     const hass = makeHass({ devices: [...x1c(), instanceDevice] });
     const messages: [Record<string, unknown>, string][] = [
       [{}, "Choose a printer in the card's settings."],
-      [{ printer: "dev-gone" }, "This printer is no longer available. Choose another one in the card's settings."],
-      [{ printer: "dev-x1c-ams-0" }, "This device is not a BamBuddy printer. Choose a printer, not an AMS unit or the BamBuddy server."],
-      [{ printer: "dev-instance" }, "This device is not a BamBuddy printer. Choose a printer, not an AMS unit or the BamBuddy server."],
+      // Most often it is the same printer, set up anew: chosen again.
+      [{ printer: "dev-gone" }, "This printer is no longer available. In the card's settings, choose it again – or another one."],
+      [{ printer: "dev-x1c-ams-0" }, "This device is not a BamBuddy printer. Choose a printer, not an AMS unit, a smart plug or the BamBuddy server."],
+      [{ printer: "dev-instance" }, "This device is not a BamBuddy printer. Choose a printer, not an AMS unit, a smart plug or the BamBuddy server."],
     ];
     for (const [config, message] of messages) {
       const card = await mountCard(hass, config);
@@ -124,7 +123,9 @@ describe("the status view", () => {
     // has no chip for it.
     expect(text(find(card, ".state"))).toBe("Printing");
     expect(find(card, ".state")?.classList.contains("tone-active")).toBe(true);
-    expect(find(card, ".state")?.getAttribute("role")).toBe("status");
+    // Announced by the card's own live line, with the printer's name.
+    expect(find(card, ".card-status")?.getAttribute("role")).toBe("status");
+    expect(text(find(card, ".card-status"))).toBe("Workshop: Printing");
     expect(find(card, ".state svg path")?.getAttribute("d")).toBe(ICONS.play);
     expect(find(card, ".head .chip")).toBeNull();
     expect(find(card, ".dot")?.classList.contains("on")).toBe(true);
@@ -190,6 +191,8 @@ describe("the status view", () => {
   it("shows the loaded filament: colour, material, the slot in use and the AMS humidity", async () => {
     const { card } = await cardFor("x1c");
     expect(findAll(card, ".ams-name").map(text)).toEqual(["AMS A", "Ext"]);
+    // "Ext" is short: its tooltip says it in full.
+    expect(findAll(card, ".ams-name").at(-1)?.getAttribute("title")).toBe("External spool");
     expect(text(find(card, ".ams-hum"))).toBe(`21${NBSP}%`);
     // Slot 4 holds a spool nobody described: "?". The external holder,
     // whose spool BamBuddy never reports, is empty: "–".
@@ -279,14 +282,25 @@ describe("the status view", () => {
 
   it("says what the strip shows to a screen reader, and where a tap on it goes", async () => {
     const { card } = await cardFor("x1c");
-    expect(find(card, "button.ams-strip")?.getAttribute("aria-label")).toBe(
-      `AMS A, humidity 21${NBSP}%, temperature 27${NBSP}°C: PLA Basic · 80${NBSP}%, PLA Matte · 45${NBSP}% · In use, PLA, Not set. External spool: Not set. Open the filament view`,
+    const button = find(card, "button.ams-strip") as HTMLButtonElement;
+    expect(button.getAttribute("aria-label")).toBe("AMS and filament – Open the filament view");
+    expect(text(find(card, `#${button.getAttribute("aria-describedby")}`))).toBe(
+      `AMS A, humidity 21${NBSP}%, temperature 27${NBSP}°C: PLA Basic · 80${NBSP}%, PLA Matte · 45${NBSP}% · In use, PLA, Not set. External spool: Not set`,
     );
     const { card: german } = await cardFor("h2d", {}, { language: "de" });
-    expect(find(german, "button.ams-strip")?.getAttribute("aria-label")).toBe(
+    expect(find(german, "button.ams-strip")?.getAttribute("aria-label")).toBe("AMS und Filament – Filament-Ansicht öffnen");
+    expect(text(find(german, "#ams-said"))).toBe(
       `AMS A (AMS 2 Pro, rechte Düse), Feuchte 14${NBSP}%, Temperatur 52${NBSP}°C: PLA Basic · 92${NBSP}%, PLA Basic · 61${NBSP}% · In Gebrauch, PLA Silk+ · 12${NBSP}%, Support for PLA · 70${NBSP}%. ` +
-        `AMS HT A (linke Düse), Feuchte 9${NBSP}%, Temperatur 30${NBSP}°C: PA6-CF · 55${NBSP}%. Externe Spulen: Links: PETG HF, Rechts: Nicht festgelegt. Filament-Ansicht öffnen`,
+        `AMS HT A (linke Düse), Feuchte 9${NBSP}%, Temperatur 30${NBSP}°C: PA6-CF · 55${NBSP}%. Externe Spulen: Links: PETG HF, Rechts: Nicht festgelegt`,
     );
+    // Without the Filament tab the strip is no button: a named group that says the same.
+    const { card: noTab } = await cardFor("x1c", { show_filament_tab: false });
+    const strip = find(noTab, "div.ams-strip") as Element;
+    expect([strip.getAttribute("role"), strip.getAttribute("aria-label")]).toEqual(["group", "AMS and filament"]);
+    expect(text(strip.querySelector(".sr-only"))).toBe(
+      `AMS A, humidity 21${NBSP}%, temperature 27${NBSP}°C: PLA Basic · 80${NBSP}%, PLA Matte · 45${NBSP}% · In use, PLA, Not set. External spool: Not set`,
+    );
+    expect(strip.querySelector(".ams-column")?.getAttribute("aria-hidden")).toBe("true");
   });
 
   it("offers pause, stop and the print speed while printing", async () => {
@@ -491,6 +505,28 @@ describe("the status view", () => {
     expect(find(card, ".bar")).toBeNull();
     expect(findAll(card, ".meta span").map(text)).toEqual(["Layer 122 / 250"]);
     expect(text(find(card, ".job-name"))).toBe("Benchy_0.2mm_PLA");
+  });
+
+  it("keeps Failed on the state line while the printer loads filament after the print", async () => {
+    const { card } = await withX1c({ status: "failed", stage: "changing_filament", progress: 0, layer: 122, totalLayers: 250, plateClearNeeded: true });
+    expect(text(find(card, ".state"))).toBe("Failed");
+    const finished = await withX1c({ status: "finished", stage: "changing_filament", progress: 100, remaining: 0 });
+    expect(text(find(finished.card, ".state"))).toBe("Finished");
+  });
+
+  it("names a printer's light a light where the integration says it has no chamber", async () => {
+    const devices = x1c();
+    for (const device of devices) {
+      for (const entity of device.entities) {
+        if (entity.key === "chamber_light") {
+          entity.key = "light";
+          entity.entityId = entity.entityId.replace("chamber_light", "light");
+        }
+      }
+    }
+    const { card } = await cardFor("x1c", {}, { devices });
+    expect(hasButton(card, "Light")).toBe(true);
+    expect(hasButton(card, "Chamber light")).toBe(false);
   });
 
   it("shows an idle printer", async () => {
@@ -718,6 +754,17 @@ describe("skipping objects", () => {
     async (call) =>
       call.service === "get_print_objects" ? { response: { objects } } : undefined;
 
+  it("says at once that a print of one object can only be stopped", async () => {
+    const { card } = await cardFor("x1c", {}, { callService: answering([{ id: 11, name: "Lamp shade", skipped: false }]) });
+    await press(card, "Skip objects");
+    expect(find(card, "dialog .obj input")).toBeNull();
+    expect(text(find(card, "dialog"))).toContain("This print has only one object. To leave it out, stop the print.");
+    // Nothing to choose: one way out, and a note, not a warning.
+    expect(findAll(card, "dialog .dlg-actions .btn").map(text)).toEqual(["Close"]);
+    expect(find(card, "dialog .dlg-warn.info .icon path")?.getAttribute("d")).toBe(ICONS.info);
+    expect(styleText()).toMatch(/\.dlg-warn\.info \.icon\s*\{\s*color: var\(--bb-accent\);/);
+  });
+
   it("lists the objects, the skipped ones struck through, and skips the chosen ones after asking", async () => {
     const { card, hass } = await cardFor("x1c", {}, { callService: answering() });
     await press(card, "Skip objects");
@@ -785,10 +832,18 @@ describe("skipping objects", () => {
     await tick(2);
     expect(confirm().disabled).toBe(false);
     expect(text(find(card, "dialog .dlg-warn"))).toBe("Skipped objects cannot be printed again in this job.");
-    const { card: german } = await cardFor("x1c", {}, { language: "de", callService: answering([{ id: 1, name: "Benchy", skipped: false }]) });
+    const { card: german } = await cardFor("x1c", {}, {
+      language: "de",
+      callService: answering([
+        { id: 1, name: "Benchy", skipped: false },
+        { id: 2, name: "Clip", skipped: false },
+      ]),
+    });
     await press(german, "Objekte überspringen");
-    findAll<HTMLInputElement>(german, "dialog .obj input")[0]?.click();
-    await german.updateComplete;
+    for (const box of findAll<HTMLInputElement>(german, "dialog .obj input")) {
+      box.click();
+      await german.updateComplete;
+    }
     expect(text(find(german, "dialog .dlg-warn"))).toBe("Um alle Objekte zu überspringen, stoppe stattdessen den Druck.");
     expect(findAll<HTMLButtonElement>(german, "dialog .dlg-actions .btn")[1]?.disabled).toBe(true);
   });
@@ -867,7 +922,7 @@ describe("skipping objects", () => {
     const { card } = await cardFor("x1c", {}, { language: "de", callService: answering() });
     await press(card, "Objekte überspringen");
     expect(text(find(card, "dialog h2"))).toBe("Objekte überspringen");
-    expect(text(find(card, "dialog .dlg-warn"))).toBe("Übersprungene Objekte werden in diesem Druck nicht mehr gedruckt.");
+    expect(text(find(card, "dialog .dlg-warn"))).toBe("Übersprungene Objekte werden in diesem Druck nicht mehr gedruckt. Das lässt sich nicht rückgängig machen.");
     expect(findAll(card, "dialog .obj").map(text)).toEqual(["Benchy", "Calibration cube Übersprungen", "Objekt 13", "Clip"]);
     const boxes = findAll<HTMLInputElement>(card, "dialog .obj input");
     boxes[0]?.click();
@@ -900,7 +955,7 @@ describe("a printer whose developer mode is off", () => {
   it("says it in German", async () => {
     const { card } = await cardFor("x1c", {}, { language: "de", devices: x1c({ developerMode: "off" }) });
     expect(text(find(card, ".note.warning"))).toBe(
-      "Der Drucker nimmt keine Befehle an: Sein Entwicklermodus (LAN) ist aus. Schalte ihn am Druckerdisplay unter Einstellungen → Netzwerk (oder WLAN) ein: erst „LAN Only Mode“, dann „Developer Mode“. Trage danach den neuen Zugangscode in BamBuddy ein.",
+      "Der Drucker nimmt keine Befehle an: Sein Entwicklermodus (LAN) ist aus. Schalte ihn am Display des Druckers unter Einstellungen → Netzwerk (oder WLAN) ein: erst „LAN Only Mode“, dann „Developer Mode“. Trage danach den neuen Zugangscode in BamBuddy ein.",
     );
   });
 
@@ -982,6 +1037,15 @@ describe("the live view", () => {
     expect(stream?.hasAttribute("src")).toBe(false);
   });
 
+  it("ends the old printer's stream when the card is set to another", async () => {
+    const hass = makeHass({ devices: [...x1c(), ...h2d()] });
+    const card = await mountCard(hass, { printer: "dev-x1c", camera: "always" });
+    expect(find(card, "img.stream")?.getAttribute("src")).toContain("camera.x1c_camera");
+    card.setConfig({ type: "custom:bambuddy-printer-card", printer: "dev-h2d", camera: "always" });
+    await settle(card);
+    expect(find(card, "img.stream")?.getAttribute("src") ?? "").not.toContain("camera.x1c_camera");
+  });
+
   it("runs all the time with camera: always, and stops while the page is hidden", async () => {
     const { card } = await cardFor("x1c", { camera: "always" });
     expect(find(card, "img.stream")).not.toBeNull();
@@ -1039,7 +1103,7 @@ describe("the live view", () => {
     expect(find(unavailable, "button.picture")).toBeNull();
   });
 
-  it("names its frame rate, and offers to change it where the camera gives more (his word)", async () => {
+  it("names its frame rate, and offers to change it where the camera gives more", async () => {
     const { card } = await cardFor("x1c", { camera: "always" });
     expect(text(find(card, ".live-fps"))).toBe("30 fps");
     expect(find(card, ".live-fps")?.getAttribute("aria-label")).toBe("30 frames a second");
@@ -1064,17 +1128,17 @@ describe("the live view", () => {
     expect(find(card, "dialog output.step-value")?.getAttribute("aria-live")).toBe("polite");
     expect(text(find(card, "dialog .step-value [aria-hidden]"))).toBe("30 fps");
     expect(text(find(card, "dialog .step-value .sr-only"))).toBe("30 frames a second");
-    expect(button(card, "5 frames a second more").disabled).toBe(true);
+    expect(button(card, "5 more frames a second").disabled).toBe(true);
     expect(text(find(card, "dialog .hint"))).toContain("This camera gives up to 30 frames a second.");
     for (let tap = 0; tap < 6; tap++) {
-      button(card, "5 frames a second fewer").click();
+      button(card, "5 fewer frames a second").click();
       await vi.advanceTimersByTimeAsync(0);
       await card.updateComplete;
     }
     // Five taps reach 5; the sixth finds the button off -- and the focus
-    // stays in the stepper, on its other end (U3).
+    // stays in the stepper, on its other end.
     expect(text(find(card, "dialog .step-value [aria-hidden]"))).toBe("5 fps");
-    expect(button(card, "5 frames a second fewer").disabled).toBe(true);
+    expect(button(card, "5 fewer frames a second").disabled).toBe(true);
     expect(hass.calls).toEqual([]);
     await vi.advanceTimersByTimeAsync(800);
     expect(hass.calls).toEqual([{ domain: "number", service: "set_value", data: { entity_id: "number.x1c_camera_frame_rate", value: 5 }, notifyOnError: false }]);
@@ -1090,8 +1154,8 @@ describe("the live view", () => {
       await card.updateComplete;
     };
     await tap("Set the frame rate");
-    await tap("5 frames a second fewer");
-    await tap("5 frames a second more");
+    await tap("5 fewer frames a second");
+    await tap("5 more frames a second");
     expect(text(find(card, "dialog .step-value [aria-hidden]"))).toBe("30 fps");
     await vi.advanceTimersByTimeAsync(800);
     expect(hass.calls.at(-1)?.data).toEqual({ entity_id: "number.x1c_camera_frame_rate", value: 30 });
@@ -1101,8 +1165,8 @@ describe("the live view", () => {
     await update(other.card, other.hass.withState("number.x1c_camera_frame_rate", "20", {}));
     await press(other.card, "Set the frame rate");
     expect(text(find(other.card, "dialog .step-value [aria-hidden]"))).toBe("20 fps");
-    expect(button(other.card, "5 frames a second more").disabled).toBe(true);
-    expect(button(other.card, "5 frames a second fewer").disabled).toBe(false);
+    expect(button(other.card, "5 more frames a second").disabled).toBe(true);
+    expect(button(other.card, "5 fewer frames a second").disabled).toBe(false);
   });
 
   it("asks for no rate where the camera names none", async () => {
@@ -1117,13 +1181,15 @@ describe("the live view", () => {
   it("keeps the keyboard in the stepper at its ends", async () => {
     const { card } = await cardFor("x1c", { camera: "always" });
     await press(card, "Set the frame rate");
-    const more = button(card, "5 frames a second more");
-    const fewer = button(card, "5 frames a second fewer");
+    const more = button(card, "5 more frames a second");
+    const fewer = button(card, "5 fewer frames a second");
     // At 30, + is off: tapping − to 25 and + back to 30 ends on +.
     fewer.focus();
+    keyPress(fewer);
     fewer.click();
     await card.updateComplete;
     more.focus();
+    keyPress(more);
     more.click();
     await card.updateComplete;
     await card.updateComplete;
@@ -1303,6 +1369,22 @@ describe("the groups of choices: speed, active nozzle, step", () => {
     expect(hass.calls.at(-1)?.data).toEqual({ entity_id: "select.x1c_print_speed", option: "sport" });
   });
 
+  it("move the tab key's stop with the focus, and give it back to the chosen option once the focus leaves the group", async () => {
+    const { card } = await cardFor("x1c");
+    const speeds = (): HTMLButtonElement[] => findAll<HTMLButtonElement>(card, ".speed [role=radio]");
+    const stops = (): (string | null)[] => speeds().map((item) => item.getAttribute("tabindex"));
+    speeds()[1]?.focus();
+    key(card, "ArrowLeft");
+    // Tab leaves the group from where the focus is: that is the only stop.
+    expect(stops()).toEqual(["0", "-1", "-1", "-1"]);
+    // Within the group the stop stays where the focus went.
+    speeds()[0]?.dispatchEvent(new FocusEvent("focusout", { bubbles: true, composed: true, relatedTarget: speeds()[3] ?? null }));
+    expect(stops()).toEqual(["0", "-1", "-1", "-1"]);
+    // Out of the group: back on the chosen option, where Tab comes in again.
+    speeds()[0]?.dispatchEvent(new FocusEvent("focusout", { bubbles: true, composed: true, relatedTarget: null }));
+    expect(stops()).toEqual(["-1", "0", "-1", "-1"]);
+  });
+
   it("work alike for the active nozzle and the step; the first option is the stop where none is chosen", async () => {
     const { card, hass } = await cardFor("h2d", {}, { devices: h2d({ status: "idle", hms: [] }) });
     await showView(card, "Control");
@@ -1318,6 +1400,9 @@ describe("the groups of choices: speed, active nozzle, step", () => {
     await card.updateComplete;
     expect(root(card).activeElement).toBe(steps()[2]);
     expect(steps().map((item) => item.getAttribute("aria-checked"))).toEqual(["false", "true", "false"]);
+    expect(steps().map((item) => item.getAttribute("tabindex"))).toEqual(["-1", "-1", "0"]);
+    steps()[2]?.dispatchEvent(new FocusEvent("focusout", { bubbles: true, composed: true, relatedTarget: null }));
+    expect(steps().map((item) => item.getAttribute("tabindex"))).toEqual(["-1", "0", "-1"]);
     expect(hass.calls).toEqual([]);
     await update(card, hass.withState("select.h2d_active_nozzle", "standby", { options: ["left", "right"] }));
     expect(sides().map((item) => item.getAttribute("tabindex"))).toEqual(["0", "-1"]);
@@ -1330,16 +1415,36 @@ describe("the control view", () => {
   it("says how to move safely, in words a beginner knows", async () => {
     const { card } = await cardFor("a1mini", { start_view: "control" });
     expect(text(find(card, ".control + .hint, .hint:last-child"))).toBe(
-      "Tap the house first so the printer knows where it is. It does not stop at the edges — move in small steps.",
+      "Tap the house first so the printer knows where it is. It does not stop at the edges – move in small steps.",
     );
     const { card: german } = await cardFor("a1mini", { start_view: "control" }, { language: "de" });
     expect(findAll(german, ".hint").map(text)).toContain("Tippe zuerst auf das Haus, damit der Drucker seine Position kennt. Er stoppt nicht am Rand – fahre in kleinen Schritten.");
   });
 
+  it("names Z by what moves: the nozzle on the A series, the bed elsewhere", async () => {
+    const column = (card: FakeCard): [string, string | null | undefined][] =>
+      findAll(card, ".axis-col.bed .btn").map((item) => [item.getAttribute("aria-label") ?? "", item.querySelector(".icon path")?.getAttribute("d")]);
+    const { card: a1 } = await cardFor("a1mini");
+    await showView(a1, "Control");
+    expect(text(find(a1, ".axis-col.bed .axis-label"))).toBe("Nozzle height");
+    // Up on top: the nozzle rises away from the bed.
+    expect(column(a1)).toEqual([
+      ["Move the nozzle 1 mm away from the bed", ICONS.up],
+      ["Move the nozzle 1 mm closer to the bed", ICONS.down],
+    ]);
+    const { card: x1 } = await cardFor("x1c", {}, { devices: x1c({ status: "idle", stage: "idle", progress: 0 }) });
+    await showView(x1, "Control");
+    expect(text(find(x1, ".axis-col.bed .axis-label"))).toBe("Bed");
+    expect(column(x1)).toEqual([
+      ["Move the bed 1 mm closer to the nozzle", ICONS.up],
+      ["Move the bed 1 mm away from the nozzle", ICONS.down],
+    ]);
+  });
+
   it("moves the axes by 1 mm unless 0.1 or 10 mm is chosen", async () => {
     const { card, hass } = await cardFor("a1mini");
     await showView(card, "Control");
-    // His word: 0.1 mm too, for the bed's fine steps.
+    // 0.1 mm too, for the bed's fine steps.
     expect(findAll(card, ".step-row [role=radio]").map((item) => `${text(item)}: ${item.getAttribute("aria-checked")}`)).toEqual([
       "0.1 mm: false",
       "1 mm: true",
@@ -1350,15 +1455,15 @@ describe("the control view", () => {
       ["Move X by −1 mm", { axis: "x", distance: -1 }],
       ["Move X by +1 mm", { axis: "x", distance: 1 }],
       ["Move Y by −1 mm", { axis: "y", distance: -1 }],
-      ["Move the bed 1 mm closer to the nozzle", { axis: "z", distance: -1 }],
-      ["Move the bed 1 mm away from the nozzle", { axis: "z", distance: 1 }],
+      ["Move the nozzle 1 mm closer to the bed", { axis: "z", distance: -1 }],
+      ["Move the nozzle 1 mm away from the bed", { axis: "z", distance: 1 }],
     ];
     for (const [name, data] of moves) {
       await press(card, name);
       expect(hass.calls.at(-1), name).toEqual({ domain: "bambuddy", service: "move_axis", data: { device_id: "dev-a1mini", ...data }, notifyOnError: false });
     }
     await press(card, "0.1 mm");
-    await press(card, "Move the bed 0.1 mm closer to the nozzle");
+    await press(card, "Move the nozzle 0.1 mm closer to the bed");
     expect(hass.calls.at(-1)?.data).toEqual({ device_id: "dev-a1mini", axis: "z", distance: -0.1 });
     await press(card, "Move Y by +0.1 mm");
     expect(hass.calls.at(-1)?.data).toEqual({ device_id: "dev-a1mini", axis: "y", distance: 0.1 });
@@ -1366,15 +1471,15 @@ describe("the control view", () => {
     expect(findAll(card, ".step-row [role=radio]").map((item) => item.getAttribute("aria-checked"))).toEqual(["false", "false", "true"]);
     await press(card, "Move X by +10 mm");
     expect(hass.calls.at(-1)?.data).toEqual({ device_id: "dev-a1mini", axis: "x", distance: 10 });
-    await press(card, "Move the bed 10 mm closer to the nozzle");
+    await press(card, "Move the nozzle 10 mm closer to the bed");
     expect(hass.calls.at(-1)?.data).toEqual({ device_id: "dev-a1mini", axis: "z", distance: -10 });
   });
 
   it("asks before it homes the axes", async () => {
     const { card, hass } = await cardFor("a1mini");
     await showView(card, "Control");
-    expect(button(card, "Home").classList.contains("primary")).toBe(true);
-    await press(card, "Home");
+    expect(button(card, "Home all axes").classList.contains("primary")).toBe(true);
+    await press(card, "Home all axes");
     expect(text(find(card, "dialog h2"))).toBe("Home all axes?");
     expect(text(find(card, "dialog p"))).toBe("The toolhead moves to its home position; remove anything from the plate first.");
     expect(findAll(card, "dialog .dlg-actions .btn").map(text)).toEqual(["Cancel", "Home"]);
@@ -1410,7 +1515,7 @@ describe("the control view", () => {
     expect(moving.length).toBe(9);
     expect(moving.every((item) => item.disabled)).toBe(true);
     // Home looks as disabled as the arrows: no filled, primary look.
-    expect(button(card, "Home").classList.contains("primary")).toBe(false);
+    expect(button(card, "Home all axes").classList.contains("primary")).toBe(false);
     // A hot nozzle changes nothing: the reason stays the print.
     expect(findAll(card, ".note")).toHaveLength(1);
     expect(hass.calls).toEqual([]);
@@ -1436,6 +1541,25 @@ describe("the control view", () => {
   });
 });
 
+describe("an AMS unit's model chip", () => {
+  it("is left out where the unit's name is its model", () => {
+    const lite = { name: "AMS Lite", model: "AMS Lite" } as AmsRefs;
+    const ams = { name: "AMS A", model: "AMS" } as AmsRefs;
+    expect(unitModel([ams, lite], lite)).toBeUndefined();
+    expect(unitModel([ams, lite], ams)).toBe("AMS");
+  });
+});
+
+describe("the fans", () => {
+  it("leave out a fan Home Assistant only restored: the integration no longer creates it", async () => {
+    const { card, hass } = await withX1c({}, { status_blocks: ["fans"] });
+    const before = findAll(card, ".fans .fan").length;
+    const fan = Object.keys(hass.states).find((entityId) => entityId.startsWith("fan.") && entityId.includes("chamber")) as string;
+    await update(card, hass.withState(fan, "unavailable", { restored: true, friendly_name: "Chamber fan" }));
+    expect(findAll(card, ".fans .fan")).toHaveLength(before - 1);
+  });
+});
+
 describe("the heating section", () => {
   /** A tap while every timer is fake: the card's own updates still run. */
   async function tap(card: FakeCard, name: string): Promise<void> {
@@ -1443,9 +1567,97 @@ describe("the heating section", () => {
     await vi.advanceTimersByTimeAsync(0);
     await card.updateComplete;
   }
-  const targets = (card: FakeCard): string[] => findAll(card, ".heat-target").map(text);
+  const targets = (card: FakeCard): string[] => findAll(card, ".heat-target").map(shownText);
   const setValue = (entityId: string, value: number) => ({ domain: "number", service: "set_value", data: { entity_id: entityId, value }, notifyOnError: false });
   const NOZZLE = "number.a1_mini_nozzle_target_temperature";
+
+  it("keeps the keyboard in the section when a press disables its own button", async () => {
+    vi.useFakeTimers();
+    const { card, hass } = await cardFor("a1mini");
+    await showView(card, "Control");
+    await update(card, hass.withState(NOZZLE, "5"));
+    button(card, `Nozzle 5${NBSP}°C cooler`).focus();
+    keyPress(button(card, `Nozzle 5${NBSP}°C cooler`));
+    await tap(card, `Nozzle 5${NBSP}°C cooler`);
+    expect(root(card).activeElement).toBe(button(card, `Nozzle: heat to 220${NBSP}°C`));
+
+    await tap(card, `Nozzle: heat to 220${NBSP}°C`);
+    button(card, "Nozzle: turn off").focus();
+    keyPress(button(card, "Nozzle: turn off"));
+    await tap(card, "Nozzle: turn off");
+    expect(root(card).activeElement).toBe(button(card, `Nozzle: heat to 220${NBSP}°C`));
+
+    await tap(card, `Nozzle: heat to 220${NBSP}°C`);
+    button(card, "Cool down").focus();
+    keyPress(button(card, "Cool down"));
+    await tap(card, "Cool down");
+    expect(root(card).activeElement).toBe(button(card, `Nozzle: heat to 220${NBSP}°C`));
+  });
+
+  it("takes no focus back once it went elsewhere, nor a mouse's", async () => {
+    vi.useFakeTimers();
+    const { card, hass } = await cardFor("a1mini");
+    await showView(card, "Control");
+    await update(card, hass.withState(NOZZLE, "5"));
+    // The keyboard was on "-", then moved on to a field elsewhere on the page.
+    button(card, `Nozzle 5${NBSP}°C cooler`).focus();
+    keyPress(button(card, `Nozzle 5${NBSP}°C cooler`));
+    const field = document.createElement("input");
+    document.body.append(field);
+    field.focus();
+    await update(card, hass.withState(NOZZLE, "0"));
+    expect(document.activeElement).toBe(field);
+    // A mouse: no key in the card.
+    const { card: mouse, hass: other } = await cardFor("a1mini");
+    await showView(mouse, "Control");
+    await update(mouse, other.withState(NOZZLE, "5"));
+    vi.advanceTimersByTime(20_000);
+    button(mouse, `Nozzle 5${NBSP}°C cooler`).focus();
+    await update(mouse, other.withState(NOZZLE, "0"));
+    expect(root(mouse).activeElement).not.toBe(button(mouse, `Nozzle: heat to 220${NBSP}°C`));
+  });
+
+  it("keeps the keyboard's place inside Home Assistant's shadow roots too", async () => {
+    vi.useFakeTimers();
+    const { card, hass } = await cardFor("a1mini");
+    // In a dashboard the page's focus is the outermost host, not the card.
+    const host = document.createElement("div");
+    document.body.append(host);
+    host.attachShadow({ mode: "open" }).append(card);
+    await showView(card, "Control");
+    await update(card, hass.withState(NOZZLE, "5"));
+    button(card, `Nozzle 5${NBSP}°C cooler`).focus();
+    keyPress(button(card, `Nozzle 5${NBSP}°C cooler`));
+    await tap(card, `Nozzle 5${NBSP}°C cooler`);
+    expect(root(card).activeElement).toBe(button(card, `Nozzle: heat to 220${NBSP}°C`));
+  });
+
+  it("leaves the focus where the keyboard moved it on inside the card", async () => {
+    vi.useFakeTimers();
+    const { card, hass } = await cardFor("a1mini");
+    await showView(card, "Control");
+    await update(card, hass.withState(NOZZLE, "5"));
+    button(card, `Nozzle 5${NBSP}°C cooler`).focus();
+    keyPress(button(card, `Nozzle 5${NBSP}°C cooler`));
+    const status = button(card, "Status");
+    status.focus();
+    await update(card, hass.withState(NOZZLE, "0"));
+    expect(root(card).activeElement).toBe(status);
+  });
+
+  it("keeps no place for a card taken off the page", async () => {
+    vi.useFakeTimers();
+    const { card, hass } = await cardFor("a1mini");
+    await showView(card, "Control");
+    await update(card, hass.withState(NOZZLE, "5"));
+    button(card, `Nozzle 5${NBSP}°C cooler`).focus();
+    keyPress(button(card, `Nozzle 5${NBSP}°C cooler`));
+    card.remove();
+    // A late redraw of the removed card (a toast's timer) must not reach into a page it left.
+    const focused = vi.spyOn(HTMLElement.prototype, "focus");
+    await update(card, hass.withState(NOZZLE, "0"));
+    expect(focused).not.toHaveBeenCalled();
+  });
 
   it("preheats with one tap and sends a few taps as one target", async () => {
     vi.useFakeTimers();
@@ -1457,7 +1669,7 @@ describe("the heating section", () => {
     expect(button(card, "Cool down").disabled).toBe(true);
     expect(findAll<HTMLButtonElement>(card, ".heat-off").every((item) => item.disabled)).toBe(true);
     expect(button(card, `Nozzle 5${NBSP}°C cooler`).disabled).toBe(true);
-    await tap(card, `Heat Nozzle to 220${NBSP}°C`);
+    await tap(card, `Nozzle: heat to 220${NBSP}°C`);
     expect(targets(card)).toEqual([`220${NBSP}°C`, "Off"]);
     expect(hass.calls).toEqual([]);
     await tap(card, `Nozzle 5${NBSP}°C hotter`);
@@ -1481,12 +1693,12 @@ describe("the heating section", () => {
     const { card, hass } = await cardFor("a1mini");
     await update(card, hass.withState("sensor.a1_mini_active_filament", "PLA Basic", { nozzle_temp_min: 190, nozzle_temp_max: 230 }));
     await showView(card, "Control");
-    expect(hasButton(card, `Heat Nozzle to 210${NBSP}°C`)).toBe(true);
+    expect(hasButton(card, `Nozzle: heat to 210${NBSP}°C`)).toBe(true);
     await update(card, hass.withState("sensor.a1_mini_active_filament", "PLA Basic", { nozzle_temp_min: 230, nozzle_temp_max: 190 }));
-    expect(hasButton(card, `Heat Nozzle to 220${NBSP}°C`)).toBe(true);
+    expect(hasButton(card, `Nozzle: heat to 220${NBSP}°C`)).toBe(true);
     // Never above what the number allows.
     await update(card, hass.withState(NOZZLE, "0", { max: 200 }));
-    expect(hasButton(card, `Heat Nozzle to 200${NBSP}°C`)).toBe(true);
+    expect(hasButton(card, `Nozzle: heat to 200${NBSP}°C`)).toBe(true);
   });
 
   it("stops at the number's highest target and turns a heater off below 5 °C", async () => {
@@ -1506,7 +1718,7 @@ describe("the heating section", () => {
   it("turns one heater off, or all at once, only without a print", async () => {
     const { card, hass } = await withX1c({ status: "idle", nozzles: [[200, 220]], bed: [50, 55] });
     await showView(card, "Control");
-    await press(card, "Turn Nozzle off");
+    await press(card, "Nozzle: turn off");
     expect(hass.calls).toEqual([setValue("number.x1c_nozzle_target_temperature", 0)]);
     expect(targets(card)).toEqual(["Off", `55${NBSP}°C`]);
     const { card: other, hass: otherHass } = await withX1c({ status: "idle", nozzles: [[200, 220]], bed: [50, 55] });
@@ -1521,6 +1733,14 @@ describe("the heating section", () => {
     expect(hasButton(printing, "Cool down")).toBe(false);
     expect(findAll(printing, ".heat-off")).toHaveLength(0);
     expect(button(printing, `Nozzle 5${NBSP}°C hotter`).disabled).toBe(false);
+  });
+
+  it("offers Off for the chamber during a print: turning it off ends none", async () => {
+    const { card } = await cardFor("h2d", { start_view: "control" });
+    const offs = findAll<HTMLButtonElement>(card, ".heat-off");
+    expect(offs.map((item) => item.getAttribute("aria-label"))).toEqual(["Chamber: turn off"]);
+    expect(offs[0]?.disabled).toBe(false);
+    expect(hasButton(card, "Cool down")).toBe(false);
   });
 
   it("shows unknown values in the offline preview's example, and is left out without targets", async () => {
@@ -1539,10 +1759,12 @@ describe("the heating section", () => {
     vi.useFakeTimers();
     const { card } = await cardFor("a1mini", {}, { callService: async () => Promise.reject({ message: "Printer offline" }) });
     await showView(card, "Control");
-    await tap(card, `Heat Nozzle to 220${NBSP}°C`);
+    await tap(card, `Nozzle: heat to 220${NBSP}°C`);
     await vi.advanceTimersByTimeAsync(800);
     await card.updateComplete;
     expect(text(find(card, ".toast"))).toBe("Printer offline");
+    // Its × says what it closes.
+    expect(find(card, ".toast .icon-btn")?.getAttribute("aria-label")).toBe("Dismiss the error");
     expect(targets(card)[0]).toBe("Off");
   });
 
@@ -1558,7 +1780,7 @@ describe("the heating section", () => {
       },
     });
     await showView(card, "Control");
-    await tap(card, `Heat Nozzle to 220${NBSP}°C`);
+    await tap(card, `Nozzle: heat to 220${NBSP}°C`);
     await vi.advanceTimersByTimeAsync(800);
     await tap(card, `Nozzle 5${NBSP}°C hotter`);
     fail({ message: "Printer offline" });
@@ -1573,7 +1795,7 @@ describe("the heating section", () => {
     vi.useFakeTimers();
     const { card } = await cardFor("a1mini");
     await showView(card, "Control");
-    await tap(card, `Heat Nozzle to 220${NBSP}°C`);
+    await tap(card, `Nozzle: heat to 220${NBSP}°C`);
     await vi.advanceTimersByTimeAsync(800 + 9_999);
     await card.updateComplete;
     expect(targets(card)[0]).toBe(`220${NBSP}°C`);
@@ -1586,7 +1808,7 @@ describe("the heating section", () => {
     vi.useFakeTimers();
     const { card, hass } = await cardFor("a1mini");
     await showView(card, "Control");
-    await tap(card, `Heat Nozzle to 220${NBSP}°C`);
+    await tap(card, `Nozzle: heat to 220${NBSP}°C`);
     card.remove();
     await vi.advanceTimersByTimeAsync(0);
     expect(hass.calls).toEqual([setValue(NOZZLE, 220)]);
@@ -1597,7 +1819,7 @@ describe("the heating section", () => {
     let finish: () => void = () => undefined;
     const { card, hass } = await cardFor("a1mini", {}, { callService: () => new Promise<void>((resolve) => (finish = resolve)) });
     await showView(card, "Control");
-    await tap(card, `Heat Nozzle to 220${NBSP}°C`);
+    await tap(card, `Nozzle: heat to 220${NBSP}°C`);
     await vi.advanceTimersByTimeAsync(800);
     await tap(card, `Nozzle 5${NBSP}°C hotter`);
     await vi.advanceTimersByTimeAsync(800);
@@ -1642,7 +1864,7 @@ describe("the print options", () => {
     expect(states(card)).toEqual(["AI print monitoring: true", "First layer inspection: true", "Build plate position detection: false"]);
     expect(toggles(card).every((item) => !item.disabled)).toBe(true);
     expect(text(find(card, ".detection .hint"))).toBe(
-      "On: the printer pauses the print when it sees the problem. Sensitivity as set on the printer. A detection switched off stays off for later prints too.",
+      "On: the printer pauses the print when the detection triggers. Sensitivity as set on the printer. A detection switched off stays off for later prints too.",
     );
     // Only the switch taps: the row is a line to read with its name beside it.
     const row = toggle(card, "Build plate position detection").closest(".det-row") as HTMLElement;
@@ -1706,10 +1928,11 @@ describe("the print options", () => {
     expect(text(head(german))).toBe("Druckoptionen 1 aus");
     const { card: germanAll } = await cardFor("x1c", {}, { language: "de", devices: x1c({ detectors: [{ key: "ai_monitoring", on: true }] }) });
     await showView(germanAll, "Steuerung");
-    expect(text(find(germanAll, ".det-summary"))).toBe("Alle an");
+    // One detection: its own state.
+    expect(text(find(germanAll, ".det-summary"))).toBe("An");
     const { card: germanNone } = await cardFor("x1c", {}, { language: "de", devices: x1c({ detectors: [{ key: "ai_monitoring", on: false }] }) });
     await showView(germanNone, "Steuerung");
-    expect(text(find(germanNone, ".det-summary"))).toBe("Alle aus");
+    expect(text(find(germanNone, ".det-summary"))).toBe("Aus");
   });
 
   it("counts only the switches with a state", async () => {
@@ -1769,7 +1992,9 @@ describe("the print options", () => {
     await showView(card, "Control");
     await unfold(card);
     await press(card, "Build plate position detection");
-    expect(toggle(card, "Build plate position detection").disabled).toBe(true);
+    // Marked, not disabled: the keyboard keeps its place.
+    expect(toggle(card, "Build plate position detection").disabled).toBe(false);
+    expect(toggle(card, "Build plate position detection").getAttribute("aria-disabled")).toBe("true");
     expect(toggle(card, "Build plate position detection").getAttribute("aria-busy")).toBe("true");
     toggle(card, "Build plate position detection").click();
     expect(hass.calls).toHaveLength(1);
@@ -1841,7 +2066,7 @@ describe("the print options", () => {
     expect(toggles(x1).map(name).slice(0, 2)).toEqual(["KI-Drucküberwachung", "Inspektion der ersten Schicht"]);
     expect(text(find(x1, ".detection .section-label"))).toBe("Druckoptionen");
     expect(text(find(x1, ".detection .hint"))).toBe(
-      "An: Der Drucker pausiert den Druck, wenn er das Problem erkennt. Empfindlichkeit wie am Drucker eingestellt. Eine ausgeschaltete Erkennung bleibt aus, auch bei den nächsten Drucken.",
+      "An: Der Drucker pausiert den Druck, wenn die Erkennung anschlägt. Empfindlichkeit wie am Drucker eingestellt. Eine ausgeschaltete Erkennung bleibt aus, auch bei den nächsten Drucken.",
     );
     expect(text(find(x1, ".detection .det-sub"))).toBe("Spaghetti und Stau im Auswurfschacht");
     const { card: x1English } = await cardFor("x1c", {}, { devices: x1c({ serverLanguage: "de" }) });
@@ -1955,9 +2180,9 @@ describe("the active nozzle", () => {
     expect(findAll(card, ".nozzle-row [role=radio]").map(text)).toEqual(["Links", "Rechts"]);
     expect(text(find(card, ".heat-tag"))).toBe("aktiv");
     await update(card, hass.withState("select.h2d_active_nozzle", "right"));
-    expect(text(find(card, ".note"))).toBe(`Zum Extrudieren die rechte Düse (aktiv) unter „Heizen“ auf mindestens 170${NBSP}°C heizen.`);
+    expect(text(find(card, ".note"))).toBe(`Zum Extrudieren heize die rechte Düse (aktiv) unter „Heizen“ auf mindestens 170${NBSP}°C.`);
     await update(card, hass.withState("sensor.h2d_left_nozzle_temperature", "120"));
-    expect(text(find(card, ".note"))).toBe(`Zum Extrudieren die linke Düse (aktiv) unter „Heizen“ auf mindestens 170${NBSP}°C heizen.`);
+    expect(text(find(card, ".note"))).toBe(`Zum Extrudieren heize die linke Düse (aktiv) unter „Heizen“ auf mindestens 170${NBSP}°C.`);
   });
 });
 
@@ -1968,7 +2193,9 @@ describe("the filament view", () => {
     expect(findAll(card, ".unit-name").map(text)).toEqual(["AMS A", "External spool"]);
     // "AMS A" says its model already.
     expect(find(card, ".unit-model")).toBeNull();
-    expect(text(find(card, ".unit-env"))).toBe(`21${NBSP}% 27${NBSP}°C`);
+    // What shows, and what a screen reader hears.
+    expect(findAll(card, ".unit-env > span > span[aria-hidden=true]").map(text).join(" ")).toBe(`21${NBSP}% 27${NBSP}°C`);
+    expect(findAll(card, ".unit-env .sr-only").map(text)).toEqual([`humidity 21${NBSP}%`, `temperature 27${NBSP}°C`]);
     // The material only where the name does not say it already.
     expect(findAll(card, ".slot-main").map(text)).toEqual([`PLA Basic 80${NBSP}%`, `PLA Matte In use · 45${NBSP}%`, "PLA", "Not set", "Not set"]);
     expect(loadButtons(card).map(text)).toEqual(["Load", "Unload", "Load"]);
@@ -1978,7 +2205,7 @@ describe("the filament view", () => {
     expect(findAll(card, ".slot .in-use")).toHaveLength(1);
     loadButtons(card)[0]?.click();
     await card.updateComplete;
-    expect(text(find(card, "dialog h2"))).toBe("Load PLA Basic?");
+    expect(text(find(card, "dialog h2"))).toBe("Load PLA Basic from Slot 1 · AMS A?");
     await confirmDialog(card);
     expect(hass.calls.at(-1)).toEqual({ domain: "bambuddy", service: "load_filament", data: { entity_id: "sensor.dev-x1c_ams_0_slot_1" }, notifyOnError: false });
     await press(card, "Unload");
@@ -2065,18 +2292,25 @@ describe("the filament view", () => {
     const duration = find<HTMLInputElement>(card, "#dry-duration");
     // The PA6-CF spool's own recommendation.
     expect([temperature?.value, duration?.value]).toEqual(["80", "10"]);
-    expect(text(find(card, "dialog .dlg-suggested"))).toBe("Suggested for the loaded filament.");
+    // The steppers say what they change.
+    expect(findAll(card, "dialog .stepper .btn").map((item) => item.getAttribute("aria-label"))).toEqual([
+      "Lower the temperature",
+      "Raise the temperature",
+      "Shorten the drying",
+      "Lengthen the drying",
+    ]);
+    expect(text(find(card, "dialog .dlg-suggested"))).toBe("Suggested for the loaded filament: PA6-CF.");
     expect(find(card, "dialog .dlg-suggested path")?.getAttribute("d")).toBe(ICONS.check);
     expect(text(find(card, "dialog .dlg-range"))).toBe(`45${NBSP}°C – 85${NBSP}°C · 1–24 h`);
-    await press(card, "More Temperature");
-    await press(card, "Less Duration");
+    await press(card, "Raise the temperature");
+    await press(card, "Shorten the drying");
     expect([find<HTMLInputElement>(card, "#dry-temperature")?.value, find<HTMLInputElement>(card, "#dry-duration")?.value]).toEqual(["85", "9"]);
     const input = find<HTMLInputElement>(card, "#dry-temperature") as HTMLInputElement;
     input.value = "120";
     input.dispatchEvent(new Event("change"));
     await card.updateComplete;
     expect(find<HTMLInputElement>(card, "#dry-temperature")?.value).toBe("85");
-    expect(button(card, "More Temperature").disabled).toBe(true);
+    expect(button(card, "Raise the temperature").disabled).toBe(true);
     input.value = "abc";
     input.dispatchEvent(new Event("change"));
     await card.updateComplete;
@@ -2085,7 +2319,7 @@ describe("the filament view", () => {
     hours.value = "0";
     hours.dispatchEvent(new Event("change"));
     await card.updateComplete;
-    expect(button(card, "Less Duration").disabled).toBe(true);
+    expect(button(card, "Shorten the drying").disabled).toBe(true);
     await press(card, "Start drying");
     expect(hass.calls.at(-1)).toEqual({
       domain: "bambuddy",
@@ -2113,18 +2347,18 @@ describe("the filament view", () => {
       return values;
     };
     // Three PLA spools at 55 °C / 8 h; the support spool has none.
-    expect(await open()).toEqual(["55", "8", "Suggested for the loaded filament."]);
+    expect(await open()).toEqual(["55", "8", "Suggested for the loaded filament: PLA."]);
     // A PA spool at 80 °C / 12.4 h: the PLA's temperature, the PA's time.
     // A spool without a type is named by its filament.
     const slot = (n: number): string => `sensor.dev-h2d_ams_0_slot_${n}`;
     const attributes = (n: number): Record<string, unknown> => ({ ...(next.states[slot(n)]?.attributes ?? {}) });
     next = next.withState(slot(4), "PA", { ...attributes(4), type: null, name: "PA", drying_temp: 80, drying_time: 12.4 });
     await update(card, next);
-    expect(await open()).toEqual(["55", "12", `Set for the gentlest spool: PLA${NBSP}55${NBSP}°C · PA${NBSP}80${NBSP}°C`]);
+    expect(await open()).toEqual(["55", "12", `Set for the most heat-sensitive spool: PLA${NBSP}55${NBSP}°C · PA${NBSP}80${NBSP}°C`]);
     // Spools that all want more than the unit can: the AMS 2 Pro stops at 65 °C.
     for (const n of [1, 2, 3]) next = next.withState(slot(n), "PA", { ...attributes(n), type: "PA", drying_temp: 80 });
     await update(card, next);
-    expect(await open()).toEqual(["65", "12", "Suggested for the loaded filament."]);
+    expect(await open()).toEqual(["65", "12", "Suggested for the loaded filament: PA."]);
     // An empty slot's values do not count, nor do odd ones; nothing left: the defaults.
     next = next.withState(slot(4), "empty", { ...attributes(4), empty: true, drying_temp: 80, drying_time: 12 });
     for (const n of [1, 2, 3]) next = next.withState(slot(n), "PLA Basic", { ...attributes(n), drying_temp: null, drying_time: "long" });
@@ -2150,13 +2384,13 @@ describe("the filament view", () => {
     // material keeps its temperature on its line.
     const card = await open("en", 65);
     expect(find<HTMLInputElement>(card, "#dry-temperature")?.value).toBe("55");
-    expect(text(find(card, "dialog .dlg-suggested"))).toBe(`Set for the gentlest spool: PLA${NBSP}55${NBSP}°C · PETG${NBSP}65${NBSP}°C`);
+    expect(text(find(card, "dialog .dlg-suggested"))).toBe(`Set for the most heat-sensitive spool: PLA${NBSP}55${NBSP}°C · PETG${NBSP}65${NBSP}°C`);
     expect(find(card, "dialog .dlg-suggested path")?.getAttribute("d")).toBe(ICONS.info);
     const german = await open("de", 65);
     expect(text(find(german, "dialog .dlg-suggested"))).toBe(`Für die empfindlichste Spule eingestellt: PLA${NBSP}55${NBSP}°C · PETG${NBSP}65${NBSP}°C`);
     // Different materials that agree: nothing to name.
     const agreeing = await open("en", 55);
-    expect(text(find(agreeing, "dialog .dlg-suggested"))).toBe("Suggested for the loaded filament.");
+    expect(text(find(agreeing, "dialog .dlg-suggested"))).toBe("Suggested for the loaded filament: PLA, PETG.");
     expect(find(agreeing, "dialog .dlg-suggested path")?.getAttribute("d")).toBe(ICONS.check);
   });
 
@@ -2236,8 +2470,8 @@ describe("the filament view", () => {
     expect(loadButtons(card).map((item) => `${text(item)}: ${item.disabled}`)).toEqual(["Load: false", "Unload: false", "Load: false", "Load: false", "Load: false"]);
     loadButtons(card)[0]?.click();
     await card.updateComplete;
-    expect(text(find(card, "dialog h2"))).toBe("Load PLA Basic?");
-    // The nozzle named in the sentence (review U14).
+    expect(text(find(card, "dialog h2"))).toBe("Load PLA Basic from Slot 1 · AMS A?");
+    // The nozzle named in the sentence.
     expect(text(find(card, "dialog p"))).toBe("The printer heats the right nozzle, unloads its filament and loads this one. This takes a few minutes.");
     expect(text(find(card, "dialog .dlg-note"))).toBe("The print stays paused. Resume it once the new filament is in.");
     await confirmDialog(card);
@@ -2279,11 +2513,11 @@ describe("the filament view", () => {
     const preview = await previewOf("p1s", { start_view: "filament", ams_folding: "folded" });
     // Folded as the option says; the external spool unknown.
     expect(findAll<HTMLButtonElement>(preview, "button.unit-head").map((head) => head.getAttribute("aria-expanded"))).toEqual(["false"]);
-    expect(findAll(preview, ".slot-main").map((item) => item.getAttribute("aria-label"))).toEqual(["Unknown"]);
+    expect(findAll(preview, ".slot-main").map((item) => item.getAttribute("aria-label"))).toEqual(["Unknown – External spool"]);
     expect(findAll(preview, ".slot .swatch").map((item) => item.classList.contains("unknown"))).toEqual([true]);
     const german = await previewOf("p1s", { start_view: "filament", ams_folding: "open" }, "de");
     // The example follows the option: unfolded, its slots unknown too.
-    expect(findAll(german, ".slot-main").map((item) => item.getAttribute("aria-label"))).toEqual(["Unbekannt", "Unbekannt"]);
+    expect(findAll(german, ".slot-main").map((item) => item.getAttribute("aria-label"))).toEqual(["Unbekannt – Fach 1 · AMS A", "Unbekannt – Externe Spule"]);
   });
 
   it("shows the filament without controls for a read-only key or with the controls hidden", async () => {
@@ -2302,8 +2536,9 @@ describe("the filament view", () => {
     const { card } = await withX1c({ status: "idle" });
     await showView(card, "Filament");
     const slots = findAll(card, ".slot-main");
-    expect(slots.map((item) => item.hasAttribute("aria-label"))).toEqual([false, false, false, false, false]);
     expect(text(slots[1])).toBe(`PLA Matte In use · 45${NBSP}%`);
+    // Its name: what it shows, and where it is.
+    expect(slots[1]?.getAttribute("aria-label")).toBe(`PLA Matte · In use · 45${NBSP}% – Slot 2 · AMS A`);
   });
 
   it("opens a slot's more-info dialog", async () => {
@@ -2357,7 +2592,7 @@ describe("setting a slot's filament", () => {
   };
   const setButton = (card: FakeCard): HTMLButtonElement => findAll<HTMLButtonElement>(card, "dialog .dlg-actions .btn").at(-1) as HTMLButtonElement;
 
-  it("is offered for every filled slot -- a Bambu spool's too (his word) --, never for an empty one", async () => {
+  it("is offered for every filled slot -- a Bambu spool's too --, never for an empty one", async () => {
     const { card, hass } = await cardFor("x1c");
     await showView(card, "Filament");
     // A Bambu spool, the one printing, the PLA without a chip, a spool nobody
@@ -2366,7 +2601,7 @@ describe("setting a slot's filament", () => {
     const edits = findAll<HTMLButtonElement>(card, ".slot .btn.edit");
     expect(edits.every((item) => !item.disabled && text(item) === "")).toBe(true);
     // The Bambu spool's edits the slot; the external spool's names its spool.
-    // One label for one control, naming its slot (review U8).
+    // One label for one control, naming its slot.
     expect(edits.map((item) => item.title)).toEqual(["Edit Slot 1 · AMS A", "Edit Slot 3 · AMS A", "Edit Slot 4 · AMS A", "Edit the external spool"]);
     // Nothing in the slot, or no word on it.
     const slot4 = "sensor.dev-x1c_ams_0_slot_4";
@@ -2657,6 +2892,19 @@ describe("a command that went through", () => {
     expect(find(card, ".sent")).toBeNull();
   });
 
+  it("is not carried into a question that opens right after: it would read as that question's answer", async () => {
+    vi.useFakeTimers();
+    const { card } = await cardFor("x1c");
+    button(card, "Pause print").click();
+    await vi.advanceTimersByTimeAsync(0);
+    await card.updateComplete;
+    expect(text(find(card, ".sent"))).toBe("Sent");
+    button(card, "Stop print").click();
+    await card.updateComplete;
+    expect(text(find(card, "dialog h2"))).toBe("Stop the print?");
+    expect(find(card, ".sent")).toBeNull();
+  });
+
   it("replaces an earlier error, and is not shown for a failure", async () => {
     let fail = true;
     const { card } = await cardFor("x1c", {}, { callService: async () => (fail ? Promise.reject({ message: "Printer offline" }) : undefined) });
@@ -2683,9 +2931,10 @@ describe("a command that went through", () => {
 describe("what the AMS is doing", () => {
   it("shows in the status and the filament view while it is not idle", async () => {
     const { card, hass } = await cardFor("a1mini", {}, { devices: a1mini({ amsStatus: "feeding" }) });
-    expect(text(find(card, ".job-info .ams-activity"))).toBe("AMS: Feeding");
+    expect(shownText(find(card, ".job-info .ams-activity"))).toBe("AMS: Feeding");
+    expect(text(find(card, ".job-info .ams-activity .sr-only"))).toBe("Desk:");
     await showView(card, "Filament");
-    expect(text(find(card, ".activity"))).toBe("AMS: Feeding");
+    expect(shownText(find(card, ".activity"))).toBe("AMS: Feeding");
     expect(find(card, ".activity")?.getAttribute("role")).toBe("status");
     for (const state of ["idle", "unknown", "unavailable"]) {
       await update(card, hass.withState("sensor.a1_mini_ams_status", state));
@@ -2697,7 +2946,7 @@ describe("what the AMS is doing", () => {
 
   it("says it in German, and nothing while the printer is offline or without the sensor", async () => {
     const { card } = await cardFor("a1mini", {}, { language: "de", devices: a1mini({ amsStatus: "changing_filament" }) });
-    expect(text(find(card, ".ams-activity"))).toBe("AMS: Wechselt Filament");
+    expect(shownText(find(card, ".ams-activity"))).toBe("AMS: Wechselt Filament");
     const devices = offlineP1s();
     const status = (devices[0] as FakeDevice).entities.find((entity) => entity.key === "ams_status") as { state: string };
     status.state = "feeding";
@@ -2735,6 +2984,55 @@ describe("a slot's tools: K profile, chip, reset", () => {
   };
   const kSelect = (card: FakeCard): HTMLSelectElement => find<HTMLSelectElement>(card, "dialog select#fil-k") as HTMLSelectElement;
 
+  it("resets an external spool as a spool, and loads it from the external spool", async () => {
+    const { card } = await cardFor("a1mini");
+    await showView(card, "Filament");
+    const external = findAll(card, ".slot").at(-1) as Element;
+    (external.querySelector(".btn.edit") as HTMLButtonElement).click();
+    await settle(card);
+    await press(card, "Reset spool");
+    expect(text(find(card, "dialog h2"))).toBe("Reset the spool?");
+    expect(text(find(card, "dialog p"))).toBe("Its material and color are cleared.");
+    // Back in the spool's dialog; it closes.
+    await press(card, "Cancel");
+    await press(card, "Cancel");
+    ([...external.querySelectorAll<HTMLButtonElement>(".btn")].find((item) => text(item) === "Load") as HTMLButtonElement).click();
+    await settle(card);
+    expect(text(find(card, "dialog h2"))).toBe("Load TPU 95A HF from the external spool?");
+  });
+
+  it("names the side of the external spool it loads from on a printer with two", async () => {
+    const left = { name: "PETG HF", type: "PETG", color: "#0A0A0A", remaining: null, trayId: 254 };
+    const right = { name: "PLA Basic", type: "PLA", color: "#FFFFFF", remaining: null, trayId: 255 };
+    const { card } = await cardFor("h2d", {}, { devices: h2d({ externalSpools: [left, right] }) });
+    await showView(card, "Filament");
+    const titles: string[] = [];
+    for (const slot of findAll(card, ".slot").slice(-2)) {
+      ([...slot.querySelectorAll<HTMLButtonElement>(".btn")].find((item) => text(item) === "Load") as HTMLButtonElement).click();
+      await settle(card);
+      titles.push(text(find(card, "dialog h2")));
+      await press(card, "Cancel");
+    }
+    expect(titles).toEqual(["Load PETG HF from the left external spool?", "Load PLA Basic from the right external spool?"]);
+  });
+
+  it("warns that a paused print feeds from the external spool, and names the spool while printing", async () => {
+    const spool = { name: "TPU 95A HF", type: "TPU", color: "#FF6A13", remaining: null, trayId: 254, active: true };
+    const { card } = await cardFor("a1mini", {}, { devices: a1mini({ status: "paused", externalSpools: [spool] }) });
+    await showView(card, "Filament");
+    (findAll(card, ".slot").at(-1)?.querySelector(".btn.edit") as HTMLButtonElement).click();
+    await settle(card);
+    await press(card, "Reset spool");
+    expect(text(find(card, "dialog p"))).toBe("Its material and color are cleared. The paused print takes its filament from this spool.");
+
+    // Printing from the AMS (the spool in use has no pencil while it feeds).
+    const { card: printing } = await cardFor("a1mini", {}, { devices: a1mini({ status: "printing", externalSpools: [{ ...spool, active: false }] }) });
+    await showView(printing, "Filament");
+    (findAll(printing, ".slot").at(-1)?.querySelector(".btn.edit") as HTMLButtonElement).click();
+    await settle(printing);
+    expect(findAll(printing, "dialog .dlg-note").map(text)).toContain("Pause the print first to reset the spool.");
+  });
+
   it("offers the printer's own K profiles, those of the material first", async () => {
     const { card, hass } = await cardFor("x1c", {}, { devices: idle(), callService: answering });
     await showView(card, "Filament");
@@ -2742,6 +3040,8 @@ describe("a slot's tools: K profile, chip, reset", () => {
 
     expect(hass.calls.find((call) => call.service === "get_k_profiles")).toMatchObject({ domain: "bambuddy", data: { entity_id: SLOT_3 }, returnResponse: true });
     expect(text(find(card, "dialog label[for=fil-k]"))).toBe("K profile (flow dynamics)");
+    // Nothing to warn of: what to do when unsure.
+    expect(text(find(card, "dialog .k-hint"))).toBe("If unsure, leave this as it is.");
     expect([...kSelect(card).querySelectorAll("optgroup")].map((group) => group.label)).toEqual(["Matching PLA", "Other K profiles on this printer"]);
     expect([...kSelect(card).options].map((option) => option.text)).toEqual([
       "Printer's default (K 0.020)",
@@ -2764,7 +3064,9 @@ describe("a slot's tools: K profile, chip, reset", () => {
     await showView(card, "Filament");
     await editRow(card, 2);
     expect([...kSelect(card).options].map((option) => option.text)).toEqual(["Printer's default (K 0.020)"]);
-    expect(text(find(card, "dialog .k-hint"))).toBe("The printer lists no K profile for this nozzle.");
+    expect(text(find(card, "dialog .k-hint"))).toBe(
+      "The printer lists no K profile for this nozzle, or did not answer in time. To ask again, close the dialog and open it once more.",
+    );
   });
 
   it("lets the AMS read a Bambu spool's chip again, once no filament is loaded", async () => {
@@ -2774,7 +3076,7 @@ describe("a slot's tools: K profile, chip, reset", () => {
     expect(text(find(loaded.card, "dialog p"))).toBe("A Bambu Lab spool with a chip: the AMS reads its material and color from the chip.");
     expect(find(loaded.card, "dialog select")).toBeNull();
     expect((button(loaded.card, "Read the chip again") as HTMLButtonElement).disabled).toBe(true);
-    // Which filament to unload (review U9).
+    // Which filament to unload.
     expect(findAll(loaded.card, "dialog .dlg-note").map(text)).toContain(
       "Unload the filament from Slot 2 · AMS A first: the AMS reads a chip only while no filament is loaded.",
     );
@@ -2839,7 +3141,7 @@ describe("a slot's tools: K profile, chip, reset", () => {
     material.value = "PETG";
     material.dispatchEvent(new Event("change"));
     await card.updateComplete;
-    // The PLA profile chosen goes; PETG's own comes (reviews M1, U12).
+    // The PLA profile chosen goes; PETG's own comes.
     expect(kSelect(card).value).toBe("2");
     (findAll<HTMLButtonElement>(card, "dialog .dlg-actions .btn").at(-1) as HTMLButtonElement).click();
     await settle(card);
@@ -2851,6 +3153,50 @@ describe("a slot's tools: K profile, chip, reset", () => {
     again.dispatchEvent(new Event("change"));
     await card.updateComplete;
     expect(kSelect(card).value).toBe("-1");
+  });
+
+  it("keeps the slot's own K profile when the material goes back to Keep", async () => {
+    const own = async (call: { service: string }): Promise<unknown> => (call.service === "get_k_profiles" ? { response: { ...PROFILES, current: 3 } } : undefined);
+    const { card, hass } = await cardFor("x1c", {}, { devices: idle(), callService: own });
+    await showView(card, "Filament");
+    await editRow(card, 2);
+    expect(kSelect(card).value).toBe("keep");
+    const material = (): HTMLSelectElement => find<HTMLSelectElement>(card, "dialog select#fil-material") as HTMLSelectElement;
+    material().value = "PETG";
+    material().dispatchEvent(new Event("change"));
+    await card.updateComplete;
+    expect(kSelect(card).value).toBe("2");
+    material().value = "keep";
+    material().dispatchEvent(new Event("change"));
+    await card.updateComplete;
+    expect(kSelect(card).value).toBe("keep");
+    expect((findAll<HTMLButtonElement>(card, "dialog .dlg-actions .btn").at(-1) as HTMLButtonElement).disabled).toBe(true);
+    expect(hass.calls.filter((call) => call.service === "set_filament")).toEqual([]);
+  });
+
+  it("gives a material chosen before the K profiles came its first matching one", async () => {
+    let answer: (value: unknown) => void = () => undefined;
+    const slow = async (call: { service: string }): Promise<unknown> => (call.service === "get_k_profiles" ? new Promise((resolve) => (answer = resolve)) : undefined);
+    const { card } = await cardFor("x1c", {}, { devices: idle(), callService: slow });
+    await showView(card, "Filament");
+    await editRow(card, 2);
+    const material = find<HTMLSelectElement>(card, "dialog select#fil-material") as HTMLSelectElement;
+    material.value = "PETG";
+    material.dispatchEvent(new Event("change"));
+    await card.updateComplete;
+    answer({ response: PROFILES });
+    await settle(card);
+    expect(kSelect(card).value).toBe("2");
+  });
+
+  it("numbers a slot by its own number, also when another slot's sensor is disabled", async () => {
+    const devices = idle();
+    const ams = devices[1] as FakeDevice;
+    ams.entities = ams.entities.filter((entity) => entity.entityId !== "sensor.dev-x1c_ams_0_slot_2");
+    const { card } = await cardFor("x1c", {}, { devices });
+    await showView(card, "Filament");
+    await editRow(card, 1);
+    expect(text(find(card, "dialog h2"))).toBe("Filament of Slot 3 · AMS A");
   });
 
   it("says when the printer did not list its K profiles, and keeps the slot's own", async () => {
@@ -2971,7 +3317,7 @@ describe("a failed action", () => {
     await press(card, "Pause print");
     expect(text(find(card, ".toast"))).toBe("Printer offline");
     expect(find(card, ".toast")?.getAttribute("role")).toBe("alert");
-    await press(card, "Close");
+    await press(card, "Dismiss the error");
     expect(find(card, ".toast")).toBeNull();
   });
 
@@ -3107,7 +3453,7 @@ describe("the card the user composes", () => {
     expect(text(find(card, ".state"))).toBe("Printing");
   });
 
-  it("shows only the chips the user chose, in his order, and an HMS error whatever they are", async () => {
+  it("shows only the chips the user chose, in their order, and an HMS error whatever they are", async () => {
     const { card } = await cardFor("x1c", { header_chips: ["firmware"] });
     expect(findAll(card, ".pill").map((pill) => pill.classList[1])).toEqual(["firmware"]);
     const { card: ordered } = await cardFor("p1s", {}, { devices: p1s() });
@@ -3293,6 +3639,32 @@ describe("folding the AMS units", () => {
     const { card: printing } = await cardFor("x1c", { start_view: "filament" });
     expect(find(printing, ".callout")).toBeNull();
   });
+
+  it("sends the user to the printer's message first where the printer paused the print itself", async () => {
+    const { card, hass } = await cardFor("h2d", { start_view: "filament" });
+    await update(card, hass.withState("sensor.h2d_print_stage", "paused_nozzle_clog", {}));
+    const note = text(find(card, ".callout"));
+    expect(note).toContain("The printer paused the print: deal with its message first. You can change the filament here, then resume.");
+    expect(note).not.toContain("you can change the filament now");
+    expect(hasButton(card, "Resume print")).toBe(true);
+    // A run-out and a G-code pause are pauses for the filament; a stage
+    // outside "paused_*" is no fault either.
+    for (const stage of ["paused_filament_runout", "paused_by_gcode", "paused_by_user", "m400_pause"]) {
+      await update(card, hass.withState("sensor.h2d_print_stage", stage, {}));
+      expect(text(find(card, ".callout"))).toContain("Print paused: you can change the filament now.");
+    }
+  });
+});
+
+describe("texts in a state's colour, the plugs' too", () => {
+  it("mix the tone with the text colour; the icons keep the pure tone", () => {
+    const sheet = styleText();
+    expect(sheet).toMatch(/\.p-row\.warn \.p-sub\s*\{[^}]*color: color-mix\(in srgb, var\(--bb-warn\) 55%, var\(--bb-text\)\);/);
+    expect(sheet).toMatch(/\.p-row\.warn \.p-icon\s*\{[^}]*color: var\(--bb-warn\);/);
+    expect(sheet).toMatch(/\.p-auto\.waiting \.p-name,\s*\.p-starting \.p-name\s*\{[^}]*color: color-mix\(in srgb, var\(--bb-accent\) 55%, var\(--bb-text\)\);/);
+    expect(sheet).toMatch(/\.p-auto\.waiting \.p-icon\s*\{[^}]*color: var\(--bb-accent\);/);
+    expect(sheet).toMatch(/\.hms-wiki\s*\{[^}]*color: color-mix\(in srgb, var\(--bb-accent\) 55%, var\(--bb-text\)\);/);
+  });
 });
 
 describe("texts in a state's colour", () => {
@@ -3368,6 +3740,9 @@ describe("texts in a state's colour", () => {
     const tagTint = share("\\.heat-label \\.heat-tag", "background", "--bb-accent");
     const chip = share("\\.chip", "color", "--tone");
     const chipTint = share("\\.chip", "background", "--tone");
+    // The question's red button: the theme's red, darkened for its white text.
+    const filled = share("\\.dlg-actions \\.btn\\.danger", "background", "--bb-err");
+    expect(sheet).toMatch(/\.dlg-actions \.btn\.danger\s*\{[^}]*color: #fff;/);
     // A text button has no tint of its own: the tonal button's colour.
     expect(sheet).toMatch(/\.btn\.plain\s*\{\s*background: none;\s*padding: 0 8px;\s*\}/);
     // The camera's panel is dark in every theme: its button stays white.
@@ -3383,6 +3758,7 @@ describe("texts in a state's colour", () => {
         ["text button", mix(accent, text, tonal), background],
         ["text button on a tint", mix(accent, text, tonal), tint],
         ["danger button", mix(rgb(ERROR), text, danger), mix(rgb(ERROR), background, dangerTint)],
+        ["filled danger button", [255, 255, 255], mix(rgb(ERROR), [0, 0, 0], filled)],
         ["chosen option", mix(accent, text, chosen), mix(accent, tint, chosenTint)],
         ["active nozzle tag", mix(accent, text, tag), mix(accent, tint, tagTint)],
         ...["#43a047", "#ffa600", ERROR, theme.muted].map((tone): [string, Rgb, Rgb] => [`chip ${tone}`, mix(rgb(tone), text, chip), mix(rgb(tone), background, chipTint)]),
@@ -3394,9 +3770,56 @@ describe("texts in a state's colour", () => {
   });
 });
 
+describe("the menu on a narrow card at the screen's left edge", () => {
+  it("is moved onto the screen", async () => {
+    const { card } = await cardFor("x1c");
+    const box = vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(function (this: HTMLElement) {
+      return (this.classList.contains("menu") ? { left: -30, right: 170, width: 200, top: 0, bottom: 100, height: 100 } : { left: 0, right: 0, width: 0, top: 0, bottom: 0, height: 0 }) as DOMRect;
+    });
+    try {
+      (find(card, ".menu-btn") as HTMLButtonElement).click();
+      await card.updateComplete;
+      expect((find(card, ".menu") as HTMLElement).style.translate).toBe("38px 0");
+    } finally {
+      box.mockRestore();
+    }
+    // Where it fits, it stays.
+    (find(card, ".menu-btn") as HTMLButtonElement).click();
+    await card.updateComplete;
+    (find(card, ".menu-btn") as HTMLButtonElement).click();
+    await card.updateComplete;
+    expect((find(card, ".menu") as HTMLElement).style.translate).toBe("");
+  });
+});
+
+describe("a press that takes its own control away", () => {
+  it("leaves the keyboard on the selected tab, not on the page", async () => {
+    const { card, hass } = await withX1c({ status: "finished", stage: "idle", progress: 100, remaining: 0, plateClearNeeded: true });
+    const plate = button(card, "Plate cleared");
+    plate.focus();
+    plate.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true, composed: true }));
+    plate.click();
+    await settle(card);
+    await update(card, hass.withState("binary_sensor.x1c_plate_clear_needed", "off"));
+    await card.updateComplete;
+    expect(root(card).activeElement).toBe(find(card, '.tabs [aria-selected="true"]'));
+  });
+
+  it("moves no focus for a mouse: no key was pressed in the card", async () => {
+    const { card, hass } = await withX1c({ status: "finished", stage: "idle", progress: 100, remaining: 0, plateClearNeeded: true });
+    button(card, "Plate cleared").focus();
+    button(card, "Plate cleared").click();
+    await settle(card);
+    await update(card, hass.withState("binary_sensor.x1c_plate_clear_needed", "off"));
+    await card.updateComplete;
+    expect(root(card).activeElement).not.toBe(find(card, '.tabs [aria-selected="true"]'));
+  });
+});
+
 describe("a command on its way", () => {
   it("turns its button's icon into a small spinner, still for those who ask for less motion", () => {
     const sheet = styleText();
+    expect(sheet).toMatch(/\.icon-btn\.pending\s*\{[^}]*cursor: progress;/);
     // The head's round buttons too: the light.
     expect(sheet).toMatch(/\.btn\.pending > \.icon,\s*\.icon-btn\.pending > \.icon\s*\{[^}]*border: 2px solid currentColor;[^}]*border-right-color: transparent;[^}]*border-radius: 50%;[^}]*animation: spin/);
     expect(sheet).toMatch(/\.btn\.pending > \.icon path,\s*\.icon-btn\.pending > \.icon path\s*\{[^}]*display: none;/);
@@ -3420,6 +3843,58 @@ describe("a command on its way", () => {
     finish();
     await settle(card);
     expect(button(card, "Chamber light").classList.contains("pending")).toBe(false);
+  });
+
+  it("keeps the keyboard on its button, which takes no second press meanwhile", async () => {
+    let finish: () => void = () => undefined;
+    const { card, hass } = await cardFor("x1c", {}, { callService: () => new Promise((resolve) => (finish = () => resolve(undefined))) });
+    button(card, "Pause print").focus();
+    button(card, "Pause print").click();
+    await card.updateComplete;
+    const pause = button(card, "Pause print");
+    expect([pause.disabled, pause.getAttribute("aria-disabled")]).toEqual([false, "true"]);
+    expect(root(card).activeElement).toBe(pause);
+    pause.click();
+    await card.updateComplete;
+    expect(hass.calls).toHaveLength(1);
+    finish();
+    await settle(card);
+    expect(button(card, "Pause print").getAttribute("aria-disabled")).toBeNull();
+
+    // A switch: a second tap meanwhile flips nothing.
+    button(card, "Chamber light").focus();
+    button(card, "Chamber light").click();
+    await card.updateComplete;
+    const light = button(card, "Chamber light");
+    expect([light.disabled, light.getAttribute("aria-disabled"), root(card).activeElement === light]).toEqual([false, "true", true]);
+    const shown = light.classList.contains("on");
+    light.click();
+    await card.updateComplete;
+    expect(hass.calls.filter((call) => call.domain === "light")).toHaveLength(1);
+    expect(button(card, "Chamber light").classList.contains("on")).toBe(shown);
+    finish();
+    await settle(card);
+  });
+
+  it("keeps a radio group usable by keyboard while a choice is sent", async () => {
+    let finish: () => void = () => undefined;
+    const { card, hass } = await cardFor("x1c", {}, { callService: () => new Promise((resolve) => (finish = () => resolve(undefined))) });
+    const speeds = (): HTMLButtonElement[] => findAll<HTMLButtonElement>(card, ".speed [role=radio]");
+    speeds()[2]?.focus();
+    speeds()[2]?.click();
+    await card.updateComplete;
+    expect(speeds().map((item) => [item.disabled, item.getAttribute("aria-disabled")])).toEqual([
+      [false, "true"],
+      [false, "true"],
+      [false, "true"],
+      [false, "true"],
+    ]);
+    expect(root(card).activeElement).toBe(speeds()[2]);
+    speeds()[3]?.click();
+    await card.updateComplete;
+    expect(hass.calls.filter((call) => call.domain === "select")).toHaveLength(1);
+    finish();
+    await settle(card);
   });
 });
 
@@ -3449,20 +3924,33 @@ describe("the layout of a narrow card and on a touch screen", () => {
     expect(atRule("@container (max-width: 400px)")).toMatch(rule("\\.callout \\.btn", "flex: 1 0 100%;[^}]*margin: 4px 0 0;"));
   });
 
+  it("keeps the strip's chips readable in both themes", () => {
+    // In a selector list with the model chip.
+    expect(styleText()).toMatch(/\.ams-strip \.ams-nozzle\s*\{[^}]*background: var\(--bb-tint-2\);[^}]*color: color-mix\(in srgb, var\(--bb-muted\) 50%, var\(--bb-text\)\);/);
+  });
+
   it("keeps the control view within a half-width card", () => {
+    const sheet = styleText();
     const narrow = atRule("@container (max-width: 280px)");
     // One column: the step, the pad, the bed, the extruder.
     expect(narrow).toMatch(rule("\\.control", 'grid-template-areas: "step" "pad" "bed" "ext";'));
     expect(narrow).toMatch(rule("\\.pad", "grid-template-columns: repeat\\(3, 40px\\);[^}]*grid-template-rows: repeat\\(3, 40px\\);"));
     expect(narrow).toMatch(rule("\\.pad \\.btn", "width: 40px;[^}]*height: 40px;"));
     expect(narrow).toMatch(rule("\\.axis-col\\.bed", "flex-direction: row;"));
-    // A heater's name and temperature above its steppers.
-    expect(narrow).toMatch(rule("\\.heat-name", "grid-column: 1 / -1;"));
+    // A heater's name and Off on a row, its steppers below with the whole
+    // width: beside a thumb's 44 px Off they would shrink under 24 px.
+    expect(narrow).toMatch(rule("\\.heat-name", "grid-column: 1;[^}]*grid-row: 1;"));
+    expect(narrow).toMatch(rule("\\.heat-row \\.heat-off", "grid-column: 2;[^}]*grid-row: 1;"));
+    expect(narrow).toMatch(rule("\\.heat-set", "grid-column: 1 / -1;"));
     expect(narrow).toMatch(rule("\\.heat-target", "min-width: 44px;"));
+    // A heater's name wraps in whole words, never cut ("Right nozzle").
+    expect(sheet).toMatch(rule("\\.heat-label \\.heat-text", "white-space: normal;[^}]*overflow: visible;[^}]*overflow-wrap: break-word;"));
+    // A heating tile's target in the readable mix, its icon in the pure tone.
+    expect(sheet).toMatch(rule("\\.temp\\.heating \\.temp-head \\.icon", "color: var\\(--bb-heat\\);"));
+    expect(sheet).toMatch(rule("\\.temp\\.heating \\.temp-target", "color: color-mix\\(in srgb, var\\(--bb-heat\\) 55%, var\\(--bb-text\\)\\);"));
     // Two temperature tiles a row.
     expect(narrow).toMatch(rule("\\.temps", "grid-template-columns: repeat\\(2, minmax\\(0, 1fr\\)\\);"));
     // After the step below 340 px, so that it wins.
-    const sheet = styleText();
     expect(sheet.indexOf("@container (max-width: 280px)")).toBeGreaterThan(sheet.indexOf("@container (max-width: 340px)"));
   });
 
@@ -3478,25 +3966,32 @@ describe("the layout of a narrow card and on a touch screen", () => {
 
   it("keeps every action within a half-width card on a phone (under 200 px)", () => {
     const tiny = atRule("@container (max-width: 200px)");
-    // A slot's buttons below its name, a notice's button below its text.
-    expect(tiny).toMatch(rule("\\.slot", "flex-wrap: wrap;"));
-    expect(tiny).toMatch(rule("\\.slot-main", "flex: 1 0 100%;"));
-    expect(tiny).toMatch(rule("\\.callout \\.btn", "white-space: normal;"));
-    expect(tiny).toMatch(rule("\\.callout > \\.icon", "display: none;"));
+    // From 280 px down a slot's buttons below its name; from 260 px a
+    // notice's button below its text, the job's words below its picture.
+    const half = atRule("@container (max-width: 280px)");
+    expect(half).toMatch(rule("\\.slot", "flex-wrap: wrap;"));
+    expect(half).toMatch(rule("\\.slot-main", "flex: 1 0 100%;"));
+    // The switch-off's row no longer indented beside the wrapped plug rows.
+    expect(half).toMatch(rule("\\.p-auto,\\s*\\.p-set", "padding-left: 0;"));
+    const narrow = atRule("@container (max-width: 260px)");
+    // The backup's "Unknown" under its text.
+    expect(narrow).toMatch(rule("\\.backup \\.det-row\\.choosing \\.det-text", "flex: 1 0 100%;"));
+    expect(narrow).toMatch(rule("\\.callout \\.btn", "white-space: normal;"));
+    expect(narrow).toMatch(rule("\\.callout > \\.icon", "display: none;"));
     // The name on a row of its own, whole words; the HMS line keeps its text.
     expect(tiny).toMatch(rule("\\.head", "flex-wrap: wrap;"));
     expect(tiny).toMatch(rule("\\.names", "flex: 1 0 100%;[^}]*order: -1;"));
     // The dot left, the light and the menu right, the chips under the name.
     expect(tiny).toMatch(rule("\\.head \\.dot", "margin-right: auto;"));
     // The job's words below its picture; one temperature a row.
-    expect(tiny).toMatch(rule("\\.job", "flex-wrap: wrap;"));
-    expect(tiny).toMatch(rule("\\.job-info", "flex: 1 0 100%;"));
+    expect(narrow).toMatch(rule("\\.job", "flex-wrap: wrap;"));
+    expect(narrow).toMatch(rule("\\.job-info", "flex: 1 0 100%;"));
     expect(tiny).toMatch(rule("\\.temps,\\s*\\.temps\\.n1,\\s*\\.temps\\.n2,\\s*\\.temps\\.n4,\\s*\\.temps\\.dual", "grid-template-columns: minmax\\(0, 1fr\\);"));
     // Controls and their labels wrap rather than leave the card.
-    expect(tiny).toMatch(rule("\\.ctl-buttons \\.btn,\\s*\\.drying > \\.btn", "white-space: normal;"));
-    expect(tiny).toMatch(rule("\\.nozzle-row", "flex-wrap: wrap;"));
-    expect(tiny).toMatch(rule("\\.det-head", "flex-wrap: wrap;"));
-    expect(tiny).toMatch(rule("\\.ext-buttons", "flex-direction: column;"));
+    expect(narrow).toMatch(rule("\\.ctl-buttons \\.btn,\\s*\\.drying > \\.btn", "white-space: normal;"));
+    expect(narrow).toMatch(rule("\\.nozzle-row", "flex-wrap: wrap;"));
+    expect(narrow).toMatch(rule("\\.det-head", "flex-wrap: wrap;"));
+    expect(narrow).toMatch(rule("\\.ext-buttons", "flex-direction: column;"));
     // The tabs as icons: their names, too long here, only for a screen
     // reader -- never cut or broken mid-word.
     expect(tiny).toMatch(rule("\\.tabs \\.tab-icon", "display: inline-flex;"));
@@ -3516,6 +4011,10 @@ describe("the layout of a narrow card and on a touch screen", () => {
     // After the narrow card's smaller steppers, so that it wins there too.
     const sheet = styleText();
     expect(sheet.lastIndexOf("@media (pointer: coarse)")).toBeGreaterThan(sheet.indexOf("@container (max-width: 280px)"));
+    // Beside them the name takes its own row from 220 px down, in whole words.
+    expect(sheet.slice(sheet.lastIndexOf("@media (pointer: coarse)"))).toMatch(
+      /@container \(max-width: 220px\)\s*\{[^@]*\.names\s*\{[^}]*flex: 1 0 100%;[^}]*order: -1;/,
+    );
   });
 });
 
@@ -3695,5 +4194,27 @@ describe("an offline printer's tabs, closer", () => {
       await showView(card, tab);
       expect(text(find(card, ".job .job-info")), tab).toContain("No data from BamBuddy");
     }
+  });
+});
+
+describe("the editor's preview of an offline printer's Power block", () => {
+  it("shows it as it is: the plugs the card shows now are no example", async () => {
+    const devices = offlineP1s();
+    const printer = devices[0] as FakeDevice;
+    const card = await previewOf("p1s", { status_blocks: ["power"] }, "en", [
+      ...devices,
+      plugDevice({ printer, id: 5, name: "Steckdose Garage", state: "off" }),
+      plugDevice({ printer, id: 2, name: "Abluft", state: "on", watts: 30, powersPrinter: false }),
+    ]);
+    expect(samples(card)).toEqual([]);
+    expect(findAll(card, ".power .p-row").map(text)).toEqual([`Abluft On · 30${NBSP}W`]);
+  });
+});
+
+describe("a switch that is off", () => {
+  it("has an edge in the muted colour, 3:1 and more against its box; on, the accent alone", () => {
+    const sheet = styleText();
+    expect(sheet).toMatch(/\.toggle\s*\{[^}]*box-shadow: inset 0 0 0 1px var\(--bb-muted\);/);
+    expect(sheet).toMatch(/\.det-switch\[aria-checked="true"\] \.toggle\s*\{[^}]*box-shadow: none;/);
   });
 });

@@ -46,6 +46,8 @@ def _client(hass: HomeAssistant, **kwargs: Any) -> BamBuddyClient:
         ("http://bambuddy.local:80/", "http://bambuddy.local"),
         ("https://bb.example.com:443", "https://bb.example.com"),
         ("https://bb.example.com:80", "https://bb.example.com:80"),
+        ("http://[FD00::5]:8000/", "http://[fd00::5]:8000"),
+        ("[fd00::5]:8000", "http://[fd00::5]:8000"),
     ],
 )
 def test_normalise_url(typed: str, normalised: str) -> None:
@@ -408,6 +410,17 @@ async def test_the_system_information_may_take_long(hass: HomeAssistant) -> None
     assert request.await_args.kwargs["timeout"].total == 30
 
 
+async def test_the_statistics_may_take_long_but_briefly_at_setup(hass: HomeAssistant) -> None:
+    """BamBuddy asks every smart plug for its energy, one after another."""
+    client = _client(hass)
+    with patch.object(client, "_request", AsyncMock(return_value={})) as request:
+        await client.get_statistics()
+        await client.get_statistics(patient=False)
+
+    timeouts = [call.kwargs["timeout"] for call in request.await_args_list]
+    assert [(timeout.total, timeout.connect) for timeout in timeouts] == [(30, 5), (10, 5)]
+
+
 async def test_a_connection_gets_five_seconds(hass: HomeAssistant) -> None:
     """A connect that hangs is told apart from a slow answer."""
     client = _client(hass)
@@ -550,3 +563,69 @@ async def test_stopping_the_camera(
     aioclient_mock.post(f"{API}/printers/1/camera/stop", json=answer)
 
     assert await _client(hass).stop_camera(1) is free
+
+
+async def test_a_proxys_404_is_no_answer_of_bambuddys(hass: HomeAssistant, aioclient_mock: AiohttpClientMocker) -> None:
+    """A reverse proxy before a BamBuddy that is not up (Traefik: "404 page not found", text) is a
+    connection problem; BamBuddy's own 404 always carries its JSON detail."""
+    aioclient_mock.get(f"{API}/updates/version", status=404, text="404 page not found", headers={"Content-Type": "text/plain"})
+    aioclient_mock.get(f"{API}/printers/7/status", status=404, json={"detail": "Printer not found"})
+
+    with pytest.raises(BamBuddyConnectionError):
+        await _client(hass).get_version()
+    with pytest.raises(BamBuddyNotFoundError):
+        await _client(hass).get_status(7)
+
+
+async def test_no_snapshot_token_in_the_log(
+    hass: HomeAssistant, aioclient_mock: AiohttpClientMocker, caplog: pytest.LogCaptureFixture
+) -> None:
+    """The snapshot carries the camera token in its address; neither a good nor a refused one logs it."""
+    caplog.set_level(logging.DEBUG, logger="custom_components.bambuddy")
+    aioclient_mock.get(f"{API}/printers/1/camera/snapshot", content=b"jpeg")
+    aioclient_mock.get(f"{API}/printers/2/camera/snapshot", status=401, json={"detail": "Valid camera stream token required"})
+
+    assert await _client(hass).get_snapshot(1, STREAM_TOKEN) == b"jpeg"
+    with pytest.raises(BamBuddyAuthError):
+        await _client(hass).get_snapshot(2, STREAM_TOKEN)
+
+    assert STREAM_TOKEN not in caplog.text
+
+
+async def test_the_update_checks_may_take_a_minute(hass: HomeAssistant) -> None:
+    """BamBuddy asks GitHub (10 s of its own) and, per printer model, Bambu Lab's pages live."""
+    client = _client(hass)
+    with patch.object(client, "_request", AsyncMock(return_value={})) as request:
+        await client.get_update_check()
+        await client.get_firmware_updates()
+
+    assert [(call.kwargs["timeout"].total, call.kwargs["timeout"].connect) for call in request.await_args_list] == [(60, 5), (60, 5)]
+
+
+@pytest.mark.parametrize(
+    ("call", "args", "total"),
+    [
+        # The printer is asked live: up to about 16 seconds.
+        ("get_kprofiles", (1, "0.4"), 25),
+        # BamBuddy waits up to 15 seconds for a fresh frame.
+        ("get_snapshot", (1, STREAM_TOKEN), 20),
+        ("get_print_objects", (1,), 60),
+        ("get_cover", (1,), 30),
+        ("control_plug", (3, False), 30),
+        ("get_plug_status", (3,), 30),
+    ],
+)
+async def test_the_slow_answers_get_their_time(hass: HomeAssistant, call: str, args: tuple[Any, ...], total: int) -> None:
+    client = _client(hass)
+    with patch.object(client, "_request", AsyncMock(return_value={})) as request:
+        await getattr(client, call)(*args)
+    timeout = request.await_args.kwargs["timeout"]
+    assert (timeout.total, timeout.connect) == (total, 5)
+
+
+async def test_a_plug_at_the_start_gets_five_seconds(hass: HomeAssistant) -> None:
+    """At Home Assistant's start the plugs' first reads may not hold the setup up."""
+    client = _client(hass)
+    with patch.object(client, "_request", AsyncMock(return_value={})) as request:
+        await client.get_plug_status(3, patient=False)
+    assert request.await_args.kwargs["timeout"].total == 5

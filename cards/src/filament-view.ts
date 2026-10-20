@@ -7,7 +7,8 @@
 // instead (card.ts).
 import { html, nothing, type TemplateResult } from "lit";
 
-import { formatDuration, formatPercent, formatTemperature, hasValue, numericState, stateOf } from "./format";
+import { formatDuration, formatPercent, formatTemperature, formatTemperatureOf, hasValue, minutesOf, numericState, stateOf } from "./format";
+import { printerTitle } from "./header";
 import { icon } from "./icons";
 import { t, type TextKey } from "./i18n";
 import {
@@ -21,6 +22,7 @@ import {
   resumeButton,
   sideName,
   slotOf,
+  slotPlace,
   swatch,
   unitModel,
   unitNozzle,
@@ -29,13 +31,15 @@ import {
 } from "./parts";
 import type { AmsRefs } from "./types";
 
+/** The load questions for the left and the right external spool. */
+const EXTERNAL_LOADS: TextKey[] = ["load_title_left", "load_title_right"];
 /** The set-filament dialog's titles for the left and the right external spool. */
 const EXTERNAL_TITLES: TextKey[] = ["filament_title_left", "filament_title_right"];
 
 /** The pencils of the left and the right external spool: each names its spool. */
 const EXTERNAL_EDITS: TextKey[] = ["edit_external_left", "edit_external_right"];
 
-/** A pencil beside every filled slot (his word): a spool without a chip
+/** A pencil beside every filled slot: a spool without a chip
  * gets its material, colour and K profile set by hand, a Bambu spool its
  * chip read again or the slot reset. Never for the slot a running print
  * feeds from. */
@@ -56,7 +60,20 @@ function editButton(ctx: CardContext, slot: Slot, title: string, label: string):
 function slotRow(
   ctx: CardContext,
   slot: Slot,
-  options: { canAct: boolean; canLoad: boolean; title: string; side?: string; editLabel?: string; nozzle?: "left" | "right" },
+  options: {
+    canAct: boolean;
+    canLoad: boolean;
+    title: string;
+    side?: string;
+    editLabel?: string;
+    nozzle?: "left" | "right";
+    /** The load question, with the slot's place where it has one. */
+    loadTitle: (filament: string) => string;
+    /** The load button's name: what it loads from. */
+    loadName: string;
+    /** Where the slot is, for the names of its buttons: "Slot 1 · AMS A". */
+    place: string;
+  },
 ): TemplateResult {
   const { hass, refs } = ctx;
   const title = slot.unknown ? "—" : slot.empty ? emptyText(hass, slot) : slot.name || slot.type;
@@ -92,12 +109,13 @@ function slotRow(
   } else if (ctx.canControl && !slot.empty && !slot.unknown && options.canLoad) {
     action = actionButton({
       label: t(hass, "load"),
+      aria: options.loadName,
       iconName: "load",
       disabled: !options.canAct,
       pending: ctx.isPending(`load_${slot.entityId}`),
       onClick: () =>
         ctx.confirm({
-          title: t(hass, "load_title", { filament: title }),
+          title: options.loadTitle(title),
           // Two nozzles: which one it goes into.
           text: t(hass, options.nozzle ? (options.nozzle === "left" ? "load_text_left" : "load_text_right") : "load_text"),
           confirm: t(hass, "load"),
@@ -110,7 +128,14 @@ function slotRow(
   // What the button shows names it: the filament, in use, what is left.
   // Unknown, it shows a dash, which says nothing.
   return html`<div class="slot ${slot.active ? "active" : ""}">
-    <button class="slot-main" aria-label=${slot.unknown ? t(hass, "unknown") : nothing} @click=${() => ctx.moreInfo(slot.entityId)}>
+    <button
+      class="slot-main"
+      aria-label=${t(hass, "slot_named", {
+        shown: [slot.unknown ? t(hass, "unknown") : title, ...(slot.active ? [t(hass, "in_use")] : []), ...details].join(" · "),
+        place: options.place,
+      })}
+      @click=${() => ctx.moreInfo(slot.entityId)}
+    >
       ${swatch(slot, "large")}
       <span class="slot-text">
         <span class="slot-name">${title}</span>
@@ -130,13 +155,13 @@ function dryingRow(ctx: CardContext, unit: AmsRefs): TemplateResult | typeof not
   // Only the AMS 2 Pro and the AMS HT have a heater.
   if (!unit.drying || !DRYING_MODELS.includes(unit.model)) return nothing;
   const on = stateOf(hass, unit.drying)?.state === "on";
-  const left = numericState(hass, unit.dryingRemaining);
+  const left = minutesOf(hass, unit.dryingRemaining);
   // The time stays on one line: "3 h 20 min" never breaks inside.
   const time = left ? formatDuration(hass, left).replace(/ /g, "\u00a0") : undefined;
-  // Without a state -- the printer offline, say -- whether it dries is not known.
   // The temperature it dries at, where the integration knows it.
   const target = stateOf(hass, unit.drying)?.attributes["target_temperature"];
   const at = on && typeof target === "number" && target > 0 ? formatTemperature(hass, target) : undefined;
+  // Without a state -- the printer offline, say -- whether it dries is not known.
   const text = !hasValue(hass, unit.drying)
     ? "—"
     : on
@@ -168,11 +193,12 @@ function dryingRow(ctx: CardContext, unit: AmsRefs): TemplateResult | typeof not
     ${ctx.canControl && remote
       ? actionButton({
           kind: "plain",
-          disabled: !ctx.online,
+          // A start waits for a filament change (the integration refuses it); a stop does not.
+          disabled: !ctx.online || (!on && ctx.changing),
           pending: ctx.isPending(key),
           ...(on
-            ? { label: t(hass, "dry_stop"), iconName: "stop", onClick: stop }
-            : { label: t(hass, "dry"), iconName: "heat", onClick: () => ctx.dry(unit) }),
+            ? { label: t(hass, "dry_stop"), aria: t(hass, "dry_stop_named", { unit: unit.name }), iconName: "stop", onClick: stop }
+            : { label: t(hass, "dry"), aria: t(hass, "dry_named", { unit: unit.name }), iconName: "heat", onClick: () => ctx.dry(unit) }),
         })
       : nothing}
   </div>`;
@@ -207,8 +233,18 @@ function unitSection(ctx: CardContext, unit: AmsRefs, canAct: boolean): Template
           : nothing}
         <span class="unit-end">
         <span class="unit-env">
-          ${humidity !== undefined ? html`<span title=${t(hass, "humidity")}>${icon("humidity")}${formatPercent(hass, humidity)}</span>` : nothing}
-          ${temperature !== undefined ? html`<span title=${t(hass, "temperature")}>${icon("chamber")}${formatTemperature(hass, temperature)}</span>` : nothing}
+          ${humidity !== undefined
+            ? html`<span title=${t(hass, "humidity")}
+                ><span class="sr-only">${t(hass, "strip_humidity", { humidity: formatPercent(hass, humidity) })}</span
+                ><span aria-hidden="true">${icon("humidity")}${formatPercent(hass, humidity)}</span></span
+              >`
+            : nothing}
+          ${temperature !== undefined
+            ? html`<span title=${t(hass, "temperature")}
+                ><span class="sr-only">${t(hass, "strip_temperature", { temperature: formatTemperatureOf(hass, unit.temperature, temperature) })}</span
+                ><span aria-hidden="true">${icon("chamber")}${formatTemperatureOf(hass, unit.temperature, temperature)}</span></span
+              >`
+            : nothing}
         </span>
         <span class="unit-fold">${icon("chevronDown")}</span>
         </span>
@@ -218,26 +254,38 @@ function unitSection(ctx: CardContext, unit: AmsRefs, canAct: boolean): Template
     ${dryingRow(ctx, unit)}
     ${open
       ? html`<div class="slots" id=${slotsId} role="region" aria-label=${unit.name}>
-            ${unit.slots.map((entityId, index) =>
-              slotRow(ctx, slotOf(hass, entityId), {
+            ${unit.slots.map((entityId, index) => {
+              const place = slotPlace(hass, unit, entityId, index);
+              return slotRow(ctx, slotOf(hass, entityId), {
                 canAct,
                 canLoad: !ht,
-                title: t(hass, "filament_title", { slot: t(hass, "slot_label", { slot: index + 1, unit: unit.name }) }),
-                editLabel: t(hass, "edit_slot", { slot: t(hass, "slot_label", { slot: index + 1, unit: unit.name }) }),
+                title: t(hass, "filament_title", { slot: place }),
+                loadTitle: (filament) => t(hass, "load_title_from", { filament, place }),
+                loadName: t(hass, "load_from", { place }),
+                place,
+                editLabel: t(hass, "edit_slot", { slot: place }),
                 ...(nozzle ? { nozzle } : {}),
-              }),
-            )}
+              });
+            })}
           </div>
           ${ht && ctx.canControl ? html`<p class="hint">${t(hass, "ht_load")}</p>` : nothing}`
       : nothing}
   </section>`;
 }
 
+/** The pauses for the filament: by the user, at a run-out, by the
+ * G-code. Any other "paused_*" stage is one the printer took itself for a
+ * fault (a clog, a fan, a temperature): its message comes first. A stage
+ * outside "paused_*" (`m400_pause`) is no fault either. */
+const FILAMENT_PAUSES = new Set(["paused_by_user", "paused_filament_runout", "paused_by_gcode"]);
+
 /** A paused print: the filament can be changed now, and resumed from here.
  * Not during a change: the view says to wait. */
 function pausedNote(ctx: CardContext): TemplateResult | typeof nothing {
   if (!ctx.online || ctx.status !== "paused" || !ctx.canControl || ctx.changing) return nothing;
-  return callout(t(ctx.hass, "filament_paused"), ctx.refs.resume ? resumeButton(ctx) : nothing);
+  const stage = stateOf(ctx.hass, ctx.refs.stage)?.state;
+  const fault = !!stage?.startsWith("paused_") && !FILAMENT_PAUSES.has(stage);
+  return callout(t(ctx.hass, fault ? "filament_paused_fault" : "filament_paused"), ctx.refs.resume ? resumeButton(ctx) : nothing);
 }
 
 /** The AMS filament backup, after the AMS units -- the external spool
@@ -259,7 +307,7 @@ function backupRow(ctx: CardContext): TemplateResult | typeof nothing {
     ${known ? nothing : html`<span class="det-sub" id="backup-unknown">${t(hass, "backup_unknown")}</span>`}
   </span>`;
   const pending = ctx.isPending(`switch_${entityId}`);
-  const disabled = !ctx.online || pending || state.state === "unavailable";
+  const disabled = !ctx.online || state.state === "unavailable";
   let control: TemplateResult;
   if (!ctx.canControl) {
     control = html`<span class="det-state">${t(hass, state.state === "on" ? "on" : state.state === "off" ? "off" : "unknown")}</span>`;
@@ -272,6 +320,7 @@ function backupRow(ctx: CardContext): TemplateResult | typeof nothing {
       aria-describedby="backup-sub"
       aria-checked=${on ? "true" : "false"}
       aria-busy=${pending ? "true" : "false"}
+      aria-disabled=${pending ? "true" : nothing}
       ?disabled=${disabled}
       @click=${() => ctx.toggleSwitch(entityId)}
     >
@@ -283,9 +332,11 @@ function backupRow(ctx: CardContext): TemplateResult | typeof nothing {
       <div class="backup-set" role="group" aria-label=${label} aria-describedby="backup-sub backup-unknown">
         ${(["off", "on"] as const).map(
           (option) => html`<button
-            class="btn tonal"
+            class="btn tonal ${pending ? "pending" : ""}"
             ?disabled=${disabled}
-            @click=${() => ctx.run(`switch_${entityId}`, "switch", option === "on" ? "turn_on" : "turn_off", { entity_id: entityId })}
+            aria-busy=${pending ? "true" : "false"}
+            aria-disabled=${pending ? "true" : nothing}
+            @click=${pending ? nothing : () => ctx.run(`switch_${entityId}`, "switch", option === "on" ? "turn_on" : "turn_off", { entity_id: entityId })}
           >
             ${t(hass, option === "on" ? "backup_turn_on" : "backup_turn_off")}
           </button>`,
@@ -315,7 +366,11 @@ export function filamentView(ctx: CardContext): TemplateResult {
   const dual = refs.externalSpools.length > 1;
   const activity = amsActivity(ctx);
   return html`${developerHint(ctx)}${reason ? note(t(hass, reason[0]), reason[1]) : nothing}${pausedNote(ctx)}
-    ${activity ? html`<div class="activity" role="status">${icon("sync")}<span>${activity}</span><span class="activity-bar" aria-hidden="true"></span></div>` : nothing}
+    ${activity
+      ? html`<div class="activity" role="status">
+          ${icon("sync")}<span class="sr-only">${printerTitle(ctx)}: </span><span>${activity}</span><span class="activity-bar" aria-hidden="true"></span>
+        </div>`
+      : nothing}
     ${ctx.ams.map((unit) => unitSection(ctx, unit, canAct))}
     ${backupRow(ctx)}
     ${refs.externalSpools.length
@@ -327,6 +382,9 @@ export function filamentView(ctx: CardContext): TemplateResult {
                 canAct,
                 canLoad: true,
                 title: t(hass, (dual ? EXTERNAL_TITLES[index] : "filament_title_external") as TextKey),
+                loadTitle: (filament) => t(hass, (dual ? EXTERNAL_LOADS[index] : "load_title_external") as TextKey, { filament }),
+                loadName: t(hass, dual ? (index === 0 ? "load_from_left" : "load_from_right") : "load_from_external"),
+                place: t(hass, dual ? (index === 0 ? "external_left_place" : "external_right_place") : "external"),
                 editLabel: t(hass, (dual ? EXTERNAL_EDITS[index] : "edit_external") as TextKey),
                 ...(dual ? { nozzle: index === 0 ? ("left" as const) : ("right" as const) } : {}),
                 ...(dual ? { side: sideName(hass, index) } : {}),

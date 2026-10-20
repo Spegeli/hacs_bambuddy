@@ -50,11 +50,15 @@ from .const import (
 from .coordinator import BamBuddyConfigEntry, create_client
 from .models import find_printers, printer_key, printer_name, short_name, stored_key, stored_printer as _stored, too_old
 
-# Home Assistant 2026.10 types form schemas as probatio schemas; the voluptuous
-# ones built here work the same from 2025.5 on, hence `type: ignore[arg-type]`
-# where a form takes one.
+def form_schema(fields: dict[Any, Any]) -> Any:
+    """The schema of a form. Home Assistant 2026.10 types form schemas as
+    probatio schemas; the voluptuous ones built here work the same from
+    2025.5 on, hence `Any`: the one place that says so."""
+    return vol.Schema(fields)
+
+
 _KEY = TextSelector(TextSelectorConfig(type=TextSelectorType.PASSWORD))
-_CONNECTION = vol.Schema(
+_CONNECTION = form_schema(
     {
         vol.Required(CONF_URL): TextSelector(TextSelectorConfig(type=TextSelectorType.URL)),
         vol.Required(CONF_API_KEY): _KEY,
@@ -66,7 +70,7 @@ _CONNECTION = vol.Schema(
 _EXAMPLE_URL = "https://bambuddy.example.com"
 # Reconfiguring: the key is never shown -- anyone who may open the form would
 # read it; left empty, it stays.
-_RECONFIGURE = vol.Schema(
+_RECONFIGURE = form_schema(
     {
         vol.Required(CONF_URL): TextSelector(TextSelectorConfig(type=TextSelectorType.URL)),
         vol.Optional(CONF_API_KEY): _KEY,
@@ -89,10 +93,10 @@ def _many(options: list[SelectOptionDict]) -> SelectSelector:
     return SelectSelector(SelectSelectorConfig(options=options, multiple=True, mode=SelectSelectorMode.LIST))
 
 
-def _choice(options: list[SelectOptionDict]) -> vol.Schema:
+def _choice(options: list[SelectOptionDict]) -> Any:
     """Printers to tick: none ticked at first -- a required multi-select
     without a default comes with its first option ticked."""
-    return vol.Schema({vol.Optional(CONF_PRINTERS, default=[]): _many(options)})
+    return form_schema({vol.Optional(CONF_PRINTERS, default=[]): _many(options)})
 
 
 class _Found(NamedTuple):
@@ -108,6 +112,7 @@ class _Found(NamedTuple):
 # A web page answered, not BamBuddy's API: inside the flow only -- `_find`
 # tries the address's parents, then says it is no BamBuddy.
 _WEB_PAGE = "wrong_path"
+
 
 async def _validate(hass: HomeAssistant, url: str, api_key: str, verify_ssl: bool) -> _Found:
     client = BamBuddyClient(url, api_key, async_get_clientsession(hass), verify_ssl=verify_ssl)
@@ -127,7 +132,7 @@ async def _validate(hass: HomeAssistant, url: str, api_key: str, verify_ssl: boo
         except BamBuddyError:
             pass
         printers = await client.get_printers()
-        return _Found({}, {}, printers, await client.can_control())
+        return _Found({}, {}, printers, (await client.permissions()).control)
     except (BamBuddyAuthError, BamBuddyPermissionError) as err:
         # BamBuddy asks no key for its version: a login in front of it does.
         if first:
@@ -218,6 +223,24 @@ def _normalised(user_input: dict[str, Any]) -> tuple[str | None, str]:
         return None, "invalid_url"
 
 
+def _elsewhere(hass: HomeAssistant, entry_id: str | None) -> dict[str, str]:
+    """The printers other BamBuddy entries hold -- the same BamBuddy at
+    another address, say -- by key, with the entry's title: a printer has a
+    device per entry, so one set up twice would come twice."""
+    return {
+        stored_key(printer): entry.title
+        for entry in hass.config_entries.async_entries(DOMAIN)
+        if entry.entry_id != entry_id
+        for printer in entry.options.get(CONF_PRINTERS, [])
+    }
+
+
+def _in_use(printers: list[dict[str, Any]], elsewhere: dict[str, str]) -> dict[str, str]:
+    """The placeholder that says where the printers are set up."""
+    titles = sorted({elsewhere[printer_key(printer)] for printer in printers if printer_key(printer) in elsewhere})
+    return {"entries": ", ".join(titles)}
+
+
 class BamBuddyConfigFlow(ConfigFlow, domain=DOMAIN):
     VERSION = 2
     MINOR_VERSION = 2
@@ -246,23 +269,28 @@ class BamBuddyConfigFlow(ConfigFlow, domain=DOMAIN):
             if url is None:
                 errors[CONF_URL] = invalid
             else:
-                await self.async_set_unique_id(url)
+                # A setup left open -- the tab closed -- blocks no new one;
+                # Home Assistant ends it once this one makes the entry.
+                await self.async_set_unique_id(url, raise_on_progress=False)
                 self._abort_if_unique_id_configured()
                 url, found = await _find(self.hass, url, api_key, user_input[CONF_VERIFY_SSL])
                 errors, placeholders = found.errors, found.placeholders
                 if not errors:
                     # Found at a parent of the address typed.
-                    await self.async_set_unique_id(url)
+                    await self.async_set_unique_id(url, raise_on_progress=False)
                     self._abort_if_unique_id_configured()
                     self._data = {**user_input, CONF_URL: url, CONF_API_KEY: api_key}
-                    self._printers = found.printers
+                    elsewhere = _elsewhere(self.hass, None)
+                    self._printers = [printer for printer in found.printers if printer_key(printer) not in elsewhere]
                     self._can_control = found.can_control
-                    if found.printers:
+                    if self._printers:
                         return await self.async_step_printers()
+                    if found.printers:
+                        return self.async_abort(reason="printers_in_use", description_placeholders=_in_use(found.printers, elsewhere))
                     return self._create_entry([])
         return self.async_show_form(
             step_id="user",
-            data_schema=self.add_suggested_values_to_schema(_CONNECTION, user_input),  # type: ignore[arg-type]
+            data_schema=self.add_suggested_values_to_schema(_CONNECTION, user_input),
             errors=errors,
             description_placeholders={"example_url": _EXAMPLE_URL, **placeholders},
         )
@@ -275,12 +303,8 @@ class BamBuddyConfigFlow(ConfigFlow, domain=DOMAIN):
             chosen = set(user_input[CONF_PRINTERS])
             return self._create_entry([printer for printer in self._printers if str(printer["id"]) in chosen])
         options = [SelectOptionDict(value=str(printer["id"]), label=printer_name(printer)) for printer in self._printers]
-        schema = vol.Schema(
-            {
-                vol.Optional(CONF_PRINTERS, default=[option["value"] for option in options]): _many(options)
-            }
-        )
-        return self.async_show_form(step_id="printers" if self._can_control else "printers_read_only", data_schema=schema)  # type: ignore[arg-type]
+        schema = form_schema({vol.Optional(CONF_PRINTERS, default=[option["value"] for option in options]): _many(options)})
+        return self.async_show_form(step_id="printers" if self._can_control else "printers_read_only", data_schema=schema)
 
     async_step_printers_read_only = async_step_printers
 
@@ -291,6 +315,8 @@ class BamBuddyConfigFlow(ConfigFlow, domain=DOMAIN):
             options={
                 CONF_PRINTERS: [_stored(printer) for printer in printers]
             },
+            # BamBuddy has none yet: said, with where to add them later.
+            description=None if self._printers else "no_printers",
         )
 
     def _update_entry(self, entry: BamBuddyConfigEntry, **changes: Any) -> None:
@@ -319,10 +345,11 @@ class BamBuddyConfigFlow(ConfigFlow, domain=DOMAIN):
             placeholders.update(found.placeholders)
             if not errors:
                 self._update_entry(entry, data={**entry.data, CONF_API_KEY: api_key})
-                return self.async_abort(reason="reauth_successful")
+                # A key that may only read: the controls go -- said.
+                return self.async_abort(reason="reauth_successful" if found.can_control else "reauth_successful_read_only")
         return self.async_show_form(
             step_id="reauth_confirm",
-            data_schema=vol.Schema({vol.Required(CONF_API_KEY): _KEY}),  # type: ignore[arg-type]
+            data_schema=form_schema({vol.Required(CONF_API_KEY): _KEY}),
             errors=errors,
             description_placeholders=placeholders,
         )
@@ -367,7 +394,7 @@ class BamBuddyConfigFlow(ConfigFlow, domain=DOMAIN):
             shown[CONF_API_KEY] = typed
         return self.async_show_form(
             step_id="reconfigure",
-            data_schema=self.add_suggested_values_to_schema(_RECONFIGURE, shown),  # type: ignore[arg-type]
+            data_schema=self.add_suggested_values_to_schema(_RECONFIGURE, shown),
             errors=errors,
             description_placeholders={"example_url": _EXAMPLE_URL, **placeholders},
         )
@@ -391,39 +418,41 @@ class BamBuddyConfigFlow(ConfigFlow, domain=DOMAIN):
         new = [printer for printer in self._printers if printer["id"] not in matched]
         if user_input is not None:
             return await self._async_move(entry, user_input, stored, new)
-        kept = [short_name(info) for info in self._found if info is not None]
+        kept = sorted((short_name(info) for info in self._found if info is not None), key=str.casefold)
         # None of the entry's printers there speaks for another BamBuddy.
         other = bool(stored) and not kept
         schema: dict[Any, Any] = {
             vol.Required(_KIND, default=_OTHER if other else _SAME): SelectSelector(
-                SelectSelectorConfig(options=[_SAME, _OTHER], translation_key=_KIND, mode=SelectSelectorMode.LIST)
+                SelectSelectorConfig(
+                    options=[_SAME, _OTHER],
+                    # Without printers: none keeps its history.
+                    translation_key=_KIND if stored else f"{_KIND}_alone",
+                    mode=SelectSelectorMode.LIST,
+                )
             )
         }
         if missing:
             schema[vol.Optional(_REMOVE, default=[])] = _many(
-                [SelectOptionDict(value=stored_key(printer), label=printer[CONF_PRINTER_NAME]) for printer in missing]
+                sorted(
+                    (SelectOptionDict(value=stored_key(printer), label=printer[CONF_PRINTER_NAME]) for printer in missing),
+                    key=lambda option: option["label"].casefold(),
+                )
             )
         if new:
             schema[vol.Optional(_ADD, default=[])] = _many(
                 [SelectOptionDict(value=str(printer["id"]), label=printer_name(printer)) for printer in new]
             )
         if not stored:
-            return self.async_show_form(
-                step_id="new_address_no_printers",
-                data_schema=vol.Schema(schema),  # type: ignore[arg-type]
-                description_placeholders={"url": self._data[CONF_URL]},
-            )
-        if not missing:
+            step = "new_address_no_printers"
+        elif not missing:
             # Every printer found there: no list of fifteen names.
-            return self.async_show_form(
-                step_id="new_address_all",
-                data_schema=vol.Schema(schema),  # type: ignore[arg-type]
-                description_placeholders={"url": self._data[CONF_URL]},
-            )
+            step = "new_address_all"
+        else:
+            step = "other_bambuddy" if other else "new_address"
         return self.async_show_form(
-            step_id="other_bambuddy" if other else "new_address",
-            data_schema=vol.Schema(schema),  # type: ignore[arg-type]
-            description_placeholders={"url": self._data[CONF_URL], "kept": _bullets(kept)},
+            step_id=step,
+            data_schema=form_schema(schema),
+            description_placeholders={"url": self._data[CONF_URL], **({"kept": _bullets(kept)} if stored and missing else {})},
         )
 
     # The same step: with a warning (none of the entry's printers there), for
@@ -493,19 +522,30 @@ class BamBuddyOptionsFlow(OptionsFlow):
         menu = ["add_printer"]
         if self._printers:
             menu.append("remove_printer")
-        return self.async_show_menu(step_id="init", menu_options=menu)
+        return self.async_show_menu(step_id="init", menu_options=menu, description_placeholders=self._named())
+
+    def _named(self) -> dict[str, str]:
+        """The entry's name, for the texts: Home Assistant titles an ending
+        dialog after the integration alone."""
+        return {"name": self.config_entry.title}
 
     async def async_step_add_printer(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
         try:
             available = await self._client().get_printers()
         except (BamBuddyAuthError, BamBuddyPermissionError):
-            return self.async_abort(reason="key_refused")
+            return self.async_abort(reason="key_refused", description_placeholders=self._named())
         except BamBuddyError:
-            return self.async_abort(reason="cannot_connect")
+            return self.async_abort(reason="cannot_connect", description_placeholders=self._named())
+        if not available:
+            return self.async_abort(reason="no_printers", description_placeholders=self._named())
         added = {stored_key(printer) for printer in self._printers}
-        new = {str(printer["id"]): printer for printer in available if printer_key(printer) not in added}
+        elsewhere = _elsewhere(self.hass, self.config_entry.entry_id)
+        missing = [printer for printer in available if printer_key(printer) not in added]
+        new = {str(printer["id"]): printer for printer in missing if printer_key(printer) not in elsewhere}
         if not new:
-            return self.async_abort(reason="all_printers_added")
+            if missing:
+                return self.async_abort(reason="printers_in_use", description_placeholders=_in_use(missing, elsewhere))
+            return self.async_abort(reason="all_printers_added", description_placeholders=self._named())
         if user_input is not None:
             chosen = [new[value] for value in user_input.get(CONF_PRINTERS, []) if value in new]
             if not chosen:
@@ -518,7 +558,7 @@ class BamBuddyOptionsFlow(OptionsFlow):
                 }
             )
         options = [SelectOptionDict(value=value, label=printer_name(printer)) for value, printer in new.items()]
-        return self.async_show_form(step_id="add_printer", data_schema=_choice(options))  # type: ignore[arg-type]
+        return self.async_show_form(step_id="add_printer", data_schema=_choice(options), description_placeholders=self._named())
 
     async def async_step_remove_printer(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
         if user_input is not None:
@@ -533,8 +573,11 @@ class BamBuddyOptionsFlow(OptionsFlow):
             )
         # By serial, as everywhere: after BamBuddy renumbered, a printer it
         # no longer lists may share its number with one it lists.
-        options = [SelectOptionDict(value=stored_key(printer), label=self._label(printer)) for printer in self._printers]
-        return self.async_show_form(step_id="remove_printer", data_schema=_choice(options))  # type: ignore[arg-type]
+        options = sorted(
+            (SelectOptionDict(value=stored_key(printer), label=self._label(printer)) for printer in self._printers),
+            key=lambda option: option["label"].casefold(),
+        )
+        return self.async_show_form(step_id="remove_printer", data_schema=_choice(options), description_placeholders=self._named())
 
     def _label(self, printer: dict[str, Any]) -> str:
         """BamBuddy's own name, while the entry knows it: two printers of a

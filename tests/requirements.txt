@@ -22,8 +22,9 @@ PyTurboJPEG>=1.7.5
 # Line coverage, measured with
 #   pytest tests/ --cov=custom_components.bambuddy --cov-report=term-missing
 # CI fails under 95 % overall (.github/workflows/_validate_newest.yml);
-# config_flow.py stays at 100 % (quality scale rules
-# config-flow-test-coverage and test-coverage).
+# config_flow.py is kept at 100 % (quality scale rules
+# config-flow-test-coverage and test-coverage) by review, not by a gate:
+# the report's missing lines show it.
 pytest-cov>=6.0.0
 # Strict typing of the integration, `mypy --strict` as configured in
 # pyproject.toml (quality scale rule strict-typing). Pinned: a new mypy

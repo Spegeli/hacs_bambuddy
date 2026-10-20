@@ -1,8 +1,10 @@
 // The card's dialogs: a confirmation before an action that cannot be taken
 // back, the drying settings, the objects of a print to skip, a slot's
 // material and colour, and what the head's chips and menu open -- the HMS
-// messages, the firmware, the printer information. The safe choice comes
-// first and has the focus; it says what stays as it is.
+// messages, the firmware, the storage, the printer information, the plugs'
+// power and the switch-off after the print, the camera's frame rate,
+// maintenance, the connection check. The safe choice comes first and has
+// the focus; it says what stays as it is.
 import { html, nothing, type TemplateResult } from "lit";
 
 import type { KProfile, KProfiles, PrintObject } from "./actions";
@@ -13,13 +15,19 @@ import { autoOffContent, powerContent } from "./power";
 import { maintenanceContent, type MaintenanceDialog } from "./maintenance";
 import { icon } from "./icons";
 import { t, type TextKey } from "./i18n";
-import { actionButton, dialogNote, slotOf, type CardContext, type Confirmation } from "./parts";
+import { actionButton, dialogNote, slotOf, slotPlace, stepControl, type CardContext, type Confirmation } from "./parts";
 import type { AmsRefs, Hass } from "./types";
 
 /** Drying defaults and limits: BamBuddy's range; the AMS 2 Pro heats to 65 °C at most. */
 export const DRYING = { temperature: 55, duration: 8, minTemperature: 45, maxTemperature: 85, maxTemperatureAms2Pro: 65, minDuration: 1, maxDuration: 24 };
 
 export type DryingField = "temperature" | "duration";
+
+/** The drying steppers' names: lower, raise. */
+const STEPPER_NAMES: Record<DryingField, [TextKey, TextKey]> = {
+  temperature: ["dry_temperature_lower", "dry_temperature_raise"],
+  duration: ["dry_duration_lower", "dry_duration_raise"],
+};
 
 /** A loaded spool's material and the temperature it asks to be dried at. */
 export interface DryingSpool {
@@ -35,6 +43,8 @@ export interface DryingDialog {
   maxTemperature: number;
   /** The values come from the loaded spools' own recommendation. */
   suggested: boolean;
+  /** The loaded materials the suggestion is for, where known. */
+  suggestedFor?: string;
   /** The loaded spools' temperatures, coolest first, where they differ;
    * else none. */
   differing: DryingSpool[];
@@ -83,10 +93,10 @@ const GENERIC: readonly [string, string, string][] = [
   ["PPS", "GFT97", "PPS"],
   ["PPS-CF", "GFT98", "PPS-CF"],
 ];
-export const MATERIALS: readonly string[] = GENERIC.map(([name]) => name);
+const MATERIALS: readonly string[] = GENERIC.map(([name]) => name);
 
 /** The K profile choice that keeps the slot's own. */
-export const K_KEEP = "keep";
+const K_KEEP = "keep";
 
 /** The printer's default K, where a slot has no profile of its own. */
 const DEFAULT_K = 0.02;
@@ -133,6 +143,8 @@ export interface FilamentDialog {
   custom?: string;
   /** A Bambu spool's chip describes it: the dialog offers only its tools. */
   rfid?: boolean;
+  /** Nothing describes the spool ("Not set"): there is nothing to reset. */
+  empty?: boolean;
   /** An AMS slot (the external spools have no chip reader). */
   ams?: boolean;
   /** A chip spool, as the strip names it: "PLA Basic · 77 %". */
@@ -157,8 +169,9 @@ export function filamentChanges(dialog: FilamentDialog): { material?: string; co
   // A K profile chosen that differs from the slot's -- a new material takes
   // the default otherwise, as on the printer's screen.
   const chosen = dialog.kprofile !== undefined && dialog.kprofile !== K_KEEP ? Number(dialog.kprofile) : undefined;
-  const current = typeof dialog.kprofiles === "object" ? dialog.kprofiles.current : -1;
-  const kChanged = chosen !== undefined && (chosen !== current || "material" in material) && !(chosen === -1 && "material" in material);
+  // Not listed, the slot's own profile is not known: the default chosen is a change.
+  const current = typeof dialog.kprofiles === "object" ? dialog.kprofiles.current : undefined;
+  const kChanged = chosen !== undefined && ("material" in material ? chosen !== -1 : chosen !== current);
   return { ...material, ...(changed ? { color: rgbOf(color) } : {}), ...(kChanged ? { k_profile: chosen } : {}) };
 }
 
@@ -169,10 +182,13 @@ export function matchingProfile(dialog: FilamentDialog): string | undefined {
   const state = dialog.kprofiles;
   if (typeof state !== "object") return undefined;
   const { id, type } = materialType(dialog);
-  const found = state.profiles.find(
-    (profile) => (id !== undefined && profile.filamentId === id) || (type !== "" && profile.name.toUpperCase().includes(type.toUpperCase())),
-  );
+  const found = state.profiles.find((profile) => profileMatches(profile, id, type));
   return found ? String(found.index) : undefined;
+}
+
+/** Whether a K profile is the material's: by its filament id, else its name. */
+function profileMatches(profile: KProfile, id: string | undefined, type: string): boolean {
+  return (id !== undefined && profile.filamentId === id) || (type !== "" && profile.name.toUpperCase().includes(type.toUpperCase()));
 }
 
 /** The material a slot will hold: the one chosen, else its own. */
@@ -189,7 +205,7 @@ export interface InfoDialog {
   copied?: boolean;
 }
 
-/** Dialogs that show the printer's state as it is now: they follow it while open. */
+/** Dialogs that show the printer's state as it is now: they follow it while open (the storage's too). */
 export type StateDialog =
   | { kind: "hms" }
   | { kind: "firmware" }
@@ -226,7 +242,7 @@ export interface DialogActions {
   copy: (text: string) => void;
   /** The maintenance task whose row asks "Mark as done?", or none. */
   confirmTask: (id: number | undefined) => void;
-  markDone: (id: number) => void;
+  markDone: (id: number, name: string) => void;
   /** Opens or folds a folded line of the connection check. */
   toggleFold: (which: "pass" | "skip") => void;
   /** Now, for the seconds a check runs. */
@@ -242,10 +258,12 @@ function stepper(
 ): TemplateResult {
   const { label, field, value, unit, min, max, step } = options;
   const id = `dry-${field}`;
+  // The unit said with the label: "Duration (hours)".
+  const spoken = field === "duration" ? t(hass, "hours_long") : unit;
   return html`<div class="field">
-    <label for=${id}>${label}</label>
+    <label for=${id}>${label}<span class="sr-only"> (${spoken})</span></label>
     <div class="stepper">
-      <button class="btn icon-only" aria-label=${t(hass, "decrease", { what: label })} ?disabled=${value <= min} @click=${() => actions.setDrying(field, value - step)}>
+      <button class="btn icon-only" aria-label=${t(hass, STEPPER_NAMES[field][0])} ?disabled=${value <= min} @click=${() => actions.setDrying(field, value - step)}>
         ${icon("minus")}
       </button>
       <input
@@ -263,7 +281,7 @@ function stepper(
         }}
       />
       <span class="unit-text">${unit}</span>
-      <button class="btn icon-only" aria-label=${t(hass, "increase", { what: label })} ?disabled=${value >= max} @click=${() => actions.setDrying(field, value + step)}>
+      <button class="btn icon-only" aria-label=${t(hass, STEPPER_NAMES[field][1])} ?disabled=${value >= max} @click=${() => actions.setDrying(field, value + step)}>
         ${icon("plus")}
       </button>
     </div>
@@ -277,7 +295,9 @@ function dryingSource(hass: Hass, dialog: DryingDialog): TemplateResult | typeof
     const spools = dialog.differing.map((spool) => `${spool.material} ${formatTemperature(hass, spool.temperature)}`).join(" · ");
     return html`<p class="dlg-suggested mixed">${icon("info")}<span>${t(hass, "dry_mixed", { spools })}</span></p>`;
   }
-  return dialog.suggested ? html`<p class="dlg-suggested">${icon("check")}<span>${t(hass, "dry_suggested")}</span></p>` : nothing;
+  if (!dialog.suggested) return nothing;
+  const text = dialog.suggestedFor ? t(hass, "dry_suggested_for", { filaments: dialog.suggestedFor }) : t(hass, "dry_suggested");
+  return html`<p class="dlg-suggested">${icon("check")}<span>${text}</span></p>`;
 }
 
 function dryingContent(hass: Hass, dialog: DryingDialog, actions: DialogActions): TemplateResult {
@@ -317,6 +337,8 @@ function skipContent(hass: Hass, dialog: SkipDialog, actions: DialogActions): Te
   if (dialog.loading) body = html`<p role="status">${t(hass, "skip_loading")}</p>`;
   else if (dialog.error) body = html`<div class="dlg-error" role="alert">${icon("error")}<span>${dialog.error}</span></div>`;
   else if (!dialog.objects.length) body = html`<p>${t(hass, "skip_none_listed")}</p>`;
+  // One object: skipping it is stopping the print -- nothing to tick.
+  else if (dialog.objects.length === 1) body = html`<p class="dlg-warn info">${icon("info")}<span>${t(hass, "skip_single")}</span></p>`;
   else {
     body = html`<div class="objects" role="group" aria-labelledby="dlg-title">
         ${dialog.objects.map(
@@ -373,8 +395,7 @@ function kField(hass: Hass, dialog: FilamentDialog, actions: DialogActions): Tem
   const current = typeof state === "object" ? state.current : -1;
   const keeping = dialog.material === KEEP;
   const { name, id, type } = materialType(dialog);
-  const matches = (profile: KProfile): boolean =>
-    (id !== undefined && profile.filamentId === id) || (type !== "" && profile.name.toUpperCase().includes(type.toUpperCase()));
+  const matches = (profile: KProfile): boolean => profileMatches(profile, id, type);
   const matching = profiles.filter(matches);
   const others = profiles.filter((profile) => !matches(profile)).sort((a, b) => a.name.localeCompare(b.name));
   const label = (profile: KProfile): string => `${profile.name} (K ${formatFixed(hass, profile.k, 3)})`;
@@ -388,16 +409,29 @@ function kField(hass: Hass, dialog: FilamentDialog, actions: DialogActions): Tem
       : current >= 0
         ? t(hass, "k_keep_number", { index: current })
         : state === "failed"
-          ? t(hass, "k_keep_plain")
+          ? t(hass, dialog.ams ? "k_keep_plain" : "k_keep_plain_spool")
           : undefined;
   const value = dialog.kprofile ?? (keepText ? K_KEEP : "-1");
   const other = others.some((profile) => String(profile.index) === value);
+  // What the field says below itself: the first that holds.
+  const hint: TextKey =
+    state === "failed"
+      ? dialog.ams
+        ? "k_failed"
+        : "k_failed_spool"
+      : typeof state === "object" && !profiles.length
+        ? "k_none"
+        : other && dialog.material !== undefined
+          ? dialog.ams
+            ? "k_other_note"
+            : "k_other_note_spool"
+          : "k_unsure";
   const option = (profile: KProfile): TemplateResult =>
     html`<option value=${String(profile.index)} .selected=${value === String(profile.index)}>${label(profile)}</option>`;
   return html`<div class="field kfield">
       <label for="fil-k">${t(hass, "k_profile")}</label>
       <span class="select">
-        <select id="fil-k" ?disabled=${state === "loading"} @change=${(event: Event) => actions.setKProfile((event.target as HTMLSelectElement).value)}>
+        <select id="fil-k" aria-describedby="k-hint" ?disabled=${state === "loading"} @change=${(event: Event) => actions.setKProfile((event.target as HTMLSelectElement).value)}>
           ${state === "loading"
             ? html`<option selected>${t(hass, "k_loading")}</option>`
             : html`${keepText ? html`<option value=${K_KEEP} .selected=${value === K_KEEP}>${keepText}</option>` : nothing}
@@ -407,13 +441,7 @@ function kField(hass: Hass, dialog: FilamentDialog, actions: DialogActions): Tem
         </select>
         ${icon("chevronDown")}
       </span>
-      ${state === "failed"
-        ? html`<span class="k-hint">${t(hass, "k_failed")}</span>`
-        : typeof state === "object" && !profiles.length
-          ? html`<span class="k-hint">${t(hass, "k_none")}</span>`
-          : other
-            ? html`<span class="k-hint">${t(hass, "k_other_note")}</span>`
-            : nothing}
+      <span class="k-hint" id="k-hint" aria-live="polite">${t(hass, hint)}</span>
     </div>`;
 }
 
@@ -423,21 +451,26 @@ function kField(hass: Hass, dialog: FilamentDialog, actions: DialogActions): Tem
 function slotTools(ctx: CardContext, dialog: FilamentDialog, actions: DialogActions): TemplateResult {
   const { hass, refs } = ctx;
   const running = ctx.running;
-  // The slots that hold filament now, by the names the dialogs give them.
-  const loaded = [
-    ...refs.ams.flatMap((unit) =>
-      unit.slots.filter((entityId) => slotOf(hass, entityId).active).map((entityId) => t(hass, "slot_label", { slot: unit.slots.indexOf(entityId) + 1, unit: unit.name })),
-    ),
-    ...refs.externalSpools.filter((entityId) => slotOf(hass, entityId).active).map(() => t(hass, "external")),
-  ];
+  const external = !dialog.ams;
+  // What feeds the printer now -- one slot or spool at most --, as the
+  // dialogs name it: the AMS reads a chip only once it is unloaded.
+  const slot = refs.ams.flatMap((unit) => unit.slots.flatMap((entityId, index) => (slotOf(hass, entityId).active ? [slotPlace(hass, unit, entityId, index)] : [])))[0];
+  const spool = refs.externalSpools.findIndex((entityId) => slotOf(hass, entityId).active);
+  const unloadFirst = slot
+    ? t(hass, "rfid_unload_hint", { slots: slot })
+    : spool < 0
+      ? undefined
+      : t(hass, refs.externalSpools.length > 1 ? (spool === 0 ? "rfid_unload_hint_left" : "rfid_unload_hint_right") : "rfid_unload_hint_external");
   return html`<div class="slot-tools">
-      ${dialog.ams ? actionButton({ label: t(hass, "rfid_read"), iconName: "sync", disabled: running || loaded.length > 0, onClick: actions.refreshRfid }) : nothing}
-      ${actionButton({ label: t(hass, "slot_reset"), iconName: "restore", disabled: running, onClick: actions.resetSlot })}
+      ${dialog.ams ? actionButton({ label: t(hass, "rfid_read"), iconName: "sync", disabled: running || unloadFirst !== undefined, onClick: actions.refreshRfid }) : nothing}
+      ${dialog.empty
+        ? nothing
+        : actionButton({ label: t(hass, external ? "spool_reset" : "slot_reset"), iconName: "restore", disabled: running, onClick: actions.resetSlot })}
     </div>
     ${running
-      ? dialogNote(t(hass, "slot_tools_running"))
-      : dialog.ams && loaded.length
-        ? dialogNote(t(hass, "rfid_unload_hint", { slots: loaded.join(", ") }))
+      ? dialogNote(t(hass, external ? "spool_tools_running" : "slot_tools_running"))
+      : dialog.ams && unloadFirst
+        ? dialogNote(unloadFirst)
         : nothing}`;
 }
 
@@ -504,8 +537,8 @@ function buttons(ctx: CardContext, dialog: Dialog): { keep: string; confirm?: st
         confirm: t(hass, "filament_set"),
         danger: false,
         ready: dialog.material !== undefined && Object.keys(filamentChanges(dialog)).length > 0,
-        // A colour chosen for a slot without a material: it needs one too.
-        ...(dialog.material === undefined && dialog.color !== undefined ? { need: t(hass, "filament_need_material") } : {}),
+        // A colour or a K profile chosen for a slot without a material: it needs one too.
+        ...(dialog.material === undefined && (dialog.color !== undefined || dialog.kprofile !== undefined) ? { need: t(hass, "filament_need_material") } : {}),
       };
     case "hms":
       return { keep: t(hass, "dismiss"), ...(canClearHms(ctx) ? { confirm: t(hass, "hms_clear") } : {}), danger: false, ready: true, quiet: hmsAnswered(ctx) };
@@ -520,7 +553,8 @@ function buttons(ctx: CardContext, dialog: Dialog): { keep: string; confirm?: st
     case "check":
       return { keep: t(hass, "dismiss"), ...(dialog.running ? {} : { confirm: t(hass, "check_again") }), danger: false, ready: !dialog.running };
     case "skip": {
-      if (!dialog.loading && (dialog.error || !dialog.objects.length)) return { keep: t(hass, "dismiss"), danger: true, ready: false };
+      // Nothing to choose: one way out.
+      if (!dialog.loading && (dialog.error || dialog.objects.length <= 1)) return { keep: t(hass, "dismiss"), danger: true, ready: false };
       const count = dialog.chosen.length;
       const confirm = count === 0 ? t(hass, "skip") : count === 1 ? t(hass, "skip_one") : t(hass, "skip_many", { count });
       return { keep: t(hass, "cancel"), confirm, danger: true, ready: count > 0 && !everyObject(dialog) };
@@ -562,7 +596,7 @@ function content(ctx: CardContext, dialog: Dialog, actions: DialogActions): Temp
   }
 }
 
-/** The live view's frame rate (his word): from 5 to the camera's most, in
+/** The live view's frame rate: from 5 to the camera's most, in
  * steps of 5; sent when the taps stop, the stream follows. */
 function cameraContent(ctx: CardContext, actions: DialogActions): TemplateResult {
   const { hass, refs } = ctx;
@@ -581,25 +615,11 @@ function cameraContent(ctx: CardContext, actions: DialogActions): TemplateResult
   const arriving = camera?.["streamed_frame_rate"];
   const differs = typeof arriving === "number" && typeof asked === "number" && Math.abs(arriving - asked) > 2;
   return html`<h2 id="dlg-title">${t(hass, "fps_title")}</h2>
-    <div class="stepper">
-      ${actionButton({
-        label: t(hass, "fps_lower", { step }),
-        iconName: "minus",
-        iconOnly: true,
-        disabled: value <= min,
-        onClick: () => ctx.stepTarget(number, Math.max(min, value - step)),
-      })}
-      <output class="step-value" aria-live="polite">
-        <span aria-hidden="true">${t(hass, "fps_value", { fps: value })}</span><span class="sr-only">${t(hass, "fps_aria", { fps: value })}</span>
-      </output>
-      ${actionButton({
-        label: t(hass, "fps_raise", { step }),
-        iconName: "plus",
-        iconOnly: true,
-        disabled: value >= max,
-        onClick: () => ctx.stepTarget(number, Math.min(max, value + step)),
-      })}
-    </div>
+    ${stepControl({
+      lower: { label: t(hass, "fps_lower", { step }), disabled: value <= min, onClick: () => ctx.stepTarget(number, Math.max(min, value - step)) },
+      raise: { label: t(hass, "fps_raise", { step }), disabled: value >= max, onClick: () => ctx.stepTarget(number, Math.min(max, value + step)) },
+      value: html`<span aria-hidden="true">${t(hass, "fps_value", { fps: value })}</span><span class="sr-only">${t(hass, "fps_aria", { fps: value })}</span>`,
+    })}
     <p class="hint">${t(hass, "fps_note", { max })}</p>
     ${differs
       ? html`${dialogNote(t(hass, "fps_arriving", { now: arriving }), "warning", "fps-arriving")}

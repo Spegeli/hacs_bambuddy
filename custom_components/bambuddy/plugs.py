@@ -2,6 +2,7 @@
 links to a printer, what kind it is, and what it last reported."""
 from __future__ import annotations
 
+from collections.abc import Iterable
 from dataclasses import dataclass
 from typing import Any, Literal
 
@@ -52,6 +53,11 @@ class Plug:
         return str(self.info.get("plug_type") or "tasmota")
 
     @property
+    def model(self) -> str:
+        """What the plug's device is a model of: its type, as BamBuddy names it."""
+        return PLUG_TYPES.get(self.plug_type, self.plug_type)
+
+    @property
     def kind(self) -> PlugKind:
         """A switch; a Home Assistant script, which only runs; or an MQTT
         plug, which BamBuddy only watches."""
@@ -64,8 +70,29 @@ class Plug:
     @property
     def powers_printer(self) -> bool:
         """BamBuddy's "powers the printer": off, BamBuddy marks the printer
-        offline. True when BamBuddy does not say (its default)."""
-        return self.info.get("controls_printer_power") is not False
+        offline. True when BamBuddy does not say (its default) -- never for
+        a script: it runs, it powers nothing (BamBuddy's own choice of the
+        printer's plug leaves scripts out)."""
+        return self.kind != "script" and self.info.get("controls_printer_power") is not False
+
+    @property
+    def reports_power(self) -> bool:
+        """Configured with somewhere to read watts (BamBuddy's
+        `_reports_power`): a Tasmota always."""
+        if self.plug_type == "homeassistant":
+            return bool(self.info.get("ha_power_entity"))
+        if self.plug_type == "mqtt":
+            return bool(self.info.get("mqtt_power_topic") or self.info.get("mqtt_topic"))
+        if self.plug_type == "rest":
+            return bool(self.info.get("rest_power_path"))
+        return True
+
+    @property
+    def main_rank(self) -> tuple[bool, bool, bool, bool, int]:
+        """Best first, as BamBuddy picks a printer's own plug among those that
+        power it (`_main_plug_rank`, #2830): one that switches, enabled,
+        shown on the printer card, reporting power, then the lowest number."""
+        return (self.kind != "switch", self.info.get("enabled") is False, not self.on_card, not self.reports_power, self.id)
 
     @property
     def on_card(self) -> bool:
@@ -99,21 +126,16 @@ class Plug:
         return _number((self.status.get("energy") or {}).get(field))
 
 
-def printer_plug(plugs: list[Plug]) -> Plug | None:
-    """The plug that powers the printer: the first switchable one BamBuddy
-    marks so."""
-    return next((plug for plug in plugs if plug.kind == "switch" and plug.powers_printer), None)
-
-
-def sort_plugs(plugs: list[Plug]) -> list[Plug]:
-    """A printer's plugs: the one that powers it first, then by name."""
-    main = printer_plug(plugs)
-    return sorted(plugs, key=lambda plug: (plug is not main, plug.name.casefold(), plug.id))
-
-
 def plug_device_name(printer_name: str, plug: Plug) -> str:
     """After its printer's BamBuddy name, so it sorts right under the
     printer (as its AMS units do), and what it is in brackets, as the
     printer's and the AMS units' models: a plug called "Exhaust fan" is a
-    plug (his word)."""
+    plug."""
     return f"{printer_name} {plug.name} (Smart Plug)"
+
+
+def main_of(plugs: Iterable[Plug], printer_id: int | None) -> int | None:
+    """The printer's own plug among `plugs`: BamBuddy's choice among the
+    plugs that power it (`Plug.main_rank`); None where none does."""
+    best = min((plug for plug in plugs if plug.printer_id == printer_id and plug.powers_printer), key=lambda plug: plug.main_rank, default=None)
+    return best.id if best else None

@@ -27,6 +27,8 @@ INSTANCE_INTERVAL = timedelta(seconds=60)
 # For the system information BamBuddy walks through its whole archive.
 SYSTEM_INTERVAL = timedelta(minutes=5)
 UPDATE_INTERVAL = timedelta(hours=6)
+# A check that failed is asked again sooner.
+UPDATE_RETRY_INTERVAL = timedelta(minutes=15)
 # The print hours, BamBuddy's name and details of a printer change slowly:
 # read once a minute, not with every status.
 RUNTIME_INTERVAL = 60.0
@@ -44,9 +46,9 @@ REFRESH_AFTER_COMMAND = 1.5
 # and 2 s after a switch.
 PLUG_INTERVAL = timedelta(seconds=15)
 PLUG_LIST_INTERVAL = 60.0
+REFRESH_AFTER_PLUG = 2.0
 # A printer BamBuddy no longer lists: its list read so often until it is back.
 MISSING_INTERVAL = timedelta(seconds=60)
-REFRESH_AFTER_PLUG = 2.0
 # The printer's K profiles, once listed: what Set filament picks from for so
 # long -- a printer may not answer the same question twice in a row.
 K_PROFILES_KEEP = 600.0

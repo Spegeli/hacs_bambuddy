@@ -88,6 +88,9 @@
     "light": {
       "chamber_light": {
         "default": "mdi:lightbulb"
+      },
+      "light": {
+        "default": "mdi:lightbulb"
       }
     },
     "number": {
@@ -127,7 +130,8 @@
         "default": "mdi:air-filter",
         "state": {
           "cooling": "mdi:snowflake",
-          "heating": "mdi:fire"
+          "heating": "mdi:fire",
+          "laser": "mdi:laser-pointer"
         }
       },
       "active_nozzle": {
