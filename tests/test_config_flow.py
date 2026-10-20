@@ -1145,5 +1145,8 @@ def test_configure_says_the_entrys_name_and_the_key_help_says_what_control_is_fo
         steps = texts["config"]["step"]
         assert steps["user"]["data_description"]["api_key"] == steps["reauth_confirm"]["data_description"]["api_key"]
         operate = {"en": "operate them from Home Assistant", "de": "aus Home Assistant bedienen"}[language]
+        maintenance = {"en": "Manage Maintenance", "de": "„Wartung verwalten“"}[language]
         for step in ("user", "reconfigure"):
             assert operate in steps[step]["data_description"]["api_key"], (language, step)
+            # The third permission the integration uses: marking maintenance done.
+            assert maintenance in steps[step]["data_description"]["api_key"], (language, step)

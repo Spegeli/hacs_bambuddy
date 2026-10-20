@@ -11,7 +11,7 @@
         },
         "data_description": {
           "url": "The address you open BamBuddy with in your browser, for example `192.168.1.20:8000` or `{example_url}`.",
-          "api_key": "Create one in BamBuddy under Settings → API Keys. It always needs Read Status: with it you see your printers in Home Assistant. If you want to operate them from Home Assistant as well (pause a print, switch the light or a plug, for example), turn on Control Printer too.",
+          "api_key": "Create one in BamBuddy under Settings → API Keys. It always needs Read Status: with it you see your printers in Home Assistant. If you want to operate them from Home Assistant as well (pause a print, switch the light or a plug, for example), turn on Control Printer too. With Manage Maintenance, you can also mark maintenance done from Home Assistant.",
           "verify_ssl": "Only matters for https addresses. Turn it off if BamBuddy uses a self-signed certificate."
         }
       },
@@ -36,7 +36,7 @@
           "api_key": "API key"
         },
         "data_description": {
-          "api_key": "Create one in BamBuddy under Settings → API Keys. It always needs Read Status: with it you see your printers in Home Assistant. If you want to operate them from Home Assistant as well (pause a print, switch the light or a plug, for example), turn on Control Printer too."
+          "api_key": "Create one in BamBuddy under Settings → API Keys. It always needs Read Status: with it you see your printers in Home Assistant. If you want to operate them from Home Assistant as well (pause a print, switch the light or a plug, for example), turn on Control Printer too. With Manage Maintenance, you can also mark maintenance done from Home Assistant."
         }
       },
       "reconfigure": {
@@ -49,7 +49,7 @@
         },
         "data_description": {
           "url": "The address you open BamBuddy with in your browser, for example `192.168.1.20:8000` or `{example_url}`.",
-          "api_key": "Leave it empty to keep the current key. A new one always needs Read Status: with it you see your printers in Home Assistant. If you want to operate them from Home Assistant as well (pause a print, switch the light or a plug, for example), turn on Control Printer too.",
+          "api_key": "Leave it empty to keep the current key. A new one always needs Read Status: with it you see your printers in Home Assistant. If you want to operate them from Home Assistant as well (pause a print, switch the light or a plug, for example), turn on Control Printer too. With Manage Maintenance, you can also mark maintenance done from Home Assistant.",
           "verify_ssl": "Only matters for https addresses. Turn it off if BamBuddy uses a self-signed certificate."
         }
       },

@@ -11,7 +11,7 @@
         },
         "data_description": {
           "url": "Die Adresse, mit der du BamBuddy im Browser öffnest, zum Beispiel `192.168.1.20:8000` oder `{example_url}`.",
-          "api_key": "Erstelle ihn in BamBuddy unter Einstellungen → API-Schlüssel. Er braucht immer „Status lesen“: Damit siehst du deine Drucker in Home Assistant. Willst du sie auch aus Home Assistant bedienen (etwa einen Druck pausieren, das Licht oder eine Steckdose schalten), schalte zusätzlich „Drucker steuern“ ein.",
+          "api_key": "Erstelle ihn in BamBuddy unter Einstellungen → API-Schlüssel. Er braucht immer „Status lesen“: Damit siehst du deine Drucker in Home Assistant. Willst du sie auch aus Home Assistant bedienen (etwa einen Druck pausieren, das Licht oder eine Steckdose schalten), schalte zusätzlich „Drucker steuern“ ein. Mit „Wartung verwalten“ kannst du außerdem Wartungen aus Home Assistant als erledigt markieren.",
           "verify_ssl": "Nur für https-Adressen wichtig. Schalte es aus, wenn BamBuddy ein selbst signiertes Zertifikat nutzt."
         }
       },
@@ -36,7 +36,7 @@
           "api_key": "API-Schlüssel"
         },
         "data_description": {
-          "api_key": "Erstelle ihn in BamBuddy unter Einstellungen → API-Schlüssel. Er braucht immer „Status lesen“: Damit siehst du deine Drucker in Home Assistant. Willst du sie auch aus Home Assistant bedienen (etwa einen Druck pausieren, das Licht oder eine Steckdose schalten), schalte zusätzlich „Drucker steuern“ ein."
+          "api_key": "Erstelle ihn in BamBuddy unter Einstellungen → API-Schlüssel. Er braucht immer „Status lesen“: Damit siehst du deine Drucker in Home Assistant. Willst du sie auch aus Home Assistant bedienen (etwa einen Druck pausieren, das Licht oder eine Steckdose schalten), schalte zusätzlich „Drucker steuern“ ein. Mit „Wartung verwalten“ kannst du außerdem Wartungen aus Home Assistant als erledigt markieren."
         }
       },
       "reconfigure": {
@@ -49,7 +49,7 @@
         },
         "data_description": {
           "url": "Die Adresse, mit der du BamBuddy im Browser öffnest, zum Beispiel `192.168.1.20:8000` oder `{example_url}`.",
-          "api_key": "Lass das Feld leer, um den aktuellen API-Schlüssel zu behalten. Ein neuer braucht immer „Status lesen“: Damit siehst du deine Drucker in Home Assistant. Willst du sie auch aus Home Assistant bedienen (etwa einen Druck pausieren, das Licht oder eine Steckdose schalten), schalte zusätzlich „Drucker steuern“ ein.",
+          "api_key": "Lass das Feld leer, um den aktuellen API-Schlüssel zu behalten. Ein neuer braucht immer „Status lesen“: Damit siehst du deine Drucker in Home Assistant. Willst du sie auch aus Home Assistant bedienen (etwa einen Druck pausieren, das Licht oder eine Steckdose schalten), schalte zusätzlich „Drucker steuern“ ein. Mit „Wartung verwalten“ kannst du außerdem Wartungen aus Home Assistant als erledigt markieren.",
           "verify_ssl": "Nur für https-Adressen wichtig. Schalte es aus, wenn BamBuddy ein selbst signiertes Zertifikat nutzt."
         }
       },
