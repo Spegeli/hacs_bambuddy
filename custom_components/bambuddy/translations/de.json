@@ -30,13 +30,13 @@
         }
       },
       "reauth_confirm": {
-        "title": "API-Schlüssel eingeben",
-        "description": "BamBuddy unter {url} akzeptiert den API-Schlüssel nicht mehr, oder ihm fehlt eine nötige Berechtigung. Gib ihn erneut ein, sobald er sie hat, oder erstelle in BamBuddy unter Einstellungen → API-Schlüssel einen neuen.",
+        "title": "Neuer BamBuddy-API-Schlüssel nötig",
+        "description": "BamBuddy unter {url} akzeptiert den gespeicherten API-Schlüssel nicht mehr, oder ihm fehlt eine nötige Berechtigung. Deine Geräte, Entitäten und ihr Verlauf bleiben erhalten.\n\nSo erstellst du einen neuen API-Schlüssel:\n\n1. Öffne in BamBuddy Einstellungen → API-Schlüssel und wähle „Schlüssel erstellen“.\n2. Gib ihm einen Namen, zum Beispiel „Home Assistant“, und schalte die Berechtigungen ein, die unten am Feld stehen.\n3. Kopiere den Schlüssel und füge ihn unten ein. BamBuddy zeigt ihn nur einmal an.\n\nHat der bisherige Schlüssel nur eine Berechtigung verloren, schalte sie in BamBuddy wieder ein und gib ihn hier erneut ein.",
         "data": {
           "api_key": "API-Schlüssel"
         },
         "data_description": {
-          "api_key": "Erstelle ihn in BamBuddy unter Einstellungen → API-Schlüssel. Er braucht immer „Status lesen“: Damit siehst du deine Drucker in Home Assistant. Willst du sie auch aus Home Assistant bedienen (etwa einen Druck pausieren, das Licht oder eine Steckdose schalten), schalte zusätzlich „Drucker steuern“ ein. Mit „Wartung verwalten“ kannst du außerdem Wartungen aus Home Assistant als erledigt markieren."
+          "api_key": "Er braucht immer „Status lesen“: Damit siehst du deine Drucker in Home Assistant. Willst du sie auch aus Home Assistant bedienen (etwa einen Druck pausieren, das Licht oder eine Steckdose schalten), schalte zusätzlich „Drucker steuern“ ein. Mit „Wartung verwalten“ kannst du außerdem Wartungen aus Home Assistant als erledigt markieren."
         }
       },
       "reconfigure": {

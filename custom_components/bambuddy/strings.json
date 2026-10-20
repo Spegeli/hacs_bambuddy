@@ -30,13 +30,13 @@
         }
       },
       "reauth_confirm": {
-        "title": "Enter the API key",
-        "description": "BamBuddy at {url} no longer accepts the API key, or the key lacks a permission it needs. Enter it again once it has that permission, or create a new one in BamBuddy under Settings → API Keys.",
+        "title": "New BamBuddy API key needed",
+        "description": "BamBuddy at {url} no longer accepts the stored API key, or the key lacks a permission it needs. Your devices, entities and their history are kept.\n\nTo create a new API key:\n\n1. In BamBuddy, open Settings → API Keys and choose “Create Key”.\n2. Give it a name, such as “Home Assistant”, and turn on the permissions listed below the field.\n3. Copy the key and paste it below. BamBuddy shows it only once.\n\nIf the old key only lost a permission, turn it back on in BamBuddy and enter the key here again.",
         "data": {
           "api_key": "API key"
         },
         "data_description": {
-          "api_key": "Create one in BamBuddy under Settings → API Keys. It always needs Read Status: with it you see your printers in Home Assistant. If you want to operate them from Home Assistant as well (pause a print, switch the light or a plug, for example), turn on Control Printer too. With Manage Maintenance, you can also mark maintenance done from Home Assistant."
+          "api_key": "It always needs Read Status: with it you see your printers in Home Assistant. If you want to operate them from Home Assistant as well (pause a print, switch the light or a plug, for example), turn on Control Printer too. With Manage Maintenance, you can also mark maintenance done from Home Assistant."
         }
       },
       "reconfigure": {

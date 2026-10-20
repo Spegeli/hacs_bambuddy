@@ -1143,7 +1143,16 @@ def test_configure_says_the_entrys_name_and_the_key_help_says_what_control_is_fo
         for reason in ("cannot_connect", "no_printers", "all_printers_added", "key_refused"):
             assert "{name}" in options["abort"][reason], (language, reason)
         steps = texts["config"]["step"]
-        assert steps["user"]["data_description"]["api_key"] == steps["reauth_confirm"]["data_description"]["api_key"]
+        # Signing in again: the dialog walks through a new key, so the field's
+        # help leaves out where to create one and says only what it needs.
+        reauth = steps["reauth_confirm"]
+        first, rest = steps["user"]["data_description"]["api_key"].split(". ", 1)
+        assert reauth["data_description"]["api_key"] == rest, language
+        assert first not in reauth["data_description"]["api_key"]
+        assert "BamBuddy" in reauth["title"], language
+        create = {"en": "“Create Key”", "de": "„Schlüssel erstellen“"}[language]
+        assert create in reauth["description"] and "{url}" in reauth["description"], language
+        assert "\n\n1. " in reauth["description"] and "\n3. " in reauth["description"], language
         operate = {"en": "operate them from Home Assistant", "de": "aus Home Assistant bedienen"}[language]
         maintenance = {"en": "Manage Maintenance", "de": "„Wartung verwalten“"}[language]
         for step in ("user", "reconfigure"):
