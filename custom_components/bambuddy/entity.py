@@ -304,7 +304,6 @@ async def async_run_command(
     paused_ok: bool = False,
     offline_ok: bool = False,
     refresh: bool = True,
-    denied: str = "control_not_permitted",
 ) -> _T:
     """Send a command to a printer, unless it cannot take it now; BamBuddy's
     refusals as translated errors; the status read again shortly after.
@@ -316,7 +315,8 @@ async def async_run_command(
     takes it -- a filament swap by hand, between the colours of a print.
     `offline_ok`: BamBuddy acts without the printer (it sends it nothing).
     `refresh`: a command, not a read: read the status again soon after.
-    `denied`: the error when the key lacks BamBuddy's permission."""
+    A refusal (401, 403) goes to the key's guard: it says whether the key is
+    the cause, and alone starts a reauthentication."""
     data = coordinator.data
     # BamBuddy's name, short enough for a phone's toast.
     name = short_name(coordinator.info)
@@ -337,11 +337,8 @@ async def async_run_command(
         coordinator.note_command()
     try:
         result = await call()
-    except BamBuddyPermissionError as err:
-        raise HomeAssistantError(translation_domain=DOMAIN, translation_key=denied) from err
-    except BamBuddyAuthError as err:
-        coordinator.config_entry.async_start_reauth(coordinator.hass)
-        raise HomeAssistantError(translation_domain=DOMAIN, translation_key="auth_failed") from err
+    except (BamBuddyAuthError, BamBuddyPermissionError) as err:
+        raise await coordinator.config_entry.runtime_data.key.async_refused(err) from err
     except BamBuddyConnectionError as err:
         if timed_out(err) and not refresh:
             # A read: nothing may still reach the printer.
@@ -462,11 +459,8 @@ async def async_switch_plug(coordinator: BamBuddyPlugCoordinator, plug: Plug, on
     coordinator.note_command()
     try:
         await coordinator.client.control_plug(plug.id, on)
-    except BamBuddyPermissionError as err:
-        raise HomeAssistantError(translation_domain=DOMAIN, translation_key="plug_control_not_permitted") from err
-    except BamBuddyAuthError as err:
-        coordinator.config_entry.async_start_reauth(coordinator.hass)
-        raise HomeAssistantError(translation_domain=DOMAIN, translation_key="auth_failed") from err
+    except (BamBuddyAuthError, BamBuddyPermissionError) as err:
+        raise await coordinator.config_entry.runtime_data.key.async_refused(err) from err
     except BamBuddyConnectionError as err:
         if timed_out(err):
             raise HomeAssistantError(translation_domain=DOMAIN, translation_key="no_answer") from err

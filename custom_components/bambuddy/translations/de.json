@@ -11,7 +11,7 @@
         },
         "data_description": {
           "url": "Die Adresse, mit der du BamBuddy im Browser öffnest, zum Beispiel `192.168.1.20:8000` oder `{example_url}`.",
-          "api_key": "Erstelle ihn in BamBuddy unter Einstellungen → API-Schlüssel. Er braucht immer „Status lesen“: Damit siehst du deine Drucker in Home Assistant. Willst du sie auch aus Home Assistant bedienen (etwa einen Druck pausieren, das Licht oder eine Steckdose schalten), schalte zusätzlich „Drucker steuern“ ein. Mit „Wartung verwalten“ kannst du außerdem Wartungen aus Home Assistant als erledigt markieren.",
+          "api_key": "Erstelle ihn in BamBuddy unter Einstellungen → API-Schlüssel, mit allen drei Berechtigungen: „Status lesen“, „Drucker steuern“ und „Wartung verwalten“.",
           "verify_ssl": "Nur für https-Adressen wichtig. Schalte es aus, wenn BamBuddy ein selbst signiertes Zertifikat nutzt."
         }
       },
@@ -22,21 +22,34 @@
           "printers": "Drucker"
         }
       },
-      "printers_read_only": {
-        "title": "Drucker auswählen",
-        "description": "Diese Drucker sind in BamBuddy eingerichtet. Jeder ausgewählte Drucker wird ein Gerät in Home Assistant. Über „Konfigurieren“ kannst du später Drucker hinzufügen oder entfernen. Die Namen kommen aus BamBuddy – benenne Drucker dort um.\n\nDieser API-Schlüssel darf nur lesen: Du siehst deine Drucker, kannst sie aber nicht aus Home Assistant bedienen. Dafür schalte in BamBuddy beim Schlüssel „Drucker steuern“ ein und lade die Integration danach neu.",
-        "data": {
-          "printers": "Drucker"
-        }
-      },
       "reauth_confirm": {
         "title": "Neuer BamBuddy-API-Schlüssel nötig",
-        "description": "BamBuddy unter {url} akzeptiert den gespeicherten API-Schlüssel nicht mehr, oder ihm fehlt eine nötige Berechtigung. Deine Geräte, Entitäten und ihr Verlauf bleiben erhalten.\n\nSo erstellst du einen neuen API-Schlüssel:\n\n1. Öffne in BamBuddy Einstellungen → API-Schlüssel und wähle „Schlüssel erstellen“.\n2. Gib ihm einen Namen, zum Beispiel „Home Assistant“, und schalte die Berechtigungen ein, die unten am Feld stehen.\n3. Kopiere den Schlüssel und füge ihn unten ein. BamBuddy zeigt ihn nur einmal an.\n\nHat der bisherige Schlüssel nur eine Berechtigung verloren, schalte sie in BamBuddy wieder ein und gib ihn hier erneut ein.",
+        "description": "BamBuddy unter {url} akzeptiert den gespeicherten API-Schlüssel nicht mehr: Er wurde gelöscht, ist abgelaufen oder ausgeschaltet. Deine Geräte, Entitäten und ihr Verlauf bleiben erhalten.\n\nSo erstellst du einen neuen API-Schlüssel:\n\n1. Öffne in BamBuddy Einstellungen → API-Schlüssel und wähle „Schlüssel erstellen“.\n2. Gib ihm einen Namen, zum Beispiel „Home Assistant“, und hake „Status lesen“, „Drucker steuern“ und „Wartung verwalten“ an.\n3. Kopiere den Schlüssel und füge ihn unten ein. BamBuddy zeigt ihn nur einmal an.",
         "data": {
           "api_key": "API-Schlüssel"
         },
         "data_description": {
-          "api_key": "Er braucht immer „Status lesen“: Damit siehst du deine Drucker in Home Assistant. Willst du sie auch aus Home Assistant bedienen (etwa einen Druck pausieren, das Licht oder eine Steckdose schalten), schalte zusätzlich „Drucker steuern“ ein. Mit „Wartung verwalten“ kannst du außerdem Wartungen aus Home Assistant als erledigt markieren."
+          "api_key": "Lass das Feld leer, um den gespeicherten Schlüssel erneut zu prüfen – nach einer Änderung in BamBuddy, etwa wenn du seinem Besitzer ein Recht gegeben hast."
+        }
+      },
+      "reauth_scopes": {
+        "title": "Neuer BamBuddy-API-Schlüssel nötig",
+        "description": "BamBuddy unter {url} kennt den gespeicherten API-Schlüssel, aber ihm fehlen Berechtigungen, die diese Integration braucht:\n\n- „Status lesen“ {stored_read_status}\n- „Drucker steuern“ {stored_control_printer}\n- „Wartung verwalten“ {stored_manage_maintenance}\n\nEinem bestehenden Schlüssel kann BamBuddy keine Berechtigungen hinzufügen. Hast du eine mit ✗ in BamBuddy angehakt, darf der Besitzer des Schlüssels das nicht: Gib ihm das Recht, oder erstelle den Schlüssel als Benutzer, der es hat. Deine Geräte, Entitäten und ihr Verlauf bleiben erhalten.\n\nSo erstellst du einen neuen API-Schlüssel:\n\n1. Öffne in BamBuddy Einstellungen → API-Schlüssel und wähle „Schlüssel erstellen“.\n2. Gib ihm einen Namen, zum Beispiel „Home Assistant“, und hake „Status lesen“, „Drucker steuern“ und „Wartung verwalten“ an.\n3. Kopiere den Schlüssel und füge ihn unten ein. BamBuddy zeigt ihn nur einmal an.",
+        "data": {
+          "api_key": "API-Schlüssel"
+        },
+        "data_description": {
+          "api_key": "Lass das Feld leer, um den gespeicherten Schlüssel erneut zu prüfen – nach einer Änderung in BamBuddy, etwa wenn du seinem Besitzer ein Recht gegeben hast."
+        }
+      },
+      "reauth_owner": {
+        "title": "Neuer BamBuddy-API-Schlüssel nötig",
+        "description": "BamBuddy unter {url} kennt den gespeicherten API-Schlüssel, aber sein Besitzer ist in BamBuddy deaktiviert oder gelöscht. Deine Geräte, Entitäten und ihr Verlauf bleiben erhalten.\n\nSo erstellst du einen neuen API-Schlüssel:\n\n1. Melde dich in BamBuddy als aktiver Benutzer an, öffne Einstellungen → API-Schlüssel und wähle „Schlüssel erstellen“.\n2. Gib ihm einen Namen, zum Beispiel „Home Assistant“, und hake „Status lesen“, „Drucker steuern“ und „Wartung verwalten“ an.\n3. Kopiere den Schlüssel und füge ihn unten ein. BamBuddy zeigt ihn nur einmal an.",
+        "data": {
+          "api_key": "API-Schlüssel"
+        },
+        "data_description": {
+          "api_key": "Lass das Feld leer, um den gespeicherten Schlüssel erneut zu prüfen – nach einer Änderung in BamBuddy, etwa wenn du seinem Besitzer ein Recht gegeben hast."
         }
       },
       "reconfigure": {
@@ -49,7 +62,7 @@
         },
         "data_description": {
           "url": "Die Adresse, mit der du BamBuddy im Browser öffnest, zum Beispiel `192.168.1.20:8000` oder `{example_url}`.",
-          "api_key": "Lass das Feld leer, um den aktuellen API-Schlüssel zu behalten. Ein neuer braucht immer „Status lesen“: Damit siehst du deine Drucker in Home Assistant. Willst du sie auch aus Home Assistant bedienen (etwa einen Druck pausieren, das Licht oder eine Steckdose schalten), schalte zusätzlich „Drucker steuern“ ein. Mit „Wartung verwalten“ kannst du außerdem Wartungen aus Home Assistant als erledigt markieren.",
+          "api_key": "Lass das Feld leer, um den aktuellen API-Schlüssel zu behalten. Ein neuer braucht alle drei Berechtigungen: „Status lesen“, „Drucker steuern“ und „Wartung verwalten“.",
           "verify_ssl": "Nur für https-Adressen wichtig. Schalte es aus, wenn BamBuddy ein selbst signiertes Zertifikat nutzt."
         }
       },
@@ -104,9 +117,13 @@
     },
     "error": {
       "cannot_connect": "BamBuddy antwortet unter dieser Adresse nicht, oder es ist nicht die Adresse von BamBuddy. Prüfe die Adresse samt Port (meist 8000) und ob BamBuddy läuft.",
-      "invalid_auth": "BamBuddy nimmt diesen API-Schlüssel nicht an. Kopiere ihn erneut (BamBuddy zeigt ihn nur einmal) oder lege einen neuen an.",
+      "invalid_auth": "BamBuddy nimmt diesen API-Schlüssel nicht an. Prüfe, ob du ihn vollständig eingefügt hast. BamBuddy zeigt einen Schlüssel nur einmal: Hast du ihn nicht mehr, erstelle einen neuen.",
+      "missing_scopes": "Dem eingegebenen API-Schlüssel fehlen Berechtigungen: „Status lesen“ {read_status}, „Drucker steuern“ {control_printer}, „Wartung verwalten“ {manage_maintenance}. Einem bestehenden Schlüssel kann BamBuddy keine Berechtigungen hinzufügen: Erstelle einen neuen mit allen dreien. Hast du eine mit ✗ in BamBuddy angehakt, darf der Besitzer des Schlüssels das nicht: Gib ihm das Recht, oder erstelle den Schlüssel als Benutzer, der es hat.",
+      "key_owner_inactive": "BamBuddy kennt diesen API-Schlüssel, aber sein Besitzer ist deaktiviert oder gelöscht. Melde dich in BamBuddy als aktiver Benutzer an und erstelle einen neuen Schlüssel mit „Status lesen“, „Drucker steuern“ und „Wartung verwalten“.",
+      "bambuddy_refused": "BamBuddy hat eine Abfrage abgelehnt, obwohl der API-Schlüssel jede Berechtigung hat, die die Integration braucht: {error}",
       "stored_key_refused": "BamBuddy akzeptiert den gespeicherten API-Schlüssel nicht mehr. Gib einen neuen ein.",
-      "missing_permission": "Dem API-Schlüssel fehlt die Berechtigung „Status lesen“. Schalte sie in BamBuddy unter Einstellungen → API-Schlüssel ein (auch der Besitzer des Schlüssels braucht sie).",
+      "stored_key_scopes": "Dem gespeicherten API-Schlüssel fehlen Berechtigungen: „Status lesen“ {read_status}, „Drucker steuern“ {control_printer}, „Wartung verwalten“ {manage_maintenance}. Gib einen neuen mit allen dreien ein.",
+      "stored_key_owner": "Der Besitzer des gespeicherten API-Schlüssels ist in BamBuddy deaktiviert oder gelöscht. Gib einen neuen ein, erstellt als aktiver Benutzer.",
       "invalid_url": "Das ist keine gültige Adresse. Gib sie zum Beispiel so ein: 192.168.1.20:8000 oder {example_url}.",
       "not_bambuddy": "Unter dieser Adresse antwortet kein BamBuddy, oder er ist älter als Version {minimum}.",
       "too_old": "BamBuddy {version} ist zu alt. Aktualisiere BamBuddy auf Version {minimum} oder neuer.",
@@ -121,12 +138,10 @@
       "already_configured": "Dieser BamBuddy-Server ist bereits eingerichtet.\n\nDrucker hinzufügen und entfernen kannst du beim Eintrag über „Konfigurieren“.",
       "address_in_use": "Diese Adresse gehört schon zu einem anderen BamBuddy-Eintrag. Es wurde nichts geändert.",
       "reauth_successful": "Der API-Schlüssel funktioniert. BamBuddy ist wieder verbunden.",
-      "reauth_successful_read_only": "Der API-Schlüssel funktioniert. BamBuddy ist wieder verbunden. Dieser Schlüssel darf nur lesen: Zum Bedienen aus Home Assistant braucht er „Drucker steuern“.",
       "reconfigure_successful": "Die Verbindung wurde gespeichert.",
       "reconfigure_successful_missing": "Die Verbindung wurde geändert. Nicht gefunden: {printers}. Unter Einstellungen → Reparaturen kannst du sie entfernen, oder alle auf einmal über „Konfigurieren“ → „Drucker entfernen“.",
       "reconfigure_successful_other": "Die Verbindung wurde geändert. Der Verlauf des BamBuddy-Geräts beginnt neu.",
       "reconfigure_successful_other_missing": "Die Verbindung wurde geändert. Der Verlauf des BamBuddy-Geräts beginnt neu. Nicht gefunden: {printers}. Unter Einstellungen → Reparaturen kannst du sie entfernen, oder alle auf einmal über „Konfigurieren“ → „Drucker entfernen“.",
-      "reconfigure_successful_read_only": "Die Verbindung wurde gespeichert. Dieser Schlüssel darf nur lesen: Zum Bedienen aus Home Assistant braucht er „Drucker steuern“.",
       "printers_in_use": "Jeder Drucker von diesem BamBuddy ist schon eingerichtet, über {entries}. Um BamBuddy unter einer anderen Adresse zu erreichen, nutze bei diesem Eintrag ⋮ → Neu konfigurieren; Drucker fügst du dort über „Konfigurieren“ hinzu oder entfernst sie."
     },
     "create_entry": {
@@ -681,10 +696,22 @@
       "message": "BamBuddy {version} ist zu alt für diese Integration. Aktualisiere BamBuddy auf Version {minimum} oder neuer."
     },
     "auth_failed": {
-      "message": "BamBuddy akzeptiert den API-Schlüssel nicht mehr. Öffne die BamBuddy-Integration, um einen neuen einzugeben."
+      "message": "BamBuddy akzeptiert den API-Schlüssel nicht mehr. Gib unter Einstellungen → Reparaturen einen neuen ein."
     },
-    "auth_permission": {
-      "message": "BamBuddy akzeptiert den API-Schlüssel, aber ihm oder seinem Besitzer fehlt eine Berechtigung. Öffne die BamBuddy-Integration, um das zu prüfen."
+    "key_doubted": {
+      "message": "BamBuddy hat den API-Schlüssel abgelehnt; er wird innerhalb einer Minute erneut geprüft."
+    },
+    "key_scopes_missing": {
+      "message": "Dem API-Schlüssel fehlen Berechtigungen, die die Integration braucht („Status lesen“ {read_status}, „Drucker steuern“ {control_printer}, „Wartung verwalten“ {manage_maintenance}). Gib unter Einstellungen → Reparaturen einen neuen Schlüssel ein."
+    },
+    "key_owner_inactive": {
+      "message": "Der Besitzer des API-Schlüssels ist in BamBuddy deaktiviert oder gelöscht. Melde dich in BamBuddy als aktiver Benutzer an, erstelle einen Schlüssel mit „Status lesen“, „Drucker steuern“ und „Wartung verwalten“ und gib ihn unter Einstellungen → Reparaturen ein."
+    },
+    "key_check_unreadable": {
+      "message": "BamBuddys Antwort zum API-Schlüssel nennt keine Berechtigungen. Aktualisiere die Integration oder melde es."
+    },
+    "bambuddy_refused": {
+      "message": "BamBuddy hat das abgelehnt: {error}"
     },
     "update_failed": {
       "message": "BamBuddy ist nicht erreichbar. Läuft der BamBuddy-Server, und stimmt die Adresse? ({error})"
@@ -700,9 +727,6 @@
     },
     "cannot_delete_ams": {
       "message": "Ihr Drucker meldet diese AMS-Einheit noch. Steck sie zuerst ab; dann lässt sich ihr Gerät löschen."
-    },
-    "control_not_permitted": {
-      "message": "Der API-Schlüssel darf keine Drucker steuern. Schalte für den Schlüssel in BamBuddy unter Einstellungen → API-Schlüssel „Drucker steuern“ ein und lade die Integration danach neu."
     },
     "command_failed": {
       "message": "BamBuddy hat den Befehl abgelehnt: {error}"
@@ -815,17 +839,11 @@
     "dry_stop_on_screen": {
       "message": "{printer} beendet das Trocknen nur am eigenen Display."
     },
-    "maintenance_not_permitted": {
-      "message": "Der API-Schlüssel darf keine Wartung als erledigt markieren. Schalte für den Schlüssel in BamBuddy unter Einstellungen → API-Schlüssel „Wartung verwalten“ ein und lade die Integration danach neu."
-    },
     "maintenance_task_unknown": {
       "message": "{printer} hat diese Wartungsaufgabe nicht."
     },
     "read_failed": {
       "message": "BamBuddy meldete einen Fehler ({error})."
-    },
-    "plug_control_not_permitted": {
-      "message": "Der API-Schlüssel darf keine Steckdosen schalten. Schalte für den Schlüssel in BamBuddy unter Einstellungen → API-Schlüssel „Drucker steuern“ ein – oder lege ihn als Benutzer neu an, der Drucker steuern darf – und lade die Integration danach neu."
     },
     "plug_not_answering": {
       "message": "Die Steckdose {plug} antwortet BamBuddy nicht. Prüfe, ob sie eingesteckt und im Netzwerk ist."
@@ -1037,7 +1055,7 @@
     },
     "mark_maintenance_done": {
       "name": "Wartung als erledigt markieren",
-      "description": "Markiert eine Wartungsaufgabe des Druckers in BamBuddy als erledigt: Ihre Zählung beginnt neu. Braucht „Wartung verwalten“ beim API-Schlüssel.",
+      "description": "Markiert eine Wartungsaufgabe des Druckers in BamBuddy als erledigt: Ihre Zählung beginnt neu.",
       "fields": {
         "device_id": {
           "name": "Drucker",

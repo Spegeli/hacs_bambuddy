@@ -40,10 +40,7 @@ async def async_setup_entry(
     hass: HomeAssistant, entry: BamBuddyConfigEntry, async_add_entities: AddConfigEntryEntitiesCallback
 ) -> None:
     runtime = entry.runtime_data
-    if runtime.can_control_plugs:
-        _add_plug_switches(runtime.plugs, async_add_entities)
-    if not runtime.can_control:
-        return
+    _add_plug_switches(runtime.plugs, async_add_entities)
     entities: list[SwitchEntity] = []
     for coordinator in runtime.printers.values():
         _add_filament_backup(coordinator, async_add_entities)

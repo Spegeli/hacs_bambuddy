@@ -623,16 +623,11 @@ describe("the status view", () => {
     expect(find(card, ".state svg path")?.getAttribute("d")).toBe(ICONS.infoOutline);
   });
 
-  it("explains, while printing, that a key without Control Printer cannot control", async () => {
+  it("shows nothing to press while the printer has no control entities, and no note about the key", async () => {
+    // The integration accepts only a key that may control: missing controls
+    // are entities Home Assistant has not created (yet), not the key.
     const { card } = await cardFor("readOnly");
-    expect(text(find(card, ".note"))).toBe(
-      "Controls need an API key with “Control Printer” in BamBuddy. Readings that come with the controls (most fans, target temperatures, speed) are missing too.",
-    );
-    // In German as BamBuddy's German pages name the permission.
-    const { card: german } = await cardFor("readOnly", {}, { language: "de" });
-    expect(text(find(german, ".note"))).toBe(
-      "Zum Steuern braucht der API-Schlüssel in BamBuddy „Drucker steuern“. Werte, die zu den Steuerungen gehören (die meisten Lüfter, Zieltemperaturen, Geschwindigkeit), fehlen dann auch.",
-    );
+    expect(find(card, ".note")).toBeNull();
     expect(hasButton(card, "Pause print")).toBe(false);
     expect(hasButton(card, "Chamber light")).toBe(false);
     expect(findAll(card, ".temp-target")).toHaveLength(0);
@@ -1530,13 +1525,11 @@ describe("the control view", () => {
     expect(find(preview, ".sample-body[inert] .pad")).not.toBeNull();
   });
 
-  it("is not there for a key without Control Printer: the status view says why", async () => {
+  it("is not there while the printer has no control entities", async () => {
     const { card } = await cardFor("readOnly");
     expect(findAll(card, "[role=tab]").map(text)).toEqual(["Status", "Filament"]);
     await expect(showView(card, "Control")).rejects.toThrowError(/no tab "Control"/);
-    expect(text(find(card, ".note"))).toBe(
-      "Controls need an API key with “Control Printer” in BamBuddy. Readings that come with the controls (most fans, target temperatures, speed) are missing too.",
-    );
+    expect(find(card, ".note")).toBeNull();
     expect(find(card, ".pad")).toBeNull();
   });
 });
@@ -2520,10 +2513,11 @@ describe("the filament view", () => {
     expect(findAll(german, ".slot-main").map((item) => item.getAttribute("aria-label"))).toEqual(["Unbekannt – Fach 1 · AMS A", "Unbekannt – Externe Spule"]);
   });
 
-  it("shows the filament without controls for a read-only key or with the controls hidden", async () => {
+  it("shows the filament without controls where the printer has none, or with the controls hidden", async () => {
     const { card } = await cardFor("readOnly");
     await showView(card, "Filament");
-    expect(find(card, ".note.info")).not.toBeNull();
+    // No note about the key: the integration's key always may control.
+    expect(find(card, ".note.info")).toBeNull();
     expect(findAll(card, ".slot .btn")).toHaveLength(0);
     const { card: plain } = await cardFor("h2d", { read_only: true });
     await showView(plain, "Filament");
@@ -3518,7 +3512,7 @@ describe("the card the user composes", () => {
     expect(find(statusOnly, ".tabs")).toBeNull();
   });
 
-  it("has no control view without sections, nor for a key without Control Printer", async () => {
+  it("has no control view without sections, nor without control entities", async () => {
     const { card } = await cardFor("x1c", { control_sections: [] });
     expect(findAll(card, "[role=tab]").map(text)).toEqual(["Status", "Filament"]);
     const { card: readOnly } = await cardFor("readOnly");

@@ -20,7 +20,7 @@ from typing import TYPE_CHECKING, Literal, cast, get_args
 from homeassistant.core import CALLBACK_TYPE, callback
 from homeassistant.util import dt as dt_util
 
-from .api import BamBuddyError
+from .api import BamBuddyAuthError, BamBuddyError, BamBuddyPermissionError
 from .entity import refuse
 from .models import ENDED_STATES, JOB_STATES, PrinterData, drying_minutes, short_name
 from .plugs import Plug
@@ -328,6 +328,9 @@ class AutoOff:
             await self.plugs.client.control_plug(plug.id, False)
         except BamBuddyError as err:
             _LOGGER.debug("Switching the plug %s off after the print failed: %s", plug.name, err)
+            if isinstance(err, (BamBuddyAuthError, BamBuddyPermissionError)):
+                # Whether the key is the cause: the guard checks it.
+                self.plugs.config_entry.runtime_data.key.async_read_refused(err)
             if self._failing_since is None:
                 self._failing_since = dt_util.utcnow()
             self.waiting_for = "plug"
@@ -369,7 +372,7 @@ def auto_off_for(entry: BamBuddyConfigEntry, plug: Plug) -> AutoOff | None:
     key may switch it; one per plug, started once."""
     runtime = entry.runtime_data
     plugs = runtime.plugs
-    if not runtime.can_control_plugs or not gets_auto_off(plugs, plug):
+    if not gets_auto_off(plugs, plug):
         return None
     printer = plugs.printers.get(plug.printer_id or -1)
     if printer is None:

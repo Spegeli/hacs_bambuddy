@@ -11,7 +11,7 @@
         },
         "data_description": {
           "url": "The address you open BamBuddy with in your browser, for example `192.168.1.20:8000` or `{example_url}`.",
-          "api_key": "Create one in BamBuddy under Settings → API Keys. It always needs Read Status: with it you see your printers in Home Assistant. If you want to operate them from Home Assistant as well (pause a print, switch the light or a plug, for example), turn on Control Printer too. With Manage Maintenance, you can also mark maintenance done from Home Assistant.",
+          "api_key": "Create one in BamBuddy under Settings → API Keys, with all three permissions: Read Status, Control Printer and Manage Maintenance.",
           "verify_ssl": "Only matters for https addresses. Turn it off if BamBuddy uses a self-signed certificate."
         }
       },
@@ -22,21 +22,34 @@
           "printers": "Printers"
         }
       },
-      "printers_read_only": {
-        "title": "Choose printers",
-        "description": "These printers are set up in BamBuddy. Each selected printer becomes a device in Home Assistant. You can add or remove printers later with Configure. Names come from BamBuddy: rename a printer there.\n\nThis API key can only read: you see your printers but cannot operate them from Home Assistant. For that, turn on Control Printer for the key in BamBuddy, then reload the integration.",
-        "data": {
-          "printers": "Printers"
-        }
-      },
       "reauth_confirm": {
         "title": "New BamBuddy API key needed",
-        "description": "BamBuddy at {url} no longer accepts the stored API key, or the key lacks a permission it needs. Your devices, entities and their history are kept.\n\nTo create a new API key:\n\n1. In BamBuddy, open Settings → API Keys and choose “Create Key”.\n2. Give it a name, such as “Home Assistant”, and turn on the permissions listed below the field.\n3. Copy the key and paste it below. BamBuddy shows it only once.\n\nIf the old key only lost a permission, turn it back on in BamBuddy and enter the key here again.",
+        "description": "BamBuddy at {url} no longer accepts the stored API key: it was deleted, has expired or was turned off. Your devices, entities and their history are kept.\n\nTo create a new API key:\n\n1. In BamBuddy, open Settings → API Keys and choose “Create Key”.\n2. Give it a name, such as “Home Assistant”, and tick Read Status, Control Printer and Manage Maintenance.\n3. Copy the key and paste it below. BamBuddy shows it only once.",
         "data": {
           "api_key": "API key"
         },
         "data_description": {
-          "api_key": "It always needs Read Status: with it you see your printers in Home Assistant. If you want to operate them from Home Assistant as well (pause a print, switch the light or a plug, for example), turn on Control Printer too. With Manage Maintenance, you can also mark maintenance done from Home Assistant."
+          "api_key": "Leave it empty to check the stored key again — after a change in BamBuddy, such as a right given to its owner."
+        }
+      },
+      "reauth_scopes": {
+        "title": "New BamBuddy API key needed",
+        "description": "BamBuddy at {url} knows the stored API key, but it lacks permissions this integration needs:\n\n- Read Status {stored_read_status}\n- Control Printer {stored_control_printer}\n- Manage Maintenance {stored_manage_maintenance}\n\nBamBuddy cannot add permissions to an existing key. If you ticked one marked ✗ in BamBuddy, the key's owner may not do it: give them that right, or create the key as a user who has it. Your devices, entities and their history are kept.\n\nTo create a new API key:\n\n1. In BamBuddy, open Settings → API Keys and choose “Create Key”.\n2. Give it a name, such as “Home Assistant”, and tick Read Status, Control Printer and Manage Maintenance.\n3. Copy the key and paste it below. BamBuddy shows it only once.",
+        "data": {
+          "api_key": "API key"
+        },
+        "data_description": {
+          "api_key": "Leave it empty to check the stored key again — after a change in BamBuddy, such as a right given to its owner."
+        }
+      },
+      "reauth_owner": {
+        "title": "New BamBuddy API key needed",
+        "description": "BamBuddy at {url} knows the stored API key, but its owner is deactivated or deleted in BamBuddy. Your devices, entities and their history are kept.\n\nTo create a new API key:\n\n1. Sign in to BamBuddy as an active user, open Settings → API Keys and choose “Create Key”.\n2. Give it a name, such as “Home Assistant”, and tick Read Status, Control Printer and Manage Maintenance.\n3. Copy the key and paste it below. BamBuddy shows it only once.",
+        "data": {
+          "api_key": "API key"
+        },
+        "data_description": {
+          "api_key": "Leave it empty to check the stored key again — after a change in BamBuddy, such as a right given to its owner."
         }
       },
       "reconfigure": {
@@ -49,7 +62,7 @@
         },
         "data_description": {
           "url": "The address you open BamBuddy with in your browser, for example `192.168.1.20:8000` or `{example_url}`.",
-          "api_key": "Leave it empty to keep the current key. A new one always needs Read Status: with it you see your printers in Home Assistant. If you want to operate them from Home Assistant as well (pause a print, switch the light or a plug, for example), turn on Control Printer too. With Manage Maintenance, you can also mark maintenance done from Home Assistant.",
+          "api_key": "Leave it empty to keep the current key. A new one needs all three permissions: Read Status, Control Printer and Manage Maintenance.",
           "verify_ssl": "Only matters for https addresses. Turn it off if BamBuddy uses a self-signed certificate."
         }
       },
@@ -104,9 +117,13 @@
     },
     "error": {
       "cannot_connect": "BamBuddy does not answer at this address, or this is not BamBuddy's address. Check the address including the port (usually 8000) and that BamBuddy is running.",
-      "invalid_auth": "BamBuddy does not accept this API key. Copy it again (BamBuddy shows it only once) or create a new one.",
+      "invalid_auth": "BamBuddy does not accept this API key. Check that you pasted all of it. BamBuddy shows a key only once: if you no longer have it, create a new one.",
+      "missing_scopes": "The API key you entered lacks permissions: Read Status {read_status}, Control Printer {control_printer}, Manage Maintenance {manage_maintenance}. BamBuddy cannot add permissions to an existing key: create a new one with all three. If you ticked one marked ✗ in BamBuddy, the key's owner may not do it: give them that right, or create the key as a user who has it.",
+      "key_owner_inactive": "BamBuddy knows this API key, but its owner is deactivated or deleted. Sign in to BamBuddy as an active user and create a new key with Read Status, Control Printer and Manage Maintenance.",
+      "bambuddy_refused": "BamBuddy refused a read although the API key has every permission the integration needs: {error}",
       "stored_key_refused": "BamBuddy no longer accepts the stored API key. Enter a new one.",
-      "missing_permission": "The API key lacks the permission Read Status. Turn it on in BamBuddy under Settings → API Keys (the key's owner needs it too).",
+      "stored_key_scopes": "The stored API key lacks permissions: Read Status {read_status}, Control Printer {control_printer}, Manage Maintenance {manage_maintenance}. Enter a new one with all three.",
+      "stored_key_owner": "The stored API key's owner is deactivated or deleted in BamBuddy. Enter a new one, created as an active user.",
       "invalid_url": "This is not a valid address. Enter it like 192.168.1.20:8000 or {example_url}.",
       "not_bambuddy": "No BamBuddy answers at this address, or it is older than version {minimum}.",
       "too_old": "BamBuddy {version} is too old. Update BamBuddy to version {minimum} or newer.",
@@ -121,12 +138,10 @@
       "already_configured": "This BamBuddy server is already set up.\n\nTo add or remove its printers, use “Configure” on its entry.",
       "address_in_use": "This address already belongs to another BamBuddy entry. Nothing was changed.",
       "reauth_successful": "The API key works. BamBuddy is connected again.",
-      "reauth_successful_read_only": "The API key works. BamBuddy is connected again. This key can only read: to operate printers from Home Assistant, it needs Control Printer.",
       "reconfigure_successful": "The connection has been saved.",
       "reconfigure_successful_missing": "The connection has been changed. Not found: {printers}. You can remove them under Settings → Repairs, or all at once with Configure → Remove printers.",
       "reconfigure_successful_other": "The connection has been changed. The BamBuddy device's history starts afresh.",
       "reconfigure_successful_other_missing": "The connection has been changed. The BamBuddy device's history starts afresh. Not found: {printers}. You can remove them under Settings → Repairs, or all at once with Configure → Remove printers.",
-      "reconfigure_successful_read_only": "The connection has been saved. This key can only read: to operate printers from Home Assistant, it needs Control Printer.",
       "printers_in_use": "Every printer of this BamBuddy is set up already, through {entries}. To reach BamBuddy at another address, use ⋮ → Reconfigure on that entry; to add or remove printers, use “Configure” there."
     },
     "create_entry": {
@@ -681,10 +696,22 @@
       "message": "BamBuddy {version} is too old for this integration. Update BamBuddy to version {minimum} or newer."
     },
     "auth_failed": {
-      "message": "BamBuddy no longer accepts the API key. Open the BamBuddy integration to enter a new one."
+      "message": "BamBuddy no longer accepts the API key. Enter a new one under Settings → Repairs."
     },
-    "auth_permission": {
-      "message": "BamBuddy accepts the API key, but the key or its owner lacks a permission. Open the BamBuddy integration to check it."
+    "key_doubted": {
+      "message": "BamBuddy refused the API key; it is checked again within a minute."
+    },
+    "key_scopes_missing": {
+      "message": "The API key lacks permissions the integration needs (Read Status {read_status}, Control Printer {control_printer}, Manage Maintenance {manage_maintenance}). Enter a new key under Settings → Repairs."
+    },
+    "key_owner_inactive": {
+      "message": "The API key's owner is deactivated or deleted in BamBuddy. Sign in to BamBuddy as an active user, create a key with Read Status, Control Printer and Manage Maintenance, and enter it under Settings → Repairs."
+    },
+    "key_check_unreadable": {
+      "message": "BamBuddy's answer about the API key names no permissions. Update the integration, or report it."
+    },
+    "bambuddy_refused": {
+      "message": "BamBuddy refused it: {error}"
     },
     "update_failed": {
       "message": "BamBuddy cannot be reached. Is the BamBuddy server running, and is the address right? ({error})"
@@ -700,9 +727,6 @@
     },
     "cannot_delete_ams": {
       "message": "Its printer still reports this AMS unit. Unplug it first; then its device can be deleted."
-    },
-    "control_not_permitted": {
-      "message": "The API key may not control printers. Turn on Control Printer for the key in BamBuddy under Settings → API Keys, then reload the integration."
     },
     "command_failed": {
       "message": "BamBuddy refused the command: {error}"
@@ -815,17 +839,11 @@
     "dry_stop_on_screen": {
       "message": "{printer} stops drying only from its own screen."
     },
-    "maintenance_not_permitted": {
-      "message": "The API key may not mark maintenance done. Turn on Manage Maintenance for the key in BamBuddy under Settings → API Keys, then reload the integration."
-    },
     "maintenance_task_unknown": {
       "message": "{printer} has no such maintenance task."
     },
     "read_failed": {
       "message": "BamBuddy reported an error ({error})."
-    },
-    "plug_control_not_permitted": {
-      "message": "The API key may not switch smart plugs. Turn on Control Printer for the key in BamBuddy under Settings → API Keys — or create it anew as a user who may control printers —, then reload the integration."
     },
     "plug_not_answering": {
       "message": "The smart plug {plug} does not answer BamBuddy. Check that it is plugged in and on the network."
@@ -1037,7 +1055,7 @@
     },
     "mark_maintenance_done": {
       "name": "Mark maintenance done",
-      "description": "Marks a maintenance task of the printer as done in BamBuddy: its count starts over. Needs Manage Maintenance on the API key.",
+      "description": "Marks a maintenance task of the printer as done in BamBuddy: its count starts over.",
       "fields": {
         "device_id": {
           "name": "Printer",

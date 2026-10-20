@@ -11,15 +11,24 @@ from typing import Any
 from homeassistant.config_entries import ConfigEntry, ConfigEntryState
 from homeassistant.const import Platform
 from homeassistant.core import HomeAssistant, callback
-from homeassistant.exceptions import ConfigEntryError, ConfigEntryNotReady, HomeAssistantError
+from homeassistant.exceptions import ConfigEntryAuthFailed, ConfigEntryError, ConfigEntryNotReady, HomeAssistantError
 from homeassistant.helpers import config_validation as cv
 from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers import issue_registry as ir
 from homeassistant.helpers.event import async_track_time_interval
 from homeassistant.helpers.typing import ConfigType
+from homeassistant.util import dt as dt_util
 
-from .api import BamBuddyClient, BamBuddyError, BamBuddyNotFoundError, normalise_url
+from .api import (
+    BamBuddyAuthError,
+    BamBuddyBadAnswerError,
+    BamBuddyClient,
+    BamBuddyError,
+    BamBuddyNotFoundError,
+    BamBuddyPermissionError,
+    normalise_url,
+)
 from .auto_off import ENTITIES as AUTO_OFF_ENTITIES, gets_auto_off
 from .cards import async_register_card
 from .const import (
@@ -54,6 +63,7 @@ from .coordinator import (
     printer_identifier,
 )
 from .entity import instance_device_info, printer_device_info
+from .key import KeyCheck, KeyGuard
 from .models import ams_key, display_model, find_printers, model_changed, stored_key, stored_printer, too_old
 from .plugs import plug_identifier
 from .services import async_setup_services
@@ -119,13 +129,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: BamBuddyConfigEntry) -> 
             translation_key="bambuddy_too_old",
             translation_placeholders={"version": version, "minimum": MIN_BAMBUDDY_VERSION},
         )
+    first = await _async_check_key(client)
+    auth_enabled = await _async_auth_enabled(client)
     listed = await fetch(client.get_printers(), kind=ConfigEntryNotReady)
-    granted = await fetch(client.permissions(), kind=ConfigEntryNotReady)
-    can_control = granted.control
-    if not can_control:
-        _remove_control_entities(hass, entry)
-    if not granted.plugs:
-        _remove_control_entities(hass, entry, plugs=True)
 
     # BamBuddy's figures and its update checks (they ask GitHub and Bambu
     # Lab through BamBuddy): when they fail, only their entities wait.
@@ -151,19 +157,18 @@ async def async_setup_entry(hass: HomeAssistant, entry: BamBuddyConfigEntry) -> 
     # A removed printer's names notice goes; a stored one's stays until Home Assistant restarts.
     named = {names_issue(entry.entry_id, stored_key(printer)) for printer in entry.options.get(CONF_PRINTERS, [])}
     _delete_issues(hass, entry, keep=missing | named)
-    _remove_stale_devices(hass, entry, set(plugs.data or {}) if plugs.last_update_success and plugs.readable else None)
-    if plugs.last_update_success and plugs.readable:
+    _remove_stale_devices(hass, entry, set(plugs.data or {}) if plugs.last_update_success else None)
+    if plugs.last_update_success:
         _remove_spare_switch_offs(hass, entry, plugs)
-    if granted.plugs:
-        _remove_plug_states(hass, entry, plugs)
 
     entry.runtime_data = BamBuddyData(
-        client, instance, updates, printers, can_control, plugs, can_manage_maintenance=granted.maintenance, can_control_plugs=granted.plugs
+        client, instance, updates, printers, plugs, key=KeyGuard(hass, entry, client, first), auth_enabled=auth_enabled
     )
     # The update checks ask GitHub and Bambu Lab through BamBuddy, up to a
     # minute each: the setup does not wait for them, their entities do.
     entry.async_create_background_task(hass, updates.async_refresh(), "bambuddy update checks")
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
+    entry.runtime_data.key.async_start()
     _remove_what_the_model_lacks(hass, entry, printers)
     entry.async_on_unload(entry.add_update_listener(_async_reload))
     if entry.options != taken:
@@ -265,18 +270,6 @@ def _remove_what_the_model_lacks(hass: HomeAssistant, entry: ConfigEntry, printe
             devices.async_update_device(device.id, model=display_model(printer.info.get("model")) or None)
 
 
-def _remove_plug_states(hass: HomeAssistant, entry: ConfigEntry, plugs: BamBuddyPlugCoordinator) -> None:
-    """A key that may switch plugs again: the states shown instead of their
-    switches go (an MQTT plug's stays -- BamBuddy only watches it)."""
-    registry = er.async_get(hass)
-    for plug in (plugs.data or {}).values():
-        if plug.kind == "monitor":
-            continue
-        entity_id = registry.async_get_entity_id("binary_sensor", DOMAIN, f"{entry.entry_id}_plug{plug.id}_power")
-        if entity_id:
-            registry.async_remove(entity_id)
-
-
 def _remove_spare_switch_offs(hass: HomeAssistant, entry: ConfigEntry, plugs: BamBuddyPlugCoordinator) -> None:
     """A plug that no longer gets the switch-off after the print -- another
     became the printer's own in BamBuddy, or it no longer powers the
@@ -321,37 +314,52 @@ def _remove_stale_devices(hass: HomeAssistant, entry: ConfigEntry, plugs: set[in
             registry.async_remove_device(device.id)
 
 
+# A 401 at setup is asked again this much later: BamBuddy also answers 401
+# when its key lookup fails for a moment.
+_KEY_AGAIN = 1.0
+
+
+async def _async_check_key(client: BamBuddyClient) -> KeyCheck:
+    """The key at setup: one with every scope the integration needs (also
+    with BamBuddy's authentication off), else Home Assistant asks for a new
+    one; no answer: tried again later."""
+    for attempt in range(2):
+        try:
+            scopes = await client.check_key()
+        except BamBuddyAuthError as err:
+            if attempt == 0:
+                await asyncio.sleep(_KEY_AGAIN)
+                continue
+            raise ConfigEntryAuthFailed(translation_domain=DOMAIN, translation_key="auth_failed") from err
+        except BamBuddyPermissionError as err:
+            raise ConfigEntryAuthFailed(translation_domain=DOMAIN, translation_key="key_owner_inactive") from err
+        except BamBuddyBadAnswerError as err:
+            # A BamBuddy that renamed the field: an error, not a retry for ever.
+            raise ConfigEntryError(translation_domain=DOMAIN, translation_key="key_check_unreadable") from err
+        except BamBuddyError as err:
+            raise failure(err, ConfigEntryNotReady) from err
+        if scopes.missing:
+            raise ConfigEntryAuthFailed(
+                translation_domain=DOMAIN, translation_key="key_scopes_missing", translation_placeholders=scopes.marks()
+            )
+        return KeyCheck(dt_util.utcnow(), "ok", scopes)
+    raise AssertionError("unreachable")
+
+
+async def _async_auth_enabled(client: BamBuddyClient) -> bool | None:
+    """Whether BamBuddy's authentication is on, for the diagnostics."""
+    try:
+        return bool((await client.get_auth_status()).get("auth_enabled"))
+    except BamBuddyError:
+        return None
+
+
 async def _async_reload(hass: HomeAssistant, entry: ConfigEntry) -> None:
     await hass.config_entries.async_reload(entry.entry_id)
 
 
 async def async_unload_entry(hass: HomeAssistant, entry: BamBuddyConfigEntry) -> bool:
     return await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
-
-
-# The platforms that only control; of the buttons, all but refreshing.
-_CONTROL_DOMAINS = frozenset({"fan", "light", "number", "select", "switch"})
-# Home Assistant's own settings among them, with any key: the camera's frame rate.
-_SETTINGS = ("_camera_fps",)
-
-
-@callback
-def _remove_control_entities(hass: HomeAssistant, entry: BamBuddyConfigEntry, *, plugs: bool = False) -> None:
-    """A key that may no longer control printers -- or, `plugs`, switch
-    smart plugs: its controls would stay as entities no longer provided.
-    They come back, with their entity IDs, with a key that may (on Home
-    Assistant 2025.x without their names, areas and hidden state; 2026
-    keeps those for a deleted entity). The plugs' controls follow their
-    own permission."""
-    registry = er.async_get(hass)
-    plug_prefix = f"{entry.entry_id}_plug"
-    for entity in er.async_entries_for_config_entry(registry, entry.entry_id):
-        if entity.unique_id.startswith(plug_prefix) != plugs:
-            continue
-        if entity.unique_id.endswith(_SETTINGS):
-            continue
-        if entity.domain in _CONTROL_DOMAINS or (entity.domain == "button" and not entity.unique_id.endswith("_refresh_status")):
-            registry.async_remove(entity.entity_id)
 
 
 async def async_remove_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:

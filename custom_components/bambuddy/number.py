@@ -125,8 +125,6 @@ async def async_setup_entry(
             async_add_entities([BamBuddyCameraFrameRate(coordinator)])
         elif stale := registry.async_get_entity_id("number", DOMAIN, coordinator.entity_unique_id("camera_fps")):
             registry.async_remove(stale)
-    if not runtime.can_control:
-        return
     async_add_entities(
         BamBuddyTemperature(coordinator, description)
         for coordinator in runtime.printers.values()

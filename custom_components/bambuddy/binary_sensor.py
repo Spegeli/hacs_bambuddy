@@ -131,7 +131,7 @@ async def async_setup_entry(
             if description.exists_fn(coordinator.data)
         )
         _add_drying_sensors(coordinator, async_add_entities)
-    _add_plug_states(runtime.plugs, async_add_entities, can_switch=runtime.can_control_plugs)
+    _add_plug_states(runtime.plugs, async_add_entities)
     async_add_entities(entities)
 
 
@@ -200,14 +200,12 @@ class BamBuddyDryingSensor(BamBuddyAmsEntity, BinarySensorEntity):
         return is_drying(self.unit or {})
 
 
-def _add_plug_states(
-    coordinator: BamBuddyPlugCoordinator, async_add_entities: AddConfigEntryEntitiesCallback, *, can_switch: bool
-) -> None:
+def _add_plug_states(coordinator: BamBuddyPlugCoordinator, async_add_entities: AddConfigEntryEntitiesCallback) -> None:
     """A plug's state where no switch shows it: a plug BamBuddy only
-    watches (MQTT), and every plug for a key that may not switch them."""
+    watches (MQTT)."""
 
     def create(plug: Plug) -> list[tuple[str, Callable[[], BinarySensorEntity]]]:
-        if can_switch and plug.kind != "monitor":
+        if plug.kind != "monitor":
             return []
         return [("power", partial(BamBuddyPlugState, coordinator, plug))]
 

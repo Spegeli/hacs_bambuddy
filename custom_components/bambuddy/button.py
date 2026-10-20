@@ -30,8 +30,6 @@ class BamBuddyButtonDescription(ButtonEntityDescription):
     refusal: str = "not_now"
     # The refusal by the printer's state, where one text does not fit all.
     refusal_fn: Callable[[PrinterData], str] | None = None
-    # Needs the key's Control Printer permission.
-    control: bool = True
     # BamBuddy acts without the printer: the button stays available.
     available_when_offline: bool = False
 
@@ -88,7 +86,6 @@ BUTTONS: tuple[BamBuddyButtonDescription, ...] = (
         translation_key="refresh_status",
         entity_category=EntityCategory.DIAGNOSTIC,
         press_fn=lambda client, printer: client.refresh_status(printer),
-        control=False,
     ),
 )
 
@@ -101,21 +98,19 @@ async def async_setup_entry(
         BamBuddyButton(coordinator, description)
         for coordinator in runtime.printers.values()
         for description in BUTTONS
-        if runtime.can_control or not description.control
     )
-    if runtime.can_control_plugs:
-        plugs = runtime.plugs
+    plugs = runtime.plugs
 
-        def create(plug: Plug) -> list[tuple[str, Callable[[], ButtonEntity]]]:
-            entities: list[tuple[str, Callable[[], ButtonEntity]]] = []
-            if plug.kind == "script":
-                entities.append(("run", partial(BamBuddyPlugRun, plugs, plug)))
-            auto_off = auto_off_for(entry, plug)
-            if auto_off is not None:
-                entities.append(("auto_off_skip", partial(BamBuddyAutoOffSkip, plugs, plug, auto_off)))
-            return entities
+    def create(plug: Plug) -> list[tuple[str, Callable[[], ButtonEntity]]]:
+        entities: list[tuple[str, Callable[[], ButtonEntity]]] = []
+        if plug.kind == "script":
+            entities.append(("run", partial(BamBuddyPlugRun, plugs, plug)))
+        auto_off = auto_off_for(entry, plug)
+        if auto_off is not None:
+            entities.append(("auto_off_skip", partial(BamBuddyAutoOffSkip, plugs, plug, auto_off)))
+        return entities
 
-        async_add_plug_entities(plugs, async_add_entities, create)
+    async_add_plug_entities(plugs, async_add_entities, create)
 
 
 class BamBuddyButton(BamBuddyDescribedEntity, ButtonEntity):

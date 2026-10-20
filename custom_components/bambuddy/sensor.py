@@ -572,7 +572,6 @@ class BamBuddyMaintenanceSensor(BamBuddyPrinterSensor):
             "tasks": [maintenance_task(task) for task in tasks],
             "due_count": sum(1 for task in tasks if task.get("is_due")),
             "due_soon_count": sum(1 for task in tasks if task.get("is_warning") and not task.get("is_due")),
-            "can_mark_done": self.coordinator.config_entry.runtime_data.can_manage_maintenance,
         }
 
 

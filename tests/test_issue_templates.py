@@ -26,3 +26,14 @@ def test_the_bug_report_asks_for_the_three_versions():
     fields = _fields("bug_report.yml")
     for version in ("integration_version", "ha_version", "bambuddy_version"):
         assert fields[version]["validations"]["required"] is True, version
+
+
+def test_the_bug_form_asks_whether_bambuddys_authentication_is_on() -> None:
+    """The key's permissions are no question any more: the integration takes
+    only a key with all three."""
+    fields = _fields("bug_report.yml")
+    assert "key_permissions" not in fields
+    auth = fields["bambuddy_auth"]
+    assert auth["type"] == "dropdown"
+    assert auth["attributes"]["label"] == "Authentication in BamBuddy"
+    assert auth["attributes"]["options"] == ["On", "Off", "Not sure"]

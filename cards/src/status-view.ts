@@ -434,8 +434,8 @@ function nothingLoaded(ctx: CardContext): boolean {
 function controls(ctx: CardContext): TemplateResult | typeof nothing {
   const { hass, refs, status } = ctx;
   if (!ctx.online || !BUSY.has(status)) return nothing;
-  // Hide controls shows nothing; a key without Control Printer says so.
-  if (!ctx.canControl) return ctx.keyLacksControl ? note(t(hass, "read_only")) : nothing;
+  // Hide controls shows nothing.
+  if (!ctx.canControl) return nothing;
   const paused = status === "paused";
   const buttons = [
     paused

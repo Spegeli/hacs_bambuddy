@@ -59,7 +59,15 @@ async def test_no_secret_reaches_the_diagnostics(hass: HomeAssistant, bambuddy_a
     # Nor BamBuddy's address -- a domain may name its owner -- or the printers' network addresses.
     for address in ("bambuddy.local", "192.0.2.11", "192.0.2.14"):
         assert address not in dumped, address
-    assert diagnostics["bambuddy"] == {"version": "1.2.5.7", "printers": 3, "can_control": True, "can_control_plugs": True}
+    assert diagnostics["bambuddy"] == {"version": "1.2.5.7", "printers": 3}
+    # The key's last check: what BamBuddy says it may do, and whether its authentication is on.
+    key = diagnostics["key"]
+    assert (key["marks"], key["outcome"], key["auth_enabled"]) == (
+        {"read_status": "✓", "control_printer": "✓", "manage_maintenance": "✓"},
+        "ok",
+        True,
+    )
+    assert key["last_check"]
     assert diagnostics["printers"]["1"]["status"]["state"] == "RUNNING"
 
 

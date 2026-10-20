@@ -390,7 +390,6 @@ export interface MaintenanceTask {
 export interface MaintenanceSpec {
   state: "ok" | "due_soon" | "overdue";
   tasks: MaintenanceTask[];
-  canMarkDone?: boolean;
 }
 
 /** Five tasks of an X1C: one overdue, one due soon, one never done (and
@@ -406,7 +405,6 @@ export const MAINTENANCE_TASKS: MaintenanceTask[] = [
 export const maintenanceSpec = (overrides: Partial<MaintenanceSpec> = {}): MaintenanceSpec => ({
   state: "overdue",
   tasks: MAINTENANCE_TASKS,
-  canMarkDone: true,
   ...overrides,
 });
 
@@ -511,7 +509,6 @@ export function printerDevice(spec: PrinterSpec): FakeDevice {
               tasks: maintenance.tasks,
               due_count: maintenance.tasks.filter((task) => task.due).length,
               due_soon_count: maintenance.tasks.filter((task) => task.due_soon).length,
-              can_mark_done: maintenance.canMarkDone ?? false,
             },
           },
     );
@@ -952,7 +949,8 @@ export function offlineP1s(): FakeDevice[] {
 export const unreachable = (devices: FakeDevice[]): FakeDevice[] =>
   devices.map((device) => ({ ...device, entities: device.entities.map((entity) => ({ ...entity, state: "unavailable", attributes: {} })) }));
 
-/** The X1C read with a key that lacks Control Printer: no controls. */
+/** The X1C without its control entities: Home Assistant has not created
+ * them (yet) -- the integration's key always may control. */
 export const readOnlyX1c = (overrides: Partial<PrinterSpec> = {}): FakeDevice[] => x1c({ control: false, ...overrides });
 
 /** The BamBuddy instance's device: no printer. */

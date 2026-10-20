@@ -29,7 +29,6 @@ export interface Maintenance {
   tasks: MaintenanceTask[];
   due: number;
   soon: number;
-  canMarkDone: boolean;
 }
 
 export interface MaintenanceDialog {
@@ -88,7 +87,6 @@ export function maintenanceOf(ctx: CardContext): Maintenance | undefined {
     tasks,
     due: tasks.filter((task) => task.due).length,
     soon: tasks.filter((task) => task.dueSoon).length,
-    canMarkDone: state.attributes["can_mark_done"] === true,
   };
 }
 
@@ -178,22 +176,21 @@ function taskRow(ctx: CardContext, task: MaintenanceTask, dialog: MaintenanceDia
 }
 
 /** The dialog: the tasks, the printer's print hours, and where tasks and
- * intervals are set. "Done" where the key may mark tasks done -- not with
- * Hide controls, which is a view, not a lock. */
+ * intervals are set. "Done" on every task -- not with Hide controls, which
+ * is a view, not a lock. */
 export function maintenanceContent(ctx: CardContext, dialog: MaintenanceDialog, actions: MaintenanceActions): TemplateResult {
   const { hass, refs } = ctx;
   const maintenance = maintenanceOf(ctx);
   const tasks = ordered(maintenance?.tasks ?? []);
-  const canMark = (maintenance?.canMarkDone ?? false) && !ctx.settings.readOnly;
+  const canMark = !ctx.settings.readOnly;
   const hours = stateOf(hass, refs.printHours);
   return html`<h2 id="dlg-title">${t(hass, "maint_title")}</h2>
-    ${tasks.some((task) => !task.done) ? dialogNote(t(hass, canMark ? "maint_all_never" : ctx.settings.readOnly ? "maint_all_never_hidden" : "maint_all_never_elsewhere")) : nothing}
+    ${tasks.some((task) => !task.done) ? dialogNote(t(hass, canMark ? "maint_all_never" : "maint_all_never_hidden")) : nothing}
     ${tasks.length
       ? html`<div class="maint-list">${repeat(tasks, (task) => task.id, (task) => taskRow(ctx, task, dialog, actions, canMark))}</div>`
       : ctx.unreachable
         ? dialogNote(t(hass, "unreachable_short"))
         : html`<p class="hms-empty">${t(hass, "maint_none")}</p>`}
-    ${maintenance && !maintenance.canMarkDone && !ctx.settings.readOnly && tasks.length ? dialogNote(t(hass, "maint_no_permission")) : nothing}
     ${dialog.error ? html`<div class="dlg-error" role="alert">${icon("error")}<span>${dialog.error}</span></div>` : nothing}
     <p class="maint-said sr-only" role="status">${dialog.marked ? t(hass, "maint_marked", { task: dialog.marked }) : ""}</p>
     <p class="maint-foot">

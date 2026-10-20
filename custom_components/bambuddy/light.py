@@ -20,8 +20,7 @@ async def async_setup_entry(
     hass: HomeAssistant, entry: BamBuddyConfigEntry, async_add_entities: AddConfigEntryEntitiesCallback
 ) -> None:
     runtime = entry.runtime_data
-    if runtime.can_control:
-        async_add_entities(BamBuddyChamberLight(coordinator) for coordinator in runtime.printers.values())
+    async_add_entities(BamBuddyChamberLight(coordinator) for coordinator in runtime.printers.values())
 
 
 class BamBuddyChamberLight(BamBuddyToggle, LightEntity):

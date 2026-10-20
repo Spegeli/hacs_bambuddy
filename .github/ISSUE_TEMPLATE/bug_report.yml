@@ -91,14 +91,13 @@ body:
       required: false
 
   - type: dropdown
-    id: key_permissions
+    id: bambuddy_auth
     attributes:
-      label: API key permissions
-      description: Which permissions does the key have, and is authentication on in BamBuddy? See the README's [Create an API key](https://github.com/Spegeli/hacs_bambuddy#create-an-api-key).
+      label: Authentication in BamBuddy
+      description: Is authentication on in BamBuddy (Settings → Authentication)? The integration needs an API key with Read Status, Control Printer and Manage Maintenance either way — see the README's [Create an API key](https://github.com/Spegeli/hacs_bambuddy#create-an-api-key).
       options:
-        - Read Status, authentication on
-        - Read Status and Control Printer, authentication on
-        - Authentication off in BamBuddy
+        - "On"
+        - "Off"
         - Not sure
     validations:
       required: false

@@ -24,6 +24,7 @@ from pytest_homeassistant_custom_component.common import MockConfigEntry, mock_r
 from pytest_homeassistant_custom_component.test_util.aiohttp import AiohttpClientMocker
 from pytest_homeassistant_custom_component.typing import ClientSessionGenerator
 
+from custom_components.bambuddy.const import DOMAIN
 from custom_components.bambuddy import camera as camera_module
 from custom_components.bambuddy.api import BamBuddyApiError, BamBuddyAuthError, BamBuddyClient, BamBuddyConnectionError
 
@@ -83,10 +84,15 @@ async def test_a_refused_token_is_renewed_at_once(hass: HomeAssistant, bambuddy_
     camera = await _camera(hass, make_entry(hass, X1C))
     bambuddy_api.get_snapshot.side_effect = [BamBuddyAuthError(401, "Valid camera stream token required"), b"jpeg"]
 
+    checked = bambuddy_api.get_auth_me.await_count
+
     image = await async_get_image(hass, camera)
 
     assert image.content == b"jpeg"
     assert bambuddy_api.get_stream_token.await_count == 2
+    # The stream token's 401 is no refused key: no check, no reauth.
+    assert bambuddy_api.get_auth_me.await_count == checked
+    assert not hass.config_entries.flow.async_progress_by_handler(DOMAIN)
 
 
 async def test_no_picture_without_bambuddy(hass: HomeAssistant, bambuddy_api: SimpleNamespace) -> None:
@@ -261,9 +267,8 @@ async def test_a_camera_that_can_do_more_streams_at_its_most(
 
 async def test_the_frame_rate_setting(hass: HomeAssistant, bambuddy_api: SimpleNamespace) -> None:
     """From 5 to the camera's most in steps of 5, a setting of
-    Home Assistant's: the key needs no right to control, and it stays while
-    the printer is offline. None for a camera that does only 5."""
-    bambuddy_api.get_auth_me.return_value = load_fixture("auth_me_read.json")
+    Home Assistant's: it stays while the printer is offline. None for a
+    camera that does only 5."""
     entry = await set_up(hass, X1C, A1_MINI, P1S, X1E)
 
     state = state_of(hass, "number", printer_uid(entry, "camera_fps"))
@@ -385,28 +390,6 @@ async def test_a_kept_rate_above_a_new_limit(hass: HomeAssistant, bambuddy_api: 
 
     assert state_of(hass, "number", printer_uid(entry, "camera_fps")).state == "15"
     assert state_of(hass, "camera", printer_uid(entry, "camera")).attributes["frame_rate"] == 15
-
-
-async def test_a_key_that_may_not_control_keeps_the_frame_rate(hass: HomeAssistant, bambuddy_api: SimpleNamespace) -> None:
-    """The controls leave the registry with a key that may not control;
-    the frame rate is Home Assistant's own setting and stays, with what the
-    user set for it."""
-    entry = await set_up(hass, X1C)
-    number = entity_id(hass, "number", printer_uid(entry, "camera_fps"))
-    await _set_rate(hass, entry, 20)
-    removed: list[str] = []
-    hass.bus.async_listen(
-        er.EVENT_ENTITY_REGISTRY_UPDATED,
-        lambda event: removed.append(event.data["entity_id"]) if event.data["action"] == "remove" else None,
-    )
-    bambuddy_api.get_auth_me.return_value = load_fixture("auth_me_read.json")
-
-    await hass.config_entries.async_reload(entry.entry_id)
-    await hass.async_block_till_done()
-
-    assert number not in removed
-    assert any(item.startswith("number.") for item in removed)  # a target temperature went
-    assert state_of(hass, "number", printer_uid(entry, "camera_fps")).state == "20"
 
 
 # --- What arrives --------------------------------------------------------------

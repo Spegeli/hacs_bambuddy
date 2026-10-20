@@ -48,7 +48,7 @@ A custom <a href="https://www.home-assistant.io/">Home Assistant</a> integration
 - Home Assistant **2025.5** or newer
 - A running [BamBuddy](https://github.com/maziggy/bambuddy) server, version **1.2.5.7** or newer (BamBuddy shows its version at the foot of its menu and in **Settings → General**, card **Updates**), that Home Assistant can reach — with your printers added in BamBuddy first (see [BamBuddy's documentation](https://wiki.bambuddy.cool)): the integration shows what BamBuddy manages
 - For the installation through HACS: [HACS](https://hacs.xyz) installed in Home Assistant
-- A BamBuddy API key with **Read Status**; for the controls also **Control Printer** (see [Create an API key](#create-an-api-key))
+- A BamBuddy API key with **Read Status**, **Control Printer** and **Manage Maintenance** (see [Create an API key](#create-an-api-key))
 - For the controls: the printer's **developer LAN mode** on — without it the printer ignores the commands BamBuddy passes on (see [Troubleshooting](#-troubleshooting))
 
 ---
@@ -98,15 +98,15 @@ The betas of 2.0.0 are the exception: HACS ranks them below the date versions (t
 ### Create an API key
 
 1. In BamBuddy, open **Settings → API Keys** and choose **Create Key**.
-2. Give it a name, such as `Home Assistant`, and tick its permissions:
-   - **Read Status**: Home Assistant shows everything and changes nothing. Unsure? Start with this alone.
-   - **Control Printer** as well, for the controls: print, speed, temperatures, fans, light, moving the axes, filament, drying and switching smart plugs.
-   - **Manage Maintenance**, to mark maintenance done from Home Assistant (new keys have it).
+2. Give it a name, such as `Home Assistant`, and tick the three permissions the integration needs:
+   - **Read Status**: everything Home Assistant shows, the camera included.
+   - **Control Printer**: the controls — print, speed, temperatures, fans, light, moving the axes, filament, drying and switching smart plugs.
+   - **Manage Maintenance**: marking maintenance done.
 
-   The integration needs no other permission. You can change them later in BamBuddy; then reload the BamBuddy entry (see [Changing settings later](#changing-settings-later)).
+   The integration refuses a key that lacks one of them and needs no other. BamBuddy cannot add a permission to an existing key: if one is missing, create a new key and enter it in Home Assistant (see [Changing settings later](#changing-settings-later)).
 3. Copy the key: BamBuddy shows it only once.
 
-The permissions only count while authentication is on in BamBuddy (**Settings → Authentication**). With it off, BamBuddy answers every request, whatever key it carries or none, and anyone who can reach BamBuddy can control your printers. Recommended: turn authentication on before you create the key. If the setup accepts any text as the key, it is off.
+BamBuddy enforces the permissions only while its authentication is on (**Settings → Authentication**). With it off, BamBuddy answers every request, whatever key it carries or none, and anyone who can reach BamBuddy can control your printers. Recommended: turn authentication on before you create the key. The integration checks the key either way: it takes only a key BamBuddy knows, with the three permissions.
 
 A key created while authentication was off keeps working once you switch it on, limited by its permissions alone. A key created afterwards as an administrator also gets an owner, which BamBuddy recommends — see its [API Keys & Webhooks](https://wiki.bambuddy.cool/features/api-keys/).
 
@@ -130,7 +130,7 @@ A printer removed in BamBuddy shows up under **Settings → Repairs**; **Remove 
 
 - **Another address, key or certificate check:** on the BamBuddy entry, choose **⋮ → Reconfigure**. The form never shows the stored API key: leave the field empty to keep it. A new address leads to a second step: say whether it is the same BamBuddy or another one — for another, the history of BamBuddy's own figures is deleted, their entity IDs stay. The printers are found there by their serial numbers and keep their devices, entities and history. In the same step you can remove the printers the new address lacks and add those only it has; one you keep waits under **Settings → Repairs** until BamBuddy lists it again.
 - **A key BamBuddy no longer accepts:** Home Assistant asks for a new one — an entry under **Settings → Repairs** and the BamBuddy entry under **Settings → Devices & services** lead you there.
-- **Permissions changed in BamBuddy** (**Control Printer** added or removed): reload the entry (**⋮ → Reload**). The controls appear or go; when they come back, they keep their entity IDs. A smart plug's switch is a binary sensor (`binary_sensor.…` instead of `switch.…`) while the key cannot control, so automations on the switch need the other entity then.
+- **A key that lacks a permission** — its owner lost a right in BamBuddy, say: within ten minutes Home Assistant asks for a new key, under **Settings → Repairs**; the dialog shows which permissions the stored key has (✓) and lacks (✗). Meanwhile the values go on, and a control BamBuddy refuses says why. Gave the owner the right back? The request goes by itself at the next check, within ten minutes; or leave the dialog's field empty to check the stored key at once.
 
 ### How the integration reads BamBuddy
 
@@ -146,7 +146,7 @@ After a command it reads the printer again a moment later, once the printer has 
 
 ## 📊 Entities
 
-Entity names are in Home Assistant's language: English or German, English for any other. Which entities a printer gets depends on its model: an A1 has no chamber temperature, no door and no auxiliary fan; only printers with a chamber heater get a chamber target temperature; a two-nozzle printer (H2D, H2D Pro, H2C, X2D) gets left and right versions. Controls appear only when the API key has **Control Printer** (*Refresh status* and *Camera frame rate* need only **Read Status**).
+Entity names are in Home Assistant's language: English or German, English for any other. Which entities a printer gets depends on its model: an A1 has no chamber temperature, no door and no auxiliary fan; only printers with a chamber heater get a chamber target temperature; a two-nozzle printer (H2D, H2D Pro, H2C, X2D) gets left and right versions.
 
 While a printer is offline, BamBuddy keeps its last values, so most of its entities are unavailable: **Online** and **Print status** (`offline`) tell about it; the print hours, *Maintenance*, the build plate, *Plate cleared*, the firmware and *Camera frame rate* stay available. Home Assistant skips an unavailable entity without an error (only a warning in its log): an automation that presses an offline printer's *Pause* or sets its nozzle target sends nothing. The `bambuddy.*` actions refuse with "… is offline" instead — all but `bambuddy.run_diagnostic` and `bambuddy.mark_maintenance_done`, which work without the printer, as *Plate cleared* does.
 
@@ -161,7 +161,7 @@ While a printer is offline, BamBuddy keeps its last values, so most of its entit
 | Current layer / Total layers | Sensor | Layer progress |
 | Current print | Sensor | Name of the job |
 | Print hours | Sensor | Hours the printer has printed, as BamBuddy counts them (with the offset set in BamBuddy) |
-| Maintenance | Sensor | *OK*, *Due soon* or *Overdue*, as BamBuddy keeps the printer's maintenance; its tasks in the attribute `tasks`. Read every 10 minutes and after a print: a read can write to BamBuddy's database (it adds missing default tasks). BamBuddy counts a task never marked done from 0 hours, so a printer with print hours shows such tasks overdue until you mark them done. Attributes `due_count`, `due_soon_count` (numbers) and `can_mark_done` |
+| Maintenance | Sensor | *OK*, *Due soon* or *Overdue*, as BamBuddy keeps the printer's maintenance; its tasks in the attribute `tasks`. Read every 10 minutes and after a print: a read can write to BamBuddy's database (it adds missing default tasks). BamBuddy counts a task never marked done from 0 hours, so a printer with print hours shows such tasks overdue until you mark them done. Attributes `due_count` and `due_soon_count` (numbers) |
 | Nozzle / Bed / Chamber temperature | Sensor | Current temperatures (two nozzles: left and right) |
 | Nozzle / Bed / Chamber target temperature | Number | Set the heaters; their lowest value (0 °C, 32 °F) turns them off. A running job may set them again |
 | Part cooling / Auxiliary / Chamber fan | Fan | Fan speeds in %, settable. The X2D and a P2S with the External Exhaust Fan kit have an *Exhaust fan* instead of a *Chamber fan* (a base P2S has neither); the X2D and a P2S with a left auxiliary fan have a *Left auxiliary fan* as well. The stock X1 has no auxiliary fan and the P1P neither that nor a chamber fan: kits add them, so they are there, disabled at first |
@@ -182,7 +182,7 @@ While a printer is offline, BamBuddy keeps its last values, so most of its entit
 | External spool | Sensor | Filament on the spool holder (two nozzles: left and right) |
 | Door | Binary sensor | Open or closed (printers with a door sensor) |
 | Camera | Camera | Live stream and snapshot; its attribute `frame_rate` says the frames a second a stream asks for, and while a stream runs `streamed_frame_rate` the frames a second that arrive |
-| Camera frame rate | Number | The live view's frames a second *(Configuration; Home Assistant's own setting, with any API key)*: from 5 up to what the camera gives — 30 on the X1, X2D, H2 and P2 series, 15 for a camera BamBuddy takes from elsewhere — in steps of 5, the most unless set. The A1 and P1 series and the A2L give 5 and have none, unless BamBuddy takes an external camera for them. BamBuddy shares one connection to its printers' own cameras among everyone watching, at the rate the first of them asked: while someone else watches (BamBuddy's own page asks for 8 or 15), the stream gets that rate, and the next start of the live view asks again |
+| Camera frame rate | Number | The live view's frames a second *(Configuration; Home Assistant's own setting)*: from 5 up to what the camera gives — 30 on the X1, X2D, H2 and P2 series, 15 for a camera BamBuddy takes from elsewhere — in steps of 5, the most unless set. The A1 and P1 series and the A2L give 5 and have none, unless BamBuddy takes an external camera for them. BamBuddy shares one connection to its printers' own cameras among everyone watching, at the rate the first of them asked: while someone else watches (BamBuddy's own page asks for 8 or 15), the stream gets that rate, and the next start of the live view asks again |
 | Cover image | Image | The job's plate picture, while a job runs and after it has finished or failed |
 | Firmware | Update | New firmware Bambu Lab offers *(Diagnostic; install it on the printer or in BamBuddy)* |
 | Online / Developer mode / SD card / Wired network / Wi-Fi signal / IP address / Nozzle type / Nozzle diameter | Binary sensor / Sensor | *(Diagnostic; Wired network only on the X1E and the H2D Pro, the printers with a port; Wi-Fi signal disabled at first on a wired printer. The P2S, X2D and H2 series have a USB drive instead of the SD card)* |
@@ -204,7 +204,7 @@ Each smart plug BamBuddy links to a printer is a device under that printer, name
 
 | Entity | Type | Description |
 |---|---|---|
-| *The plug* | Switch | On or off. Off cuts the power: a plug that powers the printer takes it offline in BamBuddy, and a running print stops. Its attributes, kept while BamBuddy cannot reach the plug, say whether it powers the printer (`powers_printer`) and is the printer's own plug (`printer_main`: BamBuddy's pick where several power it), whether BamBuddy shows it on its printer card (`on_printer_card`) and whether BamBuddy's own auto off is on (`bambuddy_auto_off`). A plug BamBuddy only watches (MQTT), or any plug with a key without **Control Printer**: a binary sensor instead |
+| *The plug* | Switch | On or off. Off cuts the power: a plug that powers the printer takes it offline in BamBuddy, and a running print stops. Its attributes, kept while BamBuddy cannot reach the plug, say whether it powers the printer (`powers_printer`) and is the printer's own plug (`printer_main`: BamBuddy's pick where several power it), whether BamBuddy shows it on its printer card (`on_printer_card`) and whether BamBuddy's own auto off is on (`bambuddy_auto_off`). A plug BamBuddy only watches (MQTT): a binary sensor instead |
 | Run | Button | A Home Assistant script BamBuddy keeps as a plug: it runs, it has no on and off |
 | Power / Energy today / Energy total | Sensor | Only the figures the plug reports; *Energy total* fits Home Assistant's energy dashboard |
 | Switch off after the print | Switch | For the printer's own plug — where several power it, the one BamBuddy picks —, see below |
@@ -230,7 +230,7 @@ Home Assistant does not refuse a plug's off during a print — the plug is an em
 
 ## 🎛️ Actions
 
-For what is no entity. Every action but `get_print_objects`, `get_k_profiles`, `run_diagnostic` and `mark_maintenance_done` needs **Control Printer** on the API key; `mark_maintenance_done` needs **Manage Maintenance**. Moving, homing and extruding refuse while a print is running or paused: BamBuddy would put them into the print. Loading and unloading refuse while a print is running, but work while it is paused — for a color change by hand. None of these work while the AMS changes filament. Skipping objects, on the other hand, works only while a print is running or paused. The slot actions take one slot each, as `entity_id` in the action's data (not as a `target`).
+For what is no entity. Moving, homing and extruding refuse while a print is running or paused: BamBuddy would put them into the print. Loading and unloading refuse while a print is running, but work while it is paused — for a color change by hand. None of these work while the AMS changes filament. Skipping objects, on the other hand, works only while a print is running or paused. The slot actions take one slot each, as `entity_id` in the action's data (not as a `target`).
 
 | Action | Fields | What it does |
 |---|---|---|
@@ -275,7 +275,7 @@ The integration brings its own card: one per printer, with its status, camera, t
 - **Control:** heating — the nozzle, the bed and, where the printer heats it, the chamber, each with − and + and an off switch, and *Cool down* for all (off and *Cool down* are hidden while a print runs or is paused); the print options — the printer's AI detections, folded, the head saying how many are off; the active nozzle on two-nozzle printers; the airduct mode on the P2S, X2D and H2 series, while no print runs; a jog pad for X and Y and the bed closer or farther, in steps of 0.1, 1 or 10 mm, homing, and extruding or retracting 10 mm. Moving and extruding are locked while a print runs or is paused and during a filament change.
 - **Filament:** each AMS unit with its slots — load and unload, humidity, temperature, drying for the AMS 2 Pro and the AMS HT, set to the gentlest of the loaded spools' advice —, the AMS filament backup, and the external spool (left and right on two-nozzle printers). The ✏️ on a filled slot opens its tools: material, color and K profile for a spool without an RFID chip, reading the chip again, and resetting the slot. On two-nozzle printers each unit names the nozzle it feeds (L or R). From three units on, each unit shows only its head, colors and drying at first; a tap on the head shows its slots. In a paused print it offers to resume once the new filament is in.
 
-While the printer is offline, or BamBuddy gives no data, every tab says so with the printer's picture; offline it offers *Check connection*: BamBuddy checks its ports and its connection to the printer, and the card says what is wrong and what to do. Stop, skipping objects, homing, loading, unloading, and starting and stopping drying ask before they act. After a command the card shows *Sent*; with developer LAN mode off it warns that the printer takes no commands. Without **Control Printer** on the API key the card only shows: no Control tab, no buttons that act on the printer (the camera's frame rate, Home Assistant's own setting, still can be set).
+While the printer is offline, or BamBuddy gives no data, every tab says so with the printer's picture; offline it offers *Check connection*: BamBuddy checks its ports and its connection to the printer, and the card says what is wrong and what to do. Stop, skipping objects, homing, loading, unloading, and starting and stopping drying ask before they act. After a command the card shows *Sent*; with developer LAN mode off it warns that the printer takes no commands.
 
 ### Card options
 
@@ -303,7 +303,7 @@ ams_folding: folded
 
 In the editor, drag a section or a chip by its handle (≡) to move it, and × hides it. Without a mouse or touch, remove one and add it again: it goes to the end. The editor shows every option as it applies, defaults included, and saves only what differs from the defaults: an option you set back leaves the YAML again. Its preview shows a section with nothing to show at the moment, such as the print controls without a print or every section while the printer is offline, faded as an example; the dashboard, also while you edit it, shows the card as it is. A list you never changed shows a section that a later version adds; a list you saved keeps it hidden until you add it.
 
-*Hide controls* turns the card into a display: what can be set shows as its state, and a tap opens nothing that could set it (a temperature or the hotend fan opens its sensor, the other fans open nothing). It is no lock: actions, automations and device pages still work. To keep a dashboard from controlling the printer, give the integration an API key without **Control Printer**.
+*Hide controls* turns the card into a display: what can be set shows as its state, and a tap opens nothing that could set it (a temperature or the hotend fan opens its sensor, the other fans open nothing). It is no lock: actions, automations and device pages still work.
 
 The live view uses bandwidth while it runs; with `tap` it stops when you leave the page. Home Assistant Cast does not show the card: Cast loads no integration's own modules.
 
@@ -378,6 +378,7 @@ actions:
 
 2.0.0 is a new integration under the old name. Home Assistant migrates the BamBuddy entry by itself; still, plan a few minutes:
 
+- **The API key** needs **Read Status**, **Control Printer** and **Manage Maintenance**. 1.x worked with Read Status alone, and with BamBuddy's authentication off with any text: where the stored key lacks a permission or BamBuddy does not know it, Home Assistant asks for a new one after the update (**Settings → Repairs**). Create it in BamBuddy first (see [Create an API key](#create-an-api-key)).
 - **The connection** becomes a single address (`http://host:port`); nothing to do.
 - **Device names** become *BamBuddy name (model / serial number)* and follow BamBuddy from then on. A name you gave a device in Home Assistant is replaced by it (Repairs tells you once); rename the printer in BamBuddy instead. Entity names in a dashboard card show the longer device name in front.
 - **Entity names** are new and translated; **entity IDs stay** where the entity stayed. The values changed with the names: *Print status* now reads `idle`, `preparing`, `slicing`, `printing`, `paused`, `finished`, `failed`, `offline` (1.x showed BamBuddy's `RUNNING`, `FINISH`, …), *Print speed* has the options `silent`, `standard`, `sport`, `ludicrous`, *HMS errors* (the old *HMS Status* sensor) is a number, and an idle printer's *Current print* is unknown instead of empty. Check automations that compare these values. New entities get IDs of model, serial number and English key.
@@ -410,16 +411,13 @@ HACS offers 2.0.0 as an update to everyone on a date version.
 Use the address you open BamBuddy with in your browser, including the port. With BamBuddy running as a Home Assistant app, use the host's address and the port the app shows, not `localhost`. The part in brackets after the entry's message, such as `(GET /updates/version: ClientConnectorDNSError)`, is for a bug report.
 
 **The setup does not accept the key.**
-Copy it again from BamBuddy (it is shown once) and make sure it has **Read Status**. With BamBuddy's authentication off, any key works — and anyone can use BamBuddy.
-
-**There are no controls: no pause or stop, no numbers, fans or light.**
-The key lacks **Control Printer**. Turn it on in BamBuddy under **Settings → API Keys** and reload the BamBuddy entry.
+Check that you pasted all of it. BamBuddy shows a key only once: if you no longer have it, create a new one. Where the form shows the three permissions, the key lacks those marked ✗: BamBuddy cannot add them to an existing key — create a new one with **Read Status**, **Control Printer** and **Manage Maintenance**. If you ticked one marked ✗, the key's owner may not do it: give them that right in BamBuddy, or create the key as a user who has it.
 
 **A button or a temperature does nothing on the printer.**
 Turn on the printer's developer LAN mode (the *Developer mode* entity shows it): on the printer's screen under **Settings → Network** (or **WLAN**), first **LAN Only Mode**, then **Developer Mode** — see BamBuddy's [Enabling Developer Mode](https://wiki.bambuddy.cool/getting-started/#enabling-developer-mode). It takes the printer off Bambu's cloud — Bambu Handy and printing through the cloud no longer reach it; printing over your home network does — and its access code changes: enter the new one in BamBuddy. Check BamBuddy's own printer page: if it cannot control the printer, neither can Home Assistant.
 
 **Everything of a printer is unavailable.**
-With *Print status* `offline`, BamBuddy lost the printer: it is off, asleep or out of the network — the card's *Check connection* (or the action `bambuddy.run_diagnostic`) says which. If *Print status* is unavailable too, BamBuddy itself does not answer — its *Connection* sensor turns off within a minute — or it no longer accepts the API key: Home Assistant then asks for it under **Settings → Devices & services**.
+With *Print status* `offline`, BamBuddy lost the printer: it is off, asleep or out of the network — the card's *Check connection* (or the action `bambuddy.run_diagnostic`) says which. If *Print status* is unavailable too, BamBuddy itself does not answer — its *Connection* sensor turns off within a minute — or it no longer accepts the API key: Home Assistant then asks for a new one under **Settings → Repairs**.
 
 **A printer has only a few entities, and its name shows no model.**
 BamBuddy has no model stored for it (it detects none for a printer added by hand), and the integration cannot find it out. Open the printer in BamBuddy, enter its model and save: within a minute the device gets the model in its name and the entities that model has. Entities created before keep their entity IDs, which say `printer` in place of the model (`sensor.printer_<serial>_print_status`).

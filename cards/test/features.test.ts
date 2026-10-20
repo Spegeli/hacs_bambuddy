@@ -290,10 +290,10 @@ describe("the maintenance dialog", () => {
     expect(find(card, "dialog")).not.toBeNull();
   });
 
-  it("says when the key may not mark tasks done, and shows no buttons with Hide controls", async () => {
-    const denied = await openMaintenance({ maintenance: maintenanceSpec({ canMarkDone: false }) });
-    expect(findAll(denied.card, ".maint-row button")).toEqual([]);
-    expect(text(find(denied.card, "dialog"))).toContain("Marking as done needs an API key with “Manage Maintenance” in BamBuddy.");
+  it("marks tasks done without asking the key, and shows no buttons with Hide controls", async () => {
+    // No permission to look up: the integration's key may mark tasks done.
+    const open = await openMaintenance({});
+    expect(findAll(open.card, ".maint-row button").length).toBeGreaterThan(0);
     const hidden = await openMaintenance({}, { read_only: true });
     expect(findAll(hidden.card, ".maint-row button")).toEqual([]);
     expect(text(find(hidden.card, "dialog"))).not.toContain("Manage Maintenance");
@@ -662,10 +662,10 @@ describe("the maintenance dialog, closer", () => {
       card,
       hass.withState("sensor.x1c_maintenance", "due_soon", {
         tasks: [null, { name: "no id" }, { id: 3, name: "Custom", due_soon: true, unit: "days", interval: 0, left: 2, last_done: "2026-10-01T00:00:00+00:00" }],
-        can_mark_done: false,
       }),
     );
-    expect(findAll(card, ".maint-row").map(text)).toEqual(["Custom Due soon: in 2 d"]);
+    // With its Done: the key may mark tasks done.
+    expect(findAll(card, ".maint-row").map(text)).toEqual(["Custom Due soon: in 2 d Done"]);
     expect((find(card, ".maint-bar > span") as HTMLElement).getAttribute("style")).toBe("width: 100%");
     await update(card, hass.withState("sensor.x1c_maintenance", "ok", { tasks: "nonsense" }));
     expect(text(find(card, "dialog"))).toContain("No maintenance tasks.");
@@ -1002,13 +1002,10 @@ describe("the 0-hour note where the card cannot mark tasks done", () => {
     return text(find(card, "dialog .dlg-note"));
   };
 
-  it("says where to mark them: in BamBuddy, with Hide controls or without the permission", async () => {
+  it("says where to mark them: here, or in BamBuddy with Hide controls", async () => {
     expect(await note({}, {})).toBe("BamBuddy zählt ab 0 Std., bis eine Aufgabe einmal als erledigt markiert ist. Markiere, was du schon gemacht hast.");
     expect(await note({}, { read_only: true })).toBe(
       "BamBuddy zählt ab 0 Std., bis eine Aufgabe einmal als erledigt markiert ist. Als erledigt markieren kannst du sie in BamBuddy – diese Karte blendet ihre Steuerelemente aus.",
-    );
-    expect(await note({ maintenance: maintenanceSpec({ canMarkDone: false }) }, {})).toBe(
-      "BamBuddy zählt ab 0 Std., bis eine Aufgabe einmal als erledigt markiert ist. Als erledigt markieren kannst du sie in BamBuddy.",
     );
   });
 });

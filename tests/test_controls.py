@@ -2,6 +2,7 @@
 light -- what each sends, and when a printer cannot take it."""
 from __future__ import annotations
 
+import logging
 from types import SimpleNamespace
 from typing import Any
 
@@ -152,10 +153,10 @@ async def test_a_command_reads_the_status_again_soon(
 @pytest.mark.parametrize(
     ("failure", "key"),
     [
-        (BamBuddyPermissionError(403, "API key does not have 'can_control_printer' permission"), "control_not_permitted"),
+        # The key has every scope: BamBuddy's own refusal, said as it is.
+        (BamBuddyPermissionError(403, "API key does not have 'can_control_printer' permission"), "bambuddy_refused"),
         (BamBuddyConnectionError("refused"), "cannot_connect"),
         (BamBuddyApiError(500, "Failed to pause print"), "command_failed"),
-        (BamBuddyAuthError(401, "Authentication required"), "auth_failed"),
     ],
 )
 async def test_bambuddys_refusals(
@@ -170,9 +171,8 @@ async def test_bambuddys_refusals(
     assert raised.value.translation_key == key
     if key == "command_failed":
         assert raised.value.translation_placeholders == {"error": "Failed to pause print"}
-    if key == "auth_failed":
-        await hass.async_block_till_done()
-        assert [flow["context"]["source"] for flow in hass.config_entries.flow.async_progress()] == ["reauth"]
+    if key == "bambuddy_refused":
+        assert raised.value.translation_placeholders == {"error": "API key does not have 'can_control_printer' permission"}
 
 
 async def test_nothing_reaches_an_offline_printer(
@@ -573,3 +573,53 @@ async def test_a_target_goes_as_high_as_the_model_heats(hass: HomeAssistant, bam
     assert state_of(hass, "number", printer_uid(entry, "nozzle_2_target", H2D)).attributes["max"] == 320
     assert state_of(hass, "number", printer_uid(entry, "bed_target", H2D)).attributes["max"] == 120
     assert state_of(hass, "number", printer_uid(entry, "chamber_target", H2D)).attributes["max"] == 65
+
+
+def _reauths(hass: HomeAssistant) -> list[str]:
+    return [flow["flow_id"] for flow in hass.config_entries.flow.async_progress() if flow["context"]["source"] == "reauth"]
+
+
+async def test_a_command_refused_for_a_short_key_starts_the_reauth(hass: HomeAssistant, bambuddy_api: SimpleNamespace) -> None:
+    """The key's owner lost Control Printer while the entry runs: the
+    refusal says so, and Home Assistant asks for a new key."""
+    entry = await set_up(hass, X1C)
+    bambuddy_api.pause.side_effect = BamBuddyPermissionError(403, "API key owner does not have 'printers:control' permission", "POST /printers/1/print/pause")
+    bambuddy_api.get_auth_me.return_value = load_fixture("auth_me_viewer.json")
+
+    with pytest.raises(HomeAssistantError) as raised:
+        await _call(hass, "button", "press", entity_id(hass, "button", printer_uid(entry, "pause")))
+    await hass.async_block_till_done()
+
+    assert raised.value.translation_key == "key_scopes_missing"
+    assert raised.value.translation_placeholders == {"read_status": "\u2713", "control_printer": "\u2717", "manage_maintenance": "\u2717"}
+    assert len(_reauths(hass)) == 1
+
+
+async def test_a_refusal_with_a_full_key_starts_no_reauth(
+    hass: HomeAssistant, bambuddy_api: SimpleNamespace, caplog: pytest.LogCaptureFixture
+) -> None:
+    """BamBuddy refuses a route the key may use (a new permission BamBuddy
+    split off, say): a new key would be refused alike -- no reauth loop, a
+    warning naming the route."""
+    entry = await set_up(hass, X1C)
+    bambuddy_api.pause.side_effect = BamBuddyPermissionError(403, "Not allowed", "POST /printers/1/print/pause")
+
+    with caplog.at_level(logging.WARNING), pytest.raises(HomeAssistantError):
+        await _call(hass, "button", "press", entity_id(hass, "button", printer_uid(entry, "pause")))
+    await hass.async_block_till_done()
+
+    assert _reauths(hass) == []
+    assert "POST /printers/1/print/pause" in caplog.text
+
+
+async def test_a_first_401_on_a_command_says_the_key_is_checked_again(hass: HomeAssistant, bambuddy_api: SimpleNamespace) -> None:
+    entry = await set_up(hass, X1C)
+    bambuddy_api.pause.side_effect = BamBuddyAuthError(401, "Authentication required", "POST /printers/1/print/pause")
+    bambuddy_api.get_auth_me.side_effect = BamBuddyAuthError(401, "Authentication required", "GET /auth/me")
+
+    with pytest.raises(HomeAssistantError) as raised:
+        await _call(hass, "button", "press", entity_id(hass, "button", printer_uid(entry, "pause")))
+    await hass.async_block_till_done()
+
+    assert raised.value.translation_key == "key_doubted"
+    assert _reauths(hass) == []

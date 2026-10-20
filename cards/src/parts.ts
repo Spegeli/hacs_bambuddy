@@ -60,8 +60,6 @@ export interface CardContext {
   /** The card offers controls: the API key may control the printer (the
    * integration made its controls) and the card does not hide them. */
   canControl: boolean;
-  /** The card would offer controls, but the API key lacks Control Printer. */
-  keyLacksControl: boolean;
   /** Hide controls with a key that may control: the controls' states show,
    * as text, and nothing can be set from the card. */
   viewOnly: boolean;

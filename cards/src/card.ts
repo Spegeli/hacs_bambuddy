@@ -1143,7 +1143,6 @@ export class BamBuddyPrinterCard extends LitElement {
       running: RUNNING.has(status),
       changing: online && FILAMENT_CHANGE.has(stateOf(hass, refs.amsStatus)?.state ?? ""),
       canControl,
-      keyLacksControl: !settings.readOnly && !permitted,
       viewOnly: settings.readOnly && permitted,
       examples: this.preview && this.inEditor,
       controlTab: settings.controlTab && permitted && settings.sections.some((section) => sectionShown(refs, section, settings.readOnly)),

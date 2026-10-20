@@ -15,6 +15,7 @@ from pytest_homeassistant_custom_component.test_util.aiohttp import AiohttpClien
 from custom_components.bambuddy.api import (
     BamBuddyApiError,
     BamBuddyAuthError,
+    BamBuddyBadAnswerError,
     BamBuddyClient,
     BamBuddyConnectionError,
     BamBuddyNotFoundError,
@@ -23,7 +24,7 @@ from custom_components.bambuddy.api import (
     normalise_url,
 )
 
-from tests.conftest import API_KEY, STREAM_TOKEN, URL
+from tests.conftest import API_KEY, STREAM_TOKEN, URL, load_fixture
 
 API = f"{URL}/api/v1"
 
@@ -474,34 +475,6 @@ async def test_the_connection_check_may_take_half_a_minute(hass: HomeAssistant) 
     assert request.await_args.kwargs["timeout"].total == 40
 
 
-@pytest.mark.parametrize(
-    ("auth", "permissions", "control", "maintenance", "plugs"),
-    [
-        # Without authentication every request may.
-        (False, [], True, True, True),
-        (True, ["printers:read", "printers:control", "smart_plugs:read", "smart_plugs:control"], True, False, True),
-        (True, ["printers:read", "maintenance:read", "maintenance:update"], False, True, False),
-        # A key whose owner may not switch plugs: BamBuddy leaves it out.
-        (True, ["printers:read", "printers:control", "smart_plugs:read"], True, False, False),
-    ],
-)
-async def test_the_keys_permissions(
-    hass: HomeAssistant,
-    aioclient_mock: AiohttpClientMocker,
-    auth: bool,
-    permissions: list[str],
-    control: bool,
-    maintenance: bool,
-    plugs: bool,
-) -> None:
-    aioclient_mock.get(f"{API}/auth/status", json={"auth_enabled": auth, "requires_setup": False})
-    aioclient_mock.get(f"{API}/auth/me", json={"permissions": permissions})
-
-    granted = await _client(hass).permissions()
-
-    assert (granted.control, granted.maintenance, granted.plugs) == (control, maintenance, plugs)
-
-
 async def test_the_smart_plugs_are_read(hass: HomeAssistant, aioclient_mock: AiohttpClientMocker) -> None:
     """BamBuddy's plug list comes from its database: one cheap read."""
     aioclient_mock.get(f"{API}/smart-plugs/", json=[{"id": 3, "name": "X1C plug", "printer_id": 1}])
@@ -629,3 +602,61 @@ async def test_a_plug_at_the_start_gets_five_seconds(hass: HomeAssistant) -> Non
     with patch.object(client, "_request", AsyncMock(return_value={})) as request:
         await client.get_plug_status(3, patient=False)
     assert request.await_args.kwargs["timeout"].total == 5
+
+
+@pytest.mark.parametrize(
+    ("fixture", "marks"),
+    [
+        # BamBuddy's default toggles and Control Printer: the extra toggles do no harm.
+        ("auth_me_control.json", {"read_status": "Y", "control_printer": "Y", "manage_maintenance": "Y"}),
+        # BamBuddy's create dialog leaves Control Printer off.
+        ("auth_me_default.json", {"read_status": "Y", "control_printer": "N", "manage_maintenance": "Y"}),
+        ("auth_me_read.json", {"read_status": "Y", "control_printer": "N", "manage_maintenance": "N"}),
+        # Its owner may only read: BamBuddy narrows the key to it.
+        ("auth_me_viewer.json", {"read_status": "Y", "control_printer": "N", "manage_maintenance": "N"}),
+        ("auth_me_other.json", {"read_status": "N", "control_printer": "N", "manage_maintenance": "N"}),
+    ],
+)
+async def test_check_key_marks_each_toggle(
+    hass: HomeAssistant, aioclient_mock: AiohttpClientMocker, fixture: str, marks: dict[str, str]
+) -> None:
+    """A toggle counts only with every permission the integration uses
+    under it; the marks are what the texts show."""
+    aioclient_mock.get(f"{API}/auth/me", json=load_fixture(fixture))
+
+    scopes = await _client(hass).check_key()
+
+    symbol = {"Y": "✓", "N": "✗"}
+    assert scopes.marks() == {key: symbol[value] for key, value in marks.items()}
+    assert scopes.missing == [key for key, value in marks.items() if value == "N"]
+    assert aioclient_mock.mock_calls[-1][3]["X-API-Key"] == API_KEY
+
+
+@pytest.mark.parametrize(
+    ("answer", "error"),
+    [
+        ({"status": 401, "json": {"detail": "Authentication required"}}, BamBuddyAuthError),
+        ({"status": 403, "json": {"detail": "API key owner is deactivated or no longer exists"}}, BamBuddyPermissionError),
+        ({"json": {"username": "api-key:bb_x..."}}, BamBuddyBadAnswerError),
+        ({"json": {"permissions": None}}, BamBuddyBadAnswerError),
+    ],
+)
+async def test_check_key_refusals(
+    hass: HomeAssistant, aioclient_mock: AiohttpClientMocker, answer: dict[str, Any], error: type[Exception]
+) -> None:
+    aioclient_mock.get(f"{API}/auth/me", **answer)
+
+    with pytest.raises(error):
+        await _client(hass).check_key()
+
+
+async def test_an_error_names_its_route_without_the_query(hass: HomeAssistant, aioclient_mock: AiohttpClientMocker) -> None:
+    """The guard's warning names the route BamBuddy refused; the camera's
+    token travels in the query and must not."""
+    aioclient_mock.get(f"{API}/printers/3/cover", status=403, json={"detail": "nope"})
+
+    with pytest.raises(BamBuddyPermissionError) as raised:
+        await _client(hass).get_cover(3)
+
+    assert raised.value.path == "GET /printers/3/cover"
+    assert STREAM_TOKEN not in raised.value.path

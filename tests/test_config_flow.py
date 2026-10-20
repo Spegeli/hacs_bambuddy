@@ -3,6 +3,7 @@ printers."""
 from __future__ import annotations
 
 import json
+import re
 import ssl
 from types import SimpleNamespace
 from typing import Any
@@ -119,8 +120,11 @@ async def test_a_bambuddy_without_printers_needs_no_choice(
     [
         ("get_version", BamBuddyConnectionError("refused"), "cannot_connect"),
         ("get_version", BamBuddyNotFoundError(404, "Not Found"), "not_bambuddy"),
-        ("get_system_info", BamBuddyAuthError(401, "Authentication required"), "invalid_auth"),
-        ("get_system_info", BamBuddyPermissionError(403, "API key does not have 'can_read_status' permission"), "missing_permission"),
+        ("get_auth_me", BamBuddyAuthError(401, "Authentication required"), "invalid_auth"),
+        ("get_auth_me", BamBuddyPermissionError(403, "API key owner is deactivated or no longer exists"), "key_owner_inactive"),
+        # The key's check passed: BamBuddy refusing a read is its own refusal.
+        ("get_system_info", BamBuddyAuthError(401, "Authentication required"), "bambuddy_refused"),
+        ("get_printers", BamBuddyPermissionError(403, "Not allowed"), "bambuddy_refused"),
     ],
 )
 async def test_errors_and_recovery(
@@ -197,22 +201,6 @@ async def test_a_web_page_that_is_no_bambuddy(hass: HomeAssistant, bambuddy_api:
     result = await _submit(hass, (await _start(hass))["flow_id"], _INPUT)
 
     assert result["errors"] == {"base": "not_bambuddy"}
-
-
-async def test_a_key_that_may_only_read_is_said_before_the_printers(
-    hass: HomeAssistant, bambuddy_api: SimpleNamespace
-) -> None:
-    """The printers show, nothing controls them: the step says so, and how
-    to change it. Each printer is a box to tick, however many there are."""
-    bambuddy_api.get_auth_me.return_value = load_fixture("auth_me_read.json")
-
-    result = await _submit(hass, (await _start(hass))["flow_id"], _INPUT)
-
-    assert result["step_id"] == "printers_read_only"
-    [field] = result["data_schema"].schema
-    assert result["data_schema"].schema[field].config["mode"] == "list"
-    result = await _submit(hass, result["flow_id"], {"printers": [str(X1C)]})
-    assert result["type"] is FlowResultType.CREATE_ENTRY
 
 
 async def test_an_address_with_a_login(hass: HomeAssistant, bambuddy_api: SimpleNamespace) -> None:
@@ -295,18 +283,6 @@ async def test_a_login_in_front_of_bambuddy_is_no_key_problem(
     assert result["errors"] == {"base": "error_not_bambuddy"}
 
 
-async def test_a_read_key_at_a_new_address_says_so(hass: HomeAssistant, bambuddy_api: SimpleNamespace) -> None:
-    entry = await set_up(hass, X1C)
-    bambuddy_api.get_auth_me.return_value = load_fixture("auth_me_read.json")
-
-    result = await _reconfigure(hass, entry)
-    result = await _submit(hass, result["flow_id"], {**_INPUT, "url": "https://bambuddy.example", "api_key": "bb_read"})
-    result = await _submit(hass, result["flow_id"], {"bambuddy": "same"})
-    await hass.async_block_till_done()
-
-    assert result["reason"] == "reconfigure_successful_read_only"
-
-
 @pytest.mark.parametrize(("status", "error"), [(500, "bad_answer"), (502, "cannot_connect")])
 async def test_an_error_bambuddy_answers_with(
     hass: HomeAssistant, bambuddy_api: SimpleNamespace, status: int, error: str
@@ -318,20 +294,6 @@ async def test_an_error_bambuddy_answers_with(
     result = await _submit(hass, (await _start(hass))["flow_id"], _INPUT)
 
     assert result["errors"] == {"base": error}
-
-
-async def test_reconfiguring_to_a_key_that_may_only_read_says_so(
-    hass: HomeAssistant, bambuddy_api: SimpleNamespace
-) -> None:
-    entry = await set_up(hass, X1C)
-    bambuddy_api.get_auth_me.return_value = load_fixture("auth_me_read.json")
-
-    result = await _reconfigure(hass, entry)
-    result = await _submit(hass, result["flow_id"], {**_INPUT, "url": URL, "api_key": "bb_read"})
-    # The reload it started, done before the test ends.
-    await hass.async_block_till_done()
-
-    assert (result["type"], result["reason"]) == (FlowResultType.ABORT, "reconfigure_successful_read_only")
 
 
 async def test_a_key_pasted_with_spaces(hass: HomeAssistant, bambuddy_api: SimpleNamespace) -> None:
@@ -389,13 +351,13 @@ def test_the_printer_names(printer: dict[str, Any], name: str) -> None:
 async def test_a_new_key_brings_a_failed_entry_back(hass: HomeAssistant, bambuddy_api: SimpleNamespace) -> None:
     """BamBuddy refused the key at setup: the entry failed and has no update
     listener. The new key must set it up, not only report success."""
-    bambuddy_api.get_printers.side_effect = BamBuddyAuthError(401, "Authentication required")
+    bambuddy_api.get_auth_me.side_effect = BamBuddyAuthError(401, "Authentication required")
     entry = make_entry(hass, X1C)
     await hass.config_entries.async_setup(entry.entry_id)
     await hass.async_block_till_done()
     assert entry.state is ConfigEntryState.SETUP_ERROR
     [flow] = [flow for flow in hass.config_entries.flow.async_progress() if flow["context"]["source"] == "reauth"]
-    bambuddy_api.get_printers.side_effect = None
+    bambuddy_api.get_auth_me.side_effect = None
 
     result = await _submit(hass, flow["flow_id"], {"api_key": "bb_new_key"})
     await hass.async_block_till_done()
@@ -427,11 +389,11 @@ async def test_reauthentication(hass: HomeAssistant, bambuddy_api: SimpleNamespa
 
     result: dict[str, Any] = await entry.start_reauth_flow(hass)  # type: ignore[assignment]
     assert (result["step_id"], result["description_placeholders"]["url"]) == ("reauth_confirm", URL)
-    bambuddy_api.get_system_info.side_effect = BamBuddyAuthError(401, "Authentication required")
+    bambuddy_api.get_auth_me.side_effect = BamBuddyAuthError(401, "Authentication required")
     result = await _submit(hass, result["flow_id"], {"api_key": "bb_wrong"})
     assert result["errors"] == {"base": "invalid_auth"}
 
-    bambuddy_api.get_system_info.side_effect = None
+    bambuddy_api.get_auth_me.side_effect = None
     result = await _submit(hass, result["flow_id"], {"api_key": "bb_new_key"})
     await hass.async_block_till_done()
 
@@ -525,7 +487,7 @@ async def test_a_new_key_survives_an_error(hass: HomeAssistant, bambuddy_api: Si
     assert result["errors"] == {"url": "invalid_url"}
     assert result["description_placeholders"]["example_url"] == "https://bambuddy.example.com"
     assert _suggested(result)["api_key"] == "bb_new"
-    bambuddy_api.get_system_info.side_effect = BamBuddyAuthError(401, "Invalid API key")
+    bambuddy_api.get_auth_me.side_effect = BamBuddyAuthError(401, "Invalid API key")
     result = await _submit(hass, result["flow_id"], {"url": URL, "api_key": "bb_new", "verify_ssl": True})
     assert result["errors"] == {"base": "invalid_auth"}
     assert _suggested(result)["api_key"] == "bb_new"
@@ -534,7 +496,7 @@ async def test_a_new_key_survives_an_error(hass: HomeAssistant, bambuddy_api: Si
 async def test_the_stored_key_refused(hass: HomeAssistant, bambuddy_api: SimpleNamespace) -> None:
     """The field left empty and BamBuddy refusing the stored key: it says so."""
     entry = await set_up(hass, X1C)
-    bambuddy_api.get_system_info.side_effect = BamBuddyAuthError(401, "Invalid API key")
+    bambuddy_api.get_auth_me.side_effect = BamBuddyAuthError(401, "Invalid API key")
 
     result = await _reconfigure(hass, entry)
     result = await _submit(hass, result["flow_id"], {"url": URL, "verify_ssl": True})
@@ -1104,18 +1066,6 @@ async def test_an_entry_without_printers_has_its_own_labels(hass: HomeAssistant,
     assert result["data_schema"].schema[field].config["translation_key"] == "bambuddy_alone"
 
 
-async def test_reauthenticating_with_a_read_only_key_says_the_controls_go(hass: HomeAssistant, bambuddy_api: SimpleNamespace) -> None:
-    """BamBuddy's key dialog starts with Control Printer off: the result says what that means."""
-    entry = await set_up(hass, X1C)
-    result: Any = await entry.start_reauth_flow(hass)
-    bambuddy_api.get_auth_me.return_value = load_fixture("auth_me_read.json")
-
-    result = await hass.config_entries.flow.async_configure(result["flow_id"], {"api_key": "bb_new_read_key"})
-    await hass.async_block_till_done()
-
-    assert (result["type"], result["reason"]) == (FlowResultType.ABORT, "reauth_successful_read_only")
-
-
 async def test_configure_names_the_entry_it_belongs_to(hass: HomeAssistant, bambuddy_api: SimpleNamespace) -> None:
     """Its menu and both steps say which BamBuddy, by the entry's name --
     renamed in Home Assistant, by that name. The dialog's title cannot: Home
@@ -1130,10 +1080,9 @@ async def test_configure_names_the_entry_it_belongs_to(hass: HomeAssistant, bamb
         assert (result["type"], result["step_id"], result["description_placeholders"]) == (FlowResultType.FORM, step, {"name": "Werkstatt"})
 
 
-def test_configure_says_the_entrys_name_and_the_key_help_says_what_control_is_for() -> None:
-    """The names in Configure, and Control Printer as the user's choice to
-    operate the printers from Home Assistant -- not something the
-    integration does by itself. Setup and sign-in again say the same."""
+def test_configure_says_the_entrys_name_and_the_key_help_names_all_three() -> None:
+    """The names in Configure; the key's help names the three permissions
+    the integration needs, the sign-in-again steps walk through a new key."""
     for language in ("en", "de"):
         texts = json.loads((INTEGRATION / "translations" / f"{language}.json").read_text(encoding="utf-8"))
         options = texts["options"]
@@ -1143,19 +1092,201 @@ def test_configure_says_the_entrys_name_and_the_key_help_says_what_control_is_fo
         for reason in ("cannot_connect", "no_printers", "all_printers_added", "key_refused"):
             assert "{name}" in options["abort"][reason], (language, reason)
         steps = texts["config"]["step"]
-        # Signing in again: the dialog walks through a new key, so the field's
-        # help leaves out where to create one and says only what it needs.
-        reauth = steps["reauth_confirm"]
-        first, rest = steps["user"]["data_description"]["api_key"].split(". ", 1)
-        assert reauth["data_description"]["api_key"] == rest, language
-        assert first not in reauth["data_description"]["api_key"]
-        assert "BamBuddy" in reauth["title"], language
-        create = {"en": "“Create Key”", "de": "„Schlüssel erstellen“"}[language]
-        assert create in reauth["description"] and "{url}" in reauth["description"], language
-        assert "\n\n1. " in reauth["description"] and "\n3. " in reauth["description"], language
-        operate = {"en": "operate them from Home Assistant", "de": "aus Home Assistant bedienen"}[language]
-        maintenance = {"en": "Manage Maintenance", "de": "„Wartung verwalten“"}[language]
+        three = {"en": "all three permissions", "de": "alle drei Berechtigungen"}[language]
         for step in ("user", "reconfigure"):
-            assert operate in steps[step]["data_description"]["api_key"], (language, step)
-            # The third permission the integration uses: marking maintenance done.
-            assert maintenance in steps[step]["data_description"]["api_key"], (language, step)
+            assert three in steps[step]["data_description"]["api_key"].replace("allen drei", "alle drei"), (language, step)
+        create = {"en": "\u201cCreate Key\u201d", "de": "\u201eSchl\u00fcssel erstellen\u201c"}[language]
+        for step in ("reauth_confirm", "reauth_scopes", "reauth_owner"):
+            assert "BamBuddy" in steps[step]["title"], (language, step)
+            assert create in steps[step]["description"] and "{url}" in steps[step]["description"], (language, step)
+            # Its field: left empty, the stored key is checked again.
+            assert steps[step]["data_description"]["api_key"], (language, step)
+        assert "\n\n1. " in steps["reauth_confirm"]["description"] and "\n3. " in steps["reauth_scopes"]["description"]
+
+
+@pytest.mark.parametrize(
+    ("fixture", "marks"),
+    [
+        ("auth_me_default.json", {"read_status": "\u2713", "control_printer": "\u2717", "manage_maintenance": "\u2713"}),
+        ("auth_me_read.json", {"read_status": "\u2713", "control_printer": "\u2717", "manage_maintenance": "\u2717"}),
+        ("auth_me_viewer.json", {"read_status": "\u2713", "control_printer": "\u2717", "manage_maintenance": "\u2717"}),
+        # BamBuddy knows the key: not an invalid one, three marks.
+        ("auth_me_other.json", {"read_status": "\u2717", "control_printer": "\u2717", "manage_maintenance": "\u2717"}),
+    ],
+)
+async def test_setup_shows_each_missing_scope(
+    hass: HomeAssistant, bambuddy_api: SimpleNamespace, fixture: str, marks: dict[str, str]
+) -> None:
+    bambuddy_api.get_auth_me.return_value = load_fixture(fixture)
+
+    result = await _submit(hass, (await _start(hass))["flow_id"], _INPUT)
+
+    assert (result["errors"], {key: result["description_placeholders"][key] for key in marks}) == ({"base": "missing_scopes"}, marks)
+    bambuddy_api.get_printers.assert_not_awaited()
+
+
+async def test_any_text_is_no_key_with_authentication_off(hass: HomeAssistant, bambuddy_api: SimpleNamespace) -> None:
+    """BamBuddy without authentication answers every read, but its key check
+    knows the key: a text that is none is refused."""
+    bambuddy_api.get_auth_status.return_value = {"auth_enabled": False, "requires_setup": False}
+    bambuddy_api.get_auth_me.side_effect = BamBuddyAuthError(401, "Authentication required")
+
+    result = await _submit(hass, (await _start(hass))["flow_id"], {**_INPUT, "api_key": "anything"})
+
+    assert result["errors"] == {"base": "invalid_auth"}
+
+
+@pytest.mark.parametrize(
+    ("stored", "step"),
+    [
+        (load_fixture("auth_me_default.json"), "reauth_scopes"),
+        (BamBuddyPermissionError(403, "API key owner is deactivated or no longer exists"), "reauth_owner"),
+        (BamBuddyAuthError(401, "Authentication required"), "reauth_confirm"),
+        (BamBuddyConnectionError("refused"), "reauth_confirm"),
+    ],
+)
+async def test_reauth_shows_why(hass: HomeAssistant, bambuddy_api: SimpleNamespace, stored: Any, step: str) -> None:
+    """The stored key checked at the start: the dialog says why a new key
+    is needed; a full key typed in any of them ends it."""
+    entry = await set_up(hass, X1C)
+    if isinstance(stored, Exception):
+        bambuddy_api.get_auth_me.side_effect = stored
+    else:
+        bambuddy_api.get_auth_me.return_value = stored
+
+    result: dict[str, Any] = await entry.start_reauth_flow(hass)  # type: ignore[assignment]
+
+    assert result["step_id"] == step
+    if step == "reauth_scopes":
+        assert result["description_placeholders"]["stored_control_printer"] == "\u2717"
+    bambuddy_api.get_auth_me.side_effect = None
+    bambuddy_api.get_auth_me.return_value = load_fixture("auth_me_control.json")
+    result = await _submit(hass, result["flow_id"], {"api_key": "bb_full_key"})
+    await hass.async_block_till_done()
+    assert (result["type"], result["reason"]) == (FlowResultType.ABORT, "reauth_successful")
+    assert entry.data["api_key"] == "bb_full_key"
+
+
+async def test_reauth_names_a_typed_short_key(hass: HomeAssistant, bambuddy_api: SimpleNamespace) -> None:
+    """A new key that lacks a scope: its own marks, the stored key's stay in the text."""
+    entry = await set_up(hass, X1C)
+    bambuddy_api.get_auth_me.return_value = load_fixture("auth_me_default.json")
+    result: dict[str, Any] = await entry.start_reauth_flow(hass)  # type: ignore[assignment]
+    bambuddy_api.get_auth_me.return_value = load_fixture("auth_me_other.json")
+
+    result = await _submit(hass, result["flow_id"], {"api_key": "bb_other"})
+
+    assert result["errors"] == {"base": "missing_scopes"}
+    placeholders = result["description_placeholders"]
+    assert (placeholders["read_status"], placeholders["stored_read_status"]) == ("\u2717", "\u2713")
+
+
+async def test_reconfigure_keeps_no_short_key(hass: HomeAssistant, bambuddy_api: SimpleNamespace) -> None:
+    """The field left empty and the stored key short: said as the stored one;
+    a typed short key: its own marks."""
+    entry = await set_up(hass, X1C)
+    bambuddy_api.get_auth_me.return_value = load_fixture("auth_me_default.json")
+
+    result = await _reconfigure(hass, entry)
+    result = await _submit(hass, result["flow_id"], {"url": URL, "verify_ssl": True})
+    assert result["errors"] == {"base": "stored_key_scopes"}
+    assert result["description_placeholders"]["control_printer"] == "\u2717"
+
+    result = await _submit(hass, result["flow_id"], {"url": URL, "api_key": "bb_default", "verify_ssl": True})
+    assert result["errors"] == {"base": "missing_scopes"}
+
+
+async def test_reauth_checks_the_stored_key_again_with_an_empty_field(hass: HomeAssistant, bambuddy_api: SimpleNamespace) -> None:
+    """The owner got the right back in BamBuddy, the stored key was shown
+    once: an empty field checks it again."""
+    entry = await set_up(hass, X1C)
+    stored = entry.data["api_key"]
+    bambuddy_api.get_auth_me.return_value = load_fixture("auth_me_default.json")
+    result: dict[str, Any] = await entry.start_reauth_flow(hass)  # type: ignore[assignment]
+    assert result["step_id"] == "reauth_scopes"
+
+    result = await _submit(hass, result["flow_id"], {})
+    assert result["errors"] == {"base": "stored_key_scopes"}
+
+    bambuddy_api.get_auth_me.return_value = load_fixture("auth_me_control.json")
+    result = await _submit(hass, result["flow_id"], {})
+    await hass.async_block_till_done()
+
+    assert (result["type"], result["reason"]) == (FlowResultType.ABORT, "reauth_successful")
+    assert entry.data["api_key"] == stored
+    assert entry.state is ConfigEntryState.LOADED
+
+
+_KEY_WORDS = {
+    "en": {
+        "entered": "The API key you entered lacks permissions",
+        "owner_fix": "give them that right, or create the key as a user who has it",
+        "repairs": "under Settings \u2192 Repairs",
+        "pasted": "Check that you pasted all of it",
+        "three": "Read Status, Control Printer and Manage Maintenance",
+        # What BamBuddy ticks at first may change: no text says it.
+        "gone": ("off at first", "starts unticked", "Open the BamBuddy integration", "Copy it again", "although the box is ticked"),
+    },
+    "de": {
+        "entered": "Dem eingegebenen API-Schl\u00fcssel fehlen Berechtigungen",
+        "owner_fix": "Gib ihm das Recht, oder erstelle den Schl\u00fcssel als Benutzer, der es hat",
+        "repairs": "unter Einstellungen \u2192 Reparaturen",
+        "pasted": "Pr\u00fcfe, ob du ihn vollst\u00e4ndig eingef\u00fcgt hast",
+        "three": "\u201eStatus lesen\u201c, \u201eDrucker steuern\u201c und \u201eWartung verwalten\u201c",
+        "gone": ("zun\u00e4chst aus", "anfangs nicht angehakt", "\u00d6ffne die BamBuddy-Integration", "Kopiere ihn erneut", "trotz gesetztem H\u00e4kchen"),
+    },
+}
+
+
+@pytest.mark.parametrize("language", ["en", "de"])
+def test_the_key_texts_say_what_to_do(language: str) -> None:
+    """The three permissions named, never what BamBuddy ticks at first (that
+    may change); a short key says it is the one entered, and what a ✗ on a
+    ticked permission means and asks for; the stored key's marks one below
+    the other; a refused key: pasted in full?; where a new key goes; the
+    owner's texts name the three."""
+    words = _KEY_WORDS[language]
+    texts = json.loads((INTEGRATION / "translations" / f"{language}.json").read_text(encoding="utf-8"))
+    steps, errors, exceptions = texts["config"]["step"], texts["config"]["error"], texts["exceptions"]
+
+    assert words["three"] in steps["user"]["data_description"]["api_key"]
+    for step in ("reauth_confirm", "reauth_scopes", "reauth_owner"):
+        assert words["three"] in steps[step]["description"], step
+        assert "\n\n1. " in steps[step]["description"], step
+    assert errors["missing_scopes"].startswith(words["entered"])
+    for text in (errors["missing_scopes"], steps["reauth_scopes"]["description"]):
+        assert words["owner_fix"] in text
+    for scope in ("read_status", "control_printer", "manage_maintenance"):
+        assert re.search(rf"\n- [^\n]+ \{{stored_{scope}\}}\n", steps["reauth_scopes"]["description"]), scope
+    assert words["pasted"] in errors["invalid_auth"]
+    for name in ("auth_failed", "key_scopes_missing", "key_owner_inactive"):
+        assert words["repairs"] in exceptions[name]["message"], name
+    for text in (errors["key_owner_inactive"], exceptions["key_owner_inactive"]["message"], steps["reauth_owner"]["description"]):
+        assert words["three"] in text
+    assert errors["stored_key_owner"]
+    everything = json.dumps(texts, ensure_ascii=False)
+    for gone in words["gone"]:
+        assert gone not in everything, gone
+
+
+async def test_reconfigure_says_the_stored_keys_owner_is_gone(hass: HomeAssistant, bambuddy_api: SimpleNamespace) -> None:
+    """The field left empty and the stored key's owner gone: said of the
+    stored key, not of "this key"."""
+    entry = await set_up(hass, X1C)
+    bambuddy_api.get_auth_me.side_effect = BamBuddyPermissionError(403, "API key owner is deactivated or no longer exists")
+
+    result = await _reconfigure(hass, entry)
+    result = await _submit(hass, result["flow_id"], {"url": URL, "verify_ssl": True})
+
+    assert result["errors"] == {"base": "stored_key_owner"}
+
+
+async def test_reauth_says_the_stored_keys_owner_is_gone(hass: HomeAssistant, bambuddy_api: SimpleNamespace) -> None:
+    entry = await set_up(hass, X1C)
+    bambuddy_api.get_auth_me.side_effect = BamBuddyPermissionError(403, "API key owner is deactivated or no longer exists")
+    result: dict[str, Any] = await entry.start_reauth_flow(hass)  # type: ignore[assignment]
+    assert result["step_id"] == "reauth_owner"
+
+    result = await _submit(hass, result["flow_id"], {})
+
+    assert result["errors"] == {"base": "stored_key_owner"}

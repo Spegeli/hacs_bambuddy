@@ -109,8 +109,12 @@ async def async_get_config_entry_diagnostics(hass: HomeAssistant, entry: BamBudd
         "bambuddy": {
             "version": (system.get("app") or {}).get("version"),
             "printers": (system.get("printers") or {}).get("total"),
-            "can_control": runtime.can_control,
-            "can_control_plugs": runtime.can_control_plugs,
+        },
+        "key": {
+            "marks": runtime.key.last.scopes.marks() if runtime.key.last.scopes is not None else None,
+            "last_check": runtime.key.last.at.isoformat(),
+            "outcome": runtime.key.last.outcome,
+            "auth_enabled": runtime.auth_enabled,
         },
         "printers": {str(printer_id): _printer(coordinator) for printer_id, coordinator in runtime.printers.items()},
         "plugs": {str(plug_id): _plug(runtime, plug) for plug_id, plug in (runtime.plugs.data or {}).items()},

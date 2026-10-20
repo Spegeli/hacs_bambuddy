@@ -5,10 +5,12 @@ from __future__ import annotations
 
 from collections.abc import Awaitable
 import logging
-from typing import Any, NamedTuple
+from typing import Any
 from urllib.parse import urlsplit, urlunsplit
 
 import aiohttp
+
+from .const import REQUIRED_SCOPES
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -37,23 +39,6 @@ _PLUG_QUICK = aiohttp.ClientTimeout(total=5, connect=5)
 _API_PATH = "/api/v1"
 # A gateway's answers: a proxy without BamBuddy behind it.
 _GATEWAY = (502, 503, 504)
-# BamBuddy's permission for the printer controls.
-_CONTROL_PERMISSION = "printers:control"
-# And for marking maintenance done (the key's "Manage Maintenance").
-_MAINTENANCE_PERMISSION = "maintenance:update"
-# And for switching smart plugs ("Control Printer" too, unless the key's
-# owner may not).
-_PLUGS_PERMISSION = "smart_plugs:control"
-
-
-class Permissions(NamedTuple):
-    """What the key may do beyond reading."""
-
-    control: bool
-    maintenance: bool
-    plugs: bool
-
-
 class AddressWithLoginError(ValueError):
     """The address carries a user name or password: BamBuddy takes the API
     key, and the address is the entry's identity -- no secret in it."""
@@ -96,12 +81,15 @@ class BamBuddyConnectionError(BamBuddyError):
 
 
 class BamBuddyApiError(BamBuddyError):
-    """BamBuddy answered with an error; the text is its own where it sent one."""
+    """BamBuddy answered with an error; the text is its own where it sent one.
+    `path`: the request ("GET /printers/3/status"), never its query -- the
+    camera token travels there."""
 
-    def __init__(self, status: int, detail: str) -> None:
+    def __init__(self, status: int, detail: str, path: str = "") -> None:
         super().__init__(detail)
         self.status = status
         self.detail = detail
+        self.path = path
 
 
 class BamBuddyAuthError(BamBuddyApiError):
@@ -116,9 +104,27 @@ class BamBuddyNotFoundError(BamBuddyApiError):
     """404: e.g. a printer BamBuddy no longer has."""
 
 
+class BamBuddyBadAnswerError(BamBuddyApiError):
+    """BamBuddy answered, but not as the integration expects it to."""
+
+
 class BamBuddyNotJsonError(BamBuddyApiError):
     """An answer that is no JSON: BamBuddy's web page answers every path
     that is not its API -- an address copied with a page's path."""
+
+
+class KeyScopes(dict[str, bool]):
+    """Whether the key has each scope the integration needs (the keys of
+    REQUIRED_SCOPES), as BamBuddy reports what it may really do."""
+
+    @property
+    def missing(self) -> list[str]:
+        return [scope for scope in REQUIRED_SCOPES if not self.get(scope)]
+
+    def marks(self) -> dict[str, str]:
+        """For the texts' placeholders: the symbols, no words -- the texts
+        name the permissions in their own language."""
+        return {scope: "\u2713" if self.get(scope) else "\u2717" for scope in REQUIRED_SCOPES}
 
 
 _ERRORS: dict[int, type[BamBuddyApiError]] = {
@@ -200,7 +206,7 @@ class BamBuddyClient:
                     if response.status in (*_GATEWAY, 404) and detail == f"HTTP {response.status}":
                         raise BamBuddyConnectionError(f"{method} {path}: HTTP {response.status}")
                     error = _ERRORS.get(response.status, BamBuddyApiError)
-                    raise error(response.status, detail)
+                    raise error(response.status, detail, f"{method} {path}")
                 if raw:
                     return await response.read()
                 try:
@@ -232,23 +238,24 @@ class BamBuddyClient:
         return str((await self._object("/updates/version", key=False)).get("version", ""))
 
     async def get_auth_status(self) -> dict[str, Any]:
+        """Whether BamBuddy's authentication is on (for the diagnostics)."""
         return await self._object("/auth/status", key=False)
-
-    async def permissions(self) -> Permissions:
-        """What the key may do: with BamBuddy's authentication off every
-        request may, else the key's permissions decide."""
-        if not (await self.get_auth_status()).get("auth_enabled"):
-            return Permissions(control=True, maintenance=True, plugs=True)
-        granted = (await self.get_auth_me()).get("permissions") or []
-        return Permissions(
-            control=_CONTROL_PERMISSION in granted,
-            maintenance=_MAINTENANCE_PERMISSION in granted,
-            plugs=_PLUGS_PERMISSION in granted,
-        )
 
     async def get_auth_me(self) -> dict[str, Any]:
         """The key's real permissions."""
         return await self._object("/auth/me")
+
+    async def check_key(self) -> KeyScopes:
+        """The key's scopes, from what BamBuddy says it may do -- whatever
+        BamBuddy's authentication setting: /auth/me checks the key itself.
+        Raises BamBuddyAuthError (401: BamBuddy does not know the key),
+        BamBuddyPermissionError (403: its owner is deactivated or gone) and
+        BamBuddyBadAnswerError for an answer without its permissions."""
+        granted = (await self.get_auth_me()).get("permissions")
+        if not isinstance(granted, list):
+            raise BamBuddyBadAnswerError(200, "No permissions in the answer", "GET /auth/me")
+        held = {permission for permission in granted if isinstance(permission, str)}
+        return KeyScopes({scope: needed <= held for scope, needed in REQUIRED_SCOPES.items()})
 
     async def get_system_info(self, *, patient: bool = True) -> dict[str, Any]:
         """For it BamBuddy walks through its whole archive: 30 s -- or 10

@@ -134,6 +134,8 @@ _RAISED = (
     re.compile(r'translation_domain=DOMAIN,\s*translation_key="([a-z0-9_]+)"'),
     re.compile(r'refuse\(\s*"([a-z0-9_]+)"'),
     re.compile(r'refusal(?::\s*str\s*)?=\s*"([a-z0-9_]+)"'),
+    # The key guard's answer to a refused request (key._error).
+    re.compile(r'_error\(\s*"([a-z0-9_]+)"'),
     # A button's refusal by the printer's state: both of its texts.
     re.compile(r'refusal_fn=lambda data: "([a-z0-9_]+)" if [^\n]* else "([a-z0-9_]+)"'),
 )

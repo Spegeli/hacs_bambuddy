@@ -702,12 +702,16 @@ async def test_not_this_time_is_too_late_once_it_switches(
 async def test_a_switch_off_the_key_may_not_send_gives_up(
     hass: HomeAssistant, bambuddy_api: SimpleNamespace, freezer: FrozenDateTimeFactory
 ) -> None:
-    """Tried again, given up after ten minutes, no reauthentication."""
+    """Tried again, given up after ten minutes; the key's guard checks the
+    key (it has every scope here: no reauthentication)."""
     entry = await set_up(hass, X1C)
     await _arm(hass, entry.entry_id)
+    checked = bambuddy_api.get_auth_me.await_count
     bambuddy_api.control_plug.side_effect = BamBuddyPermissionError(403, "API key does not have 'can_control_printer' permission")
     _printer(bambuddy_api, state="FINISH", nozzle=30.0)
     await _tick(hass, freezer)
+    await _tick(hass, freezer, 6)
+    assert bambuddy_api.get_auth_me.await_count > checked
     await _tick(hass, freezer, 11 * 60)
 
     assert _phase(hass, entry.entry_id) == "gave_up"

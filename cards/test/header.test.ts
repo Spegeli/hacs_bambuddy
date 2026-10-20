@@ -818,11 +818,11 @@ describe("the menu", () => {
     expect(pill(card, "firmware")?.getAttribute("aria-label")).toMatch(/^Firmware .+ \(no data from BamBuddy\)$/);
   });
 
-  it("says the key may only read, also with the controls hidden", async () => {
+  it("names no control mode: the key always controls", async () => {
     const { card } = await cardFor("readOnly", { config: { read_only: true } });
     await open(card);
     await press(card, "Printer information");
-    expect(Object.fromEntries(rows(card))["Control"]).toBe("Read only (API key without “Control Printer”)");
+    expect(Object.keys(Object.fromEntries(rows(card)))).not.toContain("Control");
   });
 
   it("closes when the card leaves the page", async () => {
@@ -1003,11 +1003,5 @@ describe("the printer information", () => {
     await settle(off);
     await press(off, "Druckerinformationen");
     expect(Object.fromEntries(rows(off))["Entwicklermodus"]).toBe("Aus Der Drucker nimmt keine Befehle an.");
-    // BamBuddy's German pages name the permission „Drucker steuern“.
-    const { card: reading } = await cardFor("readOnly", { language: "de" });
-    (find(reading, ".menu-btn") as HTMLButtonElement).click();
-    await settle(reading);
-    await press(reading, "Druckerinformationen");
-    expect(Object.fromEntries(rows(reading))["Steuerung"]).toBe("Nur lesen (API-Schlüssel ohne „Drucker steuern“)");
   });
 });

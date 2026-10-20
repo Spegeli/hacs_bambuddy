@@ -12,7 +12,7 @@ from typing import TYPE_CHECKING, Any, TypeVar
 
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import CALLBACK_TYPE, HomeAssistant, callback
-from homeassistant.exceptions import ConfigEntryAuthFailed, HomeAssistantError
+from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers import issue_registry as ir
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
@@ -68,6 +68,7 @@ from .plugs import ENERGY_FIELDS, Plug, main_of, plug_device_name, plug_identifi
 
 if TYPE_CHECKING:
     from .auto_off import AutoOff
+    from .key import KeyGuard
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -87,22 +88,25 @@ def failure(err: BamBuddyError, kind: type[_E]) -> _E:
     return kind(translation_domain=DOMAIN, translation_key="bad_answer", translation_placeholders={"error": str(err)})
 
 
-async def fetch(call: Awaitable[_T], *, figures: bool = False, kind: type[HomeAssistantError] = UpdateFailed) -> _T:
-    """A read for a coordinator: a refused key starts a reauthentication,
-    anything else marks the data unavailable until the next poll. `figures`:
-    BamBuddy's statistics and update checks, which a key's owner may lack
-    the right to (403) though the key works -- the reauthentication would
-    pass the same key again: those fail, the printers go on. `kind`: what
-    any other failure raises."""
+async def fetch(call: Awaitable[_T], *, entry: BamBuddyConfigEntry | None = None, kind: type[HomeAssistantError] = UpdateFailed) -> _T:
+    """A read for a coordinator: any failure marks the data unavailable
+    until the next poll (`kind`). A refused one (401, 403) goes to the
+    entry's key guard, which checks the key -- the guard alone starts a
+    reauthentication, so a 401 BamBuddy answers for a moment, or a route it
+    refuses despite every scope, asks for no new key; a 401 says so only
+    once the guard confirmed it. During the setup (`entry` not loaded yet)
+    the setup's own check ran a moment before."""
     try:
         return await call
-    except BamBuddyPermissionError as err:
-        if figures:
-            raise failure(err, UpdateFailed) from err
-        # BamBuddy accepts the key; it or its owner lost a permission.
-        raise ConfigEntryAuthFailed(translation_domain=DOMAIN, translation_key="auth_permission") from err
-    except BamBuddyAuthError as err:
-        raise ConfigEntryAuthFailed(translation_domain=DOMAIN, translation_key="auth_failed") from err
+    except (BamBuddyAuthError, BamBuddyPermissionError) as err:
+        runtime: BamBuddyData | None = getattr(entry, "runtime_data", None) if entry is not None else None
+        if runtime is not None:
+            runtime.key.async_read_refused(err)
+        if isinstance(err, BamBuddyAuthError):
+            # A doubt until the guard confirmed it a minute later.
+            key = "auth_failed" if runtime is not None and runtime.key.refused else "key_doubted"
+            raise kind(translation_domain=DOMAIN, translation_key=key) from err
+        raise kind(translation_domain=DOMAIN, translation_key="bambuddy_refused", translation_placeholders={"error": err.detail}) from err
     except BamBuddyError as err:
         raise failure(err, kind) from err
 
@@ -369,7 +373,7 @@ class BamBuddyPrinterCoordinator(DataUpdateCoordinator[PrinterData]):
     async def _read_status(self) -> dict[str, Any]:
         # A method of its own: the request comes into being only when its
         # task runs, so a reload cutting the refresh short leaves none behind.
-        return await fetch(self.client.get_status(self.printer_id))
+        return await fetch(self.client.get_status(self.printer_id), entry=self.config_entry)
 
     async def _read_hours(self) -> bool:
         """The print hours and the printer's name in BamBuddy, once a
@@ -617,7 +621,7 @@ class BamBuddyInstanceCoordinator(_BamBuddyCoordinator):
             self._system_read = now
             try:
                 # At setup the printers wait for it: 10 s there, 30 s later.
-                self._system = await fetch(self.client.get_system_info(patient=not at_setup))
+                self._system = await fetch(self.client.get_system_info(patient=not at_setup), entry=self.config_entry)
                 self._follow_version(self._system)
             except UpdateFailed as err:
                 # Its archive walk is BamBuddy's slowest answer: the last one
@@ -625,15 +629,10 @@ class BamBuddyInstanceCoordinator(_BamBuddyCoordinator):
                 # read --, and the statistics still come.
                 _LOGGER.debug("BamBuddy's system information failed (%s); its figures wait for the next read", err)
         try:
-            stats = await fetch(self.client.get_statistics(patient=not at_setup), figures=True)
+            stats = await fetch(self.client.get_statistics(patient=not at_setup), entry=self.config_entry)
         except UpdateFailed as err:
             cause = err.__cause__
-            if isinstance(cause, BamBuddyPermissionError):
-                # The key's owner may not read them: they stay unknown,
-                # BamBuddy still answers.
-                _LOGGER.debug("The API key may not read BamBuddy's statistics: %s", err)
-                stats = {}
-            elif not at_setup and (
+            if not at_setup and (
                 isinstance(cause, BamBuddyApiError) or (isinstance(cause, BamBuddyConnectionError) and timed_out(cause))
             ):
                 # BamBuddy took the request but did not finish it (it asks
@@ -668,7 +667,7 @@ class BamBuddyUpdateCoordinator(_BamBuddyCoordinator):
         failed: UpdateFailed | None = None
         for key, read in (("bambuddy", self.client.get_update_check), ("firmware", self.client.get_firmware_updates)):
             try:
-                self._answers[key] = await fetch(read(), figures=True)
+                self._answers[key] = await fetch(read(), entry=self.config_entry)
             except UpdateFailed as err:
                 _LOGGER.debug("BamBuddy's %s check failed (%s); asked again in %s", key, err, UPDATE_RETRY_INTERVAL)
                 failed = err
@@ -718,8 +717,6 @@ class BamBuddyPlugCoordinator(DataUpdateCoordinator[dict[int, Plug]]):
         self._on_since: dict[int, datetime] = {}
         self._commands = 0
         self._refresh_later: CALLBACK_TYPE | None = None
-        # Whether the key may read BamBuddy's plug list.
-        self.readable = True
 
     def note_command(self) -> None:
         """A switch goes out now: a read already under way may bring the
@@ -732,15 +729,10 @@ class BamBuddyPlugCoordinator(DataUpdateCoordinator[dict[int, Plug]]):
         # Half a read's slack: the reads come a little more than 15 seconds
         # apart, so the third of them is due -- within a minute.
         if self._listed_at is None or now - self._listed_at >= PLUG_LIST_INTERVAL - PLUG_INTERVAL.total_seconds() / 2:
-            listed = await self._read_list()
-            # A key that may not read the list sees none -- which is no
-            # list that lost its plugs.
-            self.readable = listed is not None
-            self._listed = listed or []
+            self._listed = await self._read_list()
             self._listed_at = now
             self._follow_names()
-            if listed is not None:
-                self._follow_roles()
+            self._follow_roles()
         linked = [info for info in self._listed if info.get("printer_id") in self.printers]
         # Home Assistant's start waits for the first read: 5 s per plug then.
         patient = self.data is not None
@@ -803,14 +795,8 @@ class BamBuddyPlugCoordinator(DataUpdateCoordinator[dict[int, Plug]]):
             _LOGGER.debug("A smart plug changed its printer or role in BamBuddy, or was deleted there: the entry reloads")
             async_schedule_reload(self.hass, self.config_entry)
 
-    async def _read_list(self) -> list[dict[str, Any]] | None:
-        try:
-            listed = await fetch(self.client.get_smart_plugs(), figures=True)
-        except UpdateFailed as err:
-            if not isinstance(err.__cause__, BamBuddyPermissionError):
-                raise
-            _LOGGER.debug("The API key may not read BamBuddy's smart plugs")
-            return None
+    async def _read_list(self) -> list[dict[str, Any]]:
+        listed = await fetch(self.client.get_smart_plugs(), entry=self.config_entry)
         return [info for info in listed if isinstance(info, dict) and isinstance(info.get("id"), int)]
 
     async def _read_status(self, plug_id: int, patient: bool) -> dict[str, Any] | None:
@@ -867,19 +853,19 @@ class BamBuddyPlugCoordinator(DataUpdateCoordinator[dict[int, Plug]]):
 
 @dataclass
 class BamBuddyData:
-    """What a loaded entry keeps: the client, the coordinators, and whether
-    the key may control printers."""
+    """What a loaded entry keeps: the client, the coordinators and the key's
+    guard (the key has every scope the integration needs: the setup
+    refuses any other)."""
 
     client: BamBuddyClient
     instance: BamBuddyInstanceCoordinator
     updates: BamBuddyUpdateCoordinator
     printers: dict[int, BamBuddyPrinterCoordinator]
-    can_control: bool
     # The smart plugs of the printers.
     plugs: BamBuddyPlugCoordinator
-    # The key may mark maintenance done ("Manage Maintenance"), and switch plugs.
-    can_manage_maintenance: bool = False
-    can_control_plugs: bool = False
+    key: KeyGuard
+    # BamBuddy's authentication on or off (None: it did not say), for the diagnostics.
+    auth_enabled: bool | None
     # The switch-offs after the print, by plug.
     auto_offs: dict[int, AutoOff] = field(default_factory=dict)
     # A printer found its model: the reload that brings it is on its way.

@@ -71,12 +71,14 @@ async def test_the_list_once_a_minute_each_status_every_15_seconds(
     assert bambuddy_api.get_smart_plugs.await_count == 2
 
 
-async def test_a_key_that_may_not_read_plugs_sees_none(hass: HomeAssistant, bambuddy_api: SimpleNamespace) -> None:
-    """No plugs, and no reauthentication: the key reads the printers."""
+async def test_a_refused_plug_list_asks_for_no_new_key(hass: HomeAssistant, bambuddy_api: SimpleNamespace) -> None:
+    """BamBuddy refuses its plug list although the key has every scope: the
+    plugs wait, the printers go on, no reauthentication."""
     bambuddy_api.get_smart_plugs.side_effect = BamBuddyPermissionError(403, "API key does not have 'can_read_status' permission")
     entry = await set_up(hass, X1C)
 
-    assert plugs_of(hass, entry.entry_id).data == {}
+    assert not plugs_of(hass, entry.entry_id).last_update_success
+    assert entry.state is ConfigEntryState.LOADED
     assert not hass.config_entries.flow.async_progress_by_handler("bambuddy")
 
 
@@ -104,16 +106,6 @@ async def test_a_plug_that_does_not_answer_is_unknown(hass: HomeAssistant, bambu
 
     assert plugs[3].status is None
     assert plugs[4].state is True
-
-
-async def test_the_key_may_switch_plugs(hass: HomeAssistant, bambuddy_api: SimpleNamespace) -> None:
-    entry = await set_up(hass, X1C)
-    assert entry.runtime_data.can_control_plugs
-
-    bambuddy_api.get_auth_me.return_value = load_fixture("auth_me_read.json")
-    await hass.config_entries.async_reload(entry.entry_id)
-    await hass.async_block_till_done()
-    assert not entry.runtime_data.can_control_plugs
 
 
 async def test_plug_devices_stay_while_listed(hass: HomeAssistant, bambuddy_api: SimpleNamespace) -> None:
@@ -283,15 +275,6 @@ async def test_a_script_powers_no_printer(hass: HomeAssistant, bambuddy_api: Sim
     assert run.attributes["powers_printer"] is False
 
 
-async def test_a_scripts_state_for_a_read_only_key_powers_no_printer(hass: HomeAssistant, bambuddy_api: SimpleNamespace) -> None:
-    with_plugs(bambuddy_api)
-    bambuddy_api.get_auth_me.return_value = load_fixture("auth_me_read.json")
-    entry = await set_up(hass, H2D)
-    state = hass.states.get(str(_entity_id(hass, "binary_sensor", entry.entry_id, 6, "power")))
-    assert state is not None
-    assert state.attributes["powers_printer"] is False
-
-
 async def test_a_plugs_device_model_follows_its_type(
     hass: HomeAssistant, bambuddy_api: SimpleNamespace, freezer: FrozenDateTimeFactory
 ) -> None:
@@ -425,17 +408,6 @@ async def test_what_the_card_reads_of_a_plug(hass: HomeAssistant, bambuddy_api: 
     assert garage.attributes["bambuddy_auto_off"] is True
 
 
-async def test_a_key_that_may_not_switch_plugs_sees_their_state(hass: HomeAssistant, bambuddy_api: SimpleNamespace) -> None:
-    with_plugs(bambuddy_api)
-    bambuddy_api.get_auth_me.return_value = load_fixture("auth_me_read.json")
-    entry = await set_up(hass, X1C, H2D)
-
-    assert not _entity_id(hass, "switch", entry.entry_id, 3, "power")
-    assert not _entity_id(hass, "button", entry.entry_id, 6, "run")
-    on = hass.states.get(str(_entity_id(hass, "binary_sensor", entry.entry_id, 3, "power")))
-    assert on is not None and on.state == "on"
-
-
 # --- Diagnostics, a key that may not switch, deleting a plug's device -----------
 
 
@@ -453,7 +425,6 @@ async def test_no_plug_secret_reaches_the_diagnostics(hass: HomeAssistant, bambu
     plug = diagnostics["plugs"]["3"]
     assert (plug["info"]["plug_type"], plug["info"]["printer_id"], plug["status"]["energy"]["power"]) == ("tasmota", 1, 182.4)
     assert plug["auto_off"] == {"armed": False, "every_print": False, "threshold": 50.0, "phase": "idle", "waiting_for": None}
-    assert diagnostics["bambuddy"]["can_control_plugs"] is True
 
 
 async def test_a_plugs_device_diagnostics(hass: HomeAssistant, bambuddy_api: SimpleNamespace) -> None:
@@ -466,29 +437,6 @@ async def test_a_plugs_device_diagnostics(hass: HomeAssistant, bambuddy_api: Sim
 
     assert diagnostics["info"]["name"] == "Shelly – Abluftfilter"
     assert "rest-secret" not in json.dumps(diagnostics)
-
-
-async def test_a_key_that_may_no_longer_switch_plugs_loses_their_controls(
-    hass: HomeAssistant, bambuddy_api: SimpleNamespace
-) -> None:
-    """They would stay as entities no longer provided; the state comes as a
-    binary sensor instead."""
-    with_plugs(bambuddy_api)
-    entry = await set_up(hass, X1C)
-    assert _entity_id(hass, "switch", entry.entry_id, 3, "auto_off")
-
-    bambuddy_api.get_auth_me.return_value = {
-        **load_fixture("auth_me_control.json"),
-        "permissions": [p for p in load_fixture("auth_me_control.json")["permissions"] if p != "smart_plugs:control"],
-    }
-    await hass.config_entries.async_reload(entry.entry_id)
-    await hass.async_block_till_done()
-
-    for domain, key in (("switch", "power"), ("switch", "auto_off"), ("switch", "auto_off_every_print"), ("number", "auto_off_temperature"), ("button", "auto_off_skip")):
-        assert not _entity_id(hass, domain, entry.entry_id, 3, key), (domain, key)
-    assert _entity_id(hass, "binary_sensor", entry.entry_id, 3, "power")
-    # The printer's own controls stay: the key still controls printers.
-    assert er.async_get(hass).async_get_entity_id("button", DOMAIN, f"{entry.entry_id}_p{printer_serial(X1C)}_pause")
 
 
 async def test_a_key_that_may_no_longer_read_plugs_deletes_none(
@@ -553,8 +501,8 @@ def _timed_out() -> BamBuddyConnectionError:
 @pytest.mark.parametrize(
     ("failure", "key"),
     [
-        (BamBuddyPermissionError(403, "API key owner does not have 'smart_plugs:control' permission"), "plug_control_not_permitted"),
-        (BamBuddyAuthError(401, "Authentication required"), "auth_failed"),
+        # The key has every scope (the check says so): BamBuddy's own refusal.
+        (BamBuddyPermissionError(403, "API key owner does not have 'smart_plugs:control' permission"), "bambuddy_refused"),
         (BamBuddyConnectionError("POST /smart-plugs/3/control: ClientConnectorError"), "cannot_connect"),
         (_timed_out(), "no_answer"),
         (BamBuddyApiError(400, "MQTT plugs are monitor-only."), "plug_command_failed"),
@@ -622,31 +570,6 @@ async def test_a_plug_moved_to_another_printer_reloads_the_entry(
     assert device.name == f"{printer.name.split(' (')[0]} Tasmota – FA3F19 (Smart Plug)"  # type: ignore[union-attr]
     # Its entity IDs say nothing of the printer: they stay right.
     assert _entity_id(hass, "switch", entry.entry_id, 3, "power") == "switch.bambuddy_smart_plug_3"
-
-
-async def test_a_key_that_may_switch_again_drops_the_states(hass: HomeAssistant, bambuddy_api: SimpleNamespace) -> None:
-    """They would stay as entities no longer provided; an MQTT plug's stays --
-    never removed and created again, which on 2025.x loses its name, area
-    and hidden state."""
-    with_plugs(bambuddy_api)
-    bambuddy_api.get_auth_me.return_value = load_fixture("auth_me_read.json")
-    entry = await set_up(hass, X1C, H2D)
-    assert _entity_id(hass, "binary_sensor", entry.entry_id, 3, "power")
-    mqtt = _entity_id(hass, "binary_sensor", entry.entry_id, 7, "power")
-    removed: list[str] = []
-    hass.bus.async_listen(
-        er.EVENT_ENTITY_REGISTRY_UPDATED,
-        lambda event: removed.append(event.data["entity_id"]) if event.data["action"] == "remove" else None,
-    )
-
-    bambuddy_api.get_auth_me.return_value = load_fixture("auth_me_control.json")
-    await hass.config_entries.async_reload(entry.entry_id)
-    await hass.async_block_till_done()
-
-    assert not _entity_id(hass, "binary_sensor", entry.entry_id, 3, "power")
-    assert _entity_id(hass, "switch", entry.entry_id, 3, "power")
-    assert _entity_id(hass, "binary_sensor", entry.entry_id, 7, "power") == mqtt
-    assert mqtt not in removed
 
 
 async def test_the_diagnostics_show_only_known_plug_fields(hass: HomeAssistant, bambuddy_api: SimpleNamespace) -> None:

@@ -15,6 +15,31 @@ CONF_PRINTER_NAME = "printer_name"
 # The printer's serial number: what the entry knows it by.
 CONF_SERIAL = "serial_number"
 
+# What the integration needs of an API key, by the key's toggle in
+# BamBuddy (Settings -> API Keys): every permission its calls need under each
+# (BamBuddy's core/auth.py _APIKEY_SCOPE_BY_PERMISSION; the routes'
+# RequirePermissionIfAuthEnabled). A toggle counts only with all of them --
+# one missing is what the key's owner may not do.
+REQUIRED_SCOPES: dict[str, frozenset[str]] = {
+    "read_status": frozenset(
+        {
+            "printers:read",
+            "camera:view",
+            "stats:read",
+            "system:read",
+            "firmware:read",
+            "smart_plugs:read",
+            "maintenance:read",
+            "kprofiles:read",
+        }
+    ),
+    "control_printer": frozenset({"printers:control", "printers:clear_plate", "printers:ams_rfid", "smart_plugs:control"}),
+    "manage_maintenance": frozenset({"maintenance:update"}),
+}
+# How often the running entry checks its key; how soon again after no answer.
+KEY_CHECK_INTERVAL = timedelta(minutes=10)
+KEY_RETRY_DELAY = timedelta(minutes=1)
+
 # The first BamBuddy that tells an API key its real permissions (before, a
 # key heard it held all of them), reports HMS severities as Bambu's alert
 # levels and AMS humidity in percent.

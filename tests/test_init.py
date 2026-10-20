@@ -117,42 +117,106 @@ async def test_the_devices(hass: HomeAssistant, bambuddy_api: SimpleNamespace) -
     assert h2d_ams == {"Studio AMS A (AMS 2 Pro / 19C06A000000001)", "Studio AMS HT A (AMS HT / 19F06A000000002)"}
 
 
-async def test_a_read_only_key_creates_no_controls(hass: HomeAssistant, bambuddy_api: SimpleNamespace) -> None:
-    """Without Control Printer, BamBuddy would refuse every command: no
-    button but the status refresh, no select, number, fan or light -- but
-    the camera's frame rate, Home Assistant's own setting."""
-    bambuddy_api.get_auth_me.return_value = load_fixture("auth_me_read.json")
-    entry = await set_up(hass, X1C)
-
-    domains = _domains(hass, entry)
-    assert not domains & {Platform.SELECT, Platform.FAN, Platform.LIGHT}
-    registry = er.async_get(hass)
-    numbers = [e.unique_id for e in er.async_entries_for_config_entry(registry, entry.entry_id) if e.domain == "number"]
-    assert numbers == [printer_uid(entry, "camera_fps")]
-    buttons = [e.unique_id for e in er.async_entries_for_config_entry(registry, entry.entry_id) if e.domain == "button"]
-    assert buttons == [printer_uid(entry, "refresh_status")]
-    assert entry.runtime_data.can_control is False
+def _reauths(hass: HomeAssistant) -> list[dict[str, Any]]:
+    return [flow for flow in hass.config_entries.flow.async_progress() if flow["context"]["source"] == "reauth"]
 
 
-async def test_a_key_that_may_no_longer_control_leaves_no_controls_behind(
-    hass: HomeAssistant, bambuddy_api: SimpleNamespace
+@pytest.mark.parametrize(
+    ("fixture", "marks"),
+    [
+        # BamBuddy's create dialog leaves Control Printer off.
+        ("auth_me_default.json", {"read_status": "\u2713", "control_printer": "\u2717", "manage_maintenance": "\u2713"}),
+        ("auth_me_read.json", {"read_status": "\u2713", "control_printer": "\u2717", "manage_maintenance": "\u2717"}),
+        # Its owner may only read: BamBuddy narrows the key to it.
+        ("auth_me_viewer.json", {"read_status": "\u2713", "control_printer": "\u2717", "manage_maintenance": "\u2717"}),
+        ("auth_me_other.json", {"read_status": "\u2717", "control_printer": "\u2717", "manage_maintenance": "\u2717"}),
+    ],
+)
+async def test_setup_refuses_a_key_without_every_scope(
+    hass: HomeAssistant, bambuddy_api: SimpleNamespace, fixture: str, marks: dict[str, str]
 ) -> None:
-    """Control Printer turned off for the key: the controls would stay as
-    entities no longer provided. They go; the refresh button stays."""
-    entry = await set_up(hass, X1C)
-    assert Platform.FAN in _domains(hass, entry)
-    bambuddy_api.get_auth_me.return_value = load_fixture("auth_me_read.json")
+    """The integration works only with a key that may do all it does: one
+    lacking a scope asks for a new key, with each scope's mark."""
+    bambuddy_api.get_auth_me.return_value = load_fixture(fixture)
+    entry = make_entry(hass, X1C)
 
-    await hass.config_entries.async_reload(entry.entry_id)
+    await hass.config_entries.async_setup(entry.entry_id)
     await hass.async_block_till_done()
 
-    registry = er.async_get(hass)
-    left = {e.domain for e in er.async_entries_for_config_entry(registry, entry.entry_id)}
-    assert not left & {"fan", "light", "select", "switch"}
-    numbers = [e.unique_id for e in er.async_entries_for_config_entry(registry, entry.entry_id) if e.domain == "number"]
-    assert numbers == [printer_uid(entry, "camera_fps")]
-    buttons = [e.unique_id for e in er.async_entries_for_config_entry(registry, entry.entry_id) if e.domain == "button"]
-    assert buttons == [printer_uid(entry, "refresh_status")]
+    assert entry.state is ConfigEntryState.SETUP_ERROR
+    assert (entry.error_reason_translation_key, entry.error_reason_translation_placeholders) == ("key_scopes_missing", marks)
+    assert len(_reauths(hass)) == 1
+    bambuddy_api.get_printers.assert_not_awaited()
+
+
+async def test_setup_refuses_an_unknown_key(hass: HomeAssistant, bambuddy_api: SimpleNamespace) -> None:
+    """A 401 twice, a second apart: BamBuddy does not know the key."""
+    bambuddy_api.get_auth_me.side_effect = BamBuddyAuthError(401, "Authentication required", "GET /auth/me")
+    entry = make_entry(hass, X1C)
+
+    await hass.config_entries.async_setup(entry.entry_id)
+    await hass.async_block_till_done()
+
+    assert (entry.state, entry.error_reason_translation_key) == (ConfigEntryState.SETUP_ERROR, "auth_failed")
+    # Twice at setup, once more by the reauth dialog (why a new key).
+    assert bambuddy_api.get_auth_me.await_count == 3
+    assert len(_reauths(hass)) == 1
+
+
+async def test_a_lone_401_at_setup_is_asked_again(hass: HomeAssistant, bambuddy_api: SimpleNamespace) -> None:
+    """BamBuddy also answers 401 when its key lookup fails for a moment."""
+    bambuddy_api.get_auth_me.side_effect = [BamBuddyAuthError(401, "Authentication required", "GET /auth/me"), load_fixture("auth_me_control.json")]
+    entry = make_entry(hass, X1C)
+
+    await hass.config_entries.async_setup(entry.entry_id)
+    await hass.async_block_till_done()
+
+    assert entry.state is ConfigEntryState.LOADED
+    assert _reauths(hass) == []
+
+
+async def test_setup_refuses_a_deactivated_owner(hass: HomeAssistant, bambuddy_api: SimpleNamespace) -> None:
+    bambuddy_api.get_auth_me.side_effect = BamBuddyPermissionError(403, "API key owner is deactivated or no longer exists", "GET /auth/me")
+    entry = make_entry(hass, X1C)
+
+    await hass.config_entries.async_setup(entry.entry_id)
+    await hass.async_block_till_done()
+
+    assert (entry.state, entry.error_reason_translation_key) == (ConfigEntryState.SETUP_ERROR, "key_owner_inactive")
+    assert len(_reauths(hass)) == 1
+
+
+async def test_setup_waits_while_bambuddy_is_away(hass: HomeAssistant, bambuddy_api: SimpleNamespace) -> None:
+    """No answer to the key's check: no new key would help."""
+    bambuddy_api.get_auth_me.side_effect = BamBuddyConnectionError("GET /auth/me: ClientConnectorError")
+    entry = make_entry(hass, X1C)
+
+    await hass.config_entries.async_setup(entry.entry_id)
+    await hass.async_block_till_done()
+
+    assert entry.state is ConfigEntryState.SETUP_RETRY
+    assert _reauths(hass) == []
+
+
+async def test_an_answer_without_permissions_is_an_error(hass: HomeAssistant, bambuddy_api: SimpleNamespace) -> None:
+    """A BamBuddy that renamed the field: an error, not a retry for ever."""
+    bambuddy_api.get_auth_me.return_value = {"username": "api-key:bb_x..."}
+    entry = make_entry(hass, X1C)
+
+    await hass.config_entries.async_setup(entry.entry_id)
+    await hass.async_block_till_done()
+
+    assert (entry.state, entry.error_reason_translation_key) == (ConfigEntryState.SETUP_ERROR, "key_check_unreadable")
+    assert _reauths(hass) == []
+
+
+async def test_a_full_key_gets_every_control(hass: HomeAssistant, bambuddy_api: SimpleNamespace) -> None:
+    """The key with BamBuddy's default toggles and Control Printer: the
+    extra toggles do no harm, every control is there."""
+    entry = await set_up(hass, X1C)
+
+    assert {Platform.SELECT, Platform.FAN, Platform.LIGHT, Platform.NUMBER, Platform.BUTTON, Platform.SWITCH} <= _domains(hass, entry)
+    assert entry.runtime_data.key.last.outcome == "ok"
 
 
 async def test_a_poll_from_before_a_command_does_not_undo_it(
@@ -219,29 +283,39 @@ async def test_each_renamed_printer_is_explained(
     }
 
 
-async def test_with_authentication_off_any_key_controls(hass: HomeAssistant, bambuddy_api: SimpleNamespace) -> None:
-    """BamBuddy without authentication answers every request; it has no
-    permissions to ask about."""
+async def test_the_key_is_checked_with_authentication_off(hass: HomeAssistant, bambuddy_api: SimpleNamespace) -> None:
+    """BamBuddy answers every request then, but tells what the key may do:
+    a key lacking a scope is refused all the same (so a BamBuddy that one
+    day enforces scopes without authentication changes nothing here), a
+    full one works, and the diagnostics say authentication is off."""
     bambuddy_api.get_auth_status.return_value = {"auth_enabled": False, "requires_setup": False}
-    bambuddy_api.get_auth_me.side_effect = BamBuddyAuthError(401, "Authentication required")
+    bambuddy_api.get_auth_me.return_value = load_fixture("auth_me_read.json")
+    refused = make_entry(hass, X1C)
+    await hass.config_entries.async_setup(refused.entry_id)
+    await hass.async_block_till_done()
+    assert refused.error_reason_translation_key == "key_scopes_missing"
+    await hass.config_entries.async_remove(refused.entry_id)
+
+    bambuddy_api.get_auth_me.return_value = load_fixture("auth_me_control.json")
     entry = await set_up(hass, X1C)
 
-    assert entry.runtime_data.can_control is True
+    assert entry.runtime_data.auth_enabled is False
     assert {Platform.LIGHT, Platform.FAN, Platform.NUMBER} <= _domains(hass, entry)
 
 
 @pytest.mark.parametrize(
     ("failure", "state"),
     [
-        (BamBuddyAuthError(401, "Authentication required"), ConfigEntryState.SETUP_ERROR),
+        # The key's check passed a moment before: not the key -- tried again later.
+        (BamBuddyAuthError(401, "Authentication required"), ConfigEntryState.SETUP_RETRY),
         (BamBuddyConnectionError("refused"), ConfigEntryState.SETUP_RETRY),
     ],
 )
 async def test_setup_failures(
     hass: HomeAssistant, bambuddy_api: SimpleNamespace, failure: Exception, state: ConfigEntryState
 ) -> None:
-    """A refused key asks for a new one; an unreachable BamBuddy is tried
-    again later."""
+    """The printers' list refused or unreachable after the key's check
+    passed: tried again later, no new key asked for."""
     bambuddy_api.get_printers.side_effect = failure
     entry = make_entry(hass, X1C)
 
@@ -249,8 +323,7 @@ async def test_setup_failures(
     await hass.async_block_till_done()
 
     assert entry.state is state
-    reauth = [flow for flow in hass.config_entries.flow.async_progress() if flow["context"]["source"] == "reauth"]
-    assert bool(reauth) is isinstance(failure, BamBuddyAuthError)
+    assert _reauths(hass) == []
 
 
 @pytest.mark.parametrize("version", ["1.2.5.6", None])
@@ -272,6 +345,8 @@ async def test_a_bambuddy_too_old_is_refused_at_setup(
 
     assert entry.state is ConfigEntryState.SETUP_ERROR
     assert entry.reason is not None and "too old" in entry.reason
+    # Before the key: such a BamBuddy claims every permission for any key.
+    bambuddy_api.get_auth_me.assert_not_awaited()
 
 
 async def test_a_printer_bambuddy_no_longer_has_raises_an_issue(
@@ -483,6 +558,31 @@ async def test_a_device_nothing_reports_can_go(
     assert response["success"]
 
 
+async def test_a_1x_entry_with_a_read_only_key_asks_for_a_new_one(hass: HomeAssistant, bambuddy_api: SimpleNamespace) -> None:
+    """1.x worked with Read Status alone: after the migration Home Assistant
+    asks for a key with all three; with one, the entry loads."""
+    bambuddy_api.get_auth_me.return_value = load_fixture("auth_me_read.json")
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        title="BamBuddy (bambuddy.local)",
+        data={"host": "bambuddy.local", "port": 8000, "api_key": API_KEY, "version": "0.2.4.5"},
+        options={"printers": [{"printer_id": X1C, "printer_name": printer_name(X1C)}]},
+        unique_id="bambuddy_bambuddy.local_8000",
+        version=1,
+    )
+    entry.add_to_hass(hass)
+
+    await hass.config_entries.async_setup(entry.entry_id)
+    await hass.async_block_till_done()
+    assert (entry.version, entry.state, entry.error_reason_translation_key) == (2, ConfigEntryState.SETUP_ERROR, "key_scopes_missing")
+    assert len(_reauths(hass)) == 1
+
+    bambuddy_api.get_auth_me.return_value = load_fixture("auth_me_control.json")
+    await hass.config_entries.async_reload(entry.entry_id)
+    await hass.async_block_till_done()
+    assert entry.state is ConfigEntryState.LOADED
+
+
 async def test_migration_from_version_1(hass: HomeAssistant, bambuddy_api: SimpleNamespace) -> None:
     """1.x stored host and port: 2.0 makes them a URL, and the entities it
     merged or replaced leave the registry; the others keep their IDs."""
@@ -552,23 +652,37 @@ async def test_the_firmware_follows_on_the_device_page(
     assert _devices(hass, entry)[printer_device(entry, X1C)].sw_version == "01.09.02.00"
 
 
-@pytest.mark.parametrize(
-    "refusal",
-    [
-        BamBuddyAuthError(401, "Authentication required"),
-        # Read Status taken from the key: the printers' own reads, unlike BamBuddy's figures, ask for a new one.
-        BamBuddyPermissionError(403, "API key does not have 'can_read_status' permission"),
-    ],
-)
-async def test_a_refused_key_while_running_asks_for_a_new_one(
-    hass: HomeAssistant, bambuddy_api: SimpleNamespace, freezer: FrozenDateTimeFactory, refusal: Exception
-) -> None:
-    await set_up(hass, X1C)
-    bambuddy_api.get_status.side_effect = refusal
+async def test_a_refused_read_asks_the_guard(hass: HomeAssistant, bambuddy_api: SimpleNamespace, freezer: FrozenDateTimeFactory) -> None:
+    """A read BamBuddy refuses although the key has every scope: the
+    printer's values wait, the key is checked -- no reauth by the read."""
+    entry = await set_up(hass, X1C)
+    checked = bambuddy_api.get_auth_me.await_count
+    bambuddy_api.get_status.side_effect = BamBuddyPermissionError(403, "Not allowed", "GET /printers/1/status")
 
     await next_refresh(hass, freezer)
+    await next_refresh(hass, freezer, 6)
 
-    assert [flow["context"]["source"] for flow in hass.config_entries.flow.async_progress()] == ["reauth"]
+    assert state_of(hass, "sensor", printer_uid(entry, "status")).state == STATE_UNAVAILABLE
+    assert bambuddy_api.get_auth_me.await_count == checked + 1
+    assert _reauths(hass) == []
+
+
+async def test_a_read_401_is_confirmed_before_the_reauth(
+    hass: HomeAssistant, bambuddy_api: SimpleNamespace, freezer: FrozenDateTimeFactory
+) -> None:
+    """The key deleted in BamBuddy: the reads and the check answer 401; a
+    minute later the check again -- then Home Assistant asks for a new key."""
+    await set_up(hass, X1C)
+    refused = BamBuddyAuthError(401, "Authentication required", "GET /printers/1/status")
+    bambuddy_api.get_status.side_effect = refused
+    bambuddy_api.get_auth_me.side_effect = BamBuddyAuthError(401, "Authentication required", "GET /auth/me")
+
+    await next_refresh(hass, freezer)
+    await next_refresh(hass, freezer, 6)
+    assert _reauths(hass) == []
+    await next_refresh(hass, freezer, 61)
+
+    assert len(_reauths(hass)) == 1
 
 
 async def test_the_card_is_only_offered_with_a_frontend(
@@ -1584,10 +1698,14 @@ async def test_setup_reads_the_printers_beside_bambuddys_figures(hass: HomeAssis
 async def test_statistics_the_key_may_not_read_leave_bambuddy_connected(
     hass: HomeAssistant, bambuddy_api: SimpleNamespace, freezer: FrozenDateTimeFactory
 ) -> None:
-    """Only the statistics are unknown: BamBuddy answers, its system figures stay."""
+    """BamBuddy refuses its statistics although the key has every scope:
+    only they are unknown -- BamBuddy answers, its system figures stay, and
+    no new key is asked for."""
     bambuddy_api.get_statistics.side_effect = BamBuddyPermissionError(403, "API key owner does not have 'stats:read' permission")
     entry = await set_up(hass, X1C)
-    await next_refresh(hass, freezer)
+    await next_refresh(hass, freezer, 61)
+
+    assert _reauths(hass) == []
 
     assert state_of(hass, "binary_sensor", instance_uid(entry, "connected")).state == "on"
     assert state_of(hass, "sensor", instance_uid(entry, "disk_free")).state not in ("unavailable", "unknown")
@@ -1713,31 +1831,18 @@ async def test_a_failed_printer_read_at_setup_ends_the_reads_beside_it(
 async def test_a_permission_taken_from_the_key_is_named_in_the_log(
     hass: HomeAssistant, bambuddy_api: SimpleNamespace, freezer: FrozenDateTimeFactory, caplog: pytest.LogCaptureFixture
 ) -> None:
-    """BamBuddy still accepts the key; its owner lost a permission every read needs."""
+    """BamBuddy still accepts the key; its owner lost a permission every read
+    needs: the guard's check says which, and Home Assistant asks for a new key."""
     await set_up(hass, X1C)
     bambuddy_api.get_status.side_effect = BamBuddyPermissionError(403, "API key does not have 'can_read_status' permission")
+    bambuddy_api.get_auth_me.return_value = load_fixture("auth_me_other.json")
 
     await next_refresh(hass, freezer)
+    await next_refresh(hass, freezer, 6)
 
-    assert [flow["context"]["source"] for flow in hass.config_entries.flow.async_progress()] == ["reauth"]
-    assert "lacks a permission" in caplog.text
-    assert "no longer accepts" not in caplog.text
-
-
-async def test_a_permission_taken_from_the_key_is_named_at_setup_too(
-    hass: HomeAssistant, bambuddy_api: SimpleNamespace, caplog: pytest.LogCaptureFixture
-) -> None:
-    """The same 403 after a restart: the key still works, a permission is missing."""
-    bambuddy_api.get_printers.side_effect = BamBuddyPermissionError(403, "API key owner does not have 'printers:read' permission")
-    entry = make_entry(hass, X1C)
-
-    await hass.config_entries.async_setup(entry.entry_id)
-    await hass.async_block_till_done()
-
-    assert entry.state is ConfigEntryState.SETUP_ERROR
-    assert [flow["context"]["source"] for flow in hass.config_entries.flow.async_progress()] == ["reauth"]
-    assert "lacks a permission" in caplog.text
-    assert "no longer accepts" not in caplog.text
+    assert len(_reauths(hass)) == 1
+    assert "lacks permissions the integration needs: read_status" in caplog.text
+    assert "is not accepted" not in caplog.text
 
 
 async def test_the_names_notice_goes_with_its_printer(

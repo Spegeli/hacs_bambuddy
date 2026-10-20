@@ -122,19 +122,13 @@ def _coordinators(hass: HomeAssistant) -> Iterator[BamBuddyPrinterCoordinator]:
         yield from entry.runtime_data.printers.values()
 
 
-def _controllable(coordinator: BamBuddyPrinterCoordinator) -> BamBuddyPrinterCoordinator:
-    if not coordinator.config_entry.runtime_data.can_control:
-        raise _refuse("control_not_permitted")
-    return coordinator
-
-
-def _printer(hass: HomeAssistant, device_id: str, *, control: bool = True) -> BamBuddyPrinterCoordinator:
-    """The printer of a printer device; `control`: the action commands it."""
+def _printer(hass: HomeAssistant, device_id: str) -> BamBuddyPrinterCoordinator:
+    """The printer of a printer device."""
     device = dr.async_get(hass).async_get(device_id)
     if device is not None:
         for coordinator in _coordinators(hass):
             if coordinator.identifier in device.identifiers:
-                return _controllable(coordinator) if control else coordinator
+                return coordinator
     _refuse_not_listed(hass, device_id)
     raise _refuse("not_a_printer")
 
@@ -169,7 +163,7 @@ def _ams(hass: HomeAssistant, device_id: str) -> tuple[BamBuddyPrinterCoordinato
         for coordinator in _coordinators(hass):
             for unit in coordinator.data.ams_units:
                 if coordinator.ams_identifier(ams_key(unit)) in device.identifiers:
-                    return _controllable(coordinator), int(unit.get("id", 0))
+                    return coordinator, int(unit.get("id", 0))
     _refuse_not_listed(hass, device_id)
     if device is not None:
         for coordinator in _coordinators(hass):
@@ -180,7 +174,7 @@ def _ams(hass: HomeAssistant, device_id: str) -> tuple[BamBuddyPrinterCoordinato
     raise _refuse("not_an_ams")
 
 
-def _place(hass: HomeAssistant, entity_id: str, *, control: bool = True) -> tuple[BamBuddyPrinterCoordinator, int, int, int]:
+def _place(hass: HomeAssistant, entity_id: str) -> tuple[BamBuddyPrinterCoordinator, int, int, int]:
     """Where a slot or external spool sensor's filament sits, from its
     unique ID -- the sensor is unavailable while the printer is offline, and
     the command then says so: the printer, BamBuddy's AMS id and slot in it
@@ -194,7 +188,7 @@ def _place(hass: HomeAssistant, entity_id: str, *, control: bool = True) -> tupl
             if entity.config_entry_id != entry_id or match is None or match.group(1) != coordinator.key:
                 continue
             _, ams, slot, right = match.groups()
-            printer = _controllable(coordinator) if control else coordinator
+            printer = coordinator
             if ams is not None:
                 unit, index = _unit_place(coordinator, ams), int(slot) - 1
                 return printer, unit, index, tray_id(unit, index)
@@ -434,7 +428,7 @@ async def _k_profiles(
 
 async def _get_k_profiles(hass: HomeAssistant, call: ServiceCall) -> ServiceResponse:
     """A read: Read Status is enough."""
-    coordinator, ams, slot, tray = _place(hass, call.data[ATTR_ENTITY_ID], control=False)
+    coordinator, ams, slot, tray = _place(hass, call.data[ATTR_ENTITY_ID])
     diameter, profiles = await _k_profiles(coordinator, ams, slot)
     found = find_tray(coordinator.data, tray)
     current = found[0].get("cali_idx") if found else None
@@ -603,7 +597,7 @@ async def _stop_drying(hass: HomeAssistant, call: ServiceCall) -> None:
 
 async def _get_print_objects(hass: HomeAssistant, call: ServiceCall) -> ServiceResponse:
     """A read: Read Status is enough."""
-    coordinator = _printer(hass, call.data[ATTR_DEVICE_ID], control=False)
+    coordinator = _printer(hass, call.data[ATTR_DEVICE_ID])
     answer = await async_run_command(
         coordinator,
         partial(coordinator.client.get_print_objects, coordinator.printer_id),
@@ -623,7 +617,7 @@ async def _get_print_objects(hass: HomeAssistant, call: ServiceCall) -> ServiceR
 async def _run_diagnostic(hass: HomeAssistant, call: ServiceCall) -> ServiceResponse:
     """BamBuddy's connection check: a read (Read Status is enough), also
     for an offline printer -- that is when it helps."""
-    coordinator = _printer(hass, call.data[ATTR_DEVICE_ID], control=False)
+    coordinator = _printer(hass, call.data[ATTR_DEVICE_ID])
     answer = await async_run_command(
         coordinator, partial(coordinator.client.get_diagnostic, coordinator.printer_id), offline_ok=True, refresh=False
     )
@@ -638,11 +632,9 @@ async def _run_diagnostic(hass: HomeAssistant, call: ServiceCall) -> ServiceResp
 
 
 async def _mark_maintenance_done(hass: HomeAssistant, call: ServiceCall) -> None:
-    """A task of the printer done: BamBuddy's count starts over. Needs the
-    key's Manage Maintenance; BamBuddy keeps it, the printer may be off."""
-    coordinator = _printer(hass, call.data[ATTR_DEVICE_ID], control=False)
-    if not coordinator.config_entry.runtime_data.can_manage_maintenance:
-        raise _refuse("maintenance_not_permitted")
+    """A task of the printer done: BamBuddy's count starts over. BamBuddy
+    keeps it, the printer may be off."""
+    coordinator = _printer(hass, call.data[ATTR_DEVICE_ID])
     task = call.data[ATTR_TASK_ID]
     # Any task BamBuddy listed, a disabled one too; before the first read the
     # task goes as given (BamBuddy marks the task of that ID, whichever
@@ -652,7 +644,7 @@ async def _mark_maintenance_done(hass: HomeAssistant, call: ServiceCall) -> None
         raise _refuse("maintenance_task_unknown", printer=short_name(coordinator.info))
     try:
         await async_run_command(
-            coordinator, partial(coordinator.client.perform_maintenance, task), offline_ok=True, denied="maintenance_not_permitted"
+            coordinator, partial(coordinator.client.perform_maintenance, task), offline_ok=True
         )
     finally:
         # Also after no answer: BamBuddy may have marked it done.

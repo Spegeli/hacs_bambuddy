@@ -29,3 +29,10 @@ def test_every_link_within_contributing_finds_its_section():
     links = set(re.findall(r"\]\(#([^)]+)\)", text))
     assert links
     assert sorted(links - _sections()) == []
+
+
+def test_contributing_says_a_short_key_is_refused() -> None:
+    text = (_ROOT / "CONTRIBUTING.md").read_text(encoding="utf-8")
+    assert "| `key.py` |" in text
+    assert "a key lacking Read Status, Control Printer or Manage Maintenance is refused" in text
+    assert "with a key that has only **Read Status**" not in text

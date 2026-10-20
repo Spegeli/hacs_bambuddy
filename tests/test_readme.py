@@ -107,3 +107,29 @@ def test_the_issue_forms_link_to_sections_of_the_readme():
     }
     assert {"-troubleshooting", "create-an-api-key"} <= links
     assert sorted(links - sections) == []
+
+
+def test_the_key_needs_all_three_permissions() -> None:
+    """The integration refuses a key lacking Read Status, Control Printer or
+    Manage Maintenance -- also with BamBuddy's authentication off: the README
+    says so, and none of the read-only advice is left."""
+    readme = (_ROOT / "README.md").read_text(encoding="utf-8")
+    assert "**Read Status**, **Control Printer** and **Manage Maintenance**" in readme
+    assert "Check that you pasted all of it" in readme
+    # The owner given the right back: the stored key checked again.
+    assert "leave the dialog's field empty to check the stored key at once" in readme
+    for gone in (
+        "Unsure? Start with this alone",
+        "any key works",
+        "If the setup accepts any text as the key",
+        "give the integration an API key without **Control Printer**",
+        "There are no controls: no pause or stop",
+        "with a key without **Control Printer**",
+        "Without **Control Printer** on the API key",
+        "`can_mark_done`",
+        "Controls appear only when the API key has",
+        "off at first",
+        "starts unticked",
+        "Copy it again from BamBuddy",
+    ):
+        assert gone not in readme, gone

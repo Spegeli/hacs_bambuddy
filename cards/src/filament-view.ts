@@ -353,11 +353,9 @@ export function filamentView(ctx: CardContext): TemplateResult {
   const { hass, refs } = ctx;
   // A change under way is a wait, not a problem; in a paused print the
   // resume comes after it.
-  const reason: [TextKey, "info" | "warning"] | undefined = ctx.keyLacksControl
-    ? ["read_only", "info"]
-    : !ctx.canControl || !ctx.online
-      ? undefined
-      : ctx.running
+  const reason: [TextKey, "info" | "warning"] | undefined = !ctx.canControl || !ctx.online
+    ? undefined
+    : ctx.running
         ? ["filament_pause", "warning"]
         : ctx.changing
           ? [ctx.status === "paused" ? "changing_paused" : "changing_reason", "info"]

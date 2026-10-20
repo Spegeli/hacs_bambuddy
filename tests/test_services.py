@@ -363,9 +363,8 @@ async def test_more_materials(hass: HomeAssistant, bambuddy_api: SimpleNamespace
 
 
 async def test_a_slots_k_profiles(hass: HomeAssistant, bambuddy_api: SimpleNamespace) -> None:
-    """The printer's calibrations for the nozzle that feeds the slot, which
-    Read Status may see; the slot's own one named."""
-    bambuddy_api.get_auth_me.return_value = load_fixture("auth_me_read.json")
+    """The printer's calibrations for the nozzle that feeds the slot; the
+    slot's own one named."""
     entry = await set_up(hass, X1C)
 
     response = await hass.services.async_call(
@@ -584,28 +583,6 @@ async def test_stopping_through_an_hms_answer_reads_the_printer_first(hass: Home
 
     assert raised.value.translation_key == "hms_not_current"
     bambuddy_api.execute_hms_action.assert_not_awaited()
-
-
-async def test_actions_refuse_without_control_permission(hass: HomeAssistant, bambuddy_api: SimpleNamespace) -> None:
-    bambuddy_api.get_auth_me.return_value = load_fixture("auth_me_read.json")
-    entry = await set_up(hass, A1_MINI)
-
-    with pytest.raises(ServiceValidationError) as raised:
-        await _act(hass, "home_axes", device_id=_printer(hass, entry, A1_MINI))
-
-    assert raised.value.translation_key == "control_not_permitted"
-
-
-async def test_a_read_only_key_lists_the_print_objects(hass: HomeAssistant, bambuddy_api: SimpleNamespace) -> None:
-    """BamBuddy lists them for Read Status."""
-    bambuddy_api.get_auth_me.return_value = load_fixture("auth_me_read.json")
-    entry = await set_up(hass, X1C)
-
-    response = await hass.services.async_call(
-        DOMAIN, "get_print_objects", {"device_id": _printer(hass, entry, X1C)}, blocking=True, return_response=True
-    )
-
-    assert len(response["objects"]) == 3  # type: ignore[arg-type,index]
 
 
 async def test_an_offline_printer_takes_no_action(
@@ -1147,8 +1124,7 @@ async def test_drying_started_on_the_screen_stops_there(hass: HomeAssistant, bam
 
 async def test_checking_the_connection(hass: HomeAssistant, bambuddy_api: SimpleNamespace, freezer: FrozenDateTimeFactory) -> None:
     """BamBuddy's verdict and checks as it gives them -- for an offline
-    printer too, and with Read Status alone: it reads, it sends nothing."""
-    bambuddy_api.get_auth_me.return_value = load_fixture("auth_me_read.json")
+    printer too: it reads, it sends nothing."""
     entry = await set_up(hass, X1C)
     bambuddy_api.statuses[X1C] = load_fixture("status_offline.json")
     await next_refresh(hass, freezer)

@@ -48,6 +48,7 @@ from .const import (
     MIN_BAMBUDDY_VERSION,
 )
 from .coordinator import BamBuddyConfigEntry, create_client
+from .key import async_check_key
 from .models import find_printers, printer_key, printer_name, short_name, stored_key, stored_printer as _stored, too_old
 
 def form_schema(fields: dict[Any, Any]) -> Any:
@@ -99,14 +100,22 @@ def _choice(options: list[SelectOptionDict]) -> Any:
     return form_schema({vol.Optional(CONF_PRINTERS, default=[]): _many(options)})
 
 
+# The field left empty: what a check of the stored key found, said of it.
+_STORED_ERRORS = {"invalid_auth": "stored_key_refused", "missing_scopes": "stored_key_scopes", "key_owner_inactive": "stored_key_owner"}
+
+
+def _of_stored(errors: dict[str, str]) -> dict[str, str]:
+    base = errors.get("base")
+    return {"base": _STORED_ERRORS[base]} if base in _STORED_ERRORS else errors
+
+
 class _Found(NamedTuple):
     """What an address and a key give: the errors and their placeholders, or
-    BamBuddy's printers and whether the key may control them."""
+    BamBuddy's printers."""
 
     errors: dict[str, str]
     placeholders: dict[str, str]
     printers: list[dict[str, Any]]
-    can_control: bool = False
 
 
 # A web page answered, not BamBuddy's API: inside the flow only -- `_find`
@@ -118,26 +127,37 @@ async def _validate(hass: HomeAssistant, url: str, api_key: str, verify_ssl: boo
     client = BamBuddyClient(url, api_key, async_get_clientsession(hass), verify_ssl=verify_ssl)
     # BamBuddy tells its version to anyone, never with an error.
     first = True
+    # The key's check passed: a refusal after it is BamBuddy's own.
+    checked = False
     try:
         version = await client.get_version()
         first = False
         if too_old(version):
             return _Found({"base": "too_old"}, {"version": version, "minimum": MIN_BAMBUDDY_VERSION}, [])
+        # The key first: one with every scope the integration needs, whatever
+        # BamBuddy's authentication setting.
+        scopes = await client.check_key()
+        if scopes.missing:
+            return _Found({"base": "missing_scopes"}, scopes.marks(), [])
+        checked = True
         try:
-            # The key's check; its archive walk may be slow or fail: the
-            # integration runs without its figures, so the flow does too.
+            # Its archive walk may be slow or fail: the integration runs
+            # without its figures, so the flow does too.
             await client.get_system_info(patient=False)
         except (BamBuddyAuthError, BamBuddyPermissionError):
             raise
         except BamBuddyError:
             pass
         printers = await client.get_printers()
-        return _Found({}, {}, printers, (await client.permissions()).control)
+        return _Found({}, {}, printers)
     except (BamBuddyAuthError, BamBuddyPermissionError) as err:
         # BamBuddy asks no key for its version: a login in front of it does.
         if first:
             return _Found({"base": "error_not_bambuddy"}, {"error": str(err)}, [])
-        return _Found({"base": "invalid_auth" if isinstance(err, BamBuddyAuthError) else "missing_permission"}, {}, [])
+        if checked:
+            return _Found({"base": "bambuddy_refused"}, {"error": err.detail}, [])
+        # 401: BamBuddy does not know the key; 403: its owner is deactivated or gone.
+        return _Found({"base": "invalid_auth" if isinstance(err, BamBuddyAuthError) else "key_owner_inactive"}, {}, [])
     except BamBuddyNotFoundError:
         return _Found({"base": "not_bambuddy"}, {"minimum": MIN_BAMBUDDY_VERSION}, [])
     except BamBuddyNotJsonError:
@@ -252,7 +272,8 @@ class BamBuddyConfigFlow(ConfigFlow, domain=DOMAIN):
         # BamBuddy's printer for each (None: not there).
         self._stored: list[dict[str, Any]] = []
         self._found: list[dict[str, Any] | None] = []
-        self._can_control = True
+        # The stored key's marks, where it is short (the reauth's text).
+        self._stored_marks: dict[str, str] = {}
 
     @staticmethod
     @callback
@@ -282,7 +303,6 @@ class BamBuddyConfigFlow(ConfigFlow, domain=DOMAIN):
                     self._data = {**user_input, CONF_URL: url, CONF_API_KEY: api_key}
                     elsewhere = _elsewhere(self.hass, None)
                     self._printers = [printer for printer in found.printers if printer_key(printer) not in elsewhere]
-                    self._can_control = found.can_control
                     if self._printers:
                         return await self.async_step_printers()
                     if found.printers:
@@ -297,16 +317,13 @@ class BamBuddyConfigFlow(ConfigFlow, domain=DOMAIN):
 
     async def async_step_printers(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
         """Which of BamBuddy's printers to add: all, unless the user says
-        otherwise. A key that may only read is said here: the printers show,
-        nothing controls them."""
+        otherwise."""
         if user_input is not None:
             chosen = set(user_input[CONF_PRINTERS])
             return self._create_entry([printer for printer in self._printers if str(printer["id"]) in chosen])
         options = [SelectOptionDict(value=str(printer["id"]), label=printer_name(printer)) for printer in self._printers]
         schema = form_schema({vol.Optional(CONF_PRINTERS, default=[option["value"] for option in options]): _many(options)})
-        return self.async_show_form(step_id="printers" if self._can_control else "printers_read_only", data_schema=schema)
-
-    async_step_printers_read_only = async_step_printers
+        return self.async_show_form(step_id="printers", data_schema=schema)
 
     def _create_entry(self, printers: list[dict[str, Any]]) -> ConfigFlowResult:
         return self.async_create_entry(
@@ -331,25 +348,48 @@ class BamBuddyConfigFlow(ConfigFlow, domain=DOMAIN):
             self.hass.config_entries.async_schedule_reload(entry.entry_id)
 
     async def async_step_reauth(self, entry_data: Mapping[str, Any]) -> ConfigFlowResult:
+        """Why a new key: the stored one checked -- it lacks scopes, its
+        owner is gone, or BamBuddy does not accept it."""
+        entry = self._get_reauth_entry()
+        client = BamBuddyClient(entry.data[CONF_URL], entry.data[CONF_API_KEY], async_get_clientsession(self.hass), verify_ssl=entry.data.get(CONF_VERIFY_SSL, True))
+        check = await async_check_key(client)
+        if check.outcome == "short" and check.scopes is not None:
+            self._stored_marks = {f"stored_{scope}": mark for scope, mark in check.scopes.marks().items()}
+            return await self.async_step_reauth_scopes()
+        if check.outcome == "owner":
+            return await self.async_step_reauth_owner()
         return await self.async_step_reauth_confirm()
 
     async def async_step_reauth_confirm(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
-        """BamBuddy refused the key: a new one for the same BamBuddy."""
+        """BamBuddy does not accept the stored key: a new one for the same BamBuddy."""
+        return await self._async_reauth("reauth_confirm", user_input)
+
+    async def async_step_reauth_scopes(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
+        """The stored key lacks scopes: its marks, and a new key."""
+        return await self._async_reauth("reauth_scopes", user_input)
+
+    async def async_step_reauth_owner(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
+        """The stored key's owner is deactivated or gone: a new key as an active user."""
+        return await self._async_reauth("reauth_owner", user_input)
+
+    async def _async_reauth(self, step_id: str, user_input: dict[str, Any] | None) -> ConfigFlowResult:
         entry = self._get_reauth_entry()
         errors: dict[str, str] = {}
-        placeholders = {"url": entry.data[CONF_URL]}
+        placeholders = {"url": entry.data[CONF_URL], **(self._stored_marks if step_id == "reauth_scopes" else {})}
         if user_input is not None:
-            api_key = str(user_input[CONF_API_KEY]).strip()
+            # Left empty: the stored key checked again -- its owner got the
+            # right back in BamBuddy, and BamBuddy showed the key only once.
+            typed = str(user_input.get(CONF_API_KEY) or "").strip()
+            api_key = typed or entry.data[CONF_API_KEY]
             _, found = await _find(self.hass, entry.data[CONF_URL], api_key, entry.data.get(CONF_VERIFY_SSL, True), parents=False)
-            errors = found.errors
+            errors = found.errors if typed else _of_stored(found.errors)
             placeholders.update(found.placeholders)
             if not errors:
                 self._update_entry(entry, data={**entry.data, CONF_API_KEY: api_key})
-                # A key that may only read: the controls go -- said.
-                return self.async_abort(reason="reauth_successful" if found.can_control else "reauth_successful_read_only")
+                return self.async_abort(reason="reauth_successful")
         return self.async_show_form(
-            step_id="reauth_confirm",
-            data_schema=form_schema({vol.Required(CONF_API_KEY): _KEY}),
+            step_id=step_id,
+            data_schema=form_schema({vol.Optional(CONF_API_KEY): _KEY}),
             errors=errors,
             description_placeholders=placeholders,
         )
@@ -370,20 +410,16 @@ class BamBuddyConfigFlow(ConfigFlow, domain=DOMAIN):
             else:
                 url, found = await _find(self.hass, url, api_key, user_input[CONF_VERIFY_SSL])
                 errors, placeholders, listed = found.errors, found.placeholders, found.printers
-                if errors.get("base") == "invalid_auth" and not typed:
-                    errors = {"base": "stored_key_refused"}
+                if not typed:
+                    errors = _of_stored(errors)
                 if self._address_in_use(entry, url):
                     errors = {CONF_URL: "address_in_use"}
                 if not errors:
                     self._data = {CONF_URL: url, CONF_API_KEY: api_key, CONF_VERIFY_SSL: user_input[CONF_VERIFY_SSL]}
                     if url == entry.unique_id:
                         self._update_entry(entry, data=self._data)
-                        # A key that may only read: its controls go at the reload.
-                        return self.async_abort(
-                            reason="reconfigure_successful" if found.can_control else "reconfigure_successful_read_only"
-                        )
+                        return self.async_abort(reason="reconfigure_successful")
                     self._printers = listed
-                    self._can_control = found.can_control
                     self._stored = list(entry.options.get(CONF_PRINTERS, []))
                     self._found = find_printers(listed, self._stored)
                     return await self.async_step_new_address()
@@ -497,9 +533,6 @@ class BamBuddyConfigFlow(ConfigFlow, domain=DOMAIN):
         reason = "reconfigure_successful_other" if other else "reconfigure_successful"
         if waiting:
             return self.async_abort(reason=f"{reason}_missing", description_placeholders={"printers": ", ".join(waiting)})
-        if not other and not self._can_control:
-            # A key that may only read: its controls go at the reload.
-            return self.async_abort(reason="reconfigure_successful_read_only")
         return self.async_abort(reason=reason)
 
 

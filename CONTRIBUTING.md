@@ -39,7 +39,7 @@ The integration needs no build step and no dependencies beyond Home Assistant it
 3. Restart Home Assistant.
 4. Add the integration: **Settings → Devices & services → Add integration → BamBuddy**.
 
-You need a BamBuddy server and an API key (see the README's [Create an API key](README.md#create-an-api-key)). Test with BamBuddy's authentication on, so that the key's permissions apply, and with a key that has only **Read Status** unless you work on the print controls. **Try the print controls only on a printer that is not printing**: pause, stop and the other commands act on the real printer.
+You need a BamBuddy server and an API key with Read Status, Control Printer and Manage Maintenance (see the README's [Create an API key](README.md#create-an-api-key)): the integration refuses any other. Test with BamBuddy's authentication on, so that BamBuddy enforces the permissions too. **Try the print controls only on a printer that is not printing**: pause, stop and the other commands act on the real printer.
 
 To see what the integration is doing, enable debug logging in `configuration.yaml`:
 
@@ -98,8 +98,9 @@ The integration lives in `custom_components/bambuddy/`; the dashboard card's sou
 
 | File | Responsibility |
 |---|---|
-| `__init__.py` | Setup and unload: BamBuddy's printers and the key's permissions, the devices, one coordinator per printer added in the options, a repair issue for a printer BamBuddy no longer lists; the actions and the card, once per run; migrating older entries; deleting a device from its device page (not the instance's, nor a smart plug BamBuddy still links, nor an AMS unit its printer still reports) |
+| `__init__.py` | Setup and unload: the key's check, BamBuddy's printers, the devices, one coordinator per printer added in the options, a repair issue for a printer BamBuddy no longer lists; the actions and the card, once per run; migrating older entries; deleting a device from its device page (not the instance's, nor a smart plug BamBuddy still links, nor an AMS unit its printer still reports) |
 | `api.py` | `BamBuddyClient` — every HTTP call to BamBuddy, and its errors; `normalise_url` for the address |
+| `key.py` | The API key while the entry runs: checked every ten minutes and whenever BamBuddy refuses a request; the only place that starts a reauthentication (a 401 confirmed a minute later, never for an unreachable BamBuddy), and ends it once a check finds the key fine again |
 | `auto_off.py` | The switch-off after the print: Home Assistant's own, for the plug that powers a printer (waits for the nozzles, the AMS, a target; never beside BamBuddy's own auto off) |
 | `binary_sensor.py` | BamBuddy's connection; per printer online, door, build plate, SD card (a USB drive on the P2S, X2D and H2 series), developer mode, wired network, timelapse; per AMS unit drying; a plug's state where no switch shows it |
 | `brand/` | Icon and logo for Home Assistant's brands proxy |
@@ -149,7 +150,7 @@ The integration lives in `custom_components/bambuddy/`; the dashboard card's sou
 
 **Never set `model_id` on a device:** Home Assistant then shows the model twice. A printer's model is BamBuddy's model string, its manufacturer Bambu Lab.
 
-**Permissions count only with BamBuddy's authentication on.** With it off, BamBuddy answers every request, so a missing permission shows only with authentication on. Test with it on: with a key that has only **Read Status**, the integration creates no controls, and BamBuddy refuses a control request with 403. Before BamBuddy 1.2.5.7, `/auth/me` claims every permission for any key — hence that minimum.
+**The key needs three permissions.** The integration asks `/auth/me` at every setup, in the flows and every ten minutes, whatever BamBuddy's authentication setting: a key lacking Read Status, Control Printer or Manage Maintenance is refused (`const.REQUIRED_SCOPES`; `tests/test_key_scopes_table.py` ties every client call to one of them). BamBuddy itself enforces them only with its authentication on, so a route's refusal shows only then. Before BamBuddy 1.2.5.7, `/auth/me` claims every permission for any key — hence that minimum.
 
 **Home Assistant 2025.5 is the floor** (`homeassistant` in `hacs.json`), and only APIs that exist there may be used. Home Assistant 2025.5 runs on Python 3.13, so the integration must run on 3.13 too, although the tests and mypy run on 3.14: use no syntax and no standard-library API newer than 3.13 (such as `except A, B:` without parentheses), and keep `from __future__ import annotations` at the top of every module. 3.13 evaluates annotations as it defines a class or function, so without that line a name defined further down the module fails the import there, while 3.14 evaluates them only when asked. CI compiles the integration with Python 3.13, checks that every module keeps `from __future__ import annotations`, and runs the suite on 2025.5; what the tests do not reach is for review.
 

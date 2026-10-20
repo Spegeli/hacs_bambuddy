@@ -28,8 +28,6 @@ from tests.conftest import (
     state_of,
 )
 
-_MANAGE = {**load_fixture("auth_me_control.json")}
-_MANAGE["permissions"] = [*_MANAGE["permissions"], "maintenance:read", "maintenance:update"]
 
 
 def _maintenance(hass: HomeAssistant, entry: Any) -> Any:
@@ -54,7 +52,7 @@ async def test_the_maintenance_of_a_printer(hass: HomeAssistant, bambuddy_api: S
     assert state.state == "overdue"
     assert state.attributes["friendly_name"].endswith("Maintenance")
     assert (state.attributes["due_count"], state.attributes["due_soon_count"]) == (2, 1)
-    assert state.attributes["can_mark_done"] is False
+    assert "can_mark_done" not in state.attributes
     tasks = state.attributes["tasks"]
     assert [task["id"] for task in tasks] == [11, 12, 13, 14, 15]
     assert tasks[0] == {
@@ -150,11 +148,9 @@ async def test_known_while_the_printer_is_offline(
 async def test_marking_a_task_done(
     hass: HomeAssistant, bambuddy_api: SimpleNamespace, freezer: FrozenDateTimeFactory
 ) -> None:
-    """With Manage Maintenance on the key; the tasks are read again at once
-    -- also with the printer offline: BamBuddy keeps them."""
-    bambuddy_api.get_auth_me.return_value = _MANAGE
+    """The tasks are read again at once -- also with the printer offline:
+    BamBuddy keeps them."""
     entry = await set_up(hass, X1C)
-    assert _maintenance(hass, entry).attributes["can_mark_done"] is True
     bambuddy_api.statuses[X1C] = load_fixture("status_offline.json")
     await next_refresh(hass, freezer)
     bambuddy_api.maintenance[X1C]["maintenance_items"][0].update({"is_due": False, "hours_until_due": 25.0})
@@ -166,18 +162,7 @@ async def test_marking_a_task_done(
     assert _maintenance(hass, entry).attributes["due_count"] == 1
 
 
-async def test_marking_done_needs_manage_maintenance(hass: HomeAssistant, bambuddy_api: SimpleNamespace) -> None:
-    entry = await set_up(hass, X1C)
-
-    with pytest.raises(ServiceValidationError) as raised:
-        await _mark_done(hass, entry, 11)
-
-    assert raised.value.translation_key == "maintenance_not_permitted"
-    bambuddy_api.perform_maintenance.assert_not_awaited()
-
-
 async def test_marking_done_a_task_the_printer_lacks(hass: HomeAssistant, bambuddy_api: SimpleNamespace) -> None:
-    bambuddy_api.get_auth_me.return_value = _MANAGE
     entry = await set_up(hass, X1C)
 
     with pytest.raises(ServiceValidationError) as raised:
@@ -188,7 +173,6 @@ async def test_marking_done_a_task_the_printer_lacks(hass: HomeAssistant, bambud
 
 
 async def test_bambuddy_refusing_to_mark_done(hass: HomeAssistant, bambuddy_api: SimpleNamespace) -> None:
-    bambuddy_api.get_auth_me.return_value = _MANAGE
     entry = await set_up(hass, X1C)
     bambuddy_api.perform_maintenance.side_effect = BamBuddyConnectionError("refused")
 
@@ -196,18 +180,10 @@ async def test_bambuddy_refusing_to_mark_done(hass: HomeAssistant, bambuddy_api:
         await _mark_done(hass, entry, 11)
 
 
-async def test_without_authentication_every_key_may_mark_done(hass: HomeAssistant, bambuddy_api: SimpleNamespace) -> None:
-    bambuddy_api.get_auth_status.return_value = {"auth_enabled": False, "requires_setup": False}
-    entry = await set_up(hass, X1C)
-
-    assert _maintenance(hass, entry).attributes["can_mark_done"] is True
-
-
 async def test_marking_done_does_not_hide_a_failing_status(
     hass: HomeAssistant, bambuddy_api: SimpleNamespace, freezer: FrozenDateTimeFactory
 ) -> None:
     """The tasks are read again; the printer's failed status read stands."""
-    bambuddy_api.get_auth_me.return_value = _MANAGE
     entry = await set_up(hass, X1C)
     bambuddy_api.get_status.side_effect = BamBuddyApiError(500, "Internal Server Error")
     await next_refresh(hass, freezer)
@@ -218,22 +194,9 @@ async def test_marking_done_does_not_hide_a_failing_status(
     assert state_of(hass, "sensor", printer_uid(entry, "status")).state == STATE_UNAVAILABLE
 
 
-async def test_bambuddy_refusing_the_key_names_maintenance(hass: HomeAssistant, bambuddy_api: SimpleNamespace) -> None:
-    """Not "may not control printers": Manage Maintenance is missing."""
-    bambuddy_api.get_auth_me.return_value = _MANAGE
-    entry = await set_up(hass, X1C)
-    bambuddy_api.perform_maintenance.side_effect = BamBuddyPermissionError(403, "API key does not have 'can_manage_maintenance' permission")
-
-    with pytest.raises(HomeAssistantError) as raised:
-        await _mark_done(hass, entry, 11)
-
-    assert raised.value.translation_key == "maintenance_not_permitted"
-
-
 async def test_no_answer_while_marking_done(hass: HomeAssistant, bambuddy_api: SimpleNamespace) -> None:
     """A command BamBuddy may have carried out: said so, and the tasks are
     read again to tell."""
-    bambuddy_api.get_auth_me.return_value = _MANAGE
     entry = await set_up(hass, X1C)
     timeout = BamBuddyConnectionError("POST /maintenance/items/11/perform: TimeoutError")
     timeout.__cause__ = TimeoutError()
@@ -251,7 +214,6 @@ async def test_an_older_read_never_overwrites_the_one_after_marking_done(
 ) -> None:
     """A poll's read that started before the task was marked done may answer
     after the read that followed it: it is dropped."""
-    bambuddy_api.get_auth_me.return_value = _MANAGE
     entry = await set_up(hass, X1C)
     coordinator = entry.runtime_data.printers[X1C]
     gate = asyncio.Event()
@@ -287,7 +249,6 @@ async def test_an_older_read_never_overwrites_the_one_after_marking_done(
 async def test_marking_done_a_disabled_task_or_before_the_first_read(hass: HomeAssistant, bambuddy_api: SimpleNamespace) -> None:
     """BamBuddy marks a disabled task done as well; without a read yet, it
     decides itself."""
-    bambuddy_api.get_auth_me.return_value = _MANAGE
     read = bambuddy_api.get_maintenance.side_effect
     bambuddy_api.get_maintenance.side_effect = BamBuddyConnectionError("refused")
     entry = await set_up(hass, X1C)
@@ -297,3 +258,18 @@ async def test_marking_done_a_disabled_task_or_before_the_first_read(hass: HomeA
     await _mark_done(hass, entry, 16)
 
     assert [call.args for call in bambuddy_api.perform_maintenance.await_args_list] == [(11,), (16,)]
+
+
+async def test_marking_maintenance_refused_asks_the_guard(hass: HomeAssistant, bambuddy_api: SimpleNamespace) -> None:
+    """The key's owner lost Manage Maintenance: the refusal names the
+    missing scopes, and Home Assistant asks for a new key."""
+    entry = await set_up(hass, X1C)
+    bambuddy_api.perform_maintenance.side_effect = BamBuddyPermissionError(403, "no", "POST /maintenance/items/11/perform")
+    bambuddy_api.get_auth_me.return_value = load_fixture("auth_me_viewer.json")
+
+    with pytest.raises(HomeAssistantError) as raised:
+        await _mark_done(hass, entry, 11)
+    await hass.async_block_till_done()
+
+    assert raised.value.translation_key == "key_scopes_missing"
+    assert [flow["context"]["source"] for flow in hass.config_entries.flow.async_progress()] == ["reauth"]

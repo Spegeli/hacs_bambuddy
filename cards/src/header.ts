@@ -6,7 +6,7 @@
 // the HMS messages, the firmware, the storage, the printer information.
 import { html, nothing, type TemplateResult } from "lit";
 
-import { deviceName, hasControls } from "./discovery";
+import { deviceName } from "./discovery";
 import { formatDuration, formatNumber, formatState, hasValue, minutesOf, numericState, stateOf, textOrUndefined } from "./format";
 import { icon, type IconName } from "./icons";
 import { t, type TextKey } from "./i18n";
@@ -520,7 +520,6 @@ export function infoContent(ctx: CardContext, copied: boolean, copy: (text: stri
       ${ip ? specRow(t(hass, "info_ip"), ip, copyButton("copy_ip", ip)) : nothing}
       ${serial ? specRow(t(hass, "info_serial"), serial, copyButton("copy_serial", serial)) : nothing}
       ${network ? specRow(t(hass, "info_network"), network.iconName === "wifi" ? `${t(hass, "wifi")} · ${network.text}` : t(hass, "lan_wired")) : nothing}
-      ${hasControls(refs) ? nothing : specRow(t(hass, "info_control"), t(hass, "info_control_read"))}
       ${installed ? specRow(t(hass, "firmware"), installed) : nothing}
       ${developer === undefined
         ? nothing
