@@ -207,19 +207,25 @@ async def test_check_soon_is_debounced(
 
 
 @pytest.mark.parametrize(
-    ("answer", "key", "placeholders"),
+    ("answer", "key", "placeholders", "reauths"),
     [
-        (load_fixture("auth_me_default.json"), "key_scopes_missing", {"read_status": "✓", "control_printer": "✗", "manage_maintenance": "✓"}),
-        (BamBuddyPermissionError(403, "API key owner is deactivated or no longer exists", "GET /auth/me"), "key_owner_inactive", None),
+        (load_fixture("auth_me_default.json"), "key_scopes_missing", {"read_status": "✓", "control_printer": "✗", "manage_maintenance": "✓"}, 1),
+        (BamBuddyPermissionError(403, "API key owner is deactivated or no longer exists", "GET /auth/me"), "key_owner_inactive", None, 1),
         # A first 401: doubted -- checked again within a minute, no reauth yet.
-        (BamBuddyAuthError(401, "Authentication required", "GET /auth/me"), "key_doubted", None),
-        (load_fixture("auth_me_control.json"), "bambuddy_refused", {"error": "Not allowed here"}),
+        (BamBuddyAuthError(401, "Authentication required", "GET /auth/me"), "key_doubted", None, 0),
+        (load_fixture("auth_me_control.json"), "bambuddy_refused", {"error": "Not allowed here"}, 0),
         # BamBuddy answered the request: its refusal is what to say.
-        (BamBuddyConnectionError("GET /auth/me: TimeoutError"), "bambuddy_refused", {"error": "Not allowed here"}),
+        (BamBuddyConnectionError("GET /auth/me: TimeoutError"), "bambuddy_refused", {"error": "Not allowed here"}, 0),
     ],
 )
 async def test_a_refusal_says_why(
-    hass: HomeAssistant, bambuddy_api: SimpleNamespace, entry: MockConfigEntry, answer: Any, key: str, placeholders: dict[str, str] | None
+    hass: HomeAssistant,
+    bambuddy_api: SimpleNamespace,
+    entry: MockConfigEntry,
+    answer: Any,
+    key: str,
+    placeholders: dict[str, str] | None,
+    reauths: int,
 ) -> None:
     """A route's refusal: the check says whether the key is the cause."""
     if isinstance(answer, Exception):
@@ -229,9 +235,13 @@ async def test_a_refusal_says_why(
     guard = _guard(hass, entry)
 
     error = await guard.async_refused(BamBuddyPermissionError(403, "Not allowed here", PAUSE))
+    # The reauth the guard starts runs in the background: it ends here,
+    # while BamBuddy's answers are still the test's.
+    await hass.async_block_till_done()
 
     assert error.translation_key == key
     assert error.translation_placeholders == placeholders
+    assert len(_reauths(hass)) == reauths
 
 
 async def test_a_refusal_with_a_full_key_is_warned_once_per_route(
