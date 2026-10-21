@@ -4020,7 +4020,7 @@ describe("the dialogs", () => {
     expect(sheet).toMatch(/(^|[}/])\s*dialog\s*\{[^}]*max-width: min\(440px, calc\(100vw - 32px\)\);[^}]*width: 100%;/);
     // One rule for all of them: no dialog keeps a width of its own (the
     // menu is no dialog: it takes its items' width).
-    const rules = [...sheet.replace(/\/\*[\s\S]*?\*\//g, "").matchAll(/([^{}]*)\{([^{}]*)\}/g)].map(([, selector, body]) => [selector?.trim() ?? "", body ?? ""]);
+    const rules = [...sheet.replace(/\/\*[\s\S]*?\*\//g, "").matchAll(/([^{}]*)\{([^{}]*)\}/g)].map(([, selector, body]): [string, string] => [selector?.trim() ?? "", body ?? ""]);
     const widths = rules.filter(([selector, body]) => /^dialog(\b|[.[:])/.test(selector) && !selector.includes("::backdrop") && /max-width/.test(body));
     expect(widths.map(([selector]) => selector)).toEqual(["dialog"]);
   });
