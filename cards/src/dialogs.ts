@@ -223,8 +223,6 @@ export type { CheckDialog, MaintenanceDialog };
 export interface DialogActions {
   close: () => void;
   confirm: () => void;
-  /** Starts the live view anew, at the rate set. */
-  restartLive: () => void;
   /** The K profile chosen in the filament dialog. */
   setKProfile: (value: string) => void;
   /** The filament dialog's slot: cleared after a question, its chip read again. */
@@ -588,7 +586,7 @@ function content(ctx: CardContext, dialog: Dialog, actions: DialogActions): Temp
     case "auto_off":
       return autoOffContent(ctx);
     case "camera":
-      return cameraContent(ctx, actions);
+      return cameraContent(ctx);
     case "maintenance":
       return maintenanceContent(ctx, dialog, actions);
     case "check":
@@ -598,7 +596,7 @@ function content(ctx: CardContext, dialog: Dialog, actions: DialogActions): Temp
 
 /** The live view's frame rate: from 5 to the camera's most, in
  * steps of 5; sent when the taps stop, the stream follows. */
-function cameraContent(ctx: CardContext, actions: DialogActions): TemplateResult {
+function cameraContent(ctx: CardContext): TemplateResult {
   const { hass, refs } = ctx;
   const number = refs.cameraFps as string;
   const attributes = hass.states[number]?.attributes ?? {};
@@ -609,22 +607,14 @@ function cameraContent(ctx: CardContext, actions: DialogActions): TemplateResult
   const max = figure(attributes["max"], Math.max(min, set ?? min));
   const step = figure(attributes["step"], 5);
   const value = set ?? max;
-  // What arrives, where it is not what the camera asks for.
-  const camera = refs.camera ? hass.states[refs.camera]?.attributes : undefined;
-  const asked = camera?.["frame_rate"];
-  const arriving = camera?.["streamed_frame_rate"];
-  const differs = typeof arriving === "number" && typeof asked === "number" && Math.abs(arriving - asked) > 2;
   return html`<h2 id="dlg-title">${t(hass, "fps_title")}</h2>
     ${stepControl({
+      centered: true,
       lower: { label: t(hass, "fps_lower", { step }), disabled: value <= min, onClick: () => ctx.stepTarget(number, Math.max(min, value - step)) },
       raise: { label: t(hass, "fps_raise", { step }), disabled: value >= max, onClick: () => ctx.stepTarget(number, Math.min(max, value + step)) },
       value: html`<span aria-hidden="true">${t(hass, "fps_value", { fps: value })}</span><span class="sr-only">${t(hass, "fps_aria", { fps: value })}</span>`,
     })}
-    <p class="hint">${t(hass, "fps_note", { max })}</p>
-    ${differs
-      ? html`${dialogNote(t(hass, "fps_arriving", { now: arriving }), "warning", "fps-arriving")}
-          <button class="btn tonal fps-restart" @click=${actions.restartLive}>${icon("restore")}<span>${t(hass, "fps_restart")}</span></button>`
-      : nothing}`;
+    <p class="hint">${t(hass, "fps_note", { min, max, step })}</p>`;
 }
 
 /** The dialogs a press started on the backdrop of: kept on the element, as

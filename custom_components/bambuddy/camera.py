@@ -24,7 +24,7 @@ from homeassistant.util import dt as dt_util
 from .api import BamBuddyAuthError, BamBuddyError
 from .coordinator import BamBuddyConfigEntry, BamBuddyPrinterCoordinator
 from .entity import BamBuddyPrinterEntity
-from .models import camera_is_external
+from .models import CAMERA_MIN_FPS, camera_is_external, camera_max_fps
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -38,9 +38,11 @@ _TOKEN_LIFETIME = timedelta(minutes=55)
 _OWN_STREAMS_WAIT = 2.0
 _STOP_TRIES = 4
 _STOP_PAUSE = 0.5
-# What arrives: frames a second over this many seconds; a change smaller
-# than the other is none.
+# What arrives: frames a second over this many seconds and at least this
+# many frames (the A1's chamber image sends one every two seconds or so); a
+# change smaller than the other -- or than half a rate below 4 -- is none.
 _RATE_WINDOW = 3.0
+_RATE_FRAMES = 4
 _RATE_CHANGE = 2
 _clock: Callable[[], float] = time.monotonic
 
@@ -72,21 +74,24 @@ class _RateMeter:
     def __init__(self) -> None:
         self._start: float | None = None
         self._frames = 0
-        self._rate: int | None = None
+        self._rate: float | None = None
 
-    def count(self, frames: int, now: float) -> int | None:
-        """A new rate, once one is measured and when it changed."""
+    def count(self, frames: int, now: float) -> float | None:
+        """A new rate, once one is measured and when it changed: whole frames
+        from 1 on, tenths below -- never 0 while frames arrive."""
         if self._start is None:
             # The first frame starts the count.
             self._start = now
             return None
         self._frames += frames
         elapsed = now - self._start
-        if elapsed < _RATE_WINDOW:
+        if elapsed < _RATE_WINDOW or self._frames < _RATE_FRAMES:
             return None
-        rate = round(self._frames / elapsed)
+        measured = self._frames / elapsed
         self._start, self._frames = now, 0
-        if self._rate is not None and abs(rate - self._rate) < _RATE_CHANGE:
+        rate: float = round(measured, 1)
+        rate = round(measured) if rate >= 1 else max(rate, 0.1)
+        if self._rate is not None and abs(rate - self._rate) < min(_RATE_CHANGE, self._rate / 2):
             return None
         self._rate = rate
         return rate
@@ -135,7 +140,7 @@ class BamBuddyCamera(BamBuddyPrinterEntity, Camera):
         self._no_streams.set()
         self._streamed_fps: int | None = None
         self._rate_unsure = False
-        self._arriving: int | None = None
+        self._arriving: float | None = None
 
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
@@ -201,8 +206,10 @@ class BamBuddyCamera(BamBuddyPrinterEntity, Camera):
         rate = meter.count(frames, _clock())
         if rate is None:
             return
-        # Not what was asked: the next stream asks BamBuddy to begin anew.
-        if abs(rate - fps) > _RATE_CHANGE:
+        # Not what was asked: the next stream asks BamBuddy to begin anew. A
+        # chamber image comes as fast as the printer sends it, whatever is
+        # asked.
+        if abs(rate - fps) > _RATE_CHANGE and camera_max_fps(self.coordinator.info) > CAMERA_MIN_FPS:
             self._rate_unsure = True
         if rate != self._arriving:
             self._arriving = rate

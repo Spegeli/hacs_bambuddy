@@ -19,9 +19,11 @@ export const cardStyles = css`
     --bb-err: var(--error-color, #db4437);
     --bb-info: var(--info-color, #039be5);
     --bb-divider: var(--divider-color, rgba(0, 0, 0, 0.12));
-    --bb-tint: rgba(var(--rgb-primary-text-color, 33, 33, 33), 0.05);
-    --bb-tint-2: rgba(var(--rgb-primary-text-color, 33, 33, 33), 0.09);
-    --bb-line: rgba(var(--rgb-primary-text-color, 33, 33, 33), 0.16);
+    /* From the text colour itself: Home Assistant computes its rgb triple
+       only from a theme's own hex value, not from one it names by a variable. */
+    --bb-tint: color-mix(in srgb, var(--bb-text) 5%, transparent);
+    --bb-tint-2: color-mix(in srgb, var(--bb-text) 9%, transparent);
+    --bb-line: color-mix(in srgb, var(--bb-text) 16%, transparent);
     --bb-heat: var(--deep-orange-color, #ff6f22);
   }
   ha-card {
@@ -1061,9 +1063,6 @@ export const cardStyles = css`
   .live-fps {
     background: rgba(0, 0, 0, 0.55);
   }
-  .fps-restart {
-    margin-top: 8px;
-  }
   .live-tools {
     position: absolute;
     top: 6px;
@@ -1219,9 +1218,7 @@ export const cardStyles = css`
   /* Filament: the strip on the status view. */
   .ams-strip {
     display: flex;
-    flex-wrap: wrap;
     align-items: stretch;
-    gap: 8px 16px;
     padding: 10px 36px 10px 12px;
     border: 0;
     border-radius: 10px;
@@ -1238,18 +1235,63 @@ export const cardStyles = css`
   /* The AMS units one below the other; the AMS HT units and the external
      spools beside them as long as the widest of them fits there, else
      below. */
+  .ams-units {
+    display: flex;
+    flex: 1 1 auto;
+    min-width: 0;
+    flex-wrap: wrap;
+    align-items: stretch;
+    gap: 21px 24px;
+    /* What lies left of or above the units: the line a fill does not need
+       where it starts a row or stands in the first one -- but not a
+       spool's ring (2 px out, 2 px off). */
+    clip-path: inset(-6px -24px -24px -6px);
+  }
+  /* A line between two AMS units, with room on either side. */
   .ams-column {
     display: flex;
     flex-direction: column;
-    gap: 8px;
+    gap: 0;
+  }
+  .ams-column > .ams-group + .ams-group {
+    border-top: 1px solid var(--bb-line);
+    margin-top: 10px;
+    padding-top: 10px;
   }
   .ams-fill {
+    position: relative;
     display: flex;
     flex: 1 1 0%;
     min-width: min-content;
     flex-wrap: wrap;
     align-content: flex-start;
     gap: 8px 16px;
+  }
+  /* The AMS HT units' rows as far apart as the AMS units beside them --
+     a line's room, without the line --, so they stand level. */
+  .ams-fill.with-ht {
+    row-gap: 21px;
+  }
+  /* Beside the column, a line in the middle of the gap that fades out at
+     both ends; below it, a line as between the AMS units. */
+  .ams-fill::before,
+  .ams-fill::after {
+    content: "";
+    position: absolute;
+  }
+  .ams-fill::before {
+    top: 0;
+    bottom: 0;
+    left: -12px;
+    width: 1px;
+    background: linear-gradient(to bottom, transparent, var(--bb-line) 25%, var(--bb-line) 75%, transparent);
+  }
+  .ams-fill::after {
+    top: -11px;
+    left: 0;
+    right: 0;
+    height: 1px;
+    background: var(--bb-line);
   }
   /* With an AMS HT there, each unit is as wide as one -- its second line:
      the humidity, 6 px, the temperature --, so the rows fill evenly: never
@@ -1292,7 +1334,9 @@ export const cardStyles = css`
     background: var(--bb-tint-2);
     color: color-mix(in srgb, var(--bb-muted) 50%, var(--bb-text));
   }
+  /* A size above the figures below it, in its 15 px line. */
   .ams-name {
+    font-size: 13px;
     font-weight: 500;
     color: var(--bb-text);
   }
@@ -1358,11 +1402,11 @@ export const cardStyles = css`
     position: absolute;
     inset: 0;
     border-radius: inherit;
-    box-shadow: inset 0 0 0 1px rgba(var(--rgb-primary-text-color, 33, 33, 33), 0.24);
+    box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--bb-text) 24%, transparent);
     pointer-events: none;
   }
   .swatch.outline::after {
-    box-shadow: inset 0 0 0 1px rgba(var(--rgb-primary-text-color, 33, 33, 33), 0.5);
+    box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--bb-text) 50%, transparent);
   }
   .swatch .fill {
     position: absolute;
@@ -1373,7 +1417,7 @@ export const cardStyles = css`
     background: var(--c);
   }
   .swatch.partial .fill {
-    box-shadow: 0 -1px 0 rgba(var(--rgb-primary-text-color, 33, 33, 33), 0.4);
+    box-shadow: 0 -1px 0 color-mix(in srgb, var(--bb-text) 40%, transparent);
   }
   .swatch.empty {
     background: none;
@@ -2228,7 +2272,9 @@ export const cardStyles = css`
     border: 0;
     padding: 0;
     border-radius: 16px;
-    max-width: min(360px, calc(100vw - 32px));
+    /* As Home Assistant's dialogs: a width they want, never wider than the
+       screen less a margin -- on a phone the screen less 16 px a side. */
+    max-width: min(440px, calc(100vw - 32px));
     width: 100%;
     color: var(--bb-text);
     background: var(--bb-surface);
@@ -2238,6 +2284,17 @@ export const cardStyles = css`
   }
   dialog::backdrop {
     background: rgba(0, 0, 0, 0.55);
+  }
+  /* A pop-up is never see-through, even where the theme makes its surface
+     so -- the card behind would show: the theme's colour at full strength.
+     A browser that cannot take a colour's alpha away keeps the theme's. */
+  @supports (color: rgb(from red r g b / 1)) {
+    dialog {
+      --bb-surface: rgb(from var(--ha-dialog-surface-background, var(--mdc-theme-surface, var(--card-background-color, #fff))) r g b / 1);
+    }
+    .menu {
+      background: rgb(from var(--ha-card-background, var(--card-background-color, #fff)) r g b / 1);
+    }
   }
   .dlg-body {
     position: relative;
@@ -2586,6 +2643,9 @@ export const cardStyles = css`
     align-items: center;
     gap: 6px;
   }
+  .stepper.centered {
+    justify-content: center;
+  }
   .stepper input {
     width: 54px;
     padding: 6px 4px;
@@ -2707,11 +2767,11 @@ export const cardStyles = css`
     position: absolute;
     inset: 0;
     border-radius: inherit;
-    box-shadow: inset 0 0 0 1px rgba(var(--rgb-primary-text-color, 33, 33, 33), 0.24);
+    box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--bb-text) 24%, transparent);
     pointer-events: none;
   }
   .pal.outline::after {
-    box-shadow: inset 0 0 0 1px rgba(var(--rgb-primary-text-color, 33, 33, 33), 0.5);
+    box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--bb-text) 50%, transparent);
   }
   .pal[aria-checked="true"] {
     box-shadow:

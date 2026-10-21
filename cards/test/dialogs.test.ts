@@ -38,24 +38,6 @@ describe("a control in a dialog that goes after its own press", () => {
     expect(find(card, "dialog .p-skip")).toBeNull();
     expect(root(card).activeElement).toBe(find(card, "dialog .dlg-actions .btn.safe"));
   });
-
-  it("leaves the keyboard in the dialog when the restart of the live view is no longer needed", async () => {
-    const base = makeHass({ devices: x1c() });
-    const camera = "camera.x1c_camera";
-    const hass = base.withState(camera, "idle", { ...base.states[camera]?.attributes, frame_rate: 30, streamed_frame_rate: 8 });
-    const card = await mountCard(hass, { printer: "dev-x1c", camera: "always" });
-    (find(card, ".live-fps-open") as HTMLButtonElement).click();
-    await card.updateComplete;
-    const restart = button(card, "Restart the live view");
-    restart.focus();
-    keyPress(restart);
-    restart.click();
-    await settle(card);
-    await update(card, hass.withState(camera, "idle", { ...hass.states[camera]?.attributes, streamed_frame_rate: 29 }));
-    await settle(card);
-    expect(find(card, "dialog .fps-restart")).toBeNull();
-    expect(root(card).activeElement).toBe(find(card, "dialog .dlg-actions .btn.safe"));
-  });
 });
 
 describe("the switch-off's settings opened from the power dialog", () => {

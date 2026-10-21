@@ -9,7 +9,7 @@ import { controlView, sectionShown, type Step } from "./control-view";
 import { dialogView, DRYING, filamentChanges, inPalette, KEEP, matchingProfile, type Dialog, type DryingField, type DryingSpool, type FilamentDialog } from "./dialogs";
 import { findPrinter, hasControls, isPrinterDevice, notListed, printerDevices, printerOnline, printStatus, shownUnits } from "./discovery";
 import { filamentView } from "./filament-view";
-import { BUSY, FILAMENT_CHANGE, formatPercent, hasValue, numericState, RUNNING, stateOf, textOrUndefined, WITH_JOB } from "./format";
+import { BUSY, FILAMENT_CHANGE, formatNumber, formatPercent, hasValue, numericState, RUNNING, stateOf, textOrUndefined, WITH_JOB } from "./format";
 import { BamBuddyPrinterCardEditor, EDITOR_TAG, loadForm } from "./editor";
 import { DEFAULTS, settingsOf, validateConfig, type Settings } from "./forms";
 import { runCheck, type CheckDialog } from "./check";
@@ -142,8 +142,6 @@ export class BamBuddyPrinterCard extends LitElement {
   private streamSrc?: string;
   /** The frame rate the running stream asked for. */
   private streamFps?: number;
-  /** Restarts of the live view: each a new address, so the image loads anew. */
-  private streamRun = 0;
   /** The control the keyboard was on last, and when a key was last pressed
    * in the card: a keyboard user's place, kept when a press takes the
    * control away. */
@@ -382,7 +380,7 @@ export class BamBuddyPrinterCard extends LitElement {
   }
 
   /** A press took the keyboard's control away -- a stepper's end, a
-   * heater's Off or Cool down, the plate cleared, a load that starts a
+   * heater's Off or Heating off, the plate cleared, a load that starts a
    * filament change, an HMS answer that closes its dialog: the nearest
    * group's next button takes the focus, else the selected tab, else the
    * menu button. Only right after a key in the card, and only while the
@@ -450,22 +448,13 @@ export class BamBuddyPrinterCard extends LitElement {
     return typeof rate === "number" ? rate : undefined;
   }
 
-  /** Starts the live view anew: the integration then asks BamBuddy to
-   * begin its camera connection at the rate set. */
-  private readonly restartLive = (): void => {
-    this.stopStream();
-    this.streamRun += 1;
-    this.requestUpdate();
-  };
-
   /** The live stream through Home Assistant's camera proxy. It is read when
    * the stream starts and kept while it runs: the token rotates, the
    * running stream does not need a new one. The rate is for the browser:
    * a new one is a new address, and the image loads anew. */
   private streamUrl(): string {
     const rate = this.streamFps === undefined ? "" : `&fps=${this.streamFps}`;
-    const run = this.streamRun ? `&run=${this.streamRun}` : "";
-    return `/api/camera_proxy_stream/${this.refs?.camera}?token=${encodeURIComponent(this.cameraToken() ?? "")}${rate}${run}`;
+    return `/api/camera_proxy_stream/${this.refs?.camera}?token=${encodeURIComponent(this.cameraToken() ?? "")}${rate}`;
   }
 
   /** Ends a running stream at once; dropping the image alone can leave the
@@ -617,7 +606,7 @@ export class BamBuddyPrinterCard extends LitElement {
     if (!sent) this.dropDraft(entityId);
   }
 
-  /** Off and Cool down: sent at once. */
+  /** Off and Heating off: sent at once. */
   private setTargets(targets: [string, number][]): void {
     for (const [entityId, value] of targets) {
       this.setDraft(entityId, { value });
@@ -897,7 +886,6 @@ export class BamBuddyPrinterCard extends LitElement {
   private readonly dialogActions = {
     close: this.closeDialog,
     confirm: this.confirmDialog,
-    restartLive: this.restartLive,
     setDrying: (field: DryingField, value: number) => this.setDrying(field, value),
     toggleObject: (id: number) => this.toggleObject(id),
     // A new material takes its first matching K profile, else the
@@ -1343,7 +1331,9 @@ export class BamBuddyPrinterCard extends LitElement {
           </button>`
         : nothing;
     // What arrives once the integration has counted it, else what was asked.
-    const fps = this.frameRate(true) ?? this.streamFps;
+    const rate = this.frameRate(true) ?? this.streamFps;
+    // Tenths below 1 (a slow chamber image), in the user's language.
+    const fps = rate === undefined ? undefined : formatNumber(hass, rate, 1);
     return html`<div class="live">
       <img class="stream" src=${this.streamSrc} alt=${t(hass, "live")} @error=${this.streamBroke} />
       <div class="live-tags">

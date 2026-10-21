@@ -1062,7 +1062,8 @@ describe("the AMS strip's order", () => {
   it("puts the AMS units in a column, the AMS HT units and the external spools beside it", async () => {
     const { card } = await mount(h2d(), "dev-h2d");
     const strip = find(card, ".ams-strip");
-    expect([...(strip?.children ?? [])].map((child) => child.classList[0])).toEqual(["sr-only", "ams-column", "ams-fill", "ams-go"]);
+    expect([...(strip?.children ?? [])].map((child) => child.classList[0])).toEqual(["sr-only", "ams-units", "ams-go"]);
+    expect([...(find(card, ".ams-units")?.children ?? [])].map((child) => child.classList[0])).toEqual(["ams-column", "ams-fill"]);
     expect(names(find(card, ".ams-column"))).toEqual(["AMS A"]);
     expect(names(find(card, ".ams-fill"))).toEqual(["AMS HT A", "Ext"]);
     // With an AMS HT, each unit there is as wide as one: the rows fill evenly.
@@ -1083,16 +1084,39 @@ describe("the AMS strip's order", () => {
 
   it("fills the room beside the column, and goes below it where none is left", () => {
     const sheet = styleText();
-    expect(sheet).toMatch(rule("\\.ams-strip", "flex-wrap: wrap;"));
+    expect(sheet).toMatch(rule("\\.ams-units", "flex-wrap: wrap;"));
     expect(sheet).toMatch(rule("\\.ams-column", "flex-direction: column;"));
     // Its widest unit decides whether the fill fits beside the column.
     expect(sheet).toMatch(rule("\\.ams-fill", "flex: 1 1 0%;[^}]*min-width: min-content;[^}]*flex-wrap: wrap;"));
-    // 16 px apart, 36 px kept for the chevron: an AMS HT fits beside an AMS
-    // from a card of about 326 px, well below a 360 px phone's 344.
-    expect(sheet).toMatch(rule("\\.ams-strip", "gap: 8px 16px;[^}]*padding: 10px 36px 10px 12px;"));
+    // 24 px apart (the line in the middle), 36 px kept for the chevron: an
+    // AMS HT fits beside an AMS from a card of about 334 px, below a 360 px
+    // phone's 344.
+    expect(sheet).toMatch(rule("\\.ams-units", "gap: 21px 24px;"));
+    expect(sheet).toMatch(rule("\\.ams-strip", "padding: 10px 36px 10px 12px;"));
     // An AMS HT's head: its second line, the humidity (14 px + 4ch), 6 px,
     // the temperature (14 px + 4.5ch).
     expect(sheet).toMatch(rule("\\.ams-fill\\.with-ht \\.ams-head", "min-width: calc\\(34px \\+ 8\\.5ch\\);"));
+  });
+
+  it("sets the units apart: a line between the AMS units, a fading one beside the column, a line above what went below it", () => {
+    const sheet = styleText();
+    expect(sheet).toMatch(rule("\\.ams-column", "gap: 0;"));
+    expect(sheet).toMatch(rule("\\.ams-column > \\.ams-group \\+ \\.ams-group", "border-top: 1px solid var\\(--bb-line\\);[^}]*margin-top: 10px;[^}]*padding-top: 10px;"));
+    // Beside the column: a line in the middle of the gap, fading out at
+    // both ends. Below it: a line in the middle of the row gap. The units'
+    // box clips what lies left of or above it -- the line a fill does not
+    // need where it starts a row or stands in the first -- but not a
+    // spool's ring (2 px out, 2 px off).
+    expect(sheet).toMatch(rule("\\.ams-units", "clip-path: inset\\(-6px -24px -24px -6px\\);"));
+    expect(sheet).toMatch(
+      rule("\\.ams-fill::before", "left: -12px;[^}]*width: 1px;[^}]*background: linear-gradient\\(to bottom, transparent, var\\(--bb-line\\) 25%, var\\(--bb-line\\) 75%, transparent\\);"),
+    );
+    expect(sheet).toMatch(rule("\\.ams-fill::after", "top: -11px;[^}]*height: 1px;[^}]*background: var\\(--bb-line\\);"));
+    // Beside AMS units, the AMS HT units' rows as far apart as theirs, so
+    // they stand level -- without a line.
+    expect(sheet).toMatch(/\.ams-fill\.with-ht\s*\{\s*row-gap: 21px;\s*\}/);
+    // The unit's name a size above the figures below it.
+    expect(sheet).toMatch(rule("\\.ams-name", "font-size: 13px;"));
   });
 
   it("lets a head's lines wrap on a card under 200 px, clear of the chevron", () => {

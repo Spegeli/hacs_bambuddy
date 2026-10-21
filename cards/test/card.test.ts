@@ -1199,7 +1199,7 @@ describe("the live view", () => {
     expect(text(find(card, "dialog .step-value [aria-hidden]"))).toBe("30 fps");
     expect(text(find(card, "dialog .step-value .sr-only"))).toBe("30 frames a second");
     expect(button(card, "5 more frames a second").disabled).toBe(true);
-    expect(text(find(card, "dialog .hint"))).toContain("This camera gives up to 30 frames a second.");
+    expect(text(find(card, "dialog .hint"))).toContain("This camera gives up to 30 frames a second; you can set 5 to 30 in steps of 5.");
     for (let tap = 0; tap < 6; tap++) {
       button(card, "5 fewer frames a second").click();
       await vi.advanceTimersByTimeAsync(0);
@@ -1267,7 +1267,7 @@ describe("the live view", () => {
     expect(card.shadowRoot?.activeElement).toBe(fewer);
   });
 
-  it("says what arrives, and offers to start anew where it is not what was asked", async () => {
+  it("says what arrives in the chip; the dialog only sets the rate and says when it applies", async () => {
     const { card, hass } = await cardFor("x1c", { camera: "always" });
     const camera = hass.states["camera.x1c_camera"]?.attributes ?? {};
     // Someone else watches on BamBuddy's own page, at 8.
@@ -1275,19 +1275,31 @@ describe("the live view", () => {
     expect(text(find(card, ".live-fps"))).toBe("8 fps");
     expect(find(card, ".live-fps")?.getAttribute("aria-label")).toBe("8 frames a second");
     await press(card, "Set the frame rate");
-    expect(text(find(card, "dialog .hint"))).toContain("the chip in the live view shows what arrives");
-    expect(text(find(card, "dialog #fps-arriving"))).toBe(
-      "8 frames a second arrive now. The rate set applies once the live view starts anew while nobody else watches.",
+    expect(text(find(card, "dialog .hint"))).toBe(
+      "This camera gives up to 30 frames a second; you can set 5 to 30 in steps of 5. It applies to this printer throughout Home Assistant – on every dashboard, phone and computer. While someone else watches – on BamBuddy's own page, say – BamBuddy may stay at their rate: yours applies from the next time the live view opens while nobody else watches. The chip in the live view shows what arrives.",
     );
-    const stream = find<HTMLImageElement>(card, "img.stream");
-    expect(stream?.getAttribute("src")).toBe("/api/camera_proxy_stream/camera.x1c_camera?token=token-x1c&fps=30");
-    await press(card, "Restart the live view");
-    expect(find(card, "img.stream")?.getAttribute("src")).toBe("/api/camera_proxy_stream/camera.x1c_camera?token=token-x1c&fps=30&run=1");
-    // What was asked arrives: nothing to say.
-    await update(card, hass.withState("camera.x1c_camera", "idle", { ...camera, streamed_frame_rate: 29 }));
-    expect(text(find(card, ".live-fps"))).toBe("29 fps");
-    expect(find(card, "dialog #fps-arriving")).toBeNull();
+    expect(find(card, "dialog .dlg-note")).toBeNull();
+    // Minus, the rate and plus in the middle of the dialog; the text stays left.
+    expect(find(card, "dialog .stepper")?.classList.contains("centered")).toBe(true);
     expect(hasButton(card, "Restart the live view")).toBe(false);
+    expect(find(card, "img.stream")?.getAttribute("src")).toBe("/api/camera_proxy_stream/camera.x1c_camera?token=token-x1c&fps=30");
+    const { card: german } = await cardFor("x1c", { camera: "always" }, { language: "de" });
+    await press(german, "Bildrate einstellen");
+    expect(text(find(german, "dialog .hint"))).toBe(
+      "Diese Kamera schafft bis zu 30 Bilder pro Sekunde; einstellbar sind 5 bis 30 in Schritten von 5. Die Bildrate gilt für diesen Drucker in ganz Home Assistant – in jedem Dashboard und auf jedem Handy oder Computer. Schaut gerade jemand anderes zu, etwa in BamBuddy selbst, kann BamBuddy bei dessen Bildrate bleiben – deine gilt dann ab dem nächsten Öffnen des Livebilds, wenn sonst niemand zuschaut. Der Chip im Livebild zeigt, was ankommt.",
+    );
+  });
+
+  it("says a slow chamber image in tenths, in the user's language", async () => {
+    // The A1's chamber image sends a frame every two seconds or so.
+    const { card: german, hass: de } = await cardFor("a1mini", { camera: "always" }, { language: "de" });
+    const camera = de.states["camera.a1_mini_camera"]?.attributes ?? {};
+    await update(german, de.withState("camera.a1_mini_camera", "idle", { ...camera, streamed_frame_rate: 0.5 }));
+    expect(text(find(german, ".live-fps"))).toBe("0,5 fps");
+    expect(find(german, ".live-fps")?.getAttribute("aria-label")).toBe("0,5 Bilder pro Sekunde");
+    const { card, hass } = await cardFor("a1mini", { camera: "always" });
+    await update(card, hass.withState("camera.a1_mini_camera", "idle", { ...camera, streamed_frame_rate: 0.5 }));
+    expect(text(find(card, ".live-fps"))).toBe("0.5 fps");
   });
 
   it("starts the stream anew at a new frame rate", async () => {
@@ -1656,9 +1668,9 @@ describe("the heating section", () => {
     expect(root(card).activeElement).toBe(button(card, `Nozzle: heat to 220${NBSP}°C`));
 
     await tap(card, `Nozzle: heat to 220${NBSP}°C`);
-    button(card, "Cool down").focus();
-    keyPress(button(card, "Cool down"));
-    await tap(card, "Cool down");
+    button(card, "Heating off").focus();
+    keyPress(button(card, "Heating off"));
+    await tap(card, "Heating off");
     expect(root(card).activeElement).toBe(button(card, `Nozzle: heat to 220${NBSP}°C`));
   });
 
@@ -1734,7 +1746,7 @@ describe("the heating section", () => {
     expect(findAll(card, ".heat-row").map((row) => text(row.querySelector(".heat-label")))).toEqual(["Nozzle", "Bed"]);
     expect(targets(card)).toEqual(["Off", "Off"]);
     expect(findAll(card, ".heat-now").map(text)).toEqual([`Now 27${NBSP}°C`, `Now 25${NBSP}°C`]);
-    expect(button(card, "Cool down").disabled).toBe(true);
+    expect(button(card, "Heating off").disabled).toBe(true);
     expect(findAll<HTMLButtonElement>(card, ".heat-off").every((item) => item.disabled)).toBe(true);
     expect(button(card, `Nozzle 5${NBSP}°C cooler`).disabled).toBe(true);
     await tap(card, `Nozzle: heat to 220${NBSP}°C`);
@@ -1791,14 +1803,14 @@ describe("the heating section", () => {
     expect(targets(card)).toEqual(["Off", `55${NBSP}°C`]);
     const { card: other, hass: otherHass } = await withX1c({ status: "idle", nozzles: [[200, 220]], bed: [50, 55] });
     await showView(other, "Control");
-    await press(other, "Cool down");
+    await press(other, "Heating off");
     expect(otherHass.calls).toEqual([setValue("number.x1c_nozzle_target_temperature", 0), setValue("number.x1c_bed_target_temperature", 0)]);
     expect(targets(other)).toEqual(["Off", "Off"]);
-    expect(button(other, "Cool down").disabled).toBe(true);
-    // While printing: the steppers stay, Off and Cool down would end the print.
+    expect(button(other, "Heating off").disabled).toBe(true);
+    // While printing: the steppers stay, Off and Heating off would end the print.
     const { card: printing } = await cardFor("x1c");
     await showView(printing, "Control");
-    expect(hasButton(printing, "Cool down")).toBe(false);
+    expect(hasButton(printing, "Heating off")).toBe(false);
     expect(findAll(printing, ".heat-off")).toHaveLength(0);
     expect(button(printing, `Nozzle 5${NBSP}°C hotter`).disabled).toBe(false);
   });
@@ -1808,7 +1820,7 @@ describe("the heating section", () => {
     const offs = findAll<HTMLButtonElement>(card, ".heat-off");
     expect(offs.map((item) => item.getAttribute("aria-label"))).toEqual(["Chamber: turn off"]);
     expect(offs[0]?.disabled).toBe(false);
-    expect(hasButton(card, "Cool down")).toBe(false);
+    expect(hasButton(card, "Heating off")).toBe(false);
   });
 
   it("shows unknown values in the offline preview's example, and is left out without targets", async () => {
@@ -1901,7 +1913,7 @@ describe("the heating section", () => {
     const { card } = await cardFor("a1mini", {}, { language: "de" });
     await showView(card, "Steuerung");
     expect(text(find(card, ".section-label"))).toBe("Heizen");
-    expect(hasButton(card, "Abkühlen")).toBe(true);
+    expect(hasButton(card, "Heizen aus")).toBe(true);
     expect(hasButton(card, `Düse auf 220${NBSP}°C heizen`)).toBe(true);
     expect(hasButton(card, "Bett ausschalten")).toBe(true);
     expect(findAll(card, ".heat-now").map(text)).toEqual([`Jetzt 27${NBSP}°C`, `Jetzt 25${NBSP}°C`]);
@@ -2997,6 +3009,19 @@ describe("a command that went through", () => {
   });
 });
 
+describe("switching every heater off", () => {
+  it("names what it does and looks like each heater's own off switch", async () => {
+    // It only switches the heaters off -- no fan cools: not "Cool down",
+    // no snowflake, not in the accent's blue.
+    const { card } = await cardFor("x1c", { start_view: "control" }, { devices: x1c({ status: "idle", stage: "idle" }) });
+    const all = button(card, "Heating off");
+    expect(all.classList.contains("heat-off")).toBe(true);
+    expect(all.querySelector("path")?.getAttribute("d")).toBe(ICONS.power);
+    const { card: german } = await cardFor("x1c", { start_view: "control" }, { language: "de", devices: x1c({ status: "idle", stage: "idle" }) });
+    expect(hasButton(german, "Heizen aus")).toBe(true);
+  });
+});
+
 describe("what the AMS is doing", () => {
   it("shows in the status and the filament view while it is not idle", async () => {
     const { card, hass } = await cardFor("a1mini", {}, { devices: a1mini({ amsStatus: "feeding" }) });
@@ -3011,6 +3036,18 @@ describe("what the AMS is doing", () => {
     }
     await showView(card, "Status");
     expect(find(card, ".ams-activity")).toBeNull();
+  });
+
+  it("says nothing while the AMS only assists the print", async () => {
+    // "assist" is the AMS's state through every print it feeds -- no
+    // activity to show: a line with a spinner would stand there for hours.
+    const { card, hass } = await cardFor("a1mini", {}, { devices: a1mini({ amsStatus: "assist" }) });
+    expect(find(card, ".ams-activity")).toBeNull();
+    await showView(card, "Filament");
+    expect(find(card, ".activity")).toBeNull();
+    // A filament change during it still shows.
+    await update(card, hass.withState("sensor.a1_mini_ams_status", "feeding"));
+    expect(shownText(find(card, ".activity"))).toBe("AMS: Feeding");
   });
 
   it("says it in German, and nothing while the printer is offline or without the sensor", async () => {
@@ -3316,7 +3353,7 @@ describe("a filament change", () => {
       expect(button(card, `Left nozzle 5${NBSP}°C hotter`).disabled, state).toBe(false);
       expect(button(card, `Bed 5${NBSP}°C cooler`).disabled, state).toBe(false);
       // Cooling would break the change.
-      expect(button(card, "Cool down").disabled, state).toBe(true);
+      expect(button(card, "Heating off").disabled, state).toBe(true);
       expect(findAll<HTMLButtonElement>(card, ".heat-off").every((item) => item.disabled), state).toBe(true);
     }
   });
@@ -3330,7 +3367,7 @@ describe("a filament change", () => {
       await showView(card, "Control");
       expect(find(card, ".note"), state).toBeNull();
       expect(findAll<HTMLButtonElement>(card, ".pad button, .nozzle-row button").every((item) => !item.disabled), state).toBe(true);
-      expect(button(card, "Cool down").disabled, state).toBe(false);
+      expect(button(card, "Heating off").disabled, state).toBe(false);
     }
   });
 
@@ -3976,6 +4013,34 @@ describe("the dialogs", () => {
     // What lies on the dialog takes its surface, not the card's.
     expect(sheet).toMatch(/\.select select\s*\{[^}]*background: var\(--bb-surface\);/);
     expect(sheet).toMatch(/\.pal\[aria-checked="true"\]\s*\{[^}]*0 0 0 2px var\(--bb-surface\),/);
+  });
+
+  it("take up to 440 px, and the screen less 16 px a side where it is narrower: every dialog alike", () => {
+    const sheet = styleText();
+    expect(sheet).toMatch(/(^|[}/])\s*dialog\s*\{[^}]*max-width: min\(440px, calc\(100vw - 32px\)\);[^}]*width: 100%;/);
+    // One rule for all of them: no dialog keeps a width of its own (the
+    // menu is no dialog: it takes its items' width).
+    const rules = [...sheet.replace(/\/\*[\s\S]*?\*\//g, "").matchAll(/([^{}]*)\{([^{}]*)\}/g)].map(([, selector, body]) => [selector?.trim() ?? "", body ?? ""]);
+    const widths = rules.filter(([selector, body]) => /^dialog(\b|[.[:])/.test(selector) && !selector.includes("::backdrop") && /max-width/.test(body));
+    expect(widths.map(([selector]) => selector)).toEqual(["dialog"]);
+  });
+
+  it("the tints and lines come from the theme's text colour itself, not from its rgb triple", () => {
+    // Home Assistant computes --rgb-primary-text-color only from a theme's
+    // own hex value: a theme naming its text colour by a variable keeps the
+    // light default, dark grey under white text.
+    const sheet = styleText();
+    expect(sheet).not.toContain("--rgb-primary-text-color");
+    expect(sheet).toMatch(/--bb-tint: color-mix\(in srgb, var\(--bb-text\) 5%, transparent\);/);
+    expect(sheet).toMatch(/--bb-tint-2: color-mix\(in srgb, var\(--bb-text\) 9%, transparent\);/);
+    expect(sheet).toMatch(/--bb-line: color-mix\(in srgb, var\(--bb-text\) 16%, transparent\);/);
+  });
+
+  it("and the menu are never see-through: the theme's colour at full strength, where the browser can take its alpha away", () => {
+    const sheet = styleText();
+    expect(sheet).toMatch(
+      /@supports \(color: rgb\(from red r g b \/ 1\)\)\s*\{\s*dialog\s*\{[^}]*--bb-surface: rgb\(from var\(--ha-dialog-surface-background, var\(--mdc-theme-surface, var\(--card-background-color, #fff\)\)\) r g b \/ 1\);\s*\}\s*\.menu\s*\{[^}]*background: rgb\(from var\(--ha-card-background, var\(--card-background-color, #fff\)\) r g b \/ 1\);/,
+    );
   });
 });
 

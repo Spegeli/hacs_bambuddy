@@ -632,7 +632,7 @@
           "purging": "Purging old filament",
           "changing_filament": "Changing filament",
           "reading_rfid": "Reading the spool's RFID",
-          "assist": "Assist",
+          "assist": "Assisting the print",
           "calibrating": "Calibrating"
         }
       },

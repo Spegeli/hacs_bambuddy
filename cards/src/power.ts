@@ -392,6 +392,7 @@ export function autoOffContent(ctx: CardContext): TemplateResult {
     <p class="dlg-label" id="auto-off-temperature">${t(hass, "auto_off_temperature")}</p>
     ${stepControl({
       labelledBy: "auto-off-temperature",
+      centered: true,
       lower: {
         label: t(hass, "auto_off_lower", { step: AUTO_OFF_STEP, unit }),
         disabled: !number || value <= lowest,

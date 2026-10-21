@@ -777,10 +777,15 @@ def slot_attributes(tray: dict[str, Any], slot: int, global_id: int, active_tray
         "color": None if empty else _color(tray),
         "type": None if empty else tray.get("tray_type") or None,
         "name": None if empty else tray_label(tray) or None,
-        # BamBuddy says -1 without an RFID estimate; the external spools
-        # always report 0.
+        # The AMS estimates it only for a Bambu spool with its chip: without
+        # one it says -1, 0 or -- the A1's AMS Lite -- 100. The external
+        # spools always report 0.
         "remaining": remain
-        if isinstance(remain, int) and remain >= 0 and not empty and global_id not in (EXTERNAL_LEFT, EXTERNAL_RIGHT)
+        if isinstance(remain, int)
+        and remain >= 0
+        and not empty
+        and has_chip_ids(tray)
+        and global_id not in (EXTERNAL_LEFT, EXTERNAL_RIGHT)
         else None,
         "active": global_id == active_tray,
         "empty": empty,
@@ -801,6 +806,11 @@ def slot_attributes(tray: dict[str, Any], slot: int, global_id: int, active_tray
 def has_rfid(tray: dict[str, Any]) -> bool:
     """BamBuddy names a spool's chip (null without one)."""
     return bool(tray.get("tray_uuid") or tray.get("tag_uid"))
+
+
+def has_chip_ids(tray: dict[str, Any]) -> bool:
+    """Both ids of a Bambu spool's chip: the chip's own and the spool's."""
+    return bool(tray.get("tray_uuid") and tray.get("tag_uid"))
 
 
 @dataclass(frozen=True)

@@ -435,6 +435,28 @@ def test_the_rate_is_measured_over_a_few_seconds() -> None:
     assert meter.count(24, 9.0) == 8
 
 
+def test_a_slow_camera_is_measured_in_tenths() -> None:
+    """The A1's chamber image sends a frame every two seconds or so: the rate
+    waits for four frames and is said in tenths below 1, never 0. A change
+    from a slow rate counts from half of it."""
+    meter = camera_module._RateMeter()
+    assert meter.count(1, 0.0) is None
+    assert meter.count(1, 2.1) is None
+    assert meter.count(1, 4.2) is None  # 3 s, but only two frames
+    assert meter.count(1, 6.3) is None
+    assert meter.count(1, 8.4) == 0.5  # 4 frames in 8.4 s
+    for at in (10.5, 12.6, 14.7):
+        assert meter.count(1, at) is None
+    assert meter.count(1, 17.4) is None  # 0.4: still 0.5
+    rate = meter.count(6, 20.4)  # 2 a second
+    assert rate == 2
+    assert isinstance(rate, int)
+
+    meter = camera_module._RateMeter()
+    meter.count(1, 0.0)
+    assert meter.count(4, 100.0) == 0.1
+
+
 class _Upstream:
     """BamBuddy's stream, one frame a read at the rate it streams; the clock
     is the camera's."""
@@ -487,6 +509,53 @@ async def test_the_camera_says_what_arrives(
     with patch.object(BamBuddyClient, "open_stream", AsyncMock(return_value=_Upstream(1, 30, clock, lambda: None))):
         await _watch(hass_client, camera)
     bambuddy_api.stop_camera.assert_awaited_once_with(X1C)
+
+
+async def _watch_a1_mini_at_half_a_frame(
+    hass: HomeAssistant, hass_client: ClientSessionGenerator, monkeypatch: pytest.MonkeyPatch
+) -> tuple[str, list[object]]:
+    """The A1 mini's chamber image at a frame every two seconds, as his A1
+    mini sends it; what the camera said while the stream ran."""
+    clock = [0.0]
+    monkeypatch.setattr(camera_module, "_clock", lambda: clock[0])
+    entry = await set_up(hass, A1_MINI)
+    camera = entity_id(hass, "camera", printer_uid(entry, "camera", A1_MINI))
+    seen: list[object] = []
+
+    def on_read() -> None:
+        seen.append(state_at(hass, camera).attributes.get("streamed_frame_rate"))
+
+    with patch.object(BamBuddyClient, "open_stream", AsyncMock(return_value=_Upstream(10, 0.5, clock, on_read))):
+        await _watch(hass_client, camera)
+    return camera, seen
+
+
+async def test_a_slow_chamber_image_says_its_tenths(
+    hass: HomeAssistant,
+    bambuddy_api: SimpleNamespace,
+    hass_client: ClientSessionGenerator,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Half a frame a second is 0.5, not 0."""
+    _, seen = await _watch_a1_mini_at_half_a_frame(hass, hass_client, monkeypatch)
+    assert 0.5 in seen
+    assert 0 not in seen
+
+
+async def test_a_chamber_image_slower_than_asked_asks_nothing(
+    hass: HomeAssistant,
+    bambuddy_api: SimpleNamespace,
+    hass_client: ClientSessionGenerator,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The chamber image comes as fast as the printer sends it, whatever is
+    asked: the next stream does not ask BamBuddy to begin anew."""
+    camera, _ = await _watch_a1_mini_at_half_a_frame(hass, hass_client, monkeypatch)
+    clock = [100.0]
+    monkeypatch.setattr(camera_module, "_clock", lambda: clock[0])
+    with patch.object(BamBuddyClient, "open_stream", AsyncMock(return_value=_Upstream(1, 5, clock, lambda: None))):
+        await _watch(hass_client, camera)
+    bambuddy_api.stop_camera.assert_not_awaited()
 
 
 async def test_a_rate_bambuddy_kept_is_asked_for_again(

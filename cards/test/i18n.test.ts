@@ -68,8 +68,11 @@ describe("the card's texts", () => {
 });
 
 describe("the frame rate's note in German", () => {
-  it("says the highest is set at first", () => {
-    expect(LANGUAGES.de.fps_note).toContain("eingestellt ist zunächst die höchste.");
+  it("names the printer it applies to, not a device, nor what was set at first", () => {
+    // "Gerät" reads as a printer in Home Assistant; the rate set changes.
+    expect(LANGUAGES.de.fps_note).toContain("gilt für diesen Drucker in ganz Home Assistant");
+    expect(LANGUAGES.de.fps_note).not.toContain("Gerät");
+    expect(LANGUAGES.de.fps_note).not.toContain("zunächst");
     expect(LANGUAGES.de.editor_show_auto_off_help).toContain("und im Dialog des Strom-Chips");
   });
 });

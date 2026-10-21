@@ -193,7 +193,8 @@ def test_slot_attributes() -> None:
         "color": "#FF6A13",
         "type": "PLA",
         "name": "PLA Basic",
-        "remaining": 85,
+        # No chip: the AMS cannot estimate it.
+        "remaining": None,
         "active": True,
         "empty": False,
         "tray_id": 1,
@@ -211,9 +212,33 @@ def test_the_external_spool_has_no_remaining_amount() -> None:
     assert slot_attributes({**_TRAY, "id": 254, "remain": 0}, 1, 254, None)["remaining"] is None
 
 
+# A Bambu spool's chip: BamBuddy names both its ids (null without a chip).
+_CHIP = {"tag_uid": "3B9E01AA22CC44EE", "tray_uuid": "0F1E2D3C4B5A69788796A5B4C3D2E1F0"}
+
+
+def test_a_chip_spool_tells_its_remaining_amount() -> None:
+    """The AMS estimates what is left of a Bambu spool from its chip."""
+    assert slot_attributes({**_TRAY, **_CHIP, "remain": 85}, 2, 1, None)["remaining"] == 85
+
+
+@pytest.mark.parametrize(
+    "ids",
+    [
+        {},
+        {"tag_uid": None, "tray_uuid": None},
+        {"tag_uid": "3B9E01AA22CC44EE", "tray_uuid": None},
+        {"tag_uid": None, "tray_uuid": "0F1E2D3C4B5A69788796A5B4C3D2E1F0"},
+    ],
+)
+def test_a_spool_without_a_chip_has_no_remaining_amount(ids: dict[str, Any]) -> None:
+    """Without a chip the AMS knows neither the spool nor what is on it: the
+    A1's AMS Lite says 100 for every such spool."""
+    assert slot_attributes({**_TRAY, **ids, "remain": 100}, 2, 1, None)["remaining"] is None
+
+
 def test_an_unknown_remaining_amount_is_none() -> None:
-    """BamBuddy says -1 for spools without an RFID estimate."""
-    assert slot_attributes({**_TRAY, "remain": -1}, 2, 1, None)["remaining"] is None
+    """-1: the AMS has no estimate, a chip or not."""
+    assert slot_attributes({**_TRAY, **_CHIP, "remain": -1}, 2, 1, None)["remaining"] is None
 
 
 def test_an_empty_slot_tells_no_filament() -> None:

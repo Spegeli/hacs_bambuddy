@@ -632,7 +632,7 @@
           "purging": "Altes Filament wird ausgespült",
           "changing_filament": "Filamentwechsel",
           "reading_rfid": "RFID der Spule wird gelesen",
-          "assist": "Unterstützung",
+          "assist": "Unterstützt den Druck",
           "calibrating": "Kalibrierung"
         }
       },

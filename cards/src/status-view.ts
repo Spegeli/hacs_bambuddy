@@ -362,9 +362,11 @@ function amsStrip(ctx: CardContext): TemplateResult | typeof nothing {
       </span>`;
   // Shown, not read: the description (the button) or the screen-reader
   // text (the group) says it whole.
-  const content = html`${column.length ? html`<span class="ams-column" aria-hidden="true">${column.map(unit)}</span>` : nothing}${fill.length
-    ? html`<span class="ams-fill ${fill.some((group) => group.ht) ? "with-ht" : ""}" aria-hidden="true">${fill.map(unit)}</span>`
-    : nothing}`;
+  const content = html`<span class="ams-units"
+    >${column.length ? html`<span class="ams-column" aria-hidden="true">${column.map(unit)}</span>` : nothing}${fill.length
+      ? html`<span class="ams-fill ${fill.some((group) => group.ht) ? "with-ht" : ""}" aria-hidden="true">${fill.map(unit)}</span>`
+      : nothing}</span
+  >`;
   // Named by what it is and where it goes; what it shows is its description,
   // which a screen reader says after the name and lets the user skip.
   return ctx.filamentTab

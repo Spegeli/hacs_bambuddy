@@ -117,6 +117,8 @@ describe("the switch-off after the print", () => {
     const group = find(card, "dialog .stepper") as HTMLElement;
     expect(group.getAttribute("role")).toBe("group");
     expect(text(root(card).getElementById(group.getAttribute("aria-labelledby") ?? ""))).toBe("Switch off once the nozzle is cooler than");
+    // In the middle of the dialog, as the frame rate's; the text stays left.
+    expect(group.classList.contains("centered")).toBe(true);
     await press(card, `Lower the switch-off temperature by 5${NBSP}°C`);
     await new Promise((resolve) => setTimeout(resolve, 900));
     await settle(card);

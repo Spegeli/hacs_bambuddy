@@ -70,11 +70,11 @@ describe("a Home Assistant in °F", () => {
     expect(hass.calls.at(-1)?.data).toEqual({ entity_id: NOZZLE, value: 32 });
   });
 
-  it("cools every hot heater to its lowest value, and offers nothing once all are off", async () => {
+  it("switches every hot heater to its lowest value, and offers nothing once all are off", async () => {
     const hass = makeHass({ devices: fahrenheit(a1mini({ nozzles: [[200, 220]], bed: [50, 55] })) });
     const card = await mountCard(hass, { printer: "dev-a1mini" });
     await showView(card, "Control");
-    button(card, "Cool down").click();
+    button(card, "Heating off").click();
     await card.updateComplete;
     expect(hass.calls.map((call) => call.data)).toEqual([
       { entity_id: NOZZLE, value: 32 },
@@ -83,7 +83,7 @@ describe("a Home Assistant in °F", () => {
 
     const cold = await mountCard(makeHass({ devices: fahrenheit(a1mini()) }), { printer: "dev-a1mini" });
     await showView(cold, "Control");
-    expect(button(cold, "Cool down").disabled).toBe(true);
+    expect(button(cold, "Heating off").disabled).toBe(true);
   });
 
   it("says a tile's target in °F", async () => {

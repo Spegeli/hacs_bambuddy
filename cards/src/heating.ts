@@ -1,5 +1,5 @@
 // The heating section of the control view: each heater's target with
-// -5 / +5 steppers and "Off", and one "Cool down" for all. A tap changes
+// -5 / +5 steppers and "Off", and one "Heating off" for all. A tap changes
 // the target shown at once; the card sends it when the taps stop (see
 // card.ts, stepTarget), so a few taps are one command.
 import { html, nothing, type TemplateResult } from "lit";
@@ -135,7 +135,7 @@ const AIRDUCT_MODES: readonly string[] = ["cooling", "heating"];
 const AIRDUCT_TEXTS: Readonly<Record<string, TextKey>> = { cooling: "airduct_cooling", heating: "airduct_heating", laser: "airduct_laser" };
 
 /** The airduct (P2S, X2D, H2 series): fresh air in, or the chamber's warmth
- * kept. Words only: a snowflake would mean "Cool down" above. The printer
+ * kept. Words only: the power icon would mean "Off" beside it. The printer
  * sets it at every print start; it changes only without a print and a
  * filament change. Its laser mode (H2 series with the laser module) comes
  * from the printer: said, never offered; another mode chooses nothing. */
@@ -187,7 +187,7 @@ export function heatingSection(ctx: CardContext): TemplateResult | typeof nothin
   const heaters = rows(ctx);
   if (!heaters.length) return nothing;
   const disabled = !ctx.online;
-  // Off and Cool down would end a print: only without one -- but the
+  // Off and Heating off would end a print: only without one -- but the
   // chamber's Off, which ends none (the job may set it again). They wait
   // during a filament change, which cooling would break.
   const offered = !ctx.busy && !ctx.viewOnly;
@@ -198,9 +198,11 @@ export function heatingSection(ctx: CardContext): TemplateResult | typeof nothin
       <span class="section-label" id="heat-title">${icon("heat")}${t(hass, "heating")}</span>
       ${offered
         ? actionButton({
-            label: t(hass, "cool_down"),
-            iconName: "snow",
+            label: t(hass, "heating_off"),
+            iconName: "power",
             kind: "plain",
+            // Each heater's own off switch, for all: it only switches off.
+            className: "heat-off",
             disabled: disabled || !hot.length || ctx.changing,
             onClick: () => ctx.setTargets(hot.map((row) => [row.target, targetFloor(hass, row.target)])),
           })

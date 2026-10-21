@@ -89,7 +89,7 @@ export interface CardContext {
   targetOf: (entityId: string) => number | undefined;
   /** Sets a heater's target once the taps stop. */
   stepTarget: (entityId: string, value: number) => void;
-  /** Sets targets at once: Off, Cool down. */
+  /** Sets targets at once: Off, Heating off. */
   setTargets: (targets: [string, number][]) => void;
   /** A switch as the card shows it: the state just set, else its own. */
   switchOn: (entityId: string) => boolean;
@@ -264,9 +264,11 @@ export function stepControl(options: {
   value: TemplateResult | string;
   /** The element that names what the stepper changes: a group then. */
   labelledBy?: string;
+  /** In the middle of its dialog, the text around it left. */
+  centered?: boolean;
 }): TemplateResult {
-  const { lower, raise, value, labelledBy } = options;
-  return html`<div class="stepper" role=${labelledBy ? "group" : nothing} aria-labelledby=${labelledBy ?? nothing}>
+  const { lower, raise, value, labelledBy, centered } = options;
+  return html`<div class="stepper${centered ? " centered" : ""}" role=${labelledBy ? "group" : nothing} aria-labelledby=${labelledBy ?? nothing}>
     ${actionButton({ ...lower, iconName: "minus", iconOnly: true })}
     <output class="step-value" aria-live="polite">${value}</output>
     ${actionButton({ ...raise, iconName: "plus", iconOnly: true })}
@@ -338,8 +340,9 @@ export function activeNozzleIndex(ctx: CardContext): number | undefined {
   return ctx.refs.dual && side >= 0 ? side : undefined;
 }
 
-/** AMS states that need no line: it rests, or nothing is known. */
-const AMS_RESTING = new Set(["idle", "unknown", "unavailable", ""]);
+/** AMS states that need no line: it rests, it only assists a print (the
+ * state through every print it feeds), or nothing is known. */
+const AMS_RESTING = new Set(["idle", "assist", "unknown", "unavailable", ""]);
 
 /** What the AMS does right now -- "AMS: Feeding" -- while it is not idle:
  * a filament change takes minutes, and this says it is under way. */
