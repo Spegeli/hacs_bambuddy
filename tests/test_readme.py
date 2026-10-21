@@ -152,3 +152,27 @@ def test_ams_entity_ids_name_the_unit() -> None:
     assert "an AMS Lite's, for now," in readme
     # A replacement AMS Lite without a serial stays the same device.
     assert "an AMS Lite stays the same device while BamBuddy reports no serial" in readme
+
+
+_APP = "https://github.com/Spegeli/homeassistant-app-bambuddy"
+
+
+def test_the_head_sends_date_version_users_to_the_upgrade_and_names_the_app() -> None:
+    """No development warning any more: before the first section the README
+    says it is the integration, not the BamBuddy app -- as the app's README
+    says the other way round -- and sends users of a date version to the
+    upgrade first (as hacs_bitpanda does)."""
+    head = _README[: _README.index("## ✨ Features")]
+    assert "[!WARNING]" not in head and "active development" not in head
+    assert "This is the integration, not the app" in head and _APP in head
+    assert "> [!IMPORTANT]" in head and "(#%EF%B8%8F-upgrading-from-a-date-version)" in head
+
+
+def test_the_app_section_follows_the_requirements() -> None:
+    """Where a reader without a BamBuddy server looks next: the app that runs
+    it inside Home Assistant, and the address to enter for it."""
+    headings = re.findall(r"^## (.+)$", _README, re.MULTILINE)
+    assert headings[headings.index("📋 Requirements") + 1] == "🧩 BamBuddy App"
+    section = _README[_README.index("## 🧩 BamBuddy App") :]
+    section = section[: section.index("\n## ", 1)]
+    assert _APP in section and "`http://homeassistant.local:8000`" in section and "`localhost`" in section

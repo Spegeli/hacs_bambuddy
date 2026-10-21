@@ -19,9 +19,10 @@ A custom <a href="https://www.home-assistant.io/">Home Assistant</a> integration
 
 [BamBuddy](https://github.com/maziggy/bambuddy) is a self-hosted command center for Bambu Lab 3D printers. The integration talks only to your own BamBuddy server, through its REST API; it uses no cloud.
 
-> [!WARNING]
-> **This integration is currently under active development and is not intended for production use.**
-> Expect breaking changes, incomplete features, and potential instability. Use at your own risk.
+*This is the integration, not the app: it connects Home Assistant to a BamBuddy server — on any machine, or inside Home Assistant with the [BamBuddy app](https://github.com/Spegeli/homeassistant-app-bambuddy).*
+
+> [!IMPORTANT]
+> **Updating from a date version (2026.05.17 or older)?** Read [Upgrading from a date version](#%EF%B8%8F-upgrading-from-a-date-version) first — it needs a new API key and cannot be undone.
 
 ---
 
@@ -50,6 +51,12 @@ A custom <a href="https://www.home-assistant.io/">Home Assistant</a> integration
 - For the installation through HACS: [HACS](https://hacs.xyz) installed in Home Assistant
 - A BamBuddy API key with **Read Status**, **Control Printer** and **Manage Maintenance** (see [Create an API key](#create-an-api-key))
 - For the controls: the printer's **developer LAN mode** on — without it the printer ignores the commands BamBuddy passes on (see [Troubleshooting](#-troubleshooting))
+
+---
+
+## 🧩 BamBuddy App
+
+The integration brings your printers into Home Assistant; the [BamBuddy app](https://github.com/Spegeli/homeassistant-app-bambuddy) runs BamBuddy itself — on Home Assistant OS, inside Home Assistant, installed and updated like any other app. With the app, set up the integration with the address you open BamBuddy with, e.g. `http://homeassistant.local:8000` (not `localhost`), and an API key created in BamBuddy.
 
 ---
 
