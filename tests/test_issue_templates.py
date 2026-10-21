@@ -37,3 +37,16 @@ def test_the_bug_form_asks_whether_bambuddys_authentication_is_on() -> None:
     assert auth["type"] == "dropdown"
     assert auth["attributes"]["label"] == "Authentication in BamBuddy"
     assert auth["attributes"]["options"] == ["On", "Off", "Not sure"]
+
+
+def test_questions_go_to_the_integrations_forum_thread() -> None:
+    """A "How do I …?" is no bug: the chooser sends it to the integration's
+    own thread in the Home Assistant Community Forum, before the general
+    forum (as hacs_bitpanda does)."""
+    links = yaml.safe_load((_FORMS / "config.yml").read_text(encoding="utf-8"))["contact_links"]
+    urls = [link["url"] for link in links]
+    thread = "https://community.home-assistant.io/t/1029750"
+    assert thread in urls
+    assert urls.index(thread) < urls.index("https://community.home-assistant.io")
+    question = next(link for link in links if link["url"] == thread)
+    assert question["name"] == "Questions about this integration"

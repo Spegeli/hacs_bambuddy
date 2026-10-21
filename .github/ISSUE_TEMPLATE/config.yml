@@ -3,6 +3,9 @@ contact_links:
   - name: Troubleshooting
     url: https://github.com/Spegeli/hacs_bambuddy#-troubleshooting
     about: Entity unavailable, integration not loading, camera not showing? Check here first.
+  - name: Questions about this integration
+    url: https://community.home-assistant.io/t/1029750
+    about: How do I …? Ask in the integration's thread in the Home Assistant Community Forum.
   - name: BamBuddy itself
     url: https://github.com/maziggy/bambuddy/issues
     about: Problems with BamBuddy, its web interface or its printer connection belong to the BamBuddy project.
