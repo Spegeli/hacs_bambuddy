@@ -120,7 +120,9 @@ The integration lives in `custom_components/bambuddy/`; the dashboard card's sou
 | `models.py` | What BamBuddy's printer status means, independent of entities: print status and stage, what each model has, AMS units and slots, names and keys |
 | `number.py` | Target temperatures; the camera's frame rate; the switch-off's temperature |
 | `plugs.py` | A smart plug BamBuddy links to a printer: its kind (switch, script, monitor), its role, its device name |
-| `repairs.py` | The repair that removes a printer BamBuddy no longer lists |
+| `rekey.py` | An AMS unit that got its serial: its device and entities move from its place to it in the setup, the stand-in entity IDs are renamed |
+| `renames.py` | The renamed AMS entity IDs in the integration's own store, and their notice under Repairs, one per printer |
+| `repairs.py` | The repairs: removing a printer BamBuddy no longer lists; confirming the AMS entity IDs that followed their unit's serial |
 | `select.py` | Print speed, airduct mode, active nozzle |
 | `sensor.py` | BamBuddy's figures; per printer status, job, temperatures, filament, maintenance and diagnostics; per AMS unit slots, humidity, temperature and drying time; a plug's power and energy |
 | `services.py`, `services.yaml` | The actions |
@@ -146,7 +148,7 @@ The integration lives in `custom_components/bambuddy/`; the dashboard card's sou
 
 **BamBuddy's control routes do not check the printer's state** (only skipping objects and clearing the plate do). `async_run_command` (`entity.py`) refuses what the printer cannot take now: offline, a job under way (`idle_only`, `paused_ok`), a filament change, or the entity's own `allowed`.
 
-**Serial numbers are the identity, not BamBuddy's printer numbers**, which a new BamBuddy or a restored database changes: device identifiers `<entry>_printer_<serial>`, unique IDs `<entry>_p<serial>_<key>`, AMS units by their own serials. A new entity's ID is set from the model, the serial number and the English translation key (`suggest_entity_id`, `entity.py`). A changed key leaves the users' entities and their history behind; a changed translation key changes the entity's name and a new installation's entity ID, and breaks the card, which finds entities by it.
+**Serial numbers are the identity, not BamBuddy's printer numbers**, which a new BamBuddy or a restored database changes: device identifiers `<entry>_printer_<serial>`, unique IDs `<entry>_p<serial>_<key>`, AMS units by their own serials. A new entity's ID is set from the model, the serial number and the English translation key (`suggest_entity_id`, `entity.py`); an AMS unit's from its own model and serial, or the printer's serial and the place's letter while BamBuddy reports none (`models.ams_object_id`). A unit known by its place that then reports its serial is held by the running entry and moved to it in the next setup, before the platforms load (`rekey.py`); the renamed IDs wait in the integration's own store for the user's confirmation (`renames.py`). A changed key leaves the users' entities and their history behind; a changed translation key changes the entity's name and a new installation's entity ID, and breaks the card, which finds entities by it.
 
 **Never set `model_id` on a device:** Home Assistant then shows the model twice. A printer's model is BamBuddy's model string, its manufacturer Bambu Lab.
 

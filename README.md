@@ -190,7 +190,7 @@ While a printer is offline, BamBuddy keeps its last values, so most of its entit
 
 ### Per AMS unit
 
-Each AMS unit is a device under its printer — **AMS**, **AMS 2 Pro**, **AMS HT** or **AMS Lite** — and keeps its entities wherever it is plugged in. It is known by its serial number, so a replacement is a new device: the old one stays with unavailable entities until you delete it (its device page offers Delete once the printer no longer reports it). Unplug the old unit and delete its device before you plug in the new one, and the new one gets the plain entity IDs; otherwise they end in `_2`.
+Each AMS unit is a device under its printer — **AMS**, **AMS 2 Pro**, **AMS HT** or **AMS Lite** — known by its serial number: it keeps its device, entities and history wherever on the printer it is plugged in, and its entity IDs carry its model and serial, such as `sensor.ams_2_pro_19c06a000000001_slot_1`. A unit's serial number is on its device page. BamBuddy reports no serial for the AMS Lite yet ([maziggy/bambuddy#3348](https://github.com/maziggy/bambuddy/issues/3348)): until it does, the AMS Lite's IDs carry the printer's serial and its letter, such as `sensor.ams_lite_0309da000000002_a_slot_1` (the A2L's AMS Lite has no letter). Once BamBuddy reports the serial, the BamBuddy entry reloads once — its entities are unavailable for a few seconds —, the unit keeps its device and history, its entity IDs take its serial, and **Settings → Repairs** lists the renamed IDs for your automations — choose **Done** there once they use the new IDs; the list goes with the notice. IDs you changed yourself stay. A replacement unit with a serial of its own is a new device with its own IDs (an AMS Lite stays the same device while BamBuddy reports no serial), while the old one stays with unavailable entities until you delete it (its device page offers Delete once the printer no longer reports it). A unit moved to another printer is a new device there: delete its old device first, and it gets the plain entity IDs; otherwise they end in `_2`.
 
 | Entity | Type | Description |
 |---|---|---|
@@ -313,7 +313,7 @@ The live view uses bandwidth while it runs; with `tap` it stops when you leave t
 
 How to use them: **Settings → Automations & scenes → Create automation → ⋮ → Edit in YAML**, paste an example and put in your entity IDs (your printer's device under **Settings → Devices & services → BamBuddy** lists them) and your phone's notify action (`notify.mobile_app_<your phone>`). Easier for a first one: in the visual editor choose **Add trigger → Entity**, then the state trigger (**State**; **State changed** in the newest versions), pick your printer's *Print status* and set **To** to *Finished*.
 
-Entity IDs are made of the printer's model and serial number and the entity's English key — `sensor.x1c_00m00a000000001_print_status`, `sensor.x1c_00m00a000000001_ams_a_humidity` — whatever the printer is called and in any language. Yours carry your printer's model and serial. BamBuddy's own start with `bambuddy`, such as `sensor.bambuddy_total_prints` (a second BamBuddy's end in `_2`). A smart plug's carry BamBuddy's number of the plug, which stays when the plug is renamed or moved to another printer — `switch.bambuddy_smart_plug_3` (the plug itself), `sensor.bambuddy_smart_plug_3_power`, `sensor.bambuddy_smart_plug_3_energy_today`.
+Entity IDs are made of the printer's model and serial number and the entity's English key — `sensor.x1c_00m00a000000001_print_status` —, an AMS unit's of its own model and serial — `sensor.ams_2_pro_19c06a000000001_humidity`; an AMS Lite's, for now, of the printer's serial and its letter (see [Per AMS unit](#per-ams-unit)) —, whatever the printer is called and in any language. Yours carry the model and serial of your printer or AMS unit; its device page shows the serial. BamBuddy's own start with `bambuddy`, such as `sensor.bambuddy_total_prints` (a second BamBuddy's end in `_2`). A smart plug's carry BamBuddy's number of the plug, which stays when the plug is renamed or moved to another printer — `switch.bambuddy_smart_plug_3` (the plug itself), `sensor.bambuddy_smart_plug_3_power`, `sensor.bambuddy_smart_plug_3_energy_today`.
 
 **Tell me when a print is done**
 
@@ -363,13 +363,13 @@ On an A1, A1 mini, A2L or P1P the light is `light.<model>_<serial>_light` (they 
 ```yaml
 triggers:
   - trigger: numeric_state
-    entity_id: sensor.x1c_00m00a000000001_ams_a_humidity
+    entity_id: sensor.ams_2_pro_19c06a000000001_humidity
     above: 40
     for: "01:00:00"
 actions:
   - action: notify.notify
     data:
-      message: "AMS A is at {{ trigger.to_state.state }} % humidity: time to dry the filament."
+      message: "{{ device_attr(trigger.entity_id, 'name') }} is at {{ trigger.to_state.state }} % humidity: time to dry the filament."
 ```
 
 ---
@@ -381,7 +381,7 @@ actions:
 - **The API key** needs **Read Status**, **Control Printer** and **Manage Maintenance**. 1.x worked with Read Status alone, and with BamBuddy's authentication off with any text: where the stored key lacks a permission or BamBuddy does not know it, Home Assistant asks for a new one after the update (**Settings → Repairs**). Create it in BamBuddy first (see [Create an API key](#create-an-api-key)).
 - **The connection** becomes a single address (`http://host:port`); nothing to do.
 - **Device names** become *BamBuddy name (model / serial number)* and follow BamBuddy from then on. A name you gave a device in Home Assistant is replaced by it (Repairs tells you once); rename the printer in BamBuddy instead. Entity names in a dashboard card show the longer device name in front.
-- **Entity names** are new and translated; **entity IDs stay** where the entity stayed. The values changed with the names: *Print status* now reads `idle`, `preparing`, `slicing`, `printing`, `paused`, `finished`, `failed`, `offline` (1.x showed BamBuddy's `RUNNING`, `FINISH`, …), *Print speed* has the options `silent`, `standard`, `sport`, `ludicrous`, *HMS errors* (the old *HMS Status* sensor) is a number, and an idle printer's *Current print* is unknown instead of empty. Check automations that compare these values. New entities get IDs of model, serial number and English key.
+- **Entity names** are new and translated; **entity IDs stay** where the entity stayed. The values changed with the names: *Print status* now reads `idle`, `preparing`, `slicing`, `printing`, `paused`, `finished`, `failed`, `offline` (1.x showed BamBuddy's `RUNNING`, `FINISH`, …), *Print speed* has the options `silent`, `standard`, `sport`, `ludicrous`, *HMS errors* (the old *HMS Status* sensor) is a number, and an idle printer's *Current print* is unknown instead of empty. Check automations that compare these values. New entities get IDs of model, serial number and English key (an AMS unit's: its own model and serial).
 - **Printers and AMS units are known by their serial numbers:** a new BamBuddy, a restored database or an AMS plugged in elsewhere keeps their devices, entities and history.
 - **Gone or changed:** *Subtask* and *GCode File* (now *Current print*), the target temperature sensors (now numbers you can set), the fan sensors (now fans, except the hotend fan), *HMS Errors* as binary sensor (now the *HMS errors* count), the *Chamber Light* switch (now a light), and *Version*, *Health Status*, *Uptime*, *Archive Count*, *Model* and *Firmware Version* (the update entities and the device page show them). Replace them in dashboards and automations.
 - **Buttons** for pause, resume and stop are no longer under *Configuration* on the device page.
@@ -397,6 +397,7 @@ HACS offers 2.0.0 as an update to everyone on a date version.
 - **No soft limits on moves** — see [Actions](#%EF%B8%8F-actions).
 - **What BamBuddy cannot do, neither can the integration:** start a print, change the plate type, load from an AMS HT, send raw G-code.
 - **Filament Track Switch:** a load from an AMS slot must name the nozzle to feed, which `bambuddy.load_filament` and the card do not ask: load it on the printer or in BamBuddy. The external spools load.
+- **AMS Lite without its serial number:** BamBuddy does not report it yet ([maziggy/bambuddy#3348](https://github.com/maziggy/bambuddy/issues/3348)). Until it does, the AMS Lite's entity IDs carry the printer's serial number and the unit's letter (`sensor.ams_lite_0309da000000002_a_slot_1`). Once BamBuddy reports it, they are renamed once and **Settings → Repairs** lists them — see [Per AMS unit](#per-ams-unit).
 - **Firmware and BamBuddy updates** are shown, not installed.
 - **Polling, not push.** The status is at most about 10 seconds old.
 - **Printer names come from BamBuddy:** a printer is named after its name in BamBuddy, then model and serial number, e.g. *Workshop (X1C / 00M00A000000001)*. Rename it in BamBuddy; a name given in Home Assistant goes back to BamBuddy's within a minute, and **Settings → Repairs** says why. Smart plug devices and the BamBuddy device keep a name you give them in Home Assistant. AMS units follow their printer, lettered as on the printer: *Workshop AMS A (AMS 2 Pro / serial number)*, so they sort right under it.

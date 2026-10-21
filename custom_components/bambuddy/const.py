@@ -63,6 +63,9 @@ MAINTENANCE_INTERVAL = 600.0
 # How long an AMS unit without a serial number waits for one: BamBuddy
 # reports it a moment after it connects.
 AMS_SERIAL_WAIT = 60.0
+# How often an AMS unit whose serial newly arrived is held for a reload in
+# one Home Assistant run before it gets its entities as a new device.
+HOLD_LIMIT = 3
 # BamBuddy only publishes a command; the printer reports back about a
 # second later.
 REFRESH_AFTER_COMMAND = 1.5

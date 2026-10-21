@@ -904,6 +904,24 @@
     "names_from_bambuddy": {
       "title": "Namen kommen aus BamBuddy: {name}",
       "description": "Du hast Geräte dieses Druckers in Home Assistant umbenannt:\n\n- {given}\n\nIhre Namen kommen aus BamBuddy und sind wieder die von BamBuddy.\n\nBenenne den Drucker stattdessen in BamBuddy um: Home Assistant übernimmt den Namen nach wenigen Sekunden (eine AMS-Einheit heißt nach ihrem Drucker)."
+    },
+    "ams_ids_renamed": {
+      "title": "AMS-Entitäts-IDs umbenannt: {name}",
+      "fix_flow": {
+        "step": {
+          "confirm": {
+            "title": "AMS-Entitäts-IDs umbenannt",
+            "description": "BamBuddy meldet jetzt Seriennummern von AMS-Einheiten an {name}, die es vorher nicht meldete. Ab jetzt wird jede dieser Einheiten an ihrer Seriennummer erkannt – Gerät, Entitäten und Verlauf bleiben –, und ihre Entitäts-IDs tragen sie statt der Seriennummer des Druckers:\n\n- {renamed}\n\nHome Assistant passt Automationen, Skripte und Dashboards nicht von selbst an; die BamBuddy-Karte findet die Einheiten von selbst. Passe die an, die die alten IDs verwenden. Entitäts-IDs, die du selbst geändert hattest, bleiben, wie sie waren. Sobald alles die neuen IDs verwendet, wähle „Erledigt“, um diesen Hinweis zu schließen.",
+            "submit": "Erledigt"
+          }
+        },
+        "abort": {
+          "already_confirmed": "Dieser Hinweis wurde bereits bestätigt."
+        },
+        "create_entry": {
+          "default": "Der Hinweis ist geschlossen. Die Geräteseite jeder Einheit zeigt ihre Entitäts-IDs."
+        }
+      }
     }
   },
   "services": {

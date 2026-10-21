@@ -1127,6 +1127,33 @@ async def test_migration_to_serial_numbers(hass: HomeAssistant, bambuddy_api: Si
     assert ams_device(entry, X1C, 0) in _devices(hass, entry)
 
 
+async def test_an_ams_lite_without_a_serial_gets_the_printers_serial_and_its_letter(
+    hass: HomeAssistant, bambuddy_api: SimpleNamespace
+) -> None:
+    """BamBuddy drops the AMS Lite's serial (maziggy/bambuddy#3348): the
+    printer's serial and the place's letter stand in."""
+    entry = await set_up(hass, A1_MINI)
+
+    assert er.async_get(hass).async_get_entity_id("sensor", DOMAIN, ams_uid(entry, 0, "slot_1", A1_MINI)) == (
+        "sensor.ams_lite_0309da000000002_a_slot_1"
+    )
+
+
+async def test_the_a2l_s_ams_lite_has_no_letter(hass: HomeAssistant, bambuddy_api: SimpleNamespace) -> None:
+    """The A2L's AMS Lite, BamBuddy's unit 6, has no place letter."""
+    printers = load_fixture("printers.json")
+    for printer in printers:
+        if printer["id"] == A1_MINI:
+            printer["model"] = "A2L"
+    bambuddy_api.get_printers.return_value = printers
+    bambuddy_api.statuses[A1_MINI]["ams"][0]["id"] = 6
+    entry = await set_up(hass, A1_MINI)
+
+    assert er.async_get(hass).async_get_entity_id("sensor", DOMAIN, ams_uid(entry, 6, "slot_1", A1_MINI)) == (
+        "sensor.ams_lite_0309da000000002_slot_1"
+    )
+
+
 async def test_new_entity_ids_follow_model_and_serial(hass: HomeAssistant, bambuddy_api: SimpleNamespace) -> None:
     """Whatever the printer is called in BamBuddy, in any language: model,
     serial number and the entity's key."""
@@ -1137,11 +1164,18 @@ async def test_new_entity_ids_follow_model_and_serial(hass: HomeAssistant, bambu
     assert registry.async_get_entity_id("sensor", DOMAIN, printer_uid(entry, "status", H2D)) == (
         "sensor.h2d_0948ad000000004_print_status"
     )
+    # An AMS unit's: what stays for it -- its own model and serial, no place.
     assert registry.async_get_entity_id("sensor", DOMAIN, ams_uid(entry, 0, "slot_1", H2D)) == (
-        "sensor.h2d_0948ad000000004_ams_a_slot_1"
+        "sensor.ams_2_pro_19c06a000000001_slot_1"
     )
     assert registry.async_get_entity_id("sensor", DOMAIN, ams_uid(entry, 128, "humidity", H2D)) == (
-        "sensor.h2d_0948ad000000004_ams_ht_a_humidity"
+        "sensor.ams_ht_19f06a000000002_humidity"
+    )
+    assert registry.async_get_entity_id("binary_sensor", DOMAIN, ams_uid(entry, 128, "drying", H2D)) == (
+        "binary_sensor.ams_ht_19f06a000000002_drying"
+    )
+    assert registry.async_get_entity_id("sensor", DOMAIN, ams_uid(entry, 128, "drying_remaining_time", H2D)) == (
+        "sensor.ams_ht_19f06a000000002_drying_remaining_time"
     )
     assert registry.async_get_entity_id("update", DOMAIN, f"{entry.entry_id}_p{printer_key(H2D)}_firmware") == (
         "update.h2d_0948ad000000004_firmware"
@@ -1282,6 +1316,41 @@ async def test_an_ams_serial_that_comes_late(
     await next_refresh(hass, freezer)
 
     assert [identifier for identifier in _devices(hass, entry) if "_ams_" in identifier] == [ams_device(entry, X1C, 0)]
+
+
+async def test_a_unit_with_a_serial_waits_for_its_type(
+    hass: HomeAssistant, bambuddy_api: SimpleNamespace, freezer: FrozenDateTimeFactory
+) -> None:
+    """BamBuddy may take a unit's serial from its report before the
+    printer's version tells its type: the unit waits for the type too, so
+    its entity IDs name the right model for good."""
+    status = bambuddy_api.statuses[H2D]
+    firmware = status["firmware_version"]
+    status["firmware_version"] = None
+    status["ams"][0]["module_type"] = ""
+    entry = await set_up(hass, H2D)
+    registry = er.async_get(hass)
+    assert registry.async_get_entity_id("sensor", DOMAIN, ams_uid(entry, 0, "slot_1", H2D)) is None
+
+    status["ams"][0]["module_type"] = "n3f"
+    status["firmware_version"] = firmware
+    await next_refresh(hass, freezer)
+
+    assert registry.async_get_entity_id("sensor", DOMAIN, ams_uid(entry, 0, "slot_1", H2D)) == (
+        "sensor.ams_2_pro_19c06a000000001_slot_1"
+    )
+
+
+async def test_an_ams_ht_does_not_wait_for_its_type(hass: HomeAssistant, bambuddy_api: SimpleNamespace) -> None:
+    """An AMS HT is told by its id: its serial is all it waits for."""
+    status = bambuddy_api.statuses[H2D]
+    status["firmware_version"] = None
+    status["ams"][1]["module_type"] = ""
+    entry = await set_up(hass, H2D)
+
+    assert er.async_get(hass).async_get_entity_id("sensor", DOMAIN, ams_uid(entry, 128, "humidity", H2D)) == (
+        "sensor.ams_ht_19f06a000000002_humidity"
+    )
 
 
 async def test_an_ams_without_serial_comes_after_a_minute(
@@ -1661,7 +1730,7 @@ async def test_an_ams_without_serial_needs_no_wait_once_bambuddy_read_the_versio
     hass: HomeAssistant, bambuddy_api: SimpleNamespace
 ) -> None:
     """BamBuddy reads the AMS serials with the printer's firmware version: with that version there, a unit
-    without a serial -- an AMS Lite never has one -- will not get one. Its entities come at once."""
+    without a serial -- BamBuddy drops the AMS Lite's (maziggy/bambuddy#3348) -- will not get one. Its entities come at once."""
     bambuddy_api.statuses[X1C]["ams"][0]["serial_number"] = ""
     entry = await set_up(hass, X1C)
 

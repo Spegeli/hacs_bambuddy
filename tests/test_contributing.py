@@ -36,3 +36,17 @@ def test_contributing_says_a_short_key_is_refused() -> None:
     assert "| `key.py` |" in text
     assert "a key lacking Read Status, Control Printer or Manage Maintenance is refused" in text
     assert "with a key that has only **Read Status**" not in text
+
+
+def test_the_module_table_lists_every_module() -> None:
+    """Each module of the integration has its row."""
+    contributing = (_ROOT / "CONTRIBUTING.md").read_text(encoding="utf-8")
+    # The first column of each row: one file, or several (`services.py`, `services.yaml`).
+    named = {cell.strip(" `") for line in contributing.splitlines() if line.startswith("| `") for cell in line.split("|")[1].split(",")}
+    modules = sorted(path.name for path in (_ROOT / "custom_components" / "bambuddy").glob("*.py"))
+    assert [name for name in modules if name not in named] == []
+
+
+def test_contributing_says_how_ams_entity_ids_are_made() -> None:
+    contributing = (_ROOT / "CONTRIBUTING.md").read_text(encoding="utf-8")
+    assert "`models.ams_object_id`" in contributing

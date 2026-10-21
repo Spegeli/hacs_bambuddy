@@ -66,6 +66,8 @@ from .entity import instance_device_info, printer_device_info
 from .key import KeyCheck, KeyGuard
 from .models import ams_key, display_model, find_printers, model_changed, stored_key, stored_printer, too_old
 from .plugs import plug_identifier
+from . import renames
+from .rekey import async_rekey_ams_units
 from .services import async_setup_services
 
 _LOGGER = logging.getLogger(__name__)
@@ -153,10 +155,20 @@ async def async_setup_entry(hass: HomeAssistant, entry: BamBuddyConfigEntry) -> 
     except BaseException:
         figures.cancel()
         raise
+    # Before the platforms: AMS units that now report their serial move to
+    # it; the renamed IDs go into the store at once, then its notices. The
+    # store is read first: a list that cannot be kept moves nothing.
+    stored = entry.options.get(CONF_PRINTERS, [])
+    await renames.async_keep(hass, entry.entry_id, {stored_key(printer) for printer in stored})
+    renamed = async_rekey_ams_units(hass, entry, printers)
+    grown = {key for key, pairs in renamed.items() if await renames.async_add(hass, entry.entry_id, key, pairs)}
+    names = {stored_key(printer): _device_name(hass, entry, printer) for printer in absent}
+    names.update({coordinator.key: coordinator.printer_name for coordinator in printers.values()})
+    noticed = await renames.async_raise(hass, entry, names, grown)
     missing = {missing_issue(entry.entry_id, stored_key(printer)) for printer in absent}
     # A removed printer's names notice goes; a stored one's stays until Home Assistant restarts.
-    named = {names_issue(entry.entry_id, stored_key(printer)) for printer in entry.options.get(CONF_PRINTERS, [])}
-    _delete_issues(hass, entry, keep=missing | named)
+    named = {names_issue(entry.entry_id, stored_key(printer)) for printer in stored}
+    _delete_issues(hass, entry, keep=missing | named | noticed)
     _remove_stale_devices(hass, entry, set(plugs.data or {}) if plugs.last_update_success else None)
     if plugs.last_update_success:
         _remove_spare_switch_offs(hass, entry, plugs)
@@ -284,8 +296,15 @@ def _remove_spare_switch_offs(hass: HomeAssistant, entry: ConfigEntry, plugs: Ba
                 registry.async_remove(entity_id)
 
 
+def _device_name(hass: HomeAssistant, entry: ConfigEntry, printer: dict[str, Any]) -> str:
+    """A stored printer's name: its device's of now, else the stored one."""
+    device = find_device(hass, entry.entry_id, printer_identifier(entry.entry_id, stored_key(printer)))
+    return device.name if device is not None and device.name else str(printer[CONF_PRINTER_NAME])
+
+
 def _delete_issues(hass: HomeAssistant, entry: ConfigEntry, keep: set[str] | None = None) -> None:
-    """The entry's "printer missing" and names notices, but those still true."""
+    """The entry's "printer missing", names and renamed AMS entity IDs
+    notices, but those still true."""
     prefixes = issue_prefixes(entry.entry_id)
     for domain, issue_id in list(ir.async_get(hass).issues):
         if domain == DOMAIN and issue_id.startswith(prefixes) and issue_id not in (keep or set()):
@@ -364,6 +383,7 @@ async def async_unload_entry(hass: HomeAssistant, entry: BamBuddyConfigEntry) ->
 
 async def async_remove_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
     _delete_issues(hass, entry)
+    await renames.async_clear(hass, entry.entry_id)
 
 
 async def async_migrate_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:

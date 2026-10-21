@@ -37,6 +37,7 @@ from .const import (
     CONF_URL,
     CONF_VERIFY_SSL,
     DOMAIN,
+    HOLD_LIMIT,
     INSTANCE_INTERVAL,
     MAINTENANCE_INTERVAL,
     PLUG_INTERVAL,
@@ -56,6 +57,8 @@ from .models import (
     ams_key,
     ams_model,
     ams_name,
+    ams_serial,
+    ams_type_by_place,
     camera_max_fps,
     find_printers,
     model_key,
@@ -129,14 +132,27 @@ def _issue_part(key: str) -> str:
     return hashlib.sha256(key.encode()).hexdigest()[:12]
 
 
-def issue_prefixes(entry_id: str) -> tuple[str, str]:
-    """The beginnings of an entry's "printer missing" and names notices."""
-    return f"printer_missing_{entry_id}_", f"names_from_bambuddy_{entry_id}_"
+def issue_prefixes(entry_id: str) -> tuple[str, str, str]:
+    """The beginnings of an entry's "printer missing", names and renamed
+    AMS entity IDs notices."""
+    return f"printer_missing_{entry_id}_", f"names_from_bambuddy_{entry_id}_", f"ams_ids_renamed_{entry_id}_"
+
+
+def _ams_holds(hass: HomeAssistant) -> dict[tuple[str, str, str], int]:
+    """How often each (entry, printer, AMS serial) was held for a reload in this run."""
+    holds: dict[tuple[str, str, str], int] = hass.data.setdefault(DOMAIN, {}).setdefault("ams_holds", {})
+    return holds
+
 
 
 def names_issue(entry_id: str, key: str) -> str:
     """The notice that a printer's names come from BamBuddy: one per printer."""
     return f"{issue_prefixes(entry_id)[1]}{_issue_part(key)}"
+
+
+def renames_issue(entry_id: str, key: str) -> str:
+    """The notice of a printer's AMS entity IDs that followed their unit's serial."""
+    return f"{issue_prefixes(entry_id)[2]}{_issue_part(key)}"
 
 
 def missing_issue(entry_id: str, key: str) -> str:
@@ -244,6 +260,8 @@ class BamBuddyPrinterCoordinator(DataUpdateCoordinator[PrinterData]):
         self._hours: float | None = None
         # Since when each AMS place reports a unit without a serial number.
         self._unserialised: dict[int, float] = {}
+        # Serials of AMS units this coordinator holds for a reload (`rekey_source`).
+        self._held: set[str] = set()
         # The printer's K profiles per nozzle diameter, when last listed.
         self.kprofiles: dict[str, tuple[float, list[dict[str, Any]]]] = {}
         # The camera's frame rate the user chose; None: its most.
@@ -320,28 +338,84 @@ class BamBuddyPrinterCoordinator(DataUpdateCoordinator[PrinterData]):
 
     def _follow_serials(self, data: PrinterData) -> None:
         now = self.hass.loop.time()
-        # BamBuddy reads the AMS serials with the printer's firmware version
-        # (get_version): with the version there, a unit without a serial --
-        # an AMS Lite never has one -- will not get one.
+        # BamBuddy reads the AMS serials and types with the printer's
+        # firmware version (get_version): with the version there, a unit
+        # without a serial will not get one (BamBuddy drops the AMS Lite's,
+        # maziggy/bambuddy#3348). Before it, a unit waits for its serial,
+        # and for its type -- BamBuddy may take the serial from the unit's
+        # report first, and the model goes into its entity IDs for good --
+        # unless its id tells the type (an AMS HT; place 6, the A2L's Lite).
         versions_read = bool(data.status.get("firmware_version"))
         waiting = {
             int(unit.get("id", 0))
             for unit in data.ams_units
-            if not versions_read and not str(unit.get("serial_number") or "").strip()
+            if not versions_read
+            and (not ams_serial(unit) or not (unit.get("module_type") or ams_type_by_place(unit)))
         }
         self._unserialised = {place: self._unserialised.get(place, now) for place in waiting}
+
+    def rekey_source(self, unit: dict[str, Any], *, holding: bool = False) -> dr.DeviceEntry | None:
+        """The device of the unit's place that this unit, now with a serial,
+        is: the setup moves it to the serial, so the unit keeps its device
+        and history. None where it is no such unit: no serial, a device for
+        the serial already (the unit came back), a place device that holds
+        a serial, another model at the place, a type still unknown (a
+        guessed model must not merge two units) -- or, for a hold
+        (`holding`), three reloads in this run that did not settle it."""
+        serial = ams_serial(unit)
+        if serial is None:
+            return None
+        if not self.data.status.get("firmware_version") and not unit.get("module_type") and not ams_type_by_place(unit):
+            return None
+        entry_id = self.config_entry.entry_id
+        if find_device(self.hass, entry_id, self.ams_identifier(serial)) is not None:
+            return None
+        device = find_device(self.hass, entry_id, self.ams_identifier(str(int(unit.get("id", 0)))))
+        if device is None or device.serial_number:
+            return None
+        model = ams_model(unit, self.data)
+        # BamBuddy names no model for the printer: its AMS Lite was "AMS" by
+        # its place, a guess where it reports no firmware (a real AMS does).
+        guessed = not self.info.get("model") and device.model == "AMS" and not device.sw_version
+        if device.model != model and not (guessed and model == "AMS Lite"):
+            return None
+        holds = _ams_holds(self.hass)
+        if holding and serial not in self._held and holds.get((entry_id, self.key, serial), 0) >= HOLD_LIMIT:
+            _LOGGER.warning(
+                "The AMS unit %s of %s got its serial number, but %s reloads did not move it to it: it gets its entities as a new device",
+                serial,
+                self.printer_name,
+                HOLD_LIMIT,
+            )
+            return None
+        return device
 
     def ams_unit_ready(self, unit: dict[str, Any]) -> bool:
         """Whether an AMS unit can get its entities: with its serial number,
         or after waiting a minute for one -- right after BamBuddy connects
         it reports a unit without, and a unit known by its place first and
-        by its serial a moment later would be two devices."""
+        by its serial a moment later would be two devices. A unit known by
+        its place that now reports its serial waits for the entry's reload:
+        the next setup moves its device and entities to the serial."""
         place = int(unit.get("id", 0))
+        serial = ams_serial(unit)
         since = self._unserialised.get(place)
-        if since is None or self.hass.loop.time() - since >= AMS_SERIAL_WAIT:
-            return True
-        # A unit known by its place before has no serial to wait for.
-        return find_device(self.hass, self.config_entry.entry_id, self.ams_identifier(str(place))) is not None
+        if since is not None and self.hass.loop.time() - since < AMS_SERIAL_WAIT:
+            # Waiting for its serial, or with it for its type. A unit known
+            # before -- by its serial, or without one by its place -- has
+            # nothing to wait for.
+            return find_device(self.hass, self.config_entry.entry_id, self.ams_identifier(serial or str(place))) is not None
+        if serial is not None and self.rekey_source(unit, holding=True) is not None:
+            if serial not in self._held:
+                # Counted once a run, however often the platforms ask.
+                self._held.add(serial)
+                holds = _ams_holds(self.hass)
+                key = (self.config_entry.entry_id, self.key, serial)
+                holds[key] = holds.get(key, 0) + 1
+                _LOGGER.debug("The AMS unit %s of %s got its serial number: the entry reloads", serial, self.printer_name)
+                self._schedule_reload()
+            return False
+        return True
 
     @property
     def printer_name(self) -> str:

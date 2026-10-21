@@ -205,7 +205,7 @@ async def test_the_ams_slots(hass: HomeAssistant, bambuddy_api: SimpleNamespace)
 
     first = state_of(hass, "sensor", ams_uid(entry, 0, "slot_1", A1_MINI))
     assert first.state == "PLA Matte"
-    assert first.attributes["friendly_name"] == "Desk AMS A (AMS Lite / 03C00A000000004) Slot 1"
+    assert first.attributes["friendly_name"] == "Desk AMS A (AMS Lite) Slot 1"
     assert {key: first.attributes[key] for key in ("slot", "color", "type", "remaining", "active", "empty", "tray_id")} == {
         "slot": 1,
         "color": "#F4EE2A",

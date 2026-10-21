@@ -9,6 +9,7 @@ from datetime import UTC, datetime
 from typing import Any
 
 from awesomeversion import AwesomeVersion, AwesomeVersionException
+from homeassistant.util import slugify
 
 from .const import CONF_PRINTER_ID, CONF_PRINTER_NAME, CONF_SERIAL, MIN_BAMBUDDY_VERSION
 
@@ -520,12 +521,23 @@ def find_printers(listed: list[dict[str, Any]], stored: list[dict[str, Any]]) ->
     return found
 
 
+def ams_serial(unit: dict[str, Any]) -> str | None:
+    """The serial number BamBuddy reports for an AMS unit, if any."""
+    return str(unit.get("serial_number") or "").strip() or None
+
+
 def ams_key(unit: dict[str, Any]) -> str:
     """What the integration knows an AMS unit by: its serial number, so a
     unit keeps its device and entities wherever it is plugged in; its place
     only for a unit BamBuddy reports no serial for."""
-    serial = str(unit.get("serial_number") or "").strip()
-    return serial or str(unit.get("id", 0))
+    return ams_serial(unit) or str(unit.get("id", 0))
+
+
+def ams_type_by_place(unit: dict[str, Any]) -> bool:
+    """Whether a unit's place tells its type without BamBuddy's module type:
+    an AMS HT (ids 128-135), the A2L's AMS Lite (place 6)."""
+    unit_id = unit.get("id", 0)
+    return isinstance(unit_id, int) and (unit_id >= 128 or unit_id == 6)
 
 
 def ams_label(unit_id: int) -> str:
@@ -536,6 +548,27 @@ def ams_label(unit_id: int) -> str:
         return "AMS Lite"
     kind = "AMS HT" if unit_id >= 128 else "AMS"
     return f"{kind} {chr(ord('A') + ams_number(unit_id) - 1)}"
+
+
+# The kinds of AMS unit, as `ams_model` names them.
+AMS_MODELS = ("AMS", "AMS 2 Pro", "AMS HT", "AMS Lite")
+
+
+def ams_letter(unit_id: int) -> str | None:
+    """A place's letter as on the printer (`ams_label`), in small: a-d, AMS
+    HT a-h; none for the A2L's AMS Lite."""
+    return None if unit_id == 6 else chr(ord("a") + ams_number(unit_id) - 1)
+
+
+def ams_object_id(model: str, printer_key: str, unit_id: int, serial: str | None, key: str) -> str:
+    """An AMS entity's object ID: what stays for the unit -- its model and
+    serial number. Without a serial (BamBuddy drops the AMS Lite's,
+    maziggy/bambuddy#3348) the printer's key and the place's letter stand
+    in, until the unit is known by its serial."""
+    if serial:
+        return slugify(f"{model} {serial} {key}")
+    letter = ams_letter(unit_id)
+    return slugify(" ".join([model, printer_key, *([letter] if letter else []), key]))
 
 
 def ams_name(printer: dict[str, Any], unit_id: int, model: str, serial: str | None) -> str:
@@ -645,8 +678,10 @@ def nozzle_type(code: str) -> str:
 
 
 def ams_model(unit: dict[str, Any], printer: PrinterData) -> str:
-    """The kind of AMS: BamBuddy's module type, the AMS HT's ids, else an
-    A1-family printer's AMS Lite."""
+    """The kind of AMS: BamBuddy's module type, the AMS HT's ids, place 6
+    (only ever the A2L's AMS Lite); without a type, an AMS Lite only where
+    one can be -- the A1 and A1 mini at place 0, the A2L at 6 (an A1's AMS
+    through the hub is never mixed with an AMS Lite)."""
     module = unit.get("module_type") or ""
     unit_id = unit.get("id", 0)
     if module == "n3s" or (isinstance(unit_id, int) and unit_id >= 128):
@@ -655,7 +690,10 @@ def ams_model(unit: dict[str, Any], printer: PrinterData) -> str:
         return "AMS 2 Pro"
     if module == "ams":
         return "AMS"
-    return "AMS Lite" if printer.is_a1_family() else "AMS"
+    # BamBuddy's type once it reads the AMS Lite's version (maziggy/bambuddy#3348).
+    if module == "ams_f1" or unit_id == 6:
+        return "AMS Lite"
+    return "AMS Lite" if unit_id == 0 and model_key(printer.model) in {"A1", "A1 MINI"} else "AMS"
 
 
 # The AMS units with a heater, and the hottest each dries at (Bambu Lab's

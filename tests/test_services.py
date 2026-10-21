@@ -30,6 +30,7 @@ from tests.conftest import (
     make_entry,
     next_refresh,
     printer_device,
+    printer_key,
     printer_name,
     printer_uid,
     printers_but,
@@ -1006,9 +1007,12 @@ async def test_the_left_external_spool_is_free_while_the_right_one_feeds(
 async def test_a_slot_of_an_ams_plugged_in_elsewhere(
     hass: HomeAssistant, bambuddy_api: SimpleNamespace, freezer: FrozenDateTimeFactory
 ) -> None:
-    """The slot follows its unit: plugged in as AMS B, it loads from there."""
+    """The slot follows its unit by its serial: plugged in as AMS B, it loads
+    from there. (An AMS through the A1 mini's hub: BamBuddy reports no
+    serial for an AMS Lite.)"""
+    bambuddy_api.statuses[A1_MINI]["ams"][0].update({"serial_number": "00600A3B0000009", "module_type": "ams"})
     entry = await set_up(hass, A1_MINI)
-    slot = entity_id(hass, "sensor", ams_uid(entry, 0, "slot_1", A1_MINI))
+    slot = entity_id(hass, "sensor", f"{entry.entry_id}_p{printer_key(A1_MINI)}_ams00600A3B0000009_slot_1")
     bambuddy_api.statuses[A1_MINI]["ams"][0]["id"] = 1
     await next_refresh(hass, freezer)
 
@@ -1022,10 +1026,12 @@ async def test_a_slot_of_an_unplugged_ams(
 ) -> None:
     """A unit the printer no longer reports is named so while the printer is
     online -- never the filament of another unit plugged in at its place;
-    offline, the action says that first."""
+    offline, the action says that first. (Units with serials: a unit known
+    by its place that reports a serial is the same unit, and moves to it.)"""
+    bambuddy_api.statuses[A1_MINI]["ams"][0].update({"serial_number": "00600A3B0000009", "module_type": "ams"})
     entry = await set_up(hass, A1_MINI)
-    slot = entity_id(hass, "sensor", ams_uid(entry, 0, "slot_1", A1_MINI))
-    bambuddy_api.statuses[A1_MINI]["ams"][0]["serial_number"] = "03C00A000000099"
+    slot = entity_id(hass, "sensor", f"{entry.entry_id}_p{printer_key(A1_MINI)}_ams00600A3B0000009_slot_1")
+    bambuddy_api.statuses[A1_MINI]["ams"][0]["serial_number"] = "00600A3B0000099"
     await next_refresh(hass, freezer)
 
     with pytest.raises(ServiceValidationError) as raised:

@@ -133,3 +133,22 @@ def test_the_key_needs_all_three_permissions() -> None:
         "Copy it again from BamBuddy",
     ):
         assert gone not in readme, gone
+
+
+def test_ams_entity_ids_name_the_unit() -> None:
+    """AMS entity IDs carry the unit's model and serial; the AMS Lite's the
+    printer's serial and its letter until BamBuddy reports its own (#3348),
+    then a notice lists the renamed IDs."""
+    readme = (_ROOT / "README.md").read_text(encoding="utf-8")
+    assert "_ams_a_humidity" not in readme
+    assert "sensor.ams_2_pro_19c06a000000001_humidity" in readme
+    assert "sensor.ams_lite_0309da000000002_a_slot_1" in readme
+    assert "maziggy/bambuddy/issues/3348" in readme
+    assert "the plain entity IDs; otherwise they end in `_2`" in readme
+    # Known limitations: the AMS Lite until BamBuddy reports its serial.
+    assert "**AMS Lite without its serial number:**" in readme
+    # The example names the unit by its device, which follows its place.
+    assert "device_attr(trigger.entity_id, 'name')" in readme
+    assert "an AMS Lite's, for now," in readme
+    # A replacement AMS Lite without a serial stays the same device.
+    assert "an AMS Lite stays the same device while BamBuddy reports no serial" in readme

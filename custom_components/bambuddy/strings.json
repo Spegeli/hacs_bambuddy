@@ -904,6 +904,24 @@
     "names_from_bambuddy": {
       "title": "Names come from BamBuddy: {name}",
       "description": "You renamed devices of this printer in Home Assistant:\n\n- {given}\n\nTheir names come from BamBuddy and went back to BamBuddy's.\n\nRename the printer in BamBuddy instead: Home Assistant follows within seconds (an AMS unit is named after its printer)."
+    },
+    "ams_ids_renamed": {
+      "title": "AMS entity IDs renamed: {name}",
+      "fix_flow": {
+        "step": {
+          "confirm": {
+            "title": "AMS entity IDs renamed",
+            "description": "BamBuddy now reports AMS serial numbers of {name} that it did not report before. From now on each of these units is known by its serial number — its device, entities and history stay — and its entity IDs carry it instead of the printer's serial number:\n\n- {renamed}\n\nHome Assistant does not change automations, scripts and dashboards for you; the BamBuddy card finds the units by itself. Update those that use the old IDs. Entity IDs you had changed yourself stay as they were. Once everything uses the new IDs, choose “Done” to close this notice.",
+            "submit": "Done"
+          }
+        },
+        "abort": {
+          "already_confirmed": "This notice has been confirmed already."
+        },
+        "create_entry": {
+          "default": "The notice is closed. Each unit's device page lists its entity IDs."
+        }
+      }
     }
   },
   "services": {

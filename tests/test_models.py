@@ -11,7 +11,10 @@ from custom_components.bambuddy.models import (
     STAGES,
     PrinterData,
     active_tray,
+    AMS_MODELS,
+    ams_letter,
     ams_model,
+    ams_object_id,
     ams_name,
     ams_number,
     camera_max_fps,
@@ -106,10 +109,42 @@ def test_every_stage_is_an_option() -> None:
         ({"id": 0, "module_type": ""}, "A1 Mini", "AMS Lite"),
         ({"id": 6, "module_type": ""}, "A2L", "AMS Lite"),
         ({"id": 1, "module_type": ""}, "P1S", "AMS"),
+        # BamBuddy's module once it reads the AMS Lite's (maziggy/bambuddy#3348).
+        ({"id": 0, "module_type": "ams_f1"}, "P1S", "AMS Lite"),
+        # Place 6 is only ever the A2L's AMS Lite, whatever the printer is called.
+        ({"id": 6, "module_type": ""}, None, "AMS Lite"),
+        # The Lite is guessed only where one can be: A1 and A1 mini at 0, A2L at 6.
+        ({"id": 1, "module_type": ""}, "A1", "AMS"),
+        ({"id": 2, "module_type": ""}, "A2L", "AMS"),
+        ({"id": 0, "module_type": ""}, "A2L", "AMS"),
     ],
 )
-def test_ams_model(unit: dict[str, Any], model: str, expected: str) -> None:
-    assert ams_model(unit, _printer({}, model)) == expected
+def test_ams_model(unit: dict[str, Any], model: str | None, expected: str) -> None:
+    assert ams_model(unit, _printer({}, model)) == expected  # type: ignore[arg-type]
+    assert expected in AMS_MODELS
+
+
+@pytest.mark.parametrize(("unit_id", "letter"), [(0, "a"), (3, "d"), (128, "a"), (135, "h"), (6, None)])
+def test_ams_letter(unit_id: int, letter: str | None) -> None:
+    """The place's letter as on the printer; the A2L's AMS Lite has none."""
+    assert ams_letter(unit_id) == letter
+
+
+@pytest.mark.parametrize(
+    ("model", "printer_key", "unit_id", "serial", "key", "expected"),
+    [
+        # What stays for the unit: its model and serial, no place.
+        ("AMS 2 Pro", "00M09A350500654", 0, "19C06A000000001", "slot_1", "ams_2_pro_19c06a000000001_slot_1"),
+        ("AMS HT", "0948AD000000004", 129, "19F06A000000002", "humidity", "ams_ht_19f06a000000002_humidity"),
+        # Without a serial: the printer's serial and the place's letter.
+        ("AMS Lite", "03C00A000000004", 0, None, "slot_1", "ams_lite_03c00a000000004_a_slot_1"),
+        ("AMS Lite", "26A19A500700555", 6, None, "slot_1", "ams_lite_26a19a500700555_slot_1"),
+        ("AMS HT", "id7", 128, None, "humidity", "ams_ht_id7_a_humidity"),
+        ("AMS", "00M09A350500654", 2, "", "drying", "ams_00m09a350500654_c_drying"),
+    ],
+)
+def test_ams_object_id(model: str, printer_key: str, unit_id: int, serial: str | None, key: str, expected: str) -> None:
+    assert ams_object_id(model, printer_key, unit_id, serial, key) == expected
 
 
 @pytest.mark.parametrize(("unit_id", "number"), [(0, 1), (3, 4), (6, 1), (128, 1), (130, 3)])

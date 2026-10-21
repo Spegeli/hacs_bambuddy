@@ -24,7 +24,7 @@ from .coordinator import (
     failure,
     find_device,
 )
-from .models import PrinterData, ams_key, ams_label, ams_model, ams_name, display_model, short_name
+from .models import PrinterData, ams_key, ams_model, ams_name, ams_object_id, ams_serial, display_model, short_name
 from .plugs import Plug
 
 _T = TypeVar("_T")
@@ -161,7 +161,7 @@ class BamBuddyPrinterEntity(CoordinatorEntity[BamBuddyPrinterCoordinator]):
         coordinator.created.add(self._attr_unique_id)
         self._attr_device_info = DeviceInfo(identifiers={coordinator.identifier})
         # The English translation key reads as the entity's English name;
-        # an AMS unit's entities name their place and key.
+        # an AMS unit's entity names its own (`BamBuddyAmsEntity`).
         suggest_entity_id(self, coordinator, *(object_id or (_translation_key(self) or key,)))
 
     @property
@@ -208,14 +208,15 @@ class BamBuddyToggle(BamBuddyPrinterEntity):
 class BamBuddyAmsEntity(BamBuddyPrinterEntity):
     """An entity of an AMS unit's device, a child of the printer's. It
     follows its unit by the unit's serial number: plugged in elsewhere, the
-    unit keeps its entities."""
+    unit keeps its entities. Its entity ID names what stays for the unit,
+    its model and serial (`models.ams_object_id`)."""
 
     def __init__(self, coordinator: BamBuddyPrinterCoordinator, ams_id: int, key: str) -> None:
         unit = next((unit for unit in coordinator.data.ams_units if unit.get("id") == ams_id), {"id": ams_id})
         self.ams_key = ams_key(unit)
         self._ams_id = ams_id
-        label = ams_label(ams_id).lower()
-        super().__init__(coordinator, f"ams{self.ams_key}_{key}", object_id=(label, key))
+        super().__init__(coordinator, f"ams{self.ams_key}_{key}")
+        _suggest(self, ams_object_id(ams_model(unit, coordinator.data), coordinator.key, ams_id, ams_serial(unit), key))
 
     @property
     def unit(self) -> dict[str, Any] | None:
