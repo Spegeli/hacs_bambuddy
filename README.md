@@ -96,8 +96,6 @@ A new version can come out as a beta first, for testing before everyone gets it.
 - **Once, a version of your choice:** **HACS → BamBuddy → ⋮ → Redownload**, open **Need a different version?**, choose the version under **Release** — betas are marked as pre-releases — and select **Download**. Restart Home Assistant afterwards.
 - **As updates:** under **Settings → Devices & services → HACS**, open **BamBuddy**. Its **Pre-release** switch is under **Diagnostic** and disabled at first: select it, open its settings (⚙), enable it, and turn it on once it appears. HACS then offers betas as updates too. Turned off again, it offers stable versions only; a beta you installed stays until the next stable version replaces it.
 
-The betas of 2.0.0 are the exception: HACS ranks them below the date versions (the 1.x releases, named by their date, such as 2026.05.17) and offers them to nobody as an update, so install one the first way.
-
 ---
 
 ## ⚙️ Configuration
