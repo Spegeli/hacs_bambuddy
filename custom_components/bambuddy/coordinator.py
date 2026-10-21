@@ -302,8 +302,10 @@ class BamBuddyPrinterCoordinator(DataUpdateCoordinator[PrinterData]):
             # it: a slow one delays this refresh by no more than its own read.
             status, read, _ = await asyncio.gather(self._read_status(), self._read_hours(), self._read_maintenance())
         except UpdateFailed as err:
-            if isinstance(err.__cause__, BamBuddyNotFoundError):
-                await self._look_up()
+            # Gone from BamBuddy's list: the entry reloads now and its repair
+            # tells -- no error to log, the last values stand until then.
+            if isinstance(err.__cause__, BamBuddyNotFoundError) and await self._look_up() and self.data is not None:
+                return self.data
             raise
         # Another name under this number: renamed in BamBuddy, or another
         # printer -- ask now, not at the next minute.
@@ -544,23 +546,26 @@ class BamBuddyPrinterCoordinator(DataUpdateCoordinator[PrinterData]):
         if new_model or had_rate_setting != (camera_max_fps(self.info) > CAMERA_MIN_FPS):
             self._schedule_reload()
 
-    async def _look_up(self) -> None:
+    async def _look_up(self) -> bool:
         """BamBuddy has no printer under this number: deleted, or numbered
         anew (a restored database). Its list tells: the reload finds the
         printer by its serial, or raises the issue and looks for it once a
         minute, as at setup -- now, not at the next restart. Still listed
-        under this number, or no list: the next poll asks again."""
+        under this number, or no list: the next poll asks again. True when
+        the reload is on its way."""
         try:
             listed = await self.client.get_printers()
         except BamBuddyError as err:
             _LOGGER.debug("No printer list after a 404 for %s: %s", self.printer_name, err)
-            return
+            return False
         stored: list[dict[str, Any]] = self.config_entry.options.get(CONF_PRINTERS, [])
         found = dict(zip((stored_key(printer) for printer in stored), find_printers(listed, stored), strict=True))
         info = found.get(self.key)
         if info is None or info.get("id") != self.printer_id:
             _LOGGER.debug("BamBuddy no longer lists %s under its number: the entry reloads", self.printer_name)
             self._schedule_reload()
+            return True
+        return False
 
     def _replaced_error(self) -> UpdateFailed:
         return UpdateFailed(
@@ -944,3 +949,6 @@ class BamBuddyData:
     auto_offs: dict[int, AutoOff] = field(default_factory=dict)
     # A printer found its model: the reload that brings it is on its way.
     reloading: bool = False
+    # The devices of the printers BamBuddy does not list (each waits under
+    # Repairs), for the card: it tells them from a BamBuddy without answer.
+    missing: list[str] = field(default_factory=list)

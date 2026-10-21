@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import copy
+import logging
 from types import SimpleNamespace
 from typing import Any
 from unittest.mock import patch
@@ -421,6 +422,25 @@ async def test_a_missing_printer_comes_back_by_itself(
     assert bambuddy_api.get_printers.await_count == reads
 
 
+async def test_a_missing_printer_is_not_looked_for_while_home_assistant_stops(
+    hass: HomeAssistant, bambuddy_api: SimpleNamespace, freezer: FrozenDateTimeFactory
+) -> None:
+    """Home Assistant closes its web session while it stops: a look after
+    that raised "Session is closed" into the log ("Task exception was never
+    retrieved"). The first thing its stop does is cancel the timers marked
+    for it."""
+    bambuddy_api.get_printers.return_value = printers_but(A1_MINI)
+    await set_up(hass, X1C, A1_MINI)
+    reads = bambuddy_api.get_printers.await_count
+
+    hass._cancel_cancellable_timers()  # noqa: SLF001 -- the first stage of async_stop
+    freezer.tick(61)
+    async_fire_time_changed(hass)
+    await hass.async_block_till_done()
+
+    assert bambuddy_api.get_printers.await_count == reads
+
+
 async def test_a_missing_printer_is_not_mistaken_for_another(
     hass: HomeAssistant, bambuddy_api: SimpleNamespace, freezer: FrozenDateTimeFactory
 ) -> None:
@@ -739,6 +759,25 @@ async def test_a_printer_deleted_in_bambuddy_while_running_raises_the_issue(
 
 def _raise(err: Exception) -> None:
     raise err
+
+
+async def test_a_printer_deleted_in_bambuddy_logs_no_error(
+    hass: HomeAssistant, bambuddy_api: SimpleNamespace, freezer: FrozenDateTimeFactory, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Its number answers 404 and the list no longer has it: the entry
+    reloads and the repair tells -- "Error fetching" in the log would say
+    something is broken."""
+    await set_up(hass, X1C, A1_MINI)
+    bambuddy_api.get_status.side_effect = lambda printer_id: (
+        _raise(BamBuddyNotFoundError(404, "Printer not found")) if printer_id == X1C else copy.deepcopy(bambuddy_api.statuses[printer_id])
+    )
+    bambuddy_api.get_printers.return_value = printers_but(X1C)
+
+    with caplog.at_level(logging.ERROR):
+        await next_refresh(hass, freezer)
+        await hass.async_block_till_done()
+
+    assert not [record for record in caplog.records if record.levelno >= logging.ERROR and "Error fetching" in record.getMessage()]
 
 
 async def test_a_404_of_a_printer_bambuddy_still_lists_raises_no_issue(
@@ -1239,7 +1278,8 @@ async def test_the_repair_removes_a_missing_printer(
     started = await client.post("/api/repairs/issues/fix", json={"handler": DOMAIN, "issue_id": issue.issue_id})
     flow = await started.json()
     assert flow["step_id"] == "confirm"
-    assert flow["description_placeholders"] == {"printer": printer_name(A1_MINI)}
+    # Which entry: two may show the same printer.
+    assert flow["description_placeholders"] == {"printer": printer_name(A1_MINI), "entry": entry.title}
     done = await client.post(f"/api/repairs/issues/fix/{flow['flow_id']}", json={})
     assert (await done.json())["type"] == "create_entry"
     await hass.async_block_till_done()
@@ -1289,7 +1329,7 @@ async def test_the_repair_removes_the_missing_printer_not_its_new_number(
         json={"handler": DOMAIN, "issue_id": missing_issue(entry.entry_id, printer_key(X1C))},
     )
     flow = await started.json()
-    assert flow["description_placeholders"] == {"printer": printer_name(X1C)}
+    assert flow["description_placeholders"] == {"printer": printer_name(X1C), "entry": entry.title}
     await client.post(f"/api/repairs/issues/fix/{flow['flow_id']}", json={})
     await hass.async_block_till_done()
 

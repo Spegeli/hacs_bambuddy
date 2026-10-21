@@ -174,7 +174,18 @@ async def async_setup_entry(hass: HomeAssistant, entry: BamBuddyConfigEntry) -> 
         _remove_spare_switch_offs(hass, entry, plugs)
 
     entry.runtime_data = BamBuddyData(
-        client, instance, updates, printers, plugs, key=KeyGuard(hass, entry, client, first), auth_enabled=auth_enabled
+        client,
+        instance,
+        updates,
+        printers,
+        plugs,
+        key=KeyGuard(hass, entry, client, first),
+        auth_enabled=auth_enabled,
+        missing=[
+            device.id
+            for printer in absent
+            if (device := find_device(hass, entry.entry_id, printer_identifier(entry.entry_id, stored_key(printer)))) is not None
+        ],
     )
     # The update checks ask GitHub and Bambu Lab through BamBuddy, up to a
     # minute each: the setup does not wait for them, their entities do.
@@ -187,8 +198,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: BamBuddyConfigEntry) -> 
         # Saved in Configure while this setup ran: it reloads once for it.
         async_schedule_reload(hass, entry)
     if absent:
+        # Cancelled as Home Assistant stops: its web session closes then.
         entry.async_on_unload(
-            async_track_time_interval(hass, partial(_async_look_for, hass, entry, absent), MISSING_INTERVAL)
+            async_track_time_interval(hass, partial(_async_look_for, hass, entry, absent), MISSING_INTERVAL, cancel_on_shutdown=True)
         )
     return True
 

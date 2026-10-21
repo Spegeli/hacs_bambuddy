@@ -43,7 +43,8 @@ class RemoveMissingPrinter(RepairsFlow):
         return self.async_show_form(
             step_id="confirm",
             data_schema=form_schema({}),
-            description_placeholders={"printer": printer[CONF_PRINTER_NAME]},
+            # Which entry: two may show the same printer.
+            description_placeholders={"printer": printer[CONF_PRINTER_NAME], "entry": entry.title},
         )
 
 

@@ -22,6 +22,13 @@
           "printers": "Printers"
         }
       },
+      "printers_some_elsewhere": {
+        "title": "Choose printers",
+        "description": "These printers are set up in BamBuddy. Each selected printer becomes a device in Home Assistant. You can add or remove printers later with Configure. Names come from BamBuddy: rename a printer there. Printers of this BamBuddy server that another BamBuddy entry already has are not listed. Already set up through: {entries}.",
+        "data": {
+          "printers": "Printers"
+        }
+      },
       "reauth_confirm": {
         "title": "New BamBuddy API key needed",
         "description": "BamBuddy at {url} no longer accepts the stored API key: it was deleted, has expired or was turned off. Your devices, entities and their history are kept.\n\nTo create a new API key:\n\n1. In BamBuddy, open Settings → API Keys and choose “Create Key”.\n2. Give it a name, such as “Home Assistant”, and tick Read Status, Control Printer and Manage Maintenance.\n3. Copy the key and paste it below. BamBuddy shows it only once.",
@@ -54,7 +61,7 @@
       },
       "reconfigure": {
         "title": "Change the connection",
-        "description": "Change the address or the API key of your BamBuddy server. At a new address you choose next which printers stay.",
+        "description": "Change the address or the API key of your BamBuddy server. At a new address you see next which printers stay and which go, and confirm the switch.",
         "data": {
           "url": "BamBuddy address",
           "api_key": "New API key",
@@ -68,47 +75,53 @@
       },
       "new_address": {
         "title": "New address",
-        "description": "BamBuddy answers at {url}. These printers were found there by their serial numbers and keep their devices and history:\n\n{kept}",
+        "description": "A BamBuddy server answers at {url}.\n\n**Found** – stay with their AMS units, entities and history:\n{kept}\n\n**Not found** – leave Home Assistant with their AMS units and smart plugs:\n{missing}",
         "data": {
-          "bambuddy": "Which BamBuddy is it?",
-          "remove_printers": "Remove printers not in this BamBuddy",
-          "add_printers": "Add printers of this BamBuddy"
+          "bambuddy": "Which BamBuddy server is it?",
+          "add_printers": "Add printers of this BamBuddy server"
         },
         "data_description": {
-          "remove_printers": "Ticked ones leave Home Assistant with their AMS units and smart plugs. Unticked ones stay and wait under Settings → Repairs until BamBuddy lists them again.",
           "add_printers": "Each becomes a device in Home Assistant."
         }
       },
       "new_address_all": {
         "title": "New address",
-        "description": "BamBuddy answers at {url}. Every printer of this entry was found there by its serial number and keeps its device and history.",
+        "description": "A BamBuddy server answers at {url}. Every printer of this entry was found there by its serial number and keeps its device and history.",
         "data": {
-          "bambuddy": "Which BamBuddy is it?",
-          "add_printers": "Add printers of this BamBuddy"
+          "bambuddy": "Which BamBuddy server is it?",
+          "add_printers": "Add printers of this BamBuddy server"
         },
         "data_description": {
           "add_printers": "Each becomes a device in Home Assistant."
         }
       },
       "other_bambuddy": {
-        "title": "Another BamBuddy?",
-        "description": "None of this entry's printers is set up in the BamBuddy at {url}. Is it another BamBuddy, or the same one before its printers are set up there again? For another BamBuddy, tick its old printers below to remove them.",
+        "title": "Another BamBuddy server?",
+        "description": "A BamBuddy server answers at {url}, but none of your current printers is set up on it – usually that is another server. These printers leave Home Assistant with their AMS units and smart plugs:\n{missing}",
         "data": {
-          "bambuddy": "Which BamBuddy is it?",
-          "remove_printers": "Remove printers not in this BamBuddy",
-          "add_printers": "Add printers of this BamBuddy"
+          "bambuddy": "Which BamBuddy server is it?",
+          "add_printers": "Add printers of this BamBuddy server"
         },
         "data_description": {
-          "remove_printers": "Ticked ones leave Home Assistant with their AMS units and smart plugs. Unticked ones stay and wait under Settings → Repairs until BamBuddy lists them again.",
           "add_printers": "Each becomes a device in Home Assistant."
         }
       },
+      "confirm_same": {
+        "title": "Confirm the switch",
+        "description": "New address: {url}\n\n**Kept:**\n{kept}\n\n**Removed** (with their AMS units and smart plugs):\n{removed}\n\n**Added:**\n{added}\n\nChoose “Switch” to apply this; close the dialog to leave everything as it is.",
+        "submit": "Switch"
+      },
+      "confirm_other": {
+        "title": "Confirm the switch",
+        "description": "New address: {url}\n\nAnother BamBuddy server: the history of the server's own figures (print statistics, storage …) is deleted. The printers under “Kept” keep theirs.\n\n**Kept:**\n{kept}\n\n**Removed** (with their AMS units and smart plugs):\n{removed}\n\n**Added:**\n{added}\n\nChoose “Switch” to apply this; close the dialog to leave everything as it is.",
+        "submit": "Switch"
+      },
       "new_address_no_printers": {
         "title": "New address",
-        "description": "BamBuddy answers at {url}. This entry has no printers yet.",
+        "description": "A BamBuddy server answers at {url}. This entry has no printers yet.",
         "data": {
-          "bambuddy": "Which BamBuddy is it?",
-          "add_printers": "Add printers of this BamBuddy"
+          "bambuddy": "Which BamBuddy server is it?",
+          "add_printers": "Add printers of this BamBuddy server"
         },
         "data_description": {
           "add_printers": "Each becomes a device in Home Assistant."
@@ -122,6 +135,7 @@
       "key_owner_inactive": "BamBuddy knows this API key, but its owner is deactivated or deleted. Sign in to BamBuddy as an active user and create a new key with Read Status, Control Printer and Manage Maintenance.",
       "bambuddy_refused": "BamBuddy refused a read although the API key has every permission the integration needs: {error}",
       "stored_key_refused": "BamBuddy no longer accepts the stored API key. Enter a new one.",
+      "stored_key_refused_at_address": "The BamBuddy server at this address does not accept the stored API key. Enter a key from this BamBuddy server.",
       "stored_key_scopes": "The stored API key lacks permissions: Read Status {read_status}, Control Printer {control_printer}, Manage Maintenance {manage_maintenance}. Enter a new one with all three.",
       "stored_key_owner": "The stored API key's owner is deactivated or deleted in BamBuddy. Enter a new one, created as an active user.",
       "invalid_url": "This is not a valid address. Enter it like 192.168.1.20:8000 or {example_url}.",
@@ -129,20 +143,21 @@
       "too_old": "BamBuddy {version} is too old. Update BamBuddy to version {minimum} or newer.",
       "ssl_error": "BamBuddy's certificate could not be verified. If BamBuddy uses a self-signed certificate, turn off “Verify SSL certificate”.",
       "url_with_login": "Leave the user name and password out of the address: the integration signs in with the API key.",
-      "address_in_use": "This address already belongs to another BamBuddy entry.",
+      "address_in_use": "This address already belongs to the entry “{entry}”.",
+      "printers_changed": "This entry's printers changed in the meantime (through Configure). Check the summary and choose “Switch” again.",
       "not_https": "BamBuddy does not use https at this address. Enter it with http://, such as http://192.168.1.20:8000.",
       "bad_answer": "BamBuddy answered with an error: {error}",
       "error_not_bambuddy": "This address answered with an error ({error}). Is it BamBuddy's address?"
     },
     "abort": {
       "already_configured": "This BamBuddy server is already set up.\n\nTo add or remove its printers, use “Configure” on its entry.",
-      "address_in_use": "This address already belongs to another BamBuddy entry. Nothing was changed.",
+      "address_in_use": "This address already belongs to the entry “{entry}”. Nothing was changed.",
+      "reconfigure_entry_gone": "This entry has been deleted in the meantime. Nothing was changed.",
       "reauth_successful": "The API key works. BamBuddy is connected again.",
       "reconfigure_successful": "The connection has been saved.",
-      "reconfigure_successful_missing": "The connection has been changed. Not found: {printers}. You can remove them under Settings → Repairs, or all at once with Configure → Remove printers.",
-      "reconfigure_successful_other": "The connection has been changed. The BamBuddy device's history starts afresh.",
-      "reconfigure_successful_other_missing": "The connection has been changed. The BamBuddy device's history starts afresh. Not found: {printers}. You can remove them under Settings → Repairs, or all at once with Configure → Remove printers.",
-      "printers_in_use": "Every printer of this BamBuddy is set up already, through {entries}. To reach BamBuddy at another address, use ⋮ → Reconfigure on that entry; to add or remove printers, use “Configure” there."
+      "reconfigure_successful_moved": "The connection has been changed.",
+      "reconfigure_successful_other": "The connection has been changed. The BamBuddy server's own figures start afresh.",
+      "printers_in_use": "Every printer of this BamBuddy server is set up already, through {entries}. To reach the BamBuddy server at another address, use ⋮ → Reconfigure on that entry; to add or remove printers, use “Configure” there."
     },
     "create_entry": {
       "no_printers": "BamBuddy has no printers yet: the integration starts with BamBuddy's own figures. Once a printer is set up in BamBuddy, add it here under Configure → Add printers."
@@ -161,6 +176,13 @@
       "add_printer": {
         "title": "Add printers",
         "description": "These printers are set up in “{name}” but not yet in Home Assistant.",
+        "data": {
+          "printers": "Printers"
+        }
+      },
+      "add_printer_some_elsewhere": {
+        "title": "Add printers",
+        "description": "These printers are set up in “{name}” but not yet in Home Assistant. Printers another BamBuddy entry already has are not listed. Already set up through: {entries}.",
         "data": {
           "printers": "Printers"
         }
@@ -185,7 +207,12 @@
   "entity": {
     "binary_sensor": {
       "bambuddy_online": {
-        "name": "Connection"
+        "name": "Connection",
+        "state_attributes": {
+          "missing_printers": {
+            "name": "Printers BamBuddy does not list"
+          }
+        }
       },
       "online": {
         "name": "Online"
@@ -892,7 +919,7 @@
         "step": {
           "confirm": {
             "title": "Remove the printer?",
-            "description": "BamBuddy no longer lists the printer {printer}. If it was removed in BamBuddy on purpose, choose “Remove printer” to remove it here too: the printer, its AMS units, its smart plugs and their entities leave Home Assistant, nothing changes in BamBuddy. If it is back in BamBuddy, close this: it comes back here by itself within a minute.",
+            "description": "The BamBuddy server of the entry “{entry}” no longer lists the printer {printer} – most likely it was removed there. If you no longer need it here, choose “Remove printer”: the printer, its AMS units and smart plugs and their entities leave Home Assistant; nothing changes in BamBuddy. If BamBuddy lists it again, close this: it comes back here by itself within a minute.",
             "submit": "Remove printer"
           }
         },
@@ -1137,14 +1164,14 @@
   "selector": {
     "bambuddy": {
       "options": {
-        "same": "The same BamBuddy at a new address (everything stays, history included)",
-        "other": "Another BamBuddy (the BamBuddy device's figures start afresh and their history is deleted; the printers keep theirs)"
+        "same": "The same BamBuddy server at a new address (the server's own figures such as print statistics and storage carry on)",
+        "other": "Another BamBuddy server (the server's own figures such as print statistics and storage start afresh and their history so far is deleted; the printers keep theirs)"
       }
     },
     "bambuddy_alone": {
       "options": {
-        "same": "The same BamBuddy at a new address (everything stays, history included)",
-        "other": "Another BamBuddy (the BamBuddy device's figures start afresh and their history is deleted)"
+        "same": "The same BamBuddy server at a new address (the server's own figures such as print statistics and storage carry on)",
+        "other": "Another BamBuddy server (the server's own figures such as print statistics and storage start afresh and their history so far is deleted)"
       }
     }
   }

@@ -51,6 +51,9 @@ export interface CardContext {
   /** No data from BamBuddy -- it does not answer, or refuses the key: the
    * printer may be fine, its state is unknown. */
   unreachable: boolean;
+  /** No data because BamBuddy no longer lists the printer: the integration
+   * names it (it waits under Settings → Repairs). Implies `unreachable`. */
+  missing: boolean;
   /** A print job is on the printer: moving waits. */
   busy: boolean;
   /** A print runs, not paused: loading and unloading wait too. */
@@ -171,15 +174,23 @@ export const radioStop = <T>(options: readonly T[], chosen: T): number => Math.m
 
 /** Why the card shows no printer state: BamBuddy does not answer, or the
  * printer is offline -- `offline` says that in the view's words. */
-export const offlineText = (ctx: CardContext, offline: TextKey): string =>
-  t(ctx.hass, ctx.unreachable ? (ctx.hass.user?.is_admin === false ? "unreachable_text_user" : "unreachable_text") : offline);
+export function offlineText(ctx: CardContext, offline: TextKey): string {
+  if (!ctx.unreachable) return t(ctx.hass, offline);
+  const user = ctx.hass.user?.is_admin === false;
+  if (ctx.missing) return t(ctx.hass, user ? "missing_text_user" : "missing_text");
+  return t(ctx.hass, user ? "unreachable_text_user" : "unreachable_text");
+}
 
-/** The connection in a word: the printer online, BamBuddy not answering,
+/** No data from BamBuddy, in a word: it does not answer -- or no longer
+ * lists the printer. */
+export const noData = (ctx: CardContext): TextKey => (ctx.missing ? "missing_short" : "unreachable_short");
+
+/** The connection in a word: the printer online, no data from BamBuddy,
  * or the printer offline. */
-export const connection = (ctx: CardContext): TextKey => (ctx.online ? "online" : ctx.unreachable ? "unreachable_short" : "offline");
+export const connection = (ctx: CardContext): TextKey => (ctx.online ? "online" : ctx.unreachable ? noData(ctx) : "offline");
 
 /** The context as if the printer were online: for the preview's examples. */
-export const asOnline = (ctx: CardContext): CardContext => ({ ...ctx, online: true, unreachable: false });
+export const asOnline = (ctx: CardContext): CardContext => ({ ...ctx, online: true, unreachable: false, missing: false });
 
 /** When an example shows: during a print -- the print's own parts, or
  * any with the printer online --, once the printer is online, or once

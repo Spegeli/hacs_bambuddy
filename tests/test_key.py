@@ -77,6 +77,20 @@ async def test_the_check_runs_every_ten_minutes(
     assert _reauths(hass) == []
 
 
+async def test_the_check_stops_with_home_assistant(
+    hass: HomeAssistant, bambuddy_api: SimpleNamespace, entry: MockConfigEntry, freezer: FrozenDateTimeFactory
+) -> None:
+    """Home Assistant closes its web session while it stops: a check after
+    that failed with "Session is closed" in the log. The first thing its
+    stop does is cancel the timers marked for it."""
+    _guard(hass, entry)
+
+    hass._cancel_cancellable_timers()  # noqa: SLF001 -- the first stage of async_stop
+    await _later(hass, freezer, 601)
+
+    bambuddy_api.get_auth_me.assert_not_awaited()
+
+
 async def test_a_short_key_starts_the_reauth(
     hass: HomeAssistant, bambuddy_api: SimpleNamespace, entry: MockConfigEntry, caplog: pytest.LogCaptureFixture
 ) -> None:

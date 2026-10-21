@@ -152,6 +152,8 @@ class BamBuddyOnlineSensor(BamBuddyInstanceEntity, BinarySensorEntity):
 
     _attr_translation_key = "bambuddy_online"
     _attr_device_class = BinarySensorDeviceClass.CONNECTIVITY
+    # For the card: device IDs mean nothing in the history.
+    _unrecorded_attributes = frozenset({"missing_printers"})
 
     def __init__(self, coordinator: BamBuddyInstanceCoordinator) -> None:
         super().__init__(coordinator, "connected")
@@ -163,6 +165,12 @@ class BamBuddyOnlineSensor(BamBuddyInstanceEntity, BinarySensorEntity):
     @property
     def is_on(self) -> bool:
         return self.coordinator.last_update_success
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        """The devices of the printers BamBuddy does not list: from the
+        sensor's first state on, gone with the entry."""
+        return {"missing_printers": list(self.coordinator.config_entry.runtime_data.missing)}
 
 
 class BamBuddyPrinterBinarySensor(BamBuddyDescribedEntity, BinarySensorEntity):

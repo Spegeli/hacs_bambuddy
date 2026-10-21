@@ -13,6 +13,7 @@ from homeassistant.helpers import entity_registry as er
 
 from custom_components.bambuddy.api import BamBuddyConnectionError
 from custom_components.bambuddy.const import DOMAIN
+from custom_components.bambuddy.coordinator import find_device, printer_identifier
 
 from tests.conftest import (
     A1_MINI,
@@ -25,7 +26,9 @@ from tests.conftest import (
     make_entry,
     next_refresh,
     no_entity,
+    printer_key,
     printer_uid,
+    printers_but,
     set_up,
     setup_integration,
     state_of,
@@ -127,6 +130,29 @@ def test_the_drying_sensor_says_drying_not_running() -> None:
     for name, on, off in (("strings.json", "Drying", "Not drying"), ("translations/de.json", "Trocknet", "Trocknet nicht")):
         texts = json.loads((INTEGRATION / name).read_text(encoding="utf-8"))
         assert texts["entity"]["binary_sensor"]["drying"]["state"] == {"on": on, "off": off}, name
+
+
+async def test_the_connection_names_the_printers_bambuddy_does_not_list(
+    hass: HomeAssistant, bambuddy_api: SimpleNamespace
+) -> None:
+    """By their devices: the card tells such a printer from one BamBuddy
+    gives no data for. From the first state on -- the sensor's platform is
+    set up before the printers' entities."""
+    entry = await set_up(hass, X1C, A1_MINI)
+    assert state_of(hass, "binary_sensor", instance_uid(entry, "connected")).attributes["missing_printers"] == []
+    missing = find_device(hass, entry.entry_id, printer_identifier(entry.entry_id, printer_key(A1_MINI)))
+    assert missing is not None
+    bambuddy_api.get_printers.return_value = printers_but(A1_MINI)
+    await hass.config_entries.async_reload(entry.entry_id)
+    await hass.async_block_till_done()
+
+    connection = state_of(hass, "binary_sensor", instance_uid(entry, "connected"))
+    assert connection.attributes["missing_printers"] == [missing.id]
+
+    bambuddy_api.get_printers.return_value = load_fixture("printers.json")
+    await hass.config_entries.async_reload(entry.entry_id)
+    await hass.async_block_till_done()
+    assert state_of(hass, "binary_sensor", instance_uid(entry, "connected")).attributes["missing_printers"] == []
 
 
 async def test_bambuddy_unreachable_is_told_not_hidden(

@@ -7,7 +7,7 @@ import { html, LitElement, nothing, type CSSResultGroup, type PropertyValues, ty
 import { callAction, errorText, kProfiles, printObjects } from "./actions";
 import { controlView, sectionShown, type Step } from "./control-view";
 import { dialogView, DRYING, filamentChanges, inPalette, KEEP, matchingProfile, type Dialog, type DryingField, type DryingSpool, type FilamentDialog } from "./dialogs";
-import { findPrinter, hasControls, printerDevices, printerOnline, printStatus, shownUnits } from "./discovery";
+import { findPrinter, hasControls, isPrinterDevice, notListed, printerDevices, printerOnline, printStatus, shownUnits } from "./discovery";
 import { filamentView } from "./filament-view";
 import { BUSY, FILAMENT_CHANGE, formatPercent, hasValue, numericState, RUNNING, stateOf, textOrUndefined, WITH_JOB } from "./format";
 import { BamBuddyPrinterCardEditor, EDITOR_TAG, loadForm } from "./editor";
@@ -1126,6 +1126,9 @@ export class BamBuddyPrinterCard extends LitElement {
     // The print status has a state even while the printer is offline: none
     // means the integration has no answer from BamBuddy at all.
     const unreachable = reported === "unavailable";
+    // No data because BamBuddy no longer lists the printer: the
+    // integration says so (it waits under Repairs).
+    const missing = unreachable && notListed(hass, refs);
     const permitted = hasControls(refs);
     const settings = this.settings;
     const canControl = permitted && !settings.readOnly;
@@ -1139,6 +1142,7 @@ export class BamBuddyPrinterCard extends LitElement {
       status,
       online,
       unreachable,
+      missing,
       busy: BUSY.has(status),
       running: RUNNING.has(status),
       changing: online && FILAMENT_CHANGE.has(stateOf(hass, refs.amsStatus)?.state ?? ""),
@@ -1371,7 +1375,8 @@ export class BamBuddyPrinterCard extends LitElement {
     if (!hass || !config) return nothing;
     const refs = this.refs;
     if (!refs) {
-      const reason: TextKey = !config.printer ? "no_printer" : hass.devices[config.printer] ? "not_a_printer" : "not_found";
+      const device = config.printer ? hass.devices[config.printer] : undefined;
+      const reason: TextKey = !config.printer ? "no_printer" : !device ? "not_found" : isPrinterDevice(device) ? "waiting_for_printer" : "not_a_printer";
       return html`<ha-card><div class="message">${t(hass, reason)}</div></ha-card>`;
     }
     const ctx = this.context(hass, refs);

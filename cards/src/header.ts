@@ -12,7 +12,7 @@ import { icon, type IconName } from "./icons";
 import { t, type TextKey } from "./i18n";
 import { maintenancePill } from "./maintenance";
 import { powerPill } from "./power";
-import { actionButton, connection, dialogNote, sideName, snack, stopQuestion, type CardContext } from "./parts";
+import { actionButton, connection, dialogNote, noData, sideName, snack, stopQuestion, type CardContext } from "./parts";
 import type { HassEntityState, HeaderChip } from "./types";
 
 // --- Title ------------------------------------------------------------------
@@ -383,7 +383,7 @@ export function hmsContent(ctx: CardContext): TemplateResult {
   // No answer from BamBuddy: no messages known, none to deny.
   const list =
     ctx.unreachable || !ctx.online
-      ? dialogNote(t(hass, ctx.unreachable ? "unreachable_short" : "offline_text"))
+      ? dialogNote(t(hass, ctx.unreachable ? noData(ctx) : "offline_text"))
       : sorted.length
         ? html`<div class="hms-list">
             ${sorted.map((error, index) => {

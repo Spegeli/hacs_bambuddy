@@ -53,6 +53,8 @@ function keyed(entries: readonly HassEntityRegistryEntry[]): Map<string, string[
 }
 
 const STATUS_KEY = "sensor.print_status";
+// The instance's sensor: on while BamBuddy answers.
+const SERVER_ONLINE = "binary_sensor.bambuddy_online";
 
 /** A device's print status sensor: a printer has one, an AMS unit or the
  * BamBuddy instance has none. */
@@ -69,6 +71,16 @@ export function printStatus(hass: Hass, deviceId: string): string | undefined {
   const entityId = statusEntity(hass, deviceId);
   return entityId ? hass.states[entityId]?.state : undefined;
 }
+
+// A printer device's identifier: "<entry>_printer_<serial>" -- an AMS
+// unit's goes on with "_ams_<serial>", a plug's is "<entry>_plug_<n>".
+const PRINTER_IDENTIFIER = /^[^_]+_printer_[^_]+$/;
+
+/** Whether the device is a BamBuddy printer by its identifier, also before
+ * its entities are there: Home Assistant restores a printer added again at
+ * the start of the setup, its entities come with the platforms. */
+export const isPrinterDevice = (device: HassDevice): boolean =>
+  (device.identifiers ?? []).some(([domain, id]) => domain === PLATFORM && PRINTER_IDENTIFIER.test(id));
 
 /** The BamBuddy printers, in the order of the device registry. */
 export function printerDevices(hass: Hass): HassDevice[] {
@@ -213,6 +225,7 @@ export function findPrinter(hass: Hass, deviceId: string | undefined): PrinterRe
     (detector): detector is { key: DetectorKey; entityId: string } => detector.entityId !== undefined,
   );
   const online = one("binary_sensor.online");
+  const server = serverSensor(hass, device);
   const ams = findAms(hass, device);
   const plugs = findPlugs(hass, device);
   // In the nozzles' order, a nozzle without the sensor keeps its place.
@@ -272,8 +285,11 @@ export function findPrinter(hass: Hass, deviceId: string | undefined): PrinterRe
     nozzleTypes: perNozzle("nozzle_type"),
     ams,
     plugs,
+    server,
     watched: [
       ...entries.map((entry) => entry.entity_id),
+      // Its list of printers BamBuddy does not list.
+      ...(server ? [server] : []),
       ...[...ams, ...plugs].flatMap((part) => (entitiesByDevice(hass).get(part.deviceId) ?? []).map((entry) => entry.entity_id)),
     ],
   };
@@ -298,6 +314,23 @@ export function hasControls(refs: PrinterRefs): boolean {
     ...heaters,
   ];
   return controls.some((entityId) => entityId !== undefined) || refs.fans.length > 0 || refs.detectors.length > 0;
+}
+
+/** The Connection sensor of the BamBuddy the printer belongs to: on the
+ * instance's device, which the printer's device hangs from. */
+function serverSensor(hass: Hass, device: HassDevice): string | undefined {
+  const server = device.via_device_id;
+  if (!server) return undefined;
+  return (entitiesByDevice(hass).get(server) ?? []).find((entry) => `${domainOf(entry.entity_id)}.${entry.translation_key}` === SERVER_ONLINE)
+    ?.entity_id;
+}
+
+/** Whether BamBuddy no longer lists the printer: the integration names its
+ * device on the Connection sensor while the entry is loaded -- from the
+ * sensor's first state on, gone when the entry unloads. */
+export function notListed(hass: Hass, refs: PrinterRefs): boolean {
+  const missing = refs.server ? hass.states[refs.server]?.attributes["missing_printers"] : undefined;
+  return Array.isArray(missing) && missing.includes(refs.deviceId);
 }
 
 /** Whether the printer is online: its Online sensor where it has one, else

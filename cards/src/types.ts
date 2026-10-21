@@ -29,6 +29,8 @@ export interface HassDevice {
   via_device_id?: string | null;
   manufacturer?: string | null;
   serial_number?: string | null;
+  /** The integration's (domain, id) pairs for the device. */
+  identifiers?: [string, string][];
 }
 
 export interface HassLocale {
@@ -190,6 +192,9 @@ export interface PrinterRefs {
   name: string;
   model: string;
   status: string;
+  /** The BamBuddy instance's Connection sensor: it names the printers
+   * BamBuddy does not list. */
+  server?: string;
   stage?: string;
   progress?: string;
   remaining?: string;

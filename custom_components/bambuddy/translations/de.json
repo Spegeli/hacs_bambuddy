@@ -22,6 +22,13 @@
           "printers": "Drucker"
         }
       },
+      "printers_some_elsewhere": {
+        "title": "Drucker auswählen",
+        "description": "Diese Drucker sind in BamBuddy eingerichtet. Jeder ausgewählte Drucker wird ein Gerät in Home Assistant. Über „Konfigurieren“ kannst du später Drucker hinzufügen oder entfernen. Die Namen kommen aus BamBuddy – benenne Drucker dort um. Nicht aufgeführt sind die Drucker dieses BamBuddy-Servers, die schon ein anderer BamBuddy-Eintrag hat. Schon eingerichtet über: {entries}.",
+        "data": {
+          "printers": "Drucker"
+        }
+      },
       "reauth_confirm": {
         "title": "Neuer BamBuddy-API-Schlüssel nötig",
         "description": "BamBuddy unter {url} akzeptiert den gespeicherten API-Schlüssel nicht mehr: Er wurde gelöscht, ist abgelaufen oder ausgeschaltet. Deine Geräte, Entitäten und ihr Verlauf bleiben erhalten.\n\nSo erstellst du einen neuen API-Schlüssel:\n\n1. Öffne in BamBuddy Einstellungen → API-Schlüssel und wähle „Schlüssel erstellen“.\n2. Gib ihm einen Namen, zum Beispiel „Home Assistant“, und hake „Status lesen“, „Drucker steuern“ und „Wartung verwalten“ an.\n3. Kopiere den Schlüssel und füge ihn unten ein. BamBuddy zeigt ihn nur einmal an.",
@@ -54,7 +61,7 @@
       },
       "reconfigure": {
         "title": "Verbindung ändern",
-        "description": "Ändere die Adresse oder den API-Schlüssel deines BamBuddy-Servers. Bei einer neuen Adresse wählst du danach, welche Drucker bleiben.",
+        "description": "Ändere die Adresse oder den API-Schlüssel deines BamBuddy-Servers. Bei einer neuen Adresse siehst du danach, welche Drucker bleiben und welche gehen, und bestätigst den Wechsel.",
         "data": {
           "url": "BamBuddy-Adresse",
           "api_key": "Neuer API-Schlüssel",
@@ -68,47 +75,53 @@
       },
       "new_address": {
         "title": "Neue Adresse",
-        "description": "BamBuddy antwortet unter {url}. Diese Drucker wurden dort über ihre Seriennummer gefunden und behalten Gerät und Verlauf:\n\n{kept}",
+        "description": "Unter {url} antwortet ein BamBuddy-Server.\n\n**Gefunden** – bleiben mit ihren AMS-Einheiten, Entitäten und ihrem Verlauf:\n{kept}\n\n**Nicht gefunden** – werden mit ihren AMS-Einheiten und Steckdosen aus Home Assistant entfernt:\n{missing}",
         "data": {
-          "bambuddy": "Welcher BamBuddy ist das?",
-          "remove_printers": "Drucker entfernen, die es in diesem BamBuddy nicht gibt",
-          "add_printers": "Drucker von diesem BamBuddy hinzufügen"
+          "bambuddy": "Welcher BamBuddy-Server ist das?",
+          "add_printers": "Drucker von diesem BamBuddy-Server hinzufügen"
         },
         "data_description": {
-          "remove_printers": "Angehakte verschwinden mit ihren AMS-Einheiten und Steckdosen aus Home Assistant. Nicht angehakte bleiben und warten unter Einstellungen → Reparaturen, bis BamBuddy sie wieder führt.",
           "add_printers": "Jeder wird ein Gerät in Home Assistant."
         }
       },
       "new_address_all": {
         "title": "Neue Adresse",
-        "description": "BamBuddy antwortet unter {url}. Jeder Drucker dieses Eintrags wurde dort über seine Seriennummer gefunden und behält Gerät und Verlauf.",
+        "description": "Unter {url} antwortet ein BamBuddy-Server. Jeder Drucker dieses Eintrags wurde dort über seine Seriennummer gefunden und behält Gerät und Verlauf.",
         "data": {
-          "bambuddy": "Welcher BamBuddy ist das?",
-          "add_printers": "Drucker von diesem BamBuddy hinzufügen"
+          "bambuddy": "Welcher BamBuddy-Server ist das?",
+          "add_printers": "Drucker von diesem BamBuddy-Server hinzufügen"
         },
         "data_description": {
           "add_printers": "Jeder wird ein Gerät in Home Assistant."
         }
       },
       "other_bambuddy": {
-        "title": "Ein anderer BamBuddy?",
-        "description": "Keiner der Drucker dieses Eintrags ist im BamBuddy unter {url} eingerichtet. Ist es ein anderer BamBuddy oder derselbe, bevor seine Drucker dort wieder eingerichtet sind? Bei einem anderen BamBuddy hake unten seine alten Drucker zum Entfernen an.",
+        "title": "Ein anderer BamBuddy-Server?",
+        "description": "Unter {url} antwortet ein BamBuddy-Server, auf dem keiner deiner bisherigen Drucker eingerichtet ist – meist ist das ein anderer Server. Diese Drucker werden mit ihren AMS-Einheiten und Steckdosen aus Home Assistant entfernt:\n{missing}",
         "data": {
-          "bambuddy": "Welcher BamBuddy ist das?",
-          "remove_printers": "Drucker entfernen, die es in diesem BamBuddy nicht gibt",
-          "add_printers": "Drucker von diesem BamBuddy hinzufügen"
+          "bambuddy": "Welcher BamBuddy-Server ist das?",
+          "add_printers": "Drucker von diesem BamBuddy-Server hinzufügen"
         },
         "data_description": {
-          "remove_printers": "Angehakte verschwinden mit ihren AMS-Einheiten und Steckdosen aus Home Assistant. Nicht angehakte bleiben und warten unter Einstellungen → Reparaturen, bis BamBuddy sie wieder führt.",
           "add_printers": "Jeder wird ein Gerät in Home Assistant."
         }
       },
+      "confirm_same": {
+        "title": "Wechsel bestätigen",
+        "description": "Neue Adresse: {url}\n\n**Behalten:**\n{kept}\n\n**Entfernt** (mit AMS-Einheiten und Steckdosen):\n{removed}\n\n**Hinzugefügt:**\n{added}\n\nMit „Wechseln“ übernimmst du das; schließt du den Dialog, bleibt alles, wie es ist.",
+        "submit": "Wechseln"
+      },
+      "confirm_other": {
+        "title": "Wechsel bestätigen",
+        "description": "Neue Adresse: {url}\n\nEin anderer BamBuddy-Server: Der Verlauf der Server-Werte (Druckstatistik, Speicherplatz …) wird gelöscht. Der Verlauf der Drucker unter „Behalten“ bleibt.\n\n**Behalten:**\n{kept}\n\n**Entfernt** (mit AMS-Einheiten und Steckdosen):\n{removed}\n\n**Hinzugefügt:**\n{added}\n\nMit „Wechseln“ übernimmst du das; schließt du den Dialog, bleibt alles, wie es ist.",
+        "submit": "Wechseln"
+      },
       "new_address_no_printers": {
         "title": "Neue Adresse",
-        "description": "BamBuddy antwortet unter {url}. Dieser Eintrag hat noch keine Drucker.",
+        "description": "Unter {url} antwortet ein BamBuddy-Server. Dieser Eintrag hat noch keine Drucker.",
         "data": {
-          "bambuddy": "Welcher BamBuddy ist das?",
-          "add_printers": "Drucker von diesem BamBuddy hinzufügen"
+          "bambuddy": "Welcher BamBuddy-Server ist das?",
+          "add_printers": "Drucker von diesem BamBuddy-Server hinzufügen"
         },
         "data_description": {
           "add_printers": "Jeder wird ein Gerät in Home Assistant."
@@ -122,6 +135,7 @@
       "key_owner_inactive": "BamBuddy kennt diesen API-Schlüssel, aber sein Besitzer ist deaktiviert oder gelöscht. Melde dich in BamBuddy als aktiver Benutzer an und erstelle einen neuen Schlüssel mit „Status lesen“, „Drucker steuern“ und „Wartung verwalten“.",
       "bambuddy_refused": "BamBuddy hat eine Abfrage abgelehnt, obwohl der API-Schlüssel jede Berechtigung hat, die die Integration braucht: {error}",
       "stored_key_refused": "BamBuddy akzeptiert den gespeicherten API-Schlüssel nicht mehr. Gib einen neuen ein.",
+      "stored_key_refused_at_address": "Der BamBuddy-Server unter dieser Adresse nimmt den gespeicherten API-Schlüssel nicht an. Gib einen Schlüssel dieses BamBuddy-Servers ein.",
       "stored_key_scopes": "Dem gespeicherten API-Schlüssel fehlen Berechtigungen: „Status lesen“ {read_status}, „Drucker steuern“ {control_printer}, „Wartung verwalten“ {manage_maintenance}. Gib einen neuen mit allen dreien ein.",
       "stored_key_owner": "Der Besitzer des gespeicherten API-Schlüssels ist in BamBuddy deaktiviert oder gelöscht. Gib einen neuen ein, erstellt als aktiver Benutzer.",
       "invalid_url": "Das ist keine gültige Adresse. Gib sie zum Beispiel so ein: 192.168.1.20:8000 oder {example_url}.",
@@ -129,20 +143,21 @@
       "too_old": "BamBuddy {version} ist zu alt. Aktualisiere BamBuddy auf Version {minimum} oder neuer.",
       "ssl_error": "Das Zertifikat von BamBuddy ließ sich nicht prüfen. Nutzt BamBuddy ein selbst signiertes Zertifikat, schalte „SSL-Zertifikat prüfen“ aus.",
       "url_with_login": "Lass Benutzername und Passwort aus der Adresse weg: Die Integration meldet sich mit dem API-Schlüssel an.",
-      "address_in_use": "Diese Adresse gehört schon zu einem anderen BamBuddy-Eintrag.",
+      "address_in_use": "Diese Adresse gehört schon zum Eintrag „{entry}“.",
+      "printers_changed": "Die Drucker dieses Eintrags wurden inzwischen geändert (über „Konfigurieren“). Prüfe die Übersicht und wähle noch einmal „Wechseln“.",
       "not_https": "BamBuddy nutzt unter dieser Adresse kein https. Gib sie mit http:// ein, etwa http://192.168.1.20:8000.",
       "bad_answer": "BamBuddy hat mit einem Fehler geantwortet: {error}",
       "error_not_bambuddy": "Unter dieser Adresse kam eine Fehlermeldung ({error}). Ist das die Adresse von BamBuddy?"
     },
     "abort": {
       "already_configured": "Dieser BamBuddy-Server ist bereits eingerichtet.\n\nDrucker hinzufügen und entfernen kannst du beim Eintrag über „Konfigurieren“.",
-      "address_in_use": "Diese Adresse gehört schon zu einem anderen BamBuddy-Eintrag. Es wurde nichts geändert.",
+      "address_in_use": "Diese Adresse gehört schon zum Eintrag „{entry}“. Es wurde nichts geändert.",
+      "reconfigure_entry_gone": "Dieser Eintrag wurde inzwischen gelöscht. Es wurde nichts geändert.",
       "reauth_successful": "Der API-Schlüssel funktioniert. BamBuddy ist wieder verbunden.",
       "reconfigure_successful": "Die Verbindung wurde gespeichert.",
-      "reconfigure_successful_missing": "Die Verbindung wurde geändert. Nicht gefunden: {printers}. Unter Einstellungen → Reparaturen kannst du sie entfernen, oder alle auf einmal über „Konfigurieren“ → „Drucker entfernen“.",
-      "reconfigure_successful_other": "Die Verbindung wurde geändert. Der Verlauf des BamBuddy-Geräts beginnt neu.",
-      "reconfigure_successful_other_missing": "Die Verbindung wurde geändert. Der Verlauf des BamBuddy-Geräts beginnt neu. Nicht gefunden: {printers}. Unter Einstellungen → Reparaturen kannst du sie entfernen, oder alle auf einmal über „Konfigurieren“ → „Drucker entfernen“.",
-      "printers_in_use": "Jeder Drucker von diesem BamBuddy ist schon eingerichtet, über {entries}. Um BamBuddy unter einer anderen Adresse zu erreichen, nutze bei diesem Eintrag ⋮ → Neu konfigurieren; Drucker fügst du dort über „Konfigurieren“ hinzu oder entfernst sie."
+      "reconfigure_successful_moved": "Die Verbindung wurde geändert.",
+      "reconfigure_successful_other": "Die Verbindung wurde geändert. Die Werte des BamBuddy-Servers beginnen neu.",
+      "printers_in_use": "Jeder Drucker dieses BamBuddy-Servers ist schon eingerichtet, über {entries}. Um den BamBuddy-Server unter einer anderen Adresse zu erreichen, nutze bei diesem Eintrag ⋮ → Neu konfigurieren; Drucker fügst du dort über „Konfigurieren“ hinzu oder entfernst sie."
     },
     "create_entry": {
       "no_printers": "In BamBuddy ist noch kein Drucker eingerichtet: Die Integration beginnt mit den Zahlen von BamBuddy selbst. Sobald in BamBuddy ein Drucker eingerichtet ist, ergänze ihn hier über „Konfigurieren“ → „Drucker hinzufügen“."
@@ -161,6 +176,13 @@
       "add_printer": {
         "title": "Drucker hinzufügen",
         "description": "Diese Drucker sind in „{name}“ eingerichtet, aber noch nicht in Home Assistant.",
+        "data": {
+          "printers": "Drucker"
+        }
+      },
+      "add_printer_some_elsewhere": {
+        "title": "Drucker hinzufügen",
+        "description": "Diese Drucker sind in „{name}“ eingerichtet, aber noch nicht in Home Assistant. Nicht aufgeführt sind die Drucker, die schon ein anderer BamBuddy-Eintrag hat. Schon eingerichtet über: {entries}.",
         "data": {
           "printers": "Drucker"
         }
@@ -185,7 +207,12 @@
   "entity": {
     "binary_sensor": {
       "bambuddy_online": {
-        "name": "Verbindung"
+        "name": "Verbindung",
+        "state_attributes": {
+          "missing_printers": {
+            "name": "Drucker, die BamBuddy nicht führt"
+          }
+        }
       },
       "online": {
         "name": "Online"
@@ -892,7 +919,7 @@
         "step": {
           "confirm": {
             "title": "Drucker entfernen?",
-            "description": "BamBuddy führt den Drucker {printer} nicht mehr. Wurde er in BamBuddy absichtlich entfernt, wähle „Drucker entfernen“, um ihn auch hier zu entfernen: Der Drucker, seine AMS-Einheiten, seine Steckdosen und deren Entitäten verschwinden aus Home Assistant, in BamBuddy ändert sich nichts. Ist er wieder in BamBuddy, schließe dies: Er kommt hier innerhalb einer Minute von selbst zurück.",
+            "description": "Der BamBuddy-Server des Eintrags „{entry}“ führt den Drucker {printer} nicht mehr – meist wurde er dort entfernt. Brauchst du ihn hier nicht mehr, wähle „Drucker entfernen“: Der Drucker, seine AMS-Einheiten und Steckdosen und deren Entitäten verschwinden aus Home Assistant, in BamBuddy ändert sich nichts. Führt BamBuddy ihn wieder, schließe dies: Er kommt hier innerhalb einer Minute von selbst zurück.",
             "submit": "Drucker entfernen"
           }
         },
@@ -1137,14 +1164,14 @@
   "selector": {
     "bambuddy": {
       "options": {
-        "same": "Derselbe BamBuddy unter neuer Adresse (alles bleibt, auch der Verlauf)",
-        "other": "Ein anderer BamBuddy (die Zahlen des BamBuddy-Geräts beginnen neu, ihr Verlauf wird gelöscht; die Drucker behalten ihren)"
+        "same": "Derselbe BamBuddy-Server unter neuer Adresse (die Werte des Servers wie Druckstatistik und Speicherplatz laufen weiter)",
+        "other": "Ein anderer BamBuddy-Server (die Werte des Servers wie Druckstatistik und Speicherplatz beginnen neu, ihr bisheriger Verlauf wird gelöscht; die Drucker behalten ihren)"
       }
     },
     "bambuddy_alone": {
       "options": {
-        "same": "Derselbe BamBuddy unter neuer Adresse (alles bleibt, auch der Verlauf)",
-        "other": "Ein anderer BamBuddy (die Zahlen des BamBuddy-Geräts beginnen neu, ihr Verlauf wird gelöscht)"
+        "same": "Derselbe BamBuddy-Server unter neuer Adresse (die Werte des Servers wie Druckstatistik und Speicherplatz laufen weiter)",
+        "other": "Ein anderer BamBuddy-Server (die Werte des Servers wie Druckstatistik und Speicherplatz beginnen neu, ihr bisheriger Verlauf wird gelöscht)"
       }
     }
   }

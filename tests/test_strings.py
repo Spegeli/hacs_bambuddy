@@ -68,6 +68,14 @@ def test_every_string_has_the_placeholders_of_its_english_original():
             assert placeholders(text) == placeholders(english[key]), (name, key)
 
 
+def test_the_switch_summary_names_its_button():
+    """It says which button applies the switch: by the button's own label."""
+    for name in _FILES:
+        steps = _load(name)["config"]["step"]
+        for step in ("confirm_same", "confirm_other"):
+            assert steps[step]["submit"] in steps[step]["description"], (name, step)
+
+
 def test_no_apostrophe_directly_precedes_a_placeholder():
     """The frontend formats strings as ICU messages, where an apostrophe right
     before a brace opens literal text: "l'{asset}" would show "{asset}"

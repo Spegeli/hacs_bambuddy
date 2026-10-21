@@ -85,8 +85,9 @@ class KeyGuard:
 
     @callback
     def async_start(self) -> None:
-        """The check every ten minutes, for as long as the entry is loaded."""
-        self.entry.async_on_unload(async_track_time_interval(self.hass, self._async_due, KEY_CHECK_INTERVAL))
+        """The check every ten minutes, for as long as the entry is loaded
+        -- and Home Assistant runs: its web session closes as it stops."""
+        self.entry.async_on_unload(async_track_time_interval(self.hass, self._async_due, KEY_CHECK_INTERVAL, cancel_on_shutdown=True))
         self.entry.async_on_unload(self._stop)
 
     @property

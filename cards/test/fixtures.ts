@@ -42,6 +42,8 @@ export interface FakeDevice {
   via?: string;
   /** The serial number Home Assistant's device registry holds. */
   serial?: string;
+  /** The device registry's identifiers, as (domain, id) pairs. */
+  identifiers?: [string, string][];
   entities: FakeEntity[];
 }
 
@@ -181,6 +183,7 @@ export function makeHass(options: FakeHassOptions = {}): FakeHass {
         manufacturer: "Bambu Lab",
         via_device_id: device.via ?? null,
         serial_number: device.serial ?? null,
+        identifiers: device.identifiers ?? [],
       };
       for (const entity of device.entities) {
         if (entity.precision !== undefined) precisions.set(entity.entityId, entity.precision);
@@ -949,16 +952,22 @@ export function offlineP1s(): FakeDevice[] {
 export const unreachable = (devices: FakeDevice[]): FakeDevice[] =>
   devices.map((device) => ({ ...device, entities: device.entities.map((entity) => ({ ...entity, state: "unavailable", attributes: {} })) }));
 
+/** The devices whose entities the integration does not set up -- a printer
+ * BamBuddy no longer lists, or every device of an entry not loaded: Home
+ * Assistant writes each registered entity unavailable, marked restored. */
+export const missingFromBamBuddy = (devices: FakeDevice[]): FakeDevice[] =>
+  devices.map((device) => ({ ...device, entities: device.entities.map((entity) => ({ ...entity, state: "unavailable", attributes: { restored: true } })) }));
+
 /** The X1C without its control entities: Home Assistant has not created
  * them (yet) -- the integration's key always may control. */
 export const readOnlyX1c = (overrides: Partial<PrinterSpec> = {}): FakeDevice[] => x1c({ control: false, ...overrides });
 
-/** The BamBuddy instance's device: no printer. */
+/** The BamBuddy instance's device: no printer; its Connection sensor on. */
 export const instanceDevice: FakeDevice = {
   id: "dev-instance",
   name: "BamBuddy (192.168.1.5)",
   model: "BamBuddy",
-  entities: [{ entityId: "binary_sensor.bambuddy", key: "connected", state: "on" }],
+  entities: [{ entityId: "binary_sensor.bambuddy_connection", key: "bambuddy_online", state: "on" }],
 };
 
 export interface FakeCard extends HTMLElement {

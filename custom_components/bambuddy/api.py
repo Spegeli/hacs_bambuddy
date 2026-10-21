@@ -186,6 +186,10 @@ class BamBuddyClient:
     ) -> Any:
         """One request; the path is logged, never the query: the camera
         token travels there."""
+        # Home Assistant closed its web session -- it stops: aiohttp would
+        # raise a RuntimeError from a timer's request.
+        if self._session.closed:
+            raise BamBuddyConnectionError(f"{method} {path}: the session is closed")
         try:
             async with self._session.request(
                 method,

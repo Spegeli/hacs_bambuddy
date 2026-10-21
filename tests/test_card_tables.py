@@ -15,7 +15,7 @@ import pytest
 import voluptuous as vol
 import yaml
 
-from custom_components.bambuddy import auto_off, models, services
+from custom_components.bambuddy import auto_off, coordinator, models, plugs, services
 from custom_components.bambuddy.models import DRYING_MAX, HMS_ANSWERS, MATERIALS
 
 from tests.conftest import INTEGRATION
@@ -89,6 +89,19 @@ def _set(source: str, name: str) -> set[str]:
     found = re.search(rf"\b{name}\b[^=]*= new Set(?:<\w+>)?\(\[(.*?)\]\)", source, re.S)
     assert found, name
     return set(re.findall(r'"([a-z_]+)"', found.group(1)))
+
+
+def test_the_card_tells_a_printer_device_by_the_integrations_identifier() -> None:
+    """Before its entities come, the card knows a printer by its device's
+    identifier: an AMS unit's, a plug's or the instance's never pass."""
+    found = re.search(r"const PRINTER_IDENTIFIER = /(.+)/;", _card("discovery.ts"))
+    assert found
+    pattern = re.compile(found.group(1))
+    entry_id = "01JENTRY0000000000000000AB"
+    assert pattern.match(coordinator.printer_identifier(entry_id, "00M00A000000001")[1])
+    assert not pattern.match(coordinator.ams_identifier(entry_id, "00M00A000000001", "00600A3B0000001")[1])
+    assert not pattern.match(plugs.plug_identifier(entry_id, 3)[1])
+    assert not pattern.match(entry_id)
 
 
 def test_the_card_looks_for_keys_the_integration_gives() -> None:

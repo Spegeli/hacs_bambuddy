@@ -47,9 +47,9 @@ from .const import (
     DOMAIN,
     MIN_BAMBUDDY_VERSION,
 )
-from .coordinator import BamBuddyConfigEntry, create_client
+from .coordinator import BamBuddyConfigEntry, create_client, find_device, printer_identifier
 from .key import async_check_key
-from .models import find_printers, printer_key, printer_name, short_name, stored_key, stored_printer as _stored, too_old
+from .models import find_printers, printer_key, printer_name, stored_key, stored_printer as _stored, too_old
 
 def form_schema(fields: dict[Any, Any]) -> Any:
     """The schema of a form. Home Assistant 2026.10 types form schemas as
@@ -80,11 +80,9 @@ _RECONFIGURE = form_schema(
 )
 
 
-# The new address step: which BamBuddy it is, and the printers to remove
-# and to add.
+# The new address step: which BamBuddy server it is, and the printers to add.
 _KIND = "bambuddy"
 _SAME, _OTHER = "same", "other"
-_REMOVE = "remove_printers"
 _ADD = "add_printers"
 
 
@@ -102,11 +100,15 @@ def _choice(options: list[SelectOptionDict]) -> Any:
 
 # The field left empty: what a check of the stored key found, said of it.
 _STORED_ERRORS = {"invalid_auth": "stored_key_refused", "missing_scopes": "stored_key_scopes", "key_owner_inactive": "stored_key_owner"}
+# At a new address -- most likely another BamBuddy -- the stored key was
+# never this one's: not "no longer".
+_STORED_ERRORS_AT_ADDRESS = {**_STORED_ERRORS, "invalid_auth": "stored_key_refused_at_address"}
 
 
-def _of_stored(errors: dict[str, str]) -> dict[str, str]:
+def _of_stored(errors: dict[str, str], *, at_address: bool = False) -> dict[str, str]:
+    said = _STORED_ERRORS_AT_ADDRESS if at_address else _STORED_ERRORS
     base = errors.get("base")
-    return {"base": _STORED_ERRORS[base]} if base in _STORED_ERRORS else errors
+    return {"base": said[base]} if base in said else errors
 
 
 class _Found(NamedTuple):
@@ -198,14 +200,14 @@ async def _find(hass: HomeAssistant, url: str, api_key: str, verify_ssl: bool, *
     return url, found
 
 
-def _short(name: str) -> str:
-    """A stored device name without " (model / serial)": BamBuddy's name."""
-    return name.rsplit(" (", 1)[0] if name.endswith(")") and " (" in name else name
-
-
 def _bullets(names: list[str]) -> str:
     """Names as a Markdown list: a run-on sentence of fifteen is unreadable."""
     return "\n".join(f"- {name}" for name in names)
+
+
+def _listed(names: list[str]) -> str:
+    """A list in the switch's summary, sorted; none: a dash under its heading."""
+    return _bullets(sorted(names, key=str.casefold)) if names else "–"
 
 
 def _title(url: str) -> str:
@@ -268,10 +270,15 @@ class BamBuddyConfigFlow(ConfigFlow, domain=DOMAIN):
     def __init__(self) -> None:
         self._data: dict[str, Any] = {}
         self._printers: list[dict[str, Any]] = []
+        # Setup: where the printers it leaves out are set up (none: {}).
+        self._held: dict[str, str] = {}
         # At a new address: the entry's printers as they were then, and
         # BamBuddy's printer for each (None: not there).
         self._stored: list[dict[str, Any]] = []
         self._found: list[dict[str, Any] | None] = []
+        # Then the user's answers: another BamBuddy, and the printers to add.
+        self._other = False
+        self._added: list[dict[str, Any]] = []
         # The stored key's marks, where it is short (the reauth's text).
         self._stored_marks: dict[str, str] = {}
 
@@ -303,6 +310,8 @@ class BamBuddyConfigFlow(ConfigFlow, domain=DOMAIN):
                     self._data = {**user_input, CONF_URL: url, CONF_API_KEY: api_key}
                     elsewhere = _elsewhere(self.hass, None)
                     self._printers = [printer for printer in found.printers if printer_key(printer) not in elsewhere]
+                    if len(self._printers) < len(found.printers):
+                        self._held = _in_use(found.printers, elsewhere)
                     if self._printers:
                         return await self.async_step_printers()
                     if found.printers:
@@ -317,13 +326,18 @@ class BamBuddyConfigFlow(ConfigFlow, domain=DOMAIN):
 
     async def async_step_printers(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
         """Which of BamBuddy's printers to add: all, unless the user says
-        otherwise."""
+        otherwise; those another entry holds are not offered, and the step
+        says where they are."""
         if user_input is not None:
             chosen = set(user_input[CONF_PRINTERS])
             return self._create_entry([printer for printer in self._printers if str(printer["id"]) in chosen])
         options = [SelectOptionDict(value=str(printer["id"]), label=printer_name(printer)) for printer in self._printers]
         schema = form_schema({vol.Optional(CONF_PRINTERS, default=[option["value"] for option in options]): _many(options)})
+        if self._held:
+            return self.async_show_form(step_id="printers_some_elsewhere", data_schema=schema, description_placeholders=self._held)
         return self.async_show_form(step_id="printers", data_schema=schema)
+
+    async_step_printers_some_elsewhere = async_step_printers
 
     def _create_entry(self, printers: list[dict[str, Any]]) -> ConfigFlowResult:
         return self.async_create_entry(
@@ -342,9 +356,12 @@ class BamBuddyConfigFlow(ConfigFlow, domain=DOMAIN):
         one whose setup failed has none, and an unchanged one -- the same key
         entered again after BamBuddy refused it for a while -- would stay
         without data. (async_update_reload_and_abort would clash with the
-        listener from Home Assistant 2026.12 on.)"""
+        listener from Home Assistant 2026.12 on.) The state is read first:
+        the listener starts unloading the entry during the update, and a
+        reload of ours on top would set it up twice."""
+        loaded = entry.state is ConfigEntryState.LOADED
         changed = self.hass.config_entries.async_update_entry(entry, **changes)
-        if entry.state is not ConfigEntryState.LOADED or not changed:
+        if not loaded or not changed:
             self.hass.config_entries.async_schedule_reload(entry.entry_id)
 
     async def async_step_reauth(self, entry_data: Mapping[str, Any]) -> ConfigFlowResult:
@@ -411,9 +428,9 @@ class BamBuddyConfigFlow(ConfigFlow, domain=DOMAIN):
                 url, found = await _find(self.hass, url, api_key, user_input[CONF_VERIFY_SSL])
                 errors, placeholders, listed = found.errors, found.placeholders, found.printers
                 if not typed:
-                    errors = _of_stored(errors)
-                if self._address_in_use(entry, url):
-                    errors = {CONF_URL: "address_in_use"}
+                    errors = _of_stored(errors, at_address=url != entry.unique_id)
+                if (holder := self._holder(entry, url)) is not None:
+                    errors, placeholders = {CONF_URL: "address_in_use"}, {"entry": holder}
                 if not errors:
                     self._data = {CONF_URL: url, CONF_API_KEY: api_key, CONF_VERIFY_SSL: user_input[CONF_VERIFY_SSL]}
                     if url == entry.unique_id:
@@ -435,26 +452,58 @@ class BamBuddyConfigFlow(ConfigFlow, domain=DOMAIN):
             description_placeholders={"example_url": _EXAMPLE_URL, **placeholders},
         )
 
-    def _address_in_use(self, entry: BamBuddyConfigEntry, url: str) -> bool:
-        """Whether another entry has the address."""
-        return url != entry.unique_id and any(
-            other.unique_id == url
-            for other in self._async_current_entries(include_ignore=False)
-            if other.entry_id != entry.entry_id
+    def _holder(self, entry: BamBuddyConfigEntry, url: str) -> str | None:
+        """The title of another entry with the address, if one has it."""
+        if url == entry.unique_id:
+            return None
+        return next(
+            (
+                other.title
+                for other in self._async_current_entries(include_ignore=False)
+                if other.entry_id != entry.entry_id and other.unique_id == url
+            ),
+            None,
         )
 
-    async def async_step_new_address(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
-        """Which BamBuddy answers there -- the same at a new address, or
-        another one -- and the printers: those found by their serial numbers
-        stay, those not there may go, those only there may come."""
+    def _kept(self) -> list[str]:
+        """The entry's printers found at the new address, by their whole
+        names: two printers of one name differ in model or serial."""
+        return [printer_name(info) for info in self._found if info is not None]
+
+    def _missing(self) -> list[str]:
+        """The entry's printers the new address lacks: they go with the
+        switch. By their devices' names of now: a device follows BamBuddy's
+        name within a minute, the stored name only at the next setup."""
         entry = self._get_reconfigure_entry()
+        names = []
+        for printer, info in zip(self._stored, self._found, strict=True):
+            if info is None:
+                device = find_device(self.hass, entry.entry_id, printer_identifier(entry.entry_id, stored_key(printer)))
+                names.append(device.name if device is not None and device.name else str(printer[CONF_PRINTER_NAME]))
+        return names
+
+    def _entry_or_gone(self) -> BamBuddyConfigEntry | None:
+        """The entry being reconfigured -- None once it was deleted in
+        another tab while a step was open."""
+        entry: BamBuddyConfigEntry | None = self.hass.config_entries.async_get_entry(self.context["entry_id"])
+        return entry
+
+    async def async_step_new_address(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
+        """Which BamBuddy server answers there -- the same at a new address,
+        or another one -- and the printers: those found by their serial
+        numbers stay, those not there go, those only there may come."""
+        if self._entry_or_gone() is None:
+            return self.async_abort(reason="reconfigure_entry_gone")
         stored = self._stored
-        missing = [printer for printer, info in zip(stored, self._found, strict=True) if info is None]
         matched = {info["id"] for info in self._found if info is not None}
         new = [printer for printer in self._printers if printer["id"] not in matched]
         if user_input is not None:
-            return await self._async_move(entry, user_input, stored, new)
-        kept = sorted((short_name(info) for info in self._found if info is not None), key=str.casefold)
+            self._other = user_input[_KIND] == _OTHER
+            chosen = set(user_input.get(_ADD, []))
+            self._added = [printer for printer in new if str(printer["id"]) in chosen]
+            return await self.async_step_confirm_same()
+        kept = self._kept()
+        missing = self._missing()
         # None of the entry's printers there speaks for another BamBuddy.
         other = bool(stored) and not kept
         schema: dict[Any, Any] = {
@@ -467,29 +516,24 @@ class BamBuddyConfigFlow(ConfigFlow, domain=DOMAIN):
                 )
             )
         }
-        if missing:
-            schema[vol.Optional(_REMOVE, default=[])] = _many(
-                sorted(
-                    (SelectOptionDict(value=stored_key(printer), label=printer[CONF_PRINTER_NAME]) for printer in missing),
-                    key=lambda option: option["label"].casefold(),
-                )
-            )
         if new:
             schema[vol.Optional(_ADD, default=[])] = _many(
                 [SelectOptionDict(value=str(printer["id"]), label=printer_name(printer)) for printer in new]
             )
+        placeholders = {"url": self._data[CONF_URL]}
         if not stored:
             step = "new_address_no_printers"
         elif not missing:
             # Every printer found there: no list of fifteen names.
             step = "new_address_all"
+        elif other:
+            step = "other_bambuddy"
+            placeholders["missing"] = _listed(missing)
         else:
-            step = "other_bambuddy" if other else "new_address"
-        return self.async_show_form(
-            step_id=step,
-            data_schema=form_schema(schema),
-            description_placeholders={"url": self._data[CONF_URL], **({"kept": _bullets(kept)} if stored and missing else {})},
-        )
+            step = "new_address"
+            placeholders |= {"kept": _listed(kept), "missing": _listed(missing)}
+        # A summary to confirm follows: the button leads on, it does not switch.
+        return self.async_show_form(step_id=step, data_schema=form_schema(schema), description_placeholders=placeholders, last_step=False)
 
     # The same step: with a warning (none of the entry's printers there), for
     # every printer found there, and for an entry without printers.
@@ -497,27 +541,49 @@ class BamBuddyConfigFlow(ConfigFlow, domain=DOMAIN):
     async_step_new_address_all = async_step_new_address
     async_step_new_address_no_printers = async_step_new_address
 
-    async def _async_move(
-        self,
-        entry: BamBuddyConfigEntry,
-        user_input: dict[str, Any],
-        stored: list[dict[str, Any]],
-        new: list[dict[str, Any]],
-    ) -> ConfigFlowResult:
-        if self._address_in_use(entry, self._data[CONF_URL]):
-            return self.async_abort(reason="address_in_use")
-        remove = set(user_input.get(_REMOVE, []))
-        add = set(user_input.get(_ADD, []))
-        printers: list[dict[str, Any]] = []
-        waiting: list[str] = []
-        for printer, info in zip(stored, self._found, strict=True):
-            if info is not None:
-                printers.append(_stored(info))
-            elif stored_key(printer) not in remove:
-                printers.append(printer)
-                waiting.append(_short(printer[CONF_PRINTER_NAME]))
-        printers += [_stored(printer) for printer in new if str(printer["id"]) in add]
-        other = user_input[_KIND] == _OTHER
+    async def async_step_confirm_same(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
+        """What the switch does, before it does it: the address, and the
+        printers that stay, go and come -- a mistyped address shows here;
+        the dialog closed, nothing changes."""
+        entry = self._entry_or_gone()
+        if entry is None:
+            return self.async_abort(reason="reconfigure_entry_gone")
+        # By the entry's printers as they are now -- Configure in another tab
+        # may have added or removed one since the address was entered. A
+        # change after the summary was shown shows it again, saying so:
+        # "Switch" does only what it said.
+        errors: dict[str, str] = {}
+        current = list(entry.options.get(CONF_PRINTERS, []))
+        if current != self._stored:
+            self._stored = current
+            self._found = find_printers(self._printers, current)
+            matched = {info["id"] for info in self._found if info is not None}
+            self._added = [printer for printer in self._added if printer["id"] not in matched]
+            if user_input is not None:
+                errors["base"] = "printers_changed"
+        elif user_input is not None:
+            return await self._async_move(entry)
+        return self.async_show_form(
+            step_id="confirm_other" if self._other else "confirm_same",
+            data_schema=form_schema({}),
+            errors=errors,
+            description_placeholders={
+                "url": self._data[CONF_URL],
+                "kept": _listed(self._kept()),
+                "removed": _listed(self._missing()),
+                "added": _listed([printer_name(printer) for printer in self._added]),
+            },
+        )
+
+    # Another BamBuddy: the summary says its history goes.
+    async_step_confirm_other = async_step_confirm_same
+
+    async def _async_move(self, entry: BamBuddyConfigEntry) -> ConfigFlowResult:
+        if (holder := self._holder(entry, self._data[CONF_URL])) is not None:
+            return self.async_abort(reason="address_in_use", description_placeholders={"entry": holder})
+        # The printers found there, then those added; the others go.
+        printers = [_stored(info) for info in self._found if info is not None] + [_stored(printer) for printer in self._added]
+        other = self._other
         if other:
             await _async_forget_history(self.hass, entry)
         url = self._data[CONF_URL]
@@ -530,10 +596,7 @@ class BamBuddyConfigFlow(ConfigFlow, domain=DOMAIN):
             title=entry.title if given else _title(url),
             options={**entry.options, CONF_PRINTERS: printers},
         )
-        reason = "reconfigure_successful_other" if other else "reconfigure_successful"
-        if waiting:
-            return self.async_abort(reason=f"{reason}_missing", description_placeholders={"printers": ", ".join(waiting)})
-        return self.async_abort(reason=reason)
+        return self.async_abort(reason="reconfigure_successful_other" if other else "reconfigure_successful_moved")
 
 
 class BamBuddyOptionsFlow(OptionsFlow):
@@ -591,7 +654,15 @@ class BamBuddyOptionsFlow(OptionsFlow):
                 }
             )
         options = [SelectOptionDict(value=value, label=printer_name(printer)) for value, printer in new.items()]
+        if len(new) < len(missing):
+            return self.async_show_form(
+                step_id="add_printer_some_elsewhere",
+                data_schema=_choice(options),
+                description_placeholders={**self._named(), **_in_use(missing, elsewhere)},
+            )
         return self.async_show_form(step_id="add_printer", data_schema=_choice(options), description_placeholders=self._named())
+
+    async_step_add_printer_some_elsewhere = async_step_add_printer
 
     async def async_step_remove_printer(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
         if user_input is not None:

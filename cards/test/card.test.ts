@@ -12,6 +12,7 @@ import {
   h2d,
   instanceDevice,
   makeHass,
+  missingFromBamBuddy,
   mountCard,
   offlineP1s,
   p1s,
@@ -107,6 +108,33 @@ describe("a card without a printer to show", () => {
       const card = await mountCard(hass, config);
       expect(cardText(card)).toBe(message);
     }
+  });
+
+  it("waits for a printer whose device is back before its entities", async () => {
+    // Added again (Configure, a switch back): Home Assistant restores the
+    // device at the start of the setup, its entities come seconds later --
+    // no reason to send the user to another device.
+    const coming: FakeDevice = {
+      id: "dev-coming",
+      name: "Kids A1 (A1 / 039ED4500600444)",
+      model: "A1",
+      identifiers: [["bambuddy", "01JENTRY0000000000000000AB_printer_039ED4500600444"]],
+      entities: [],
+    };
+    const unit: FakeDevice = {
+      id: "dev-unit",
+      name: "Kids A1 AMS A (AMS / 00600A0000000001)",
+      model: "AMS",
+      identifiers: [["bambuddy", "01JENTRY0000000000000000AB_printer_039ED4500600444_ams_00600A0000000001"]],
+      entities: [],
+    };
+    const german = makeHass({ devices: [coming], language: "de" });
+    expect(cardText(await mountCard(german, { printer: "dev-coming" }))).toBe("Warte auf die Daten des Druckers …");
+    const hass = makeHass({ devices: [...x1c(), coming, unit] });
+    expect(cardText(await mountCard(hass, { printer: "dev-coming" }))).toBe("Waiting for the printer's data …");
+    expect(cardText(await mountCard(hass, { printer: "dev-unit" }))).toBe(
+      "This device is not a BamBuddy printer. Choose a printer, not an AMS unit, a smart plug or the BamBuddy server.",
+    );
   });
 
   it("refuses an invalid option", () => {
@@ -601,6 +629,53 @@ describe("the status view", () => {
     // Someone who may not open the settings is not sent there.
     const { card: user } = await cardFor("x1c", {}, { devices: unreachable(x1c()), admin: false });
     expect(text(find(user, ".job-info"))).toBe("No data from BamBuddy. Check that BamBuddy is running; an administrator may need to enter a new API key.");
+  });
+
+  it("says BamBuddy no longer lists a printer where the integration names it so", async () => {
+    // After a move to another BamBuddy, or a printer deleted there: the
+    // entry is loaded, the printer's entities are only what Home Assistant
+    // restored, and BamBuddy's Connection sensor names the printer -- not a
+    // key to check.
+    const linked = (devices: FakeDevice[], server: FakeDevice): FakeDevice[] => [
+      ...devices.map((device) => (device.via ? device : { ...device, via: server.id })),
+      server,
+    ];
+    const naming = (missing: string[], state = "on"): FakeDevice => ({
+      ...instanceDevice,
+      entities: instanceDevice.entities.map((entity) => ({ ...entity, state, attributes: { missing_printers: missing } })),
+    });
+    const devices = linked(missingFromBamBuddy(x1c()), naming(["dev-x1c"]));
+    const message = "BamBuddy no longer lists this printer. You can remove it under Settings → Repairs; once BamBuddy lists it again, it comes back here by itself.";
+    const { card, hass } = await cardFor("x1c", {}, { devices });
+    expect(text(find(card, ".job-info"))).toBe(message);
+    expect(find(card, ".dot")?.getAttribute("aria-label")).toBe("No longer in BamBuddy");
+    await showView(card, "Control");
+    expect(findAll(card, ".note").map(text)).toEqual([message]);
+    await showView(card, "Status");
+    // The sensor's own change shows at once, either way: a card open while
+    // the entry reloads sees the printer's entities written before it.
+    await update(card, hass.withState("binary_sensor.bambuddy_connection", "on", { missing_printers: [] }));
+    expect(text(find(card, ".job-info"))).toContain("No data from BamBuddy");
+    await update(card, hass.withState("binary_sensor.bambuddy_connection", "on", { missing_printers: ["dev-x1c"] }));
+    expect(text(find(card, ".job-info"))).toBe(message);
+    const { card: german } = await cardFor("x1c", {}, { devices, language: "de" });
+    expect(text(find(german, ".job-info"))).toBe(
+      "BamBuddy führt diesen Drucker nicht mehr. Unter Einstellungen → Reparaturen kannst du ihn entfernen; führt BamBuddy ihn wieder, erscheint er hier von selbst.",
+    );
+    expect(find(german, ".dot")?.getAttribute("aria-label")).toBe("Nicht mehr in BamBuddy");
+    // Someone who may not open the settings is not sent there.
+    const { card: user } = await cardFor("x1c", {}, { devices, admin: false });
+    expect(text(find(user, ".job-info"))).toBe("BamBuddy no longer lists this printer. Once BamBuddy lists it again, it comes back here by itself.");
+    // BamBuddy down since: the printer still waits -- as the list says.
+    const { card: stopped } = await cardFor("x1c", {}, { devices: linked(missingFromBamBuddy(x1c()), naming(["dev-x1c"], "off")) });
+    expect(text(find(stopped, ".job-info"))).toBe(message);
+    // While the entry sets up, its printers' states are still the restored
+    // ones and the sensor names none of them: no data, not "missing".
+    const { card: setting } = await cardFor("x1c", {}, { devices: linked(missingFromBamBuddy(x1c()), naming([])) });
+    expect(text(find(setting, ".job-info"))).toContain("No data from BamBuddy");
+    // The entry not loaded: BamBuddy's sensor is restored too -- as before.
+    const { card: unloaded } = await cardFor("x1c", {}, { devices: missingFromBamBuddy(linked(x1c(), instanceDevice)) });
+    expect(text(find(unloaded, ".job-info"))).toContain("No data from BamBuddy");
   });
 
   it("knows a printer is offline from its print status where it has no Online sensor", async () => {

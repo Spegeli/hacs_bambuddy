@@ -243,6 +243,17 @@ async def test_an_unreachable_bambuddy_is_a_connection_error(
         await _client(hass).get_system_info()
 
 
+async def test_a_closed_session_is_a_connection_error(hass: HomeAssistant) -> None:
+    """Home Assistant closes its web session as it stops: a request a timer
+    sends after that ("Session is closed", a RuntimeError) is one more
+    BamBuddy Home Assistant does not reach."""
+    session = aiohttp.ClientSession()
+    await session.close()
+
+    with pytest.raises(BamBuddyConnectionError):
+        await BamBuddyClient(URL, API_KEY, session).get_printers()
+
+
 async def test_an_answer_that_is_no_json_is_an_api_error(
     hass: HomeAssistant, aioclient_mock: AiohttpClientMocker
 ) -> None:

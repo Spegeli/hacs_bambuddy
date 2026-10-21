@@ -23,7 +23,7 @@ import {
 } from "./format";
 import { icon } from "./icons";
 import { t, type TextKey } from "./i18n";
-import { actionButton, hottestNozzle, note, radioKeys, radioLeave, radioStop, stepControl, type CardContext, type Confirmation } from "./parts";
+import { actionButton, hottestNozzle, noData, note, radioKeys, radioLeave, radioStop, stepControl, type CardContext, type Confirmation } from "./parts";
 import type { PlugRefs } from "./types";
 
 /** How long the card counts after the printer's plug went on, before it
@@ -246,7 +246,7 @@ function plugRow(ctx: CardContext, plug: PlugRefs, tagged: boolean): TemplateRes
     }
   } else if (state === "unavailable") {
     // No answer from BamBuddy: the plug is not to blame.
-    sub = t(hass, ctx.unreachable ? "unreachable_short" : "plug_unreachable");
+    sub = t(hass, ctx.unreachable ? noData(ctx) : "plug_unreachable");
     tone = ctx.unreachable ? "" : "warn";
   } else if (state === "unknown" && plug.switchable) {
     sub = t(hass, "plug_unknown");
@@ -452,7 +452,7 @@ export function powerPill(ctx: CardContext, open: () => void): TemplateResult | 
       ? t(hass, "chip_power_plug", { plug: plug.name, power })
       : t(hass, "chip_power_plug_state", { plug: plug.name, state: t(hass, state === "on" ? "on" : "off") });
   // The name starts with what the chip shows (voice control): then whose plug.
-  const aria = accessory ? shown : ctx.unreachable ? `${shown} – ${t(hass, "unreachable_short")}` : t(hass, "chip_power_aria", { shown, plug: plug.name });
+  const aria = accessory ? shown : ctx.unreachable ? `${shown} – ${t(hass, noData(ctx))}` : t(hass, "chip_power_aria", { shown, plug: plug.name });
   // Its watts change with every read: not read out each time (as the drying chip's countdown).
   return html`<button class="pill power-chip tone-${tone}" aria-label=${aria} title=${aria} aria-haspopup="dialog" aria-live="off" @click=${open}>${icon(iconName)}<span>${shown}</span></button>`;
 }
