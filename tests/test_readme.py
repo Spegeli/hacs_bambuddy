@@ -170,10 +170,11 @@ def test_the_head_sends_date_version_users_to_the_upgrade_and_names_the_app() ->
 
 def test_the_app_section_follows_the_requirements() -> None:
     """Where a reader without a BamBuddy server looks next: the app that runs
-    it inside Home Assistant, and the address to enter for it."""
+    it inside Home Assistant, and the address to enter for it -- named as the
+    app's README names its section on the integration."""
     headings = re.findall(r"^## (.+)$", _README, re.MULTILINE)
-    assert headings[headings.index("📋 Requirements") + 1] == "🧩 BamBuddy App"
-    section = _README[_README.index("## 🧩 BamBuddy App") :]
+    assert headings[headings.index("📋 Requirements") + 1] == "🧩 Home Assistant App"
+    section = _README[_README.index("## 🧩 Home Assistant App") :]
     section = section[: section.index("\n## ", 1)]
     assert _APP in section and "`http://homeassistant.local:8000`" in section and "`localhost`" in section
 

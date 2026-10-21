@@ -54,7 +54,7 @@ A custom <a href="https://www.home-assistant.io/">Home Assistant</a> integration
 
 ---
 
-## 🧩 BamBuddy App
+## 🧩 Home Assistant App
 
 The integration brings your printers into Home Assistant; the [BamBuddy app](https://github.com/Spegeli/homeassistant-app-bambuddy) runs BamBuddy itself — on Home Assistant OS, inside Home Assistant, installed and updated like any other app. With the app, set up the integration with the address you open BamBuddy with, e.g. `http://homeassistant.local:8000` (not `localhost`), and an API key created in BamBuddy.
 
