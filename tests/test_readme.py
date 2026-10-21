@@ -176,3 +176,27 @@ def test_the_app_section_follows_the_requirements() -> None:
     section = _README[_README.index("## 🧩 BamBuddy App") :]
     section = section[: section.index("\n## ", 1)]
     assert _APP in section and "`http://homeassistant.local:8000`" in section and "`localhost`" in section
+
+
+_OWN_IMAGE = "https://raw.githubusercontent.com/Spegeli/hacs_bambuddy/main/"
+
+
+def test_the_readmes_own_images_are_in_the_repository_with_a_text() -> None:
+    """The README loads its own images from `main` (GitHub and HACS show it
+    alike); they live under `.github/readme/` as in hacs_bitpanda: each
+    address finds its file, and each image says in words what it shows."""
+    own = [tag for tag in re.findall(r"<img ([^>]*)>", _README) if _OWN_IMAGE in tag]
+    paths = [re.search(r'src="([^"]*)"', tag).group(1).removeprefix(_OWN_IMAGE) for tag in own]  # type: ignore[union-attr]
+    assert paths == [
+        ".github/readme/logo.png",
+        ".github/readme/cards/status.png",
+        ".github/readme/cards/two-nozzle.png",
+        ".github/readme/cards/control.png",
+        ".github/readme/cards/filament.png",
+    ]
+    for path in paths:
+        assert (_ROOT / path).is_file(), path
+    for tag in own:
+        alt = re.search(r'alt="([^"]*)"', tag)
+        assert alt and alt.group(1).strip(), tag
+    assert not (_ROOT / "logo.png").exists()

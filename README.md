@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="https://raw.githubusercontent.com/Spegeli/hacs_bambuddy/main/logo.png" alt="BamBuddy Logo" width="300">
+  <img src="https://raw.githubusercontent.com/Spegeli/hacs_bambuddy/main/.github/readme/logo.png" alt="BamBuddy Logo" width="300">
 </p>
 
 <h1 align="center">BamBuddy – Home Assistant Integration</h1>
@@ -269,6 +269,17 @@ The integration brings its own card: one per printer, with its status, camera, t
 > [!NOTE]
 > After installing or updating the integration, reload the browser page (twice if the card is still missing). In the companion app: **Settings → Companion app → Troubleshooting → Reset frontend cache**.
 
+<table>
+  <tr>
+    <td valign="top"><img src="https://raw.githubusercontent.com/Spegeli/hacs_bambuddy/main/.github/readme/cards/status.png" alt="The BamBuddy card's Status tab: a print at 45 % with its cover, layer, time left and end time; pause, stop and skip objects; the printer's plug with its power and the switch-off after the print; temperatures; four AMS units with their colors; fans and print speed" width="300"></td>
+    <td valign="top"><img src="https://raw.githubusercontent.com/Spegeli/hacs_bambuddy/main/.github/readme/cards/two-nozzle.png" alt="The Status tab of a two-nozzle H2D: left and right nozzle with the active one marked, and four AMS 2 Pro and eight AMS HT units, two of them drying" width="300"></td>
+  </tr>
+  <tr>
+    <td valign="top"><img src="https://raw.githubusercontent.com/Spegeli/hacs_bambuddy/main/.github/readme/cards/control.png" alt="The Control tab: nozzle and bed heating, the print options with the AI detections, and the jog pad with bed and extruder" width="300"></td>
+    <td valign="top"><img src="https://raw.githubusercontent.com/Spegeli/hacs_bambuddy/main/.github/readme/cards/filament.png" alt="The Filament tab: an AMS and an AMS HT with each slot's material, color and what is left, load and unload, drying with its time left, the filament backup and the external spool" width="300"></td>
+  </tr>
+</table>
+
 ### Add the card
 
 1. Open a dashboard, choose **Edit dashboard** (✏️), then **Add card**.
@@ -467,4 +478,4 @@ The card remembers the printer's device, and deleting the BamBuddy entry deletes
 
 ## 📜 License
 
-This project is licensed under the **MIT License** — see the [LICENSE](LICENSE) file for details. It covers this project's code and documentation, not BamBuddy's name and logo (`logo.png` and `custom_components/bambuddy/brand/`), which belong to the BamBuddy project (see [Disclaimer](#%EF%B8%8F-disclaimer)).
+This project is licensed under the **MIT License** — see the [LICENSE](LICENSE) file for details. It covers this project's code and documentation, not BamBuddy's name and logo (`.github/readme/logo.png` and `custom_components/bambuddy/brand/`), which belong to the BamBuddy project (see [Disclaimer](#%EF%B8%8F-disclaimer)).
