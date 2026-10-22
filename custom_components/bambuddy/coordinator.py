@@ -11,7 +11,7 @@ import logging
 from typing import TYPE_CHECKING, Any, TypeVar
 
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.core import CALLBACK_TYPE, HomeAssistant, callback
+from homeassistant.core import CALLBACK_TYPE, HassJob, HomeAssistant, callback
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers import issue_registry as ir
@@ -43,7 +43,9 @@ from .const import (
     PLUG_INTERVAL,
     PLUG_LIST_INTERVAL,
     PRINTER_INTERVAL,
+    PUSH_GAP,
     REFRESH_AFTER_COMMAND,
+    REFRESH_AFTER_COMMAND_AGAIN,
     REFRESH_AFTER_PLUG,
     RUNTIME_INTERVAL,
     SYSTEM_INTERVAL,
@@ -72,6 +74,7 @@ from .plugs import ENERGY_FIELDS, Plug, main_of, plug_device_name, plug_identifi
 if TYPE_CHECKING:
     from .auto_off import AutoOff
     from .key import KeyGuard
+    from .live import BamBuddyLive
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -287,6 +290,17 @@ class BamBuddyPrinterCoordinator(DataUpdateCoordinator[PrinterData]):
         # Commands sent so far: a poll during which one went out may bring
         # the state from before it.
         self._commands = 0
+        self._again_later: CALLBACK_TYPE | None = None
+        # Reads on a push of BamBuddy's live connection: how far apart (the
+        # entry's setting), when the last began, whether one runs, whether
+        # another is wanted, the timer for it.
+        self._push_gap: float = PUSH_GAP
+        self._push_started = float("-inf")
+        self._push_running = False
+        self._push_pending = False
+        self._push_later: CALLBACK_TYPE | None = None
+        self._shut_down = False
+        self._reading = asyncio.Lock()
 
     def note_command(self) -> None:
         """A command goes out now: a poll already under way may answer with
@@ -294,6 +308,14 @@ class BamBuddyPrinterCoordinator(DataUpdateCoordinator[PrinterData]):
         self._commands += 1
 
     async def _async_update_data(self) -> PrinterData:
+        # One read at a time, in the order they began: a read that started
+        # later applies later. Home Assistant 2025.5 runs a coordinator's
+        # refreshes side by side -- a poll that answered before a change
+        # could otherwise undo the push read that brought it.
+        async with self._reading:
+            return await self._async_read_printer()
+
+    async def _async_read_printer(self) -> PrinterData:
         if self.replaced:
             raise self._replaced_error()
         commands = self._commands
@@ -650,11 +672,17 @@ class BamBuddyPrinterCoordinator(DataUpdateCoordinator[PrinterData]):
 
     @callback
     def async_refresh_soon(self) -> None:
-        """Read the status again shortly after a command: BamBuddy answers as
-        soon as it passed the command on, the printer reports back later."""
-        if self._refresh_later:
-            self._refresh_later()
-        self._refresh_later = async_call_later(self.hass, REFRESH_AFTER_COMMAND, self._async_refresh_now)
+        """Read the status again shortly after a command, and once more a
+        little later: BamBuddy answers as soon as it passed the command on,
+        the printer reports back later -- and BamBuddy's live connection
+        tells of some results never. A new command starts both anew."""
+        self._cancel_command_reads()
+        self._refresh_later = async_call_later(
+            self.hass, REFRESH_AFTER_COMMAND, HassJob(self._async_refresh_now, cancel_on_shutdown=True)
+        )
+        self._again_later = async_call_later(
+            self.hass, REFRESH_AFTER_COMMAND_AGAIN, HassJob(self._async_refresh_again, cancel_on_shutdown=True)
+        )
 
     async def _async_refresh_now(self, _now: datetime) -> None:
         self._refresh_later = None
@@ -662,10 +690,76 @@ class BamBuddyPrinterCoordinator(DataUpdateCoordinator[PrinterData]):
         # the last refresh -- a second command would show that late.
         await self.async_refresh()
 
+    async def _async_refresh_again(self, _now: datetime) -> None:
+        self._again_later = None
+        await self.async_refresh()
+
+    @callback
+    def _cancel_command_reads(self) -> None:
+        for cancel in (self._refresh_later, self._again_later):
+            if cancel:
+                cancel()
+        self._refresh_later = self._again_later = None
+
+    @callback
+    def async_pushed(self) -> None:
+        """BamBuddy's live connection tells of a change of the printer: read
+        it now -- at most once per `push_gap`; what comes meanwhile is read
+        once after. Never a read cut short: its entities would go unavailable."""
+        runtime = getattr(self.config_entry, "runtime_data", None)
+        if self._shut_down or self.hass.is_stopping or self.replaced or (runtime is not None and runtime.reloading):
+            return
+        self._push_pending = True
+        self._async_push_next()
+
+    @callback
+    def _async_push_next(self) -> None:
+        # Home Assistant stops: it cancelled the background tasks before it
+        # said so -- a read or a timer started now would outlive them.
+        if not self._push_pending or self._push_running or self._push_later is not None or self._shut_down or self.hass.is_stopping:
+            return
+        wait = self._push_started + self._push_gap - self.hass.loop.time()
+        if wait > 0:
+            self._push_later = async_call_later(self.hass, wait, HassJob(self._async_push_due, cancel_on_shutdown=True))
+            return
+        self._push_pending = False
+        self._push_running = True
+        self._push_started = self.hass.loop.time()
+        # A task of its own, never inside a refresh (the coordinator's lock
+        # is not re-entrant); the entry ends it with its unload.
+        self.config_entry.async_create_background_task(self.hass, self._async_push_read(), f"{self.name} push read")
+
+    @property
+    def push_gap(self) -> float:
+        return self._push_gap
+
+    @push_gap.setter
+    def push_gap(self, seconds: float) -> None:
+        """Configure's new gap: a read that waits takes it at once."""
+        self._push_gap = seconds
+        if self._push_later is not None:
+            self._push_later()
+            self._push_later = None
+            self._async_push_next()
+
+    @callback
+    def _async_push_due(self, _now: datetime) -> None:
+        self._push_later = None
+        self._async_push_next()
+
+    async def _async_push_read(self) -> None:
+        try:
+            await self.async_refresh()
+        finally:
+            self._push_running = False
+            self._async_push_next()
+
     async def async_shutdown(self) -> None:
-        if self._refresh_later:
-            self._refresh_later()
-            self._refresh_later = None
+        self._shut_down = True
+        self._cancel_command_reads()
+        if self._push_later:
+            self._push_later()
+            self._push_later = None
         await super().async_shutdown()
 
 
@@ -945,6 +1039,12 @@ class BamBuddyData:
     key: KeyGuard
     # BamBuddy's authentication on or off (None: it did not say), for the diagnostics.
     auth_enabled: bool | None
+    # BamBuddy's live connection (switched on after the platforms, as
+    # Configure's settings say).
+    live: BamBuddyLive
+    # What a reload of the entry depends on, as the setup took it: a change
+    # of anything else -- Configure's settings -- is taken in place.
+    basis: tuple[Any, ...]
     # The switch-offs after the print, by plug.
     auto_offs: dict[int, AutoOff] = field(default_factory=dict)
     # A printer found its model: the reload that brings it is on its way.

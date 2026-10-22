@@ -510,17 +510,19 @@ export function infoContent(ctx: CardContext, copied: boolean, copy: (text: stri
   const nozzles = nozzleLines(ctx);
   const hours = hoursText(ctx);
   const installed = firmwareOf(ctx)?.installed;
+  // Which printer, what it has, what it does now, how it reaches Home Assistant.
   return html`<h2 id="dlg-title">${t(hass, "menu_info")}</h2>
     <div class="spec">
-      ${refs.model ? specRow(t(hass, "info_model"), refs.model) : nothing}
       ${bambuddyName ? specRow(t(hass, "info_name"), bambuddyName) : nothing}
-      ${server && deviceName(server) ? specRow(t(hass, "info_server"), deviceName(server)) : nothing}
+      ${refs.model ? specRow(t(hass, "info_model"), refs.model) : nothing}
+      ${serial ? specRow(t(hass, "info_serial"), serial, copyButton("copy_serial", serial)) : nothing}
+      ${installed ? specRow(t(hass, "firmware"), installed) : nothing}
+      ${nozzleRow(ctx, nozzles)}
+      ${hours ? specRow(t(hass, "info_hours"), hours) : nothing}
       ${specRow(t(hass, "info_status"), chip(ctx.online ? "ok" : ctx.unreachable ? "warn" : "off", t(hass, connection(ctx))))}
       ${ctx.online ? specRow(t(hass, "info_print_status"), formatState(hass, refs.status, ctx.status) ?? ctx.status) : nothing}
-      ${ip ? specRow(t(hass, "info_ip"), ip, copyButton("copy_ip", ip)) : nothing}
-      ${serial ? specRow(t(hass, "info_serial"), serial, copyButton("copy_serial", serial)) : nothing}
       ${network ? specRow(t(hass, "info_network"), network.iconName === "wifi" ? `${t(hass, "wifi")} · ${network.text}` : t(hass, "lan_wired")) : nothing}
-      ${installed ? specRow(t(hass, "firmware"), installed) : nothing}
+      ${ip ? specRow(t(hass, "info_ip"), ip, copyButton("copy_ip", ip)) : nothing}
       ${developer === undefined
         ? nothing
         : developer
@@ -531,8 +533,7 @@ export function infoContent(ctx: CardContext, copied: boolean, copy: (text: stri
               nothing,
               "lines",
             )}
-      ${nozzleRow(ctx, nozzles)}
-      ${hours ? specRow(t(hass, "info_hours"), hours) : nothing}
+      ${server && deviceName(server) ? specRow(t(hass, "info_server"), deviceName(server)) : nothing}
     </div>
     ${copied ? snack("dlg-snack", t(hass, "copied")) : nothing}`;
 }

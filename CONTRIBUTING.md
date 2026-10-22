@@ -98,7 +98,7 @@ The integration lives in `custom_components/bambuddy/`; the dashboard card's sou
 
 | File | Responsibility |
 |---|---|
-| `__init__.py` | Setup and unload: the key's check, BamBuddy's printers, the devices, one coordinator per printer added in the options, a repair issue for a printer BamBuddy no longer lists; the actions and the card, once per run; migrating older entries; deleting a device from its device page (not the instance's, nor a smart plug BamBuddy still links, nor an AMS unit its printer still reports) |
+| `__init__.py` | Setup and unload: the key's check, BamBuddy's printers, the devices, one coordinator per printer added in the options, a repair issue for a printer BamBuddy no longer lists; the actions and the card, once per run; Configure's live update settings taken by the running entry (any other change of the entry reloads it); migrating older entries; deleting a device from its device page (not the instance's, nor a smart plug BamBuddy still links, nor an AMS unit its printer still reports) |
 | `api.py` | `BamBuddyClient` — every HTTP call to BamBuddy, and its errors; `normalise_url` for the address |
 | `key.py` | The API key while the entry runs: checked every ten minutes and whenever BamBuddy refuses a request; the only place that starts a reauthentication (a 401 confirmed a minute later, never for an unreachable BamBuddy), and ends it once a check finds the key fine again |
 | `auto_off.py` | The switch-off after the print: Home Assistant's own, for the plug that powers a printer (waits for the nozzles, the AMS, a target; never beside BamBuddy's own auto off) |
@@ -107,9 +107,9 @@ The integration lives in `custom_components/bambuddy/`; the dashboard card's sou
 | `button.py` | Pause, resume, stop, plate cleared, clear HMS errors, refresh status; a script plug's Run; "Don't switch off this time" |
 | `camera.py` | MJPEG stream and snapshot through BamBuddy's camera proxy, with a stream token kept for 55 minutes |
 | `cards.py` | Serves the dashboard card's bundle and adds it to every dashboard |
-| `config_flow.py` | Setup (address, API key, certificate check, printers), reauthentication, reconfiguration (a new address, its printers matched by serial number), and the options (Configure): add and remove printers |
+| `config_flow.py` | Setup (address, API key, certificate check, printers), reauthentication, reconfiguration (a new address, its printers matched by serial number), and the options (Configure): Manage printers (add and remove them) and Settings (the live updates, with a test of the connection) |
 | `const.py` | Domain, config keys, intervals, the minimum BamBuddy version, print speed modes |
-| `coordinator.py` | One coordinator per printer (`/printers/{id}/status` every 10 seconds; print hours, BamBuddy's name and details once a minute, and the device names after them; its maintenance every 10 minutes and after a print), the instance's (`/archives/stats` every minute, `/system/info` every 5 minutes), the update checks' (`/updates/check`, `/firmware/updates` every 6 hours) and the smart plugs' (the list every minute, each plug's state every 15 seconds) |
+| `coordinator.py` | One coordinator per printer (`/printers/{id}/status` every 10 seconds, when BamBuddy's live connection tells of a change, and twice after a command; print hours, BamBuddy's name and details once a minute, and the device names after them; its maintenance every 10 minutes and after a print), the instance's (`/archives/stats` every minute, `/system/info` every 5 minutes), the update checks' (`/updates/check`, `/firmware/updates` every 6 hours) and the smart plugs' (the list every minute, each plug's state every 15 seconds) |
 | `diagnostics.py` | Entry and device diagnostics, redacted (`TO_REDACT`) |
 | `entity.py` | Device infos; the base entities — availability, unique IDs and entity IDs; `async_run_command`, how a command reaches a printer |
 | `fan.py` | Part cooling, auxiliary, chamber or exhaust, and left auxiliary fan |
@@ -117,6 +117,7 @@ The integration lives in `custom_components/bambuddy/`; the dashboard card's sou
 | `icons.json` | Entity and action icons |
 | `image.py` | The cover image of the current print job |
 | `light.py` | Chamber light |
+| `live.py` | BamBuddy's live connection (its WebSocket), one per entry: a printer's change reads its status at once (`BamBuddyPrinterCoordinator.async_pushed`, at most once per the gap set under Configure → Settings → Live updates, a second by default), switched off and on there without a reload; between two attempts only a timer runs, never a task |
 | `models.py` | What BamBuddy's printer status means, independent of entities: print status and stage, what each model has, AMS units and slots, names and keys |
 | `number.py` | Target temperatures; the camera's frame rate; the switch-off's temperature |
 | `plugs.py` | A smart plug BamBuddy links to a printer: its kind (switch, script, monitor), its role, its device name |

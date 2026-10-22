@@ -10,6 +10,9 @@ CONF_URL = "url"
 CONF_API_KEY = "api_key"
 CONF_VERIFY_SSL = "verify_ssl"
 CONF_PRINTERS = "printers"
+# Configure -> Settings -> Live updates, in the options beside the printers.
+CONF_LIVE_UPDATES = "live_updates"
+CONF_PUSH_GAP = "push_gap"
 CONF_PRINTER_ID = "printer_id"
 CONF_PRINTER_NAME = "printer_name"
 # The printer's serial number: what the entry knows it by.
@@ -69,6 +72,24 @@ HOLD_LIMIT = 3
 # BamBuddy only publishes a command; the printer reports back about a
 # second later.
 REFRESH_AFTER_COMMAND = 1.5
+# Once more a little later: some results the printer reports late, and
+# BamBuddy's live connection never tells of some on their own (the print
+# speed, the chamber target, the detection switches).
+REFRESH_AFTER_COMMAND_AGAIN = 4.0
+# BamBuddy's live connection tells of a printer's change: a read of it at
+# most once in this many seconds by default; what comes meanwhile is read
+# once after.
+PUSH_GAP = 1
+# The gaps Configure -> Settings -> Live updates offers.
+PUSH_GAPS = (1, 2, 5)
+# Waits between two attempts to open the live connection (seconds, each
+# a fifth either way); back to the first after a connection that held this
+# long.
+LIVE_BACKOFF = (1.0, 2.0, 4.0, 8.0, 16.0, 32.0, 60.0)
+LIVE_STEADY = 60.0
+# Configure's test of the live connection: the token and the handshake
+# together, behind a proxy that swallows the request too.
+LIVE_TEST_TIMEOUT = 10.0
 # Smart plugs: BamBuddy's list (from its database) once a minute; each
 # plug's state every 15 s -- BamBuddy asks the plug itself each time --,
 # and 2 s after a switch.

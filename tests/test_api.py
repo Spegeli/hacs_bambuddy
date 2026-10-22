@@ -2,12 +2,15 @@
 what becomes of BamBuddy's answer."""
 from __future__ import annotations
 
+import asyncio
 import logging
 from typing import Any
 from unittest.mock import AsyncMock, patch
 
 import aiohttp
+from multidict import CIMultiDict, CIMultiDictProxy
 import pytest
+import yarl
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from pytest_homeassistant_custom_component.test_util.aiohttp import AiohttpClientMocker
@@ -671,3 +674,116 @@ async def test_an_error_names_its_route_without_the_query(hass: HomeAssistant, a
 
     assert raised.value.path == "GET /printers/3/cover"
     assert STREAM_TOKEN not in raised.value.path
+
+
+# --- BamBuddy's live connection -----------------------------------------------
+
+
+class _Session:
+    """aiohttp's session as far as the socket needs it."""
+
+    def __init__(self, ws_connect: AsyncMock, *, closed: bool = False) -> None:
+        self.ws_connect = ws_connect
+        self.closed = closed
+
+
+def _refusal(status: int) -> aiohttp.WSServerHandshakeError:
+    """A refused handshake as aiohttp raises it: its text names the URL, token included."""
+    url = yarl.URL(f"{API}/ws?token=secret-ws-token")
+    info = aiohttp.RequestInfo(url, "GET", CIMultiDictProxy(CIMultiDict()), url)
+    return aiohttp.WSServerHandshakeError(info, (), status=status, message="Invalid response status")
+
+
+async def test_the_live_token(hass: HomeAssistant, aioclient_mock: AiohttpClientMocker) -> None:
+    """BamBuddy mints a token for its WebSocket; a key with Read Status may ask for one."""
+    aioclient_mock.post(f"{API}/auth/ws-token", json={"token": "abc"})
+
+    assert await _client(hass).get_ws_token() == "abc"
+
+
+@pytest.mark.parametrize(
+    ("answer", "error"),
+    [
+        ({"status": 401, "json": {"detail": "Invalid API key"}}, BamBuddyAuthError),
+        ({"status": 403, "json": {"detail": "API key does not have 'can_read_status' permission"}}, BamBuddyPermissionError),
+        ({"json": {"token": ""}}, BamBuddyBadAnswerError),
+        ({"json": {}}, BamBuddyBadAnswerError),
+    ],
+)
+async def test_a_live_token_refused_or_missing(
+    hass: HomeAssistant, aioclient_mock: AiohttpClientMocker, answer: dict[str, Any], error: type[Exception]
+) -> None:
+    aioclient_mock.post(f"{API}/auth/ws-token", **answer)
+
+    with pytest.raises(error):
+        await _client(hass).get_ws_token()
+
+
+@pytest.mark.parametrize("url", [URL, "https://example.com/bambuddy"])
+async def test_the_socket_opens_with_the_token(url: str) -> None:
+    """At the instance's address, its path kept, the token as the query;
+    aiohttp pings when the socket is quiet, waits for no message, and closes
+    fast: an unload waits for it."""
+    socket = object()
+    ws_connect = AsyncMock(return_value=socket)
+
+    assert await BamBuddyClient(url, API_KEY, _Session(ws_connect)).open_socket("abc") is socket  # type: ignore[arg-type]
+
+    ws_connect.assert_awaited_once()
+    assert ws_connect.await_args is not None
+    (address,), options = ws_connect.await_args
+    assert address == f"{url}/api/v1/ws"
+    assert options["params"] == {"token": "abc"}
+    assert options["heartbeat"] == 30
+    assert options["ssl"] is True
+    assert options["timeout"].ws_receive is None
+    assert options["timeout"].ws_close == 2.0
+
+
+@pytest.mark.parametrize(
+    ("status", "error"),
+    [(401, BamBuddyAuthError), (403, BamBuddyPermissionError), (404, BamBuddyNotFoundError), (500, BamBuddyApiError)],
+)
+async def test_a_refused_socket_says_why_without_its_address(status: int, error: type[BamBuddyApiError]) -> None:
+    """aiohttp's refusal names the URL -- the token travels there."""
+    ws_connect = AsyncMock(side_effect=_refusal(status))
+
+    with pytest.raises(error) as raised:
+        await BamBuddyClient(URL, API_KEY, _Session(ws_connect)).open_socket("secret-ws-token")  # type: ignore[arg-type]
+
+    assert raised.value.status == status
+    assert str(raised.value) == f"HTTP {status}"
+    assert "secret-ws-token" not in repr(raised.value)
+    assert raised.value.__cause__ is None
+    assert raised.value.__context__ is None or raised.value.__suppress_context__
+
+
+@pytest.mark.parametrize("failure", [aiohttp.ClientConnectionError("refused"), TimeoutError(), RuntimeError("Session is closed")])
+async def test_an_unreachable_socket(failure: BaseException) -> None:
+    ws_connect = AsyncMock(side_effect=failure)
+
+    with pytest.raises(BamBuddyConnectionError) as raised:
+        await BamBuddyClient(URL, API_KEY, _Session(ws_connect)).open_socket("secret-ws-token")  # type: ignore[arg-type]
+
+    assert str(raised.value) == f"WebSocket: {type(failure).__name__}"
+    assert raised.value.__cause__ is None
+
+
+async def test_no_socket_once_the_session_closed() -> None:
+    """Home Assistant closed its web session -- it stops."""
+    ws_connect = AsyncMock()
+
+    with pytest.raises(BamBuddyConnectionError):
+        await BamBuddyClient(URL, API_KEY, _Session(ws_connect, closed=True)).open_socket("abc")  # type: ignore[arg-type]
+
+    ws_connect.assert_not_awaited()
+
+
+async def test_a_handshake_that_hangs_gives_up() -> None:
+    """aiohttp's own limit for the upgrade is the session's five minutes."""
+
+    async def hang(*_args: Any, **_kwargs: Any) -> None:
+        await asyncio.Event().wait()
+
+    with patch("custom_components.bambuddy.api._WS_HANDSHAKE_TIMEOUT", 0.01), pytest.raises(BamBuddyConnectionError):
+        await BamBuddyClient(URL, API_KEY, _Session(AsyncMock(side_effect=hang))).open_socket("abc")  # type: ignore[arg-type]

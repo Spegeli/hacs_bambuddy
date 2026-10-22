@@ -31,6 +31,7 @@ from tests.conftest import (
     printers_but,
     set_up,
     setup_integration,
+    WS_TOKEN,
 )
 
 
@@ -80,6 +81,39 @@ async def test_a_printers_device_diagnostics(hass: HomeAssistant, bambuddy_api: 
 
     assert (await async_get_device_diagnostics(hass, entry, printer))["info"]["model"] == "H2D"
     assert "printers" in await async_get_device_diagnostics(hass, entry, instance)
+
+
+async def test_the_diagnostics_tell_the_live_connection(hass: HomeAssistant, bambuddy_api: SimpleNamespace) -> None:
+    """Whether BamBuddy's live connection is open and what it brought: a
+    bug report about late changes needs it. No token, no address."""
+    entry = await set_up(hass, X1C)
+
+    diagnostics = await async_get_config_entry_diagnostics(hass, entry)
+
+    assert diagnostics["live"] == {
+        "enabled": True,
+        "connected": False,
+        "connected_since": None,
+        "last_message": None,
+        "messages": 0,
+        "other_printers": 0,
+        "ignored": 0,
+        "connections": 0,
+        # The tests' client has no socket.
+        "last_error": "WebSocket: no socket in tests",
+        "push_gap": 1,
+    }
+    assert WS_TOKEN not in json.dumps(diagnostics)
+
+
+async def test_the_diagnostics_tell_configures_settings(hass: HomeAssistant, bambuddy_api: SimpleNamespace) -> None:
+    """Switched off in Configure, a read every 5 seconds at most."""
+    entry = make_entry(hass, X1C, live_updates=False, push_gap=5)
+    await setup_integration(hass, entry)
+
+    live = (await async_get_config_entry_diagnostics(hass, entry))["live"]
+
+    assert (live["enabled"], live["push_gap"], live["connections"], live["last_error"]) == (False, 5, 0, None)
 
 
 async def test_the_diagnostics_of_an_entry_that_did_not_load(hass: HomeAssistant, bambuddy_api: SimpleNamespace) -> None:

@@ -50,6 +50,10 @@ PERMISSION_OF = {
 # setting, the key check itself; the camera's picture and stream take the
 # stream token.
 PUBLIC = {"get_version", "get_auth_status", "get_auth_me", "check_key", "get_snapshot", "open_stream", "stream_url"}
+# Calls the integration does without: refused, it reads as it always did.
+# The live connection's token (`websocket:connect`, Read Status -- narrowed
+# to what the key's owner may do, so not every Read Status key gets it).
+OPTIONAL = {"get_ws_token": "websocket:connect"}
 
 
 def test_every_call_needs_a_listed_permission() -> None:
@@ -65,5 +69,5 @@ def test_every_call_to_bambuddy_is_listed() -> None:
         for name, member in inspect.getmembers(BamBuddyClient, inspect.iscoroutinefunction)
         if not name.startswith("_") and re.search(r"self\._(request|object|list|command)\(", inspect.getsource(member))
     }
-    assert calling - set(PERMISSION_OF) - PUBLIC == set()
+    assert calling - set(PERMISSION_OF) - PUBLIC - set(OPTIONAL) == set()
     assert set(PERMISSION_OF) - calling == set()

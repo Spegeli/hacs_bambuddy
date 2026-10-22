@@ -34,3 +34,9 @@ def test_manifest_requires_nothing_home_assistant_ships_itself():
         for requirement in manifest["requirements"]
         if canonicalize_name(Requirement(requirement).name) in ships
     ] == []
+
+
+def test_the_manifest_says_push() -> None:
+    """Most of what users see comes by BamBuddy's live connection now: Home
+    Assistant shows the integration as pushed to, not polling."""
+    assert _json("custom_components/bambuddy/manifest.json")["iot_class"] == "local_push"

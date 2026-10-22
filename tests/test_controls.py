@@ -150,6 +150,36 @@ async def test_a_command_reads_the_status_again_soon(
     assert state_of(hass, "light", printer_uid(entry, "chamber_light")).state == "off"
 
 
+async def test_a_command_reads_again_after_four_seconds(
+    hass: HomeAssistant, bambuddy_api: SimpleNamespace, freezer: FrozenDateTimeFactory
+) -> None:
+    """Some results BamBuddy never tells of on its own -- the print speed,
+    the chamber target, the detection switches: a second read a little
+    later. A new command starts both reads anew."""
+    entry = await set_up(hass, X1C)
+    calls = bambuddy_api.get_status.await_count
+    pause = entity_id(hass, "button", printer_uid(entry, "pause"))
+
+    async def later(seconds: float) -> int:
+        freezer.tick(seconds)
+        async_fire_time_changed(hass)
+        await hass.async_block_till_done()
+        return bambuddy_api.get_status.await_count - calls
+
+    await _call(hass, "button", "press", pause)
+    assert await later(2.5) == 1
+    assert await later(2.5) == 2
+
+    # Now a press, and another 3.5 s later: the first's 4 s read gives way
+    # to the second's two (at 1.5 and 4 s after it).
+    await _call(hass, "button", "press", pause)
+    assert await later(2.5) == 3
+    await _call(hass, "button", "press", pause)
+    assert await later(0.8) == 3
+    assert await later(1.7) == 4
+    assert await later(2.5) == 5
+
+
 @pytest.mark.parametrize(
     ("failure", "key"),
     [

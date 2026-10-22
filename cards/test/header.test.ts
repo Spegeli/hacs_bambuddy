@@ -863,21 +863,22 @@ describe("the printer information", () => {
     const { card } = await cardFor("x1c");
     await openInfo(card);
     expect(text(find(card, "dialog h2"))).toBe("Printer information");
+    // Which printer, what it has, what it does, how it is connected (his order, 2026-10-22).
     expect(rows(card)).toEqual([
-      ["Model", "X1C"],
       ["Name in BamBuddy", "Workshop"],
-      ["Status", "Online"],
-      ["Print status", "Printing"],
-      ["IP address", "192.168.1.42"],
+      ["Model", "X1C"],
       ["Serial number", "00M09A350100123"],
-      ["Network", `Wi-Fi · ${MINUS}52${NBSP}dBm`],
       ["Firmware", "01.08.02.00"],
-      ["Developer mode", "On"],
       ["Nozzles", `1 nozzle · 0.4${NBSP}mm · Hardened steel`],
       ["Print hours", "559 h"],
+      ["Status", "Online"],
+      ["Print status", "Printing"],
+      ["Network", `Wi-Fi · ${MINUS}52${NBSP}dBm`],
+      ["IP address", "192.168.1.42"],
+      ["Developer mode", "On"],
     ]);
     expect(find(card, "dialog .spec-value .chip.tone-ok")).not.toBeNull();
-    expect(findAll(card, "dialog .copy").map((item) => item.getAttribute("aria-label"))).toEqual(["Copy IP address", "Copy serial number"]);
+    expect(findAll(card, "dialog .copy").map((item) => item.getAttribute("aria-label"))).toEqual(["Copy serial number", "Copy IP address"]);
     expect(findAll(card, "dialog .dlg-actions .btn").map(text)).toEqual(["Close"]);
   });
 
@@ -886,10 +887,8 @@ describe("the printer information", () => {
     const [printer, ams] = x1c() as [FakeDevice, FakeDevice];
     const { card } = await cardFor("x1c", { devices: [{ ...printer, via: instanceDevice.id }, ams, instanceDevice] });
     await openInfo(card);
-    expect(rows(card).slice(1, 3)).toEqual([
-      ["Name in BamBuddy", "Workshop"],
-      ["BamBuddy server", "BamBuddy (192.168.1.5)"],
-    ]);
+    // Last: the way from the printer to Home Assistant ends there.
+    expect(rows(card).at(-1)).toEqual(["BamBuddy server", "BamBuddy (192.168.1.5)"]);
     const { card: renamed } = await cardFor("x1c", { devices: [{ ...printer, via: instanceDevice.id }, ams, { ...instanceDevice, nameByUser: "Garage" }] });
     await openInfo(renamed);
     expect(Object.fromEntries(rows(renamed))["BamBuddy server"]).toBe("Garage");
@@ -918,8 +917,8 @@ describe("the printer information", () => {
     await openInfo(card);
     expect(rows(card)).toEqual([
       ["Model", "P1S"],
-      ["Status", "Offline"],
       ["Print hours", "2,411 h"],
+      ["Status", "Offline"],
     ]);
     expect(find(card, "dialog .spec-value .chip.tone-off")).not.toBeNull();
     // No serial number in the registry: nothing to copy.
@@ -974,16 +973,16 @@ describe("the printer information", () => {
     await press(card, "Druckerinformationen");
     expect(text(find(card, "dialog h2"))).toBe("Druckerinformationen");
     expect(rows(card).map(([label]) => label)).toEqual([
-      "Modell",
       "Name in BamBuddy",
-      "Status",
-      "Druckstatus",
+      "Modell",
       "Seriennummer",
-      "Netzwerk",
       "Firmware",
-      "Entwicklermodus",
       "Düsen",
       "Druckstunden",
+      "Status",
+      "Druckstatus",
+      "Netzwerk",
+      "Entwicklermodus",
     ]);
     const shown = Object.fromEntries(rows(card));
     expect(shown["Entwicklermodus"]).toBe("An");

@@ -160,17 +160,32 @@
       "printers_in_use": "Every printer of this BamBuddy server is set up already, through {entries}. To reach the BamBuddy server at another address, use ⋮ → Reconfigure on that entry; to add or remove printers, use “Configure” there."
     },
     "create_entry": {
-      "no_printers": "BamBuddy has no printers yet: the integration starts with BamBuddy's own figures. Once a printer is set up in BamBuddy, add it here under Configure → Add printers."
+      "no_printers": "BamBuddy has no printers yet: the integration starts with BamBuddy's own figures. Once a printer is set up in BamBuddy, add it here under Configure → Manage printers → Add printers."
     }
   },
   "options": {
     "step": {
       "init": {
+        "title": "Configure",
+        "description": "What would you like to change for “{name}”?",
+        "menu_options": {
+          "printers": "Manage printers",
+          "settings": "Settings"
+        }
+      },
+      "printers": {
         "title": "Manage printers",
         "description": "Add printers of “{name}” to Home Assistant or remove them.",
         "menu_options": {
           "add_printer": "Add printers",
           "remove_printer": "Remove printers"
+        }
+      },
+      "settings": {
+        "title": "Settings",
+        "description": "How Home Assistant works with “{name}”.",
+        "menu_options": {
+          "live_updates": "Live updates"
         }
       },
       "add_printer": {
@@ -193,7 +208,50 @@
         "data": {
           "printers": "Printers"
         }
+      },
+      "live_updates": {
+        "title": "Live updates",
+        "description": "BamBuddy's live connection (its WebSocket) tells of most of a printer's changes at once – its status, progress, temperatures and light – and the integration reads the printer then. The rest comes with the read every 10 seconds; after a command from Home Assistant the integration also reads again after 1.5 and 4 seconds.\n\n✓ The live connection is open.",
+        "data": {
+          "live_updates": "Use live updates",
+          "push_gap": "Reads after live messages, per printer at most"
+        },
+        "data_description": {
+          "live_updates": "Off: no live connection and no attempts to open one – the read every 10 seconds and the reads after a command stay.",
+          "push_gap": "Less often spares BamBuddy and Home Assistant's history, with many printers or a small computer, say. Applies only with live updates."
+        },
+        "submit": "Save"
+      },
+      "live_updates_tested": {
+        "title": "Live updates",
+        "description": "BamBuddy's live connection (its WebSocket) tells of most of a printer's changes at once – its status, progress, temperatures and light – and the integration reads the printer then. The rest comes with the read every 10 seconds; after a command from Home Assistant the integration also reads again after 1.5 and 4 seconds.\n\n✓ A test just now opened the live connection.",
+        "data": {
+          "live_updates": "Use live updates",
+          "push_gap": "Reads after live messages, per printer at most"
+        },
+        "data_description": {
+          "live_updates": "Off: no live connection and no attempts to open one – the read every 10 seconds and the reads after a command stay.",
+          "push_gap": "Less often spares BamBuddy and Home Assistant's history, with many printers or a small computer, say. Applies only with live updates."
+        },
+        "submit": "Save"
+      },
+      "live_updates_failed": {
+        "title": "Live updates",
+        "description": "BamBuddy's live connection (its WebSocket) tells of most of a printer's changes at once – its status, progress, temperatures and light – and the integration reads the printer then. The rest comes with the read every 10 seconds; after a command from Home Assistant the integration also reads again after 1.5 and 4 seconds.",
+        "data": {
+          "live_updates": "Use live updates",
+          "push_gap": "Reads after live messages, per printer at most"
+        },
+        "data_description": {
+          "live_updates": "Off: no live connection and no attempts to open one – the read every 10 seconds and the reads after a command stay.",
+          "push_gap": "Less often spares BamBuddy and Home Assistant's history, with many printers or a small computer, say. Applies only with live updates."
+        },
+        "submit": "Save"
       }
+    },
+    "error": {
+      "live_timeout": "The live connection does not open: no answer within 10 seconds.",
+      "live_failed": "The live connection does not open ({error})."
     },
     "abort": {
       "cannot_connect": "“{name}” cannot be reached. Try again later.",
@@ -1172,6 +1230,13 @@
       "options": {
         "same": "The same BamBuddy server at a new address (the server's own figures such as print statistics and storage carry on)",
         "other": "Another BamBuddy server (the server's own figures such as print statistics and storage start afresh and their history so far is deleted)"
+      }
+    },
+    "push_gap": {
+      "options": {
+        "1": "every second",
+        "2": "every 2 seconds",
+        "5": "every 5 seconds"
       }
     }
   }

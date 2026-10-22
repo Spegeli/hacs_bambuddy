@@ -40,7 +40,7 @@ A custom <a href="https://www.home-assistant.io/">Home Assistant</a> integration
 - **Several printers** — add any number of the printers BamBuddy manages; choose them while setting up, add or remove them later
 - **BamBuddy itself** — print statistics, printers online and disk space of your BamBuddy server
 - **Made for Home Assistant** — entity names in English and German, a new API key or address without setting up again, diagnostics without secrets
-- A fresh status every 10 seconds
+- Live status: most changes show as soon as BamBuddy hears of them, with a full read every 10 seconds besides
 
 ---
 
@@ -125,27 +125,28 @@ Next: your printers are under **Settings → Devices & services → BamBuddy**; 
 
 ### Add and remove printers
 
-1. On the BamBuddy entry, choose **Configure** (a ⚙ in recent Home Assistant versions).
+1. On the BamBuddy entry, choose **Configure** (a ⚙ in recent Home Assistant versions), then **Manage printers**.
 2. **Add printers** lists the printers of your BamBuddy that are not added yet.
 3. **Remove printers** removes them from Home Assistant again; nothing changes in BamBuddy. You can also delete a printer's device on its device page (**⋮ → Delete**).
 
-A printer removed in BamBuddy shows up under **Settings → Repairs**; **Remove printer** there removes it here as well, and **Remove printers** under **Configure** removes several at once. Once BamBuddy lists it again (by its serial number), it comes back by itself within a minute, with its devices, entities and history.
+A printer removed in BamBuddy shows up under **Settings → Repairs**; **Remove printer** there removes it here as well, and **Remove printers** under **Configure → Manage printers** removes several at once. Once BamBuddy lists it again (by its serial number), it comes back by itself within a minute, with its devices, entities and history.
 
 ### Changing settings later
 
 - **Another address, key or certificate check:** on the BamBuddy entry, choose **⋮ → Reconfigure**. The form never shows the stored API key: leave the field empty to keep it. A new address leads to a second step: say whether it is the same BamBuddy server or another one — for another, the history of the server's own figures (print statistics, storage …) is deleted, their entity IDs stay. The printers are found there by their serial numbers and keep their devices, entities and history; those the new address lacks are removed with their AMS units and smart plugs, and you can add those only it has. A last step shows the address and which printers stay, go and come: nothing changes until you choose **Switch**.
 - **A key BamBuddy no longer accepts:** Home Assistant asks for a new one — an entry under **Settings → Repairs** and the BamBuddy entry under **Settings → Devices & services** lead you there.
 - **A key that lacks a permission** — its owner lost a right in BamBuddy, say: within ten minutes Home Assistant asks for a new key, under **Settings → Repairs**; the dialog shows which permissions the stored key has (✓) and lacks (✗). Meanwhile the values go on, and a control BamBuddy refuses says why. Gave the owner the right back? The request goes by itself at the next check, within ten minutes; or leave the dialog's field empty to check the stored key at once.
+- **Live updates:** on the BamBuddy entry, choose **Configure → Settings → Live updates**. Each time it opens, the page tests BamBuddy's live connection and says whether it is open or why it does not open. **Use live updates** off: no live connection and no attempts to open one — the read every 10 seconds and the reads after a command stay. **Reads after live messages, per printer at most** spaces the reads the live connection sets off: every second (the default), every 2 or every 5 seconds — less often spares BamBuddy and Home Assistant's history, with many printers or a small computer, say. Saved, both apply at once. Home Assistant's own **⋮ → System options → Enable polling for changes** on the entry stops its timed reads — each printer's 10-second read, the smart plugs', the statistics' and the update checks'; the reads the live connection sets off and those after a command go on.
 
 ### How the integration reads BamBuddy
 
-It asks BamBuddy for
+Unless switched off under **Configure → Settings → Live updates**, it keeps BamBuddy's live connection (its WebSocket) open: when a printer reports a change, the integration reads that printer's status at once — at most once a second, or as set there. Besides, it asks BamBuddy for
 - each printer's status every 10 seconds (a new name in BamBuddy comes with it), its print hours every minute, its maintenance every 10 minutes and after a print;
 - the list of smart plugs every minute, each plug's state every 15 seconds;
 - BamBuddy's print statistics every minute, its version, printers and disk space every 5 minutes;
 - new BamBuddy releases and printer firmware every 6 hours (a check that fails is asked again after 15 minutes).
 
-After a command it reads the printer again a moment later, once the printer has reported back. It needs no cloud and opens no connection to the printers itself: everything goes through BamBuddy.
+After a command it reads the printer again a moment later and once more a few seconds after: the printer reports back to BamBuddy first, and BamBuddy's live connection does not tell of every result. It needs no cloud and opens no connection to the printers itself: everything goes through BamBuddy.
 
 ---
 
@@ -415,7 +416,7 @@ HACS offers 2.0.0 as an update to everyone on a date version.
 - **Filament Track Switch:** a load from an AMS slot must name the nozzle to feed, which `bambuddy.load_filament` and the card do not ask: load it on the printer or in BamBuddy. The external spools load.
 - **AMS Lite without its serial number:** BamBuddy does not report it yet ([maziggy/bambuddy#3348](https://github.com/maziggy/bambuddy/issues/3348)). Until it does, the AMS Lite's entity IDs carry the printer's serial number and the unit's letter (`sensor.ams_lite_0309da000000002_a_slot_1`). Once BamBuddy reports it, they are renamed once and **Settings → Repairs** lists them — see [Per AMS unit](#per-ams-unit).
 - **Firmware and BamBuddy updates** are shown, not installed.
-- **Polling, not push.** The status is at most about 10 seconds old.
+- **Live updates need BamBuddy's WebSocket.** A reverse proxy in front of BamBuddy must pass WebSockets on the address you gave; without them the status is up to 10 seconds old. **Configure → Settings → Live updates** tests it. Some values BamBuddy's live connection does not tell of on their own — HMS messages, the remaining time, the print speed, the chamber and right-nozzle targets, the AI detection switches, the airduct, the AMS humidity: they come with the next change, at the latest with the 10-second read.
 - **Printer names come from BamBuddy:** a printer is named after its name in BamBuddy, then model and serial number, e.g. *Workshop (X1C / 00M00A000000001)*. Rename it in BamBuddy; a name given in Home Assistant goes back to BamBuddy's within a minute, and **Settings → Repairs** says why. Smart plug devices and the BamBuddy device keep a name you give them in Home Assistant. AMS units follow their printer, lettered as on the printer: *Workshop AMS A (AMS 2 Pro / serial number)*, so they sort right under it.
 - **Cast** does not show the dashboard card.
 - **No icon before Home Assistant 2026.3:** older versions take an integration's icon only from Home Assistant's brands repository, which has none for BamBuddy; from 2026.3 on, the integration brings its own.
@@ -438,6 +439,9 @@ With *Print status* `offline`, BamBuddy lost the printer: it is off, asleep or o
 
 **A printer has only a few entities, and its name shows no model.**
 BamBuddy has no model stored for it (it detects none for a printer added by hand), and the integration cannot find it out. Open the printer in BamBuddy, enter its model and save: within a minute the device gets the model in its name and the entities that model has. Entities created before keep their entity IDs, which say `printer` in place of the model (`sensor.printer_<serial>_print_status`).
+
+**Changes show only seconds later.**
+The integration hears of a printer's changes through BamBuddy's live connection (its WebSocket). Open **Configure → Settings → Live updates** on the BamBuddy entry: the page tests the connection. `HTTP 404`: no WebSocket answered at BamBuddy's address. BamBuddy answers 404 when the request reaches it without the WebSocket upgrade, which usually means a proxy in front of it does not pass WebSockets. `HTTP 403`: the connection was refused. BamBuddy refuses the socket when its token is missing or not valid, and the token when the API key's owner may not connect; a proxy can refuse either. Any other text says what failed instead. Behind a proxy that will not pass them, turn **Use live updates** off there: the integration then stops trying. The entry's diagnostics (**⋮ → Download diagnostics**) show the same under `live` (`enabled`, `connected`, `last_error`). Meanwhile everything goes on with the 10-second read.
 
 **The camera shows nothing.**
 The printer's live view must be on, and most printers allow one camera connection at a time: close Bambu Studio's or Bambu Handy's camera view.

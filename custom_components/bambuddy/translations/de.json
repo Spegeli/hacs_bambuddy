@@ -160,17 +160,32 @@
       "printers_in_use": "Jeder Drucker dieses BamBuddy-Servers ist schon eingerichtet, über {entries}. Um den BamBuddy-Server unter einer anderen Adresse zu erreichen, nutze bei diesem Eintrag ⋮ → Neu konfigurieren; Drucker fügst du dort über „Konfigurieren“ hinzu oder entfernst sie."
     },
     "create_entry": {
-      "no_printers": "In BamBuddy ist noch kein Drucker eingerichtet: Die Integration beginnt mit den Zahlen von BamBuddy selbst. Sobald in BamBuddy ein Drucker eingerichtet ist, ergänze ihn hier über „Konfigurieren“ → „Drucker hinzufügen“."
+      "no_printers": "In BamBuddy ist noch kein Drucker eingerichtet: Die Integration beginnt mit den Zahlen von BamBuddy selbst. Sobald in BamBuddy ein Drucker eingerichtet ist, ergänze ihn hier über „Konfigurieren“ → „Drucker verwalten“ → „Drucker hinzufügen“."
     }
   },
   "options": {
     "step": {
       "init": {
+        "title": "Konfigurieren",
+        "description": "Was möchtest du für „{name}“ ändern?",
+        "menu_options": {
+          "printers": "Drucker verwalten",
+          "settings": "Einstellungen"
+        }
+      },
+      "printers": {
         "title": "Drucker verwalten",
-        "description": "Füge Drucker von „{name}“ zu Home Assistant hinzu oder entferne sie.",
+        "description": "Drucker von „{name}“ zu Home Assistant hinzufügen oder entfernen.",
         "menu_options": {
           "add_printer": "Drucker hinzufügen",
           "remove_printer": "Drucker entfernen"
+        }
+      },
+      "settings": {
+        "title": "Einstellungen",
+        "description": "Wie Home Assistant mit „{name}“ arbeitet.",
+        "menu_options": {
+          "live_updates": "Live-Updates"
         }
       },
       "add_printer": {
@@ -193,7 +208,50 @@
         "data": {
           "printers": "Drucker"
         }
+      },
+      "live_updates": {
+        "title": "Live-Updates",
+        "description": "BamBuddy meldet über seine Live-Verbindung (WebSocket) die meisten Änderungen eines Druckers sofort, etwa Status, Fortschritt, Temperaturen und Licht, und die Integration liest den Drucker dann gleich. Den Rest bringt die Abfrage alle 10 Sekunden; nach einem Befehl aus Home Assistant fragt die Integration zusätzlich nach 1,5 und 4 Sekunden nach.\n\n✓ Die Live-Verbindung steht.",
+        "data": {
+          "live_updates": "Live-Updates verwenden",
+          "push_gap": "Abfragen nach Live-Meldungen, pro Drucker höchstens"
+        },
+        "data_description": {
+          "live_updates": "Aus: keine Live-Verbindung und keine Verbindungsversuche – es bleiben die Abfrage alle 10 Sekunden und die Nachfragen nach einem Befehl.",
+          "push_gap": "Seltener schont BamBuddy und den Verlauf in Home Assistant, etwa bei vielen Druckern oder einem kleinen Rechner. Wirkt nur mit Live-Updates."
+        },
+        "submit": "Speichern"
+      },
+      "live_updates_tested": {
+        "title": "Live-Updates",
+        "description": "BamBuddy meldet über seine Live-Verbindung (WebSocket) die meisten Änderungen eines Druckers sofort, etwa Status, Fortschritt, Temperaturen und Licht, und die Integration liest den Drucker dann gleich. Den Rest bringt die Abfrage alle 10 Sekunden; nach einem Befehl aus Home Assistant fragt die Integration zusätzlich nach 1,5 und 4 Sekunden nach.\n\n✓ Ein Test eben hat die Live-Verbindung aufgebaut.",
+        "data": {
+          "live_updates": "Live-Updates verwenden",
+          "push_gap": "Abfragen nach Live-Meldungen, pro Drucker höchstens"
+        },
+        "data_description": {
+          "live_updates": "Aus: keine Live-Verbindung und keine Verbindungsversuche – es bleiben die Abfrage alle 10 Sekunden und die Nachfragen nach einem Befehl.",
+          "push_gap": "Seltener schont BamBuddy und den Verlauf in Home Assistant, etwa bei vielen Druckern oder einem kleinen Rechner. Wirkt nur mit Live-Updates."
+        },
+        "submit": "Speichern"
+      },
+      "live_updates_failed": {
+        "title": "Live-Updates",
+        "description": "BamBuddy meldet über seine Live-Verbindung (WebSocket) die meisten Änderungen eines Druckers sofort, etwa Status, Fortschritt, Temperaturen und Licht, und die Integration liest den Drucker dann gleich. Den Rest bringt die Abfrage alle 10 Sekunden; nach einem Befehl aus Home Assistant fragt die Integration zusätzlich nach 1,5 und 4 Sekunden nach.",
+        "data": {
+          "live_updates": "Live-Updates verwenden",
+          "push_gap": "Abfragen nach Live-Meldungen, pro Drucker höchstens"
+        },
+        "data_description": {
+          "live_updates": "Aus: keine Live-Verbindung und keine Verbindungsversuche – es bleiben die Abfrage alle 10 Sekunden und die Nachfragen nach einem Befehl.",
+          "push_gap": "Seltener schont BamBuddy und den Verlauf in Home Assistant, etwa bei vielen Druckern oder einem kleinen Rechner. Wirkt nur mit Live-Updates."
+        },
+        "submit": "Speichern"
       }
+    },
+    "error": {
+      "live_timeout": "Die Live-Verbindung kommt nicht zustande: keine Antwort innerhalb von 10 Sekunden.",
+      "live_failed": "Die Live-Verbindung kommt nicht zustande ({error})."
     },
     "abort": {
       "cannot_connect": "„{name}“ ist nicht erreichbar. Versuche es später noch einmal.",
@@ -1172,6 +1230,13 @@
       "options": {
         "same": "Derselbe BamBuddy-Server unter neuer Adresse (die Werte des Servers wie Druckstatistik und Speicherplatz laufen weiter)",
         "other": "Ein anderer BamBuddy-Server (die Werte des Servers wie Druckstatistik und Speicherplatz beginnen neu, ihr bisheriger Verlauf wird gelöscht)"
+      }
+    },
+    "push_gap": {
+      "options": {
+        "1": "jede Sekunde",
+        "2": "alle 2 Sekunden",
+        "5": "alle 5 Sekunden"
       }
     }
   }

@@ -2263,6 +2263,99 @@ async def test_printers_configured_while_the_entry_sets_up_are_taken(hass: HomeA
         await setup_integration(hass, entry)
 
     reload.assert_called_once_with(entry.entry_id)
+    # The reload's setup opens the live connection, not this one.
+    assert not entry.runtime_data.live.enabled
+
+
+async def test_settings_saved_while_the_entry_unloads_wait_for_its_setup(
+    hass: HomeAssistant, bambuddy_api: SimpleNamespace
+) -> None:
+    """Saved while the entry unloads: the entry on its way out opens
+    nothing -- the next setup takes the settings."""
+    entry = make_entry(hass, X1C, live_updates=False)
+    await setup_integration(hass, entry)
+    unload = hass.config_entries.async_unload_platforms
+
+    async def saved_meanwhile(*args: Any, **kwargs: Any) -> bool:
+        hass.config_entries.async_update_entry(entry, options={**entry.options, "live_updates": True})
+        return await unload(*args, **kwargs)
+
+    with patch.object(hass.config_entries, "async_unload_platforms", saved_meanwhile):
+        assert await hass.config_entries.async_unload(entry.entry_id)
+    await hass.async_block_till_done()
+
+    bambuddy_api.get_ws_token.assert_not_awaited()
+
+
+async def test_settings_saved_while_the_entry_sets_up_apply_without_a_reload(
+    hass: HomeAssistant, bambuddy_api: SimpleNamespace
+) -> None:
+    """Configure -> Settings saved while the entry still sets up: the end of
+    the setup takes them as they are then -- no reload for them."""
+    entry = make_entry(hass, X1C)
+
+    async def saved_meanwhile() -> list[dict[str, Any]]:
+        if "live_updates" not in entry.options:
+            hass.config_entries.async_update_entry(entry, options={**entry.options, "live_updates": False, "push_gap": 5})
+        return []
+
+    bambuddy_api.get_smart_plugs.side_effect = saved_meanwhile
+    with patch.object(hass.config_entries, "async_schedule_reload") as reload:
+        await setup_integration(hass, entry)
+
+    reload.assert_not_called()
+    assert not entry.runtime_data.live.enabled
+    assert entry.runtime_data.printers[X1C].push_gap == 5
+
+
+@pytest.mark.parametrize(
+    "change",
+    [
+        {"data": {"url": URL, "api_key": "a-new-key-for-tests", "verify_ssl": True}},
+        {"data": {"url": "http://bambuddy.example:8000", "api_key": API_KEY, "verify_ssl": True}},
+        {"data": {"url": URL, "api_key": API_KEY, "verify_ssl": False}},
+        {"title": "Workshop BamBuddy"},
+        {"unique_id": "http://bambuddy.example:8000"},
+    ],
+)
+async def test_every_other_change_still_reloads(hass: HomeAssistant, bambuddy_api: SimpleNamespace, change: dict[str, Any]) -> None:
+    """Sign in again, Reconfigure with the same printers, a rename: the
+    entry is set up anew with it -- only Configure's settings are taken in
+    place."""
+    entry = await set_up(hass, X1C)
+    runtime = entry.runtime_data
+
+    hass.config_entries.async_update_entry(entry, **change)
+    await hass.async_block_till_done(wait_background_tasks=True)
+
+    assert entry.state is ConfigEntryState.LOADED
+    assert entry.runtime_data is not runtime
+
+
+async def test_a_printer_change_still_reloads(hass: HomeAssistant, bambuddy_api: SimpleNamespace) -> None:
+    entry = await set_up(hass, X1C)
+    runtime = entry.runtime_data
+
+    hass.config_entries.async_update_entry(entry, options={**entry.options, "printers": [*entry.options["printers"], printer_entry(A1_MINI)]})
+    await hass.async_block_till_done(wait_background_tasks=True)
+
+    assert entry.runtime_data is not runtime
+    assert set(entry.runtime_data.printers) == {X1C, A1_MINI}
+
+
+async def test_a_printer_change_after_a_settings_change_brings_both(hass: HomeAssistant, bambuddy_api: SimpleNamespace) -> None:
+    """Settings saved, and a printer added right after: one reload, and the
+    new setup has the settings too."""
+    entry = await set_up(hass, X1C)
+    runtime = entry.runtime_data
+
+    hass.config_entries.async_update_entry(entry, options={**entry.options, "live_updates": False, "push_gap": 2})
+    hass.config_entries.async_update_entry(entry, options={**entry.options, "printers": [*entry.options["printers"], printer_entry(A1_MINI)]})
+    await hass.async_block_till_done(wait_background_tasks=True)
+
+    assert entry.runtime_data is not runtime
+    assert not entry.runtime_data.live.enabled
+    assert {printer.push_gap for printer in entry.runtime_data.printers.values()} == {2}
 
 
 async def test_a_printer_without_a_model_says_printer_in_its_entity_ids(hass: HomeAssistant, bambuddy_api: SimpleNamespace) -> None:

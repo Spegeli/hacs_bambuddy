@@ -36,12 +36,14 @@ from homeassistant.helpers.selector import SelectSelector
 import pytest
 from pytest_homeassistant_custom_component.common import MockConfigEntry, async_fire_time_changed
 
-from custom_components.bambuddy.api import BamBuddyClient
+from custom_components.bambuddy.api import BamBuddyClient, BamBuddyConnectionError
 from custom_components.bambuddy.const import DOMAIN
 
 URL = "http://bambuddy.local:8000"
 API_KEY = "bb_test_key"
 STREAM_TOKEN = "stream-token-123"
+# The live connection's token; no test holds a socket unless it opens one itself.
+WS_TOKEN = "ws-token-for-tests"
 
 X1C, A1_MINI, P1S, H2D, X1E = 1, 2, 3, 4, 5
 _STATUSES = {
@@ -170,6 +172,8 @@ def bambuddy_api() -> Iterator[SimpleNamespace]:
         ),
         "get_status": AsyncMock(side_effect=lambda printer_id: copy.deepcopy(statuses[printer_id])),
         "get_stream_token": AsyncMock(return_value=STREAM_TOKEN),
+        "get_ws_token": AsyncMock(return_value=WS_TOKEN),
+        "open_socket": AsyncMock(side_effect=BamBuddyConnectionError("WebSocket: no socket in tests")),
         # Nobody else watches: BamBuddy ends the camera connection.
         "stop_camera": AsyncMock(return_value=True),
         "get_snapshot": AsyncMock(return_value=b"jpeg"),
@@ -192,15 +196,16 @@ def bambuddy_api() -> Iterator[SimpleNamespace]:
         yield SimpleNamespace(statuses=statuses, maintenance=maintenance, plug_statuses=plug_statuses, **mocks)
 
 
-def make_entry(hass: HomeAssistant, *printer_ids: int) -> MockConfigEntry:
-    """A BamBuddy entry as the config flow creates it, with these printers;
-    added to Home Assistant, not set up."""
+def make_entry(hass: HomeAssistant, *printer_ids: int, **options: Any) -> MockConfigEntry:
+    """A BamBuddy entry as the config flow creates it, with these printers
+    (and Configure's settings, if given); added to Home Assistant, not set up."""
     entry = MockConfigEntry(
         domain=DOMAIN,
         title="BamBuddy (bambuddy.local)",
         data={"url": URL, "api_key": API_KEY, "verify_ssl": True},
         options={
-            "printers": [printer_entry(printer_id) for printer_id in printer_ids]
+            "printers": [printer_entry(printer_id) for printer_id in printer_ids],
+            **options,
         },
         unique_id=URL,
         version=2,

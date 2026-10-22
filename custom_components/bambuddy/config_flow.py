@@ -17,6 +17,7 @@ from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers.recorder import get_instance
 from homeassistant.helpers.selector import (
+    BooleanSelector,
     SelectOptionDict,
     SelectSelector,
     SelectSelectorConfig,
@@ -40,15 +41,19 @@ from .api import (
 )
 from .const import (
     CONF_API_KEY,
+    CONF_LIVE_UPDATES,
     CONF_PRINTER_NAME,
     CONF_PRINTERS,
+    CONF_PUSH_GAP,
     CONF_URL,
     CONF_VERIFY_SSL,
     DOMAIN,
     MIN_BAMBUDDY_VERSION,
+    PUSH_GAPS,
 )
 from .coordinator import BamBuddyConfigEntry, create_client, find_device, printer_identifier
 from .key import async_check_key
+from .live import async_test, failure_kind, live_settings
 from .models import find_printers, printer_key, printer_name, stored_key, stored_printer as _stored, too_old
 
 def form_schema(fields: dict[Any, Any]) -> Any:
@@ -600,8 +605,8 @@ class BamBuddyConfigFlow(ConfigFlow, domain=DOMAIN):
 
 
 class BamBuddyOptionsFlow(OptionsFlow):
-    """Adding and removing printers (settled: an options flow, not
-    sub-entries)."""
+    """Configure: Manage printers -- adding and removing them (settled: an
+    options flow, not sub-entries) -- and Settings -- the live updates."""
 
     def _client(self) -> BamBuddyClient:
         entry = self.config_entry
@@ -615,10 +620,63 @@ class BamBuddyOptionsFlow(OptionsFlow):
         return list(self.config_entry.options.get(CONF_PRINTERS, []))
 
     async def async_step_init(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
+        return self.async_show_menu(step_id="init", menu_options=["printers", "settings"], description_placeholders=self._named())
+
+    async def async_step_printers(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
         menu = ["add_printer"]
         if self._printers:
             menu.append("remove_printer")
-        return self.async_show_menu(step_id="init", menu_options=menu, description_placeholders=self._named())
+        return self.async_show_menu(step_id="printers", menu_options=menu, description_placeholders=self._named())
+
+    async def async_step_settings(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
+        return self.async_show_menu(step_id="settings", menu_options=["live_updates"], description_placeholders=self._named())
+
+    async def async_step_live_updates(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
+        """The live connection, tested at every opening: the entry's own
+        socket where it is open, else one of the test's own, closed at once.
+        Saved, the running entry takes the settings without a reload."""
+        entry = self.config_entry
+        if user_input is not None:
+            return self.async_create_entry(
+                data={
+                    **entry.options,
+                    CONF_LIVE_UPDATES: user_input[CONF_LIVE_UPDATES],
+                    CONF_PUSH_GAP: int(user_input[CONF_PUSH_GAP]),
+                }
+            )
+        settings = live_settings(entry.options)
+        schema = form_schema(
+            {
+                # A switch: Home Assistant writes a checkbox's help in 10 px.
+                vol.Required(CONF_LIVE_UPDATES, default=settings.enabled): BooleanSelector(),
+                vol.Required(CONF_PUSH_GAP, default=str(settings.push_gap)): SelectSelector(
+                    SelectSelectorConfig(
+                        options=[str(gap) for gap in PUSH_GAPS], translation_key=CONF_PUSH_GAP, mode=SelectSelectorMode.LIST
+                    )
+                ),
+            }
+        )
+        if entry.state is ConfigEntryState.LOADED and entry.runtime_data.live.connected:
+            return self.async_show_form(step_id="live_updates", data_schema=schema)
+        try:
+            await async_test(self._client())
+        except Exception as err:  # noqa: BLE001 - shown by its kind, never its text: that may carry the URL with the token
+            # Only what is sure: no answer within the limit, else the kind
+            # -- an HTTP code's cause is not known from here (the README's
+            # troubleshooting names the likely ones).
+            return self.async_show_form(
+                step_id="live_updates_failed",
+                data_schema=schema,
+                errors={"base": "live_timeout" if isinstance(err, TimeoutError) else "live_failed"},
+                description_placeholders={"error": failure_kind(err)},
+            )
+        # Up to ten seconds later: the entry may have reloaded meanwhile.
+        if entry.state is ConfigEntryState.LOADED:
+            entry.runtime_data.live.async_retry_now()
+        return self.async_show_form(step_id="live_updates_tested", data_schema=schema)
+
+    async_step_live_updates_tested = async_step_live_updates
+    async_step_live_updates_failed = async_step_live_updates
 
     def _named(self) -> dict[str, str]:
         """The entry's name, for the texts: Home Assistant titles an ending

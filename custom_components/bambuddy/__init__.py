@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Mapping
 from datetime import datetime
 from functools import partial
 import logging
@@ -33,9 +34,11 @@ from .auto_off import ENTITIES as AUTO_OFF_ENTITIES, gets_auto_off
 from .cards import async_register_card
 from .const import (
     CONF_API_KEY,
+    CONF_LIVE_UPDATES,
     CONF_PRINTER_ID,
     CONF_PRINTER_NAME,
     CONF_PRINTERS,
+    CONF_PUSH_GAP,
     CONF_SERIAL,
     CONF_URL,
     CONF_VERIFY_SSL,
@@ -64,6 +67,7 @@ from .coordinator import (
 )
 from .entity import instance_device_info, printer_device_info
 from .key import KeyCheck, KeyGuard
+from .live import BamBuddyLive, live_settings
 from .models import ams_key, display_model, find_printers, model_changed, stored_key, stored_printer, too_old
 from .plugs import plug_identifier
 from . import renames
@@ -147,7 +151,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: BamBuddyConfigEntry) -> 
     try:
         printers, absent = await _async_read_printers(hass, entry, client, listed)
         # Configure may save while this setup runs, before its listener.
-        taken = dict(entry.options)
+        basis = _reload_basis(entry)
         # The printers' smart plugs: when BamBuddy cannot list them, only
         # their entities wait.
         plugs = BamBuddyPlugCoordinator(hass, entry, client, printers)
@@ -181,6 +185,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: BamBuddyConfigEntry) -> 
         plugs,
         key=KeyGuard(hass, entry, client, first),
         auth_enabled=auth_enabled,
+        live=BamBuddyLive(hass, entry, client),
+        basis=basis,
         missing=[
             device.id
             for printer in absent
@@ -192,11 +198,15 @@ async def async_setup_entry(hass: HomeAssistant, entry: BamBuddyConfigEntry) -> 
     entry.async_create_background_task(hass, updates.async_refresh(), "bambuddy update checks")
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
     entry.runtime_data.key.async_start()
+    # BamBuddy's live connection: a printer's change read at once.
+    entry.async_on_unload(entry.runtime_data.live.async_stop)
     _remove_what_the_model_lacks(hass, entry, printers)
-    entry.async_on_unload(entry.add_update_listener(_async_reload))
-    if entry.options != taken:
+    entry.async_on_unload(entry.add_update_listener(_async_entry_updated))
+    if _reload_basis(entry) != basis:
         # Saved in Configure while this setup ran: it reloads once for it.
         async_schedule_reload(hass, entry)
+    # Configure's settings as they are now -- also those saved meanwhile.
+    _async_apply_settings(entry.runtime_data, entry.options)
     if absent:
         # Cancelled as Home Assistant stops: its web session closes then.
         entry.async_on_unload(
@@ -385,7 +395,34 @@ async def _async_auth_enabled(client: BamBuddyClient) -> bool | None:
         return None
 
 
-async def _async_reload(hass: HomeAssistant, entry: ConfigEntry) -> None:
+def _reload_basis(entry: ConfigEntry) -> tuple[Any, ...]:
+    """What a reload of the entry depends on: all but Configure's settings."""
+    options = {key: value for key, value in entry.options.items() if key not in (CONF_LIVE_UPDATES, CONF_PUSH_GAP)}
+    return (dict(entry.data), options, entry.title, entry.unique_id, entry.pref_disable_polling, entry.pref_disable_new_entities)
+
+
+@callback
+def _async_apply_settings(runtime: BamBuddyData, options: Mapping[str, Any]) -> None:
+    """Configure -> Settings -> Live updates, taken by the running entry. A
+    reload on its way takes them with its setup."""
+    if runtime.reloading:
+        return
+    settings = live_settings(options)
+    for coordinator in runtime.printers.values():
+        coordinator.push_gap = settings.push_gap
+    runtime.live.async_set_enabled(settings.enabled)
+
+
+async def _async_entry_updated(hass: HomeAssistant, entry: ConfigEntry) -> None:
+    """A change of the entry sets it up anew -- signing in again,
+    Reconfigure and a rename rely on that --; Configure's settings alone are
+    taken in place. An entry between unload and setup takes them with the
+    setup. Two saves in a row: each run reads the entry as it is then."""
+    runtime: BamBuddyData | None = getattr(entry, "runtime_data", None)
+    if runtime is not None and runtime.basis == _reload_basis(entry):
+        if entry.state is ConfigEntryState.LOADED:
+            _async_apply_settings(runtime, entry.options)
+        return
     await hass.config_entries.async_reload(entry.entry_id)
 
 

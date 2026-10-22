@@ -2,6 +2,7 @@
 printers."""
 from __future__ import annotations
 
+import asyncio
 import importlib
 import json
 import re
@@ -18,6 +19,7 @@ from homeassistant.data_entry_flow import FlowResultType
 from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers import issue_registry as ir
+from homeassistant.helpers.selector import BooleanSelector
 from pytest_homeassistant_custom_component.common import MockConfigEntry, async_mock_service
 
 from custom_components.bambuddy.api import (
@@ -40,6 +42,7 @@ from tests.conftest import (
     H2D,
     P1S,
     URL,
+    WS_TOKEN,
     X1C,
     X1E,
     load_fixture,
@@ -54,6 +57,7 @@ from tests.conftest import (
     set_up,
     setup_integration,
 )
+from tests.test_live import FakeSocket, _settle
 
 _INPUT = {"url": "bambuddy.local:8000/", "api_key": API_KEY, "verify_ssl": True}
 
@@ -616,9 +620,18 @@ async def test_reconfiguration_to_another_entrys_address(
     assert other.unique_id == "http://other:8000"
 
 
+# Configure's menus: the printers' steps under Manage printers, the live
+# updates under Settings.
+_UNDER = {"add_printer": "printers", "remove_printer": "printers", "live_updates": "settings"}
+
+
 async def _options(hass: HomeAssistant, entry: Any, choice: str) -> dict[str, Any]:
+    """Configure opened and its menus walked down to `choice`."""
     result: dict[str, Any] = await hass.config_entries.options.async_init(entry.entry_id)
     assert result["type"] is FlowResultType.MENU
+    if choice in _UNDER:
+        result = await hass.config_entries.options.async_configure(result["flow_id"], {"next_step_id": _UNDER[choice]})  # type: ignore[assignment]
+        assert result["type"] is FlowResultType.MENU
     return await hass.config_entries.options.async_configure(result["flow_id"], {"next_step_id": choice})  # type: ignore[return-value]
 
 
@@ -736,12 +749,41 @@ async def test_removing_one_of_two_printers_with_one_number(hass: HomeAssistant,
     assert [printer["serial_number"] for printer in entry.options["printers"]] == [a1_mini["serial_number"]]
 
 
-async def test_without_printers_the_menu_only_adds(hass: HomeAssistant, bambuddy_api: SimpleNamespace) -> None:
-    entry = make_entry(hass)
+@pytest.mark.parametrize("printers", [(), (X1C,)])
+async def test_configure_opens_with_printers_and_settings(
+    hass: HomeAssistant, bambuddy_api: SimpleNamespace, printers: tuple[int, ...]
+) -> None:
+    entry = make_entry(hass, *printers)
 
     result = await hass.config_entries.options.async_init(entry.entry_id)
 
-    assert result["menu_options"] == ["add_printer"]
+    assert (result["type"], result["step_id"], result["menu_options"]) == (FlowResultType.MENU, "init", ["printers", "settings"])
+    assert result["description_placeholders"] == {"name": entry.title}
+
+
+async def test_without_printers_the_menu_only_adds(hass: HomeAssistant, bambuddy_api: SimpleNamespace) -> None:
+    entry = make_entry(hass)
+
+    result = await _options(hass, entry, "printers")
+
+    assert (result["step_id"], result["menu_options"]) == ("printers", ["add_printer"])
+
+
+async def test_with_printers_the_menu_adds_and_removes(hass: HomeAssistant, bambuddy_api: SimpleNamespace) -> None:
+    entry = make_entry(hass, X1C)
+
+    result = await _options(hass, entry, "printers")
+
+    assert (result["menu_options"], result["description_placeholders"]) == (["add_printer", "remove_printer"], {"name": entry.title})
+
+
+async def test_settings_offer_the_live_updates(hass: HomeAssistant, bambuddy_api: SimpleNamespace) -> None:
+    entry = make_entry(hass, X1C)
+
+    result = await _options(hass, entry, "settings")
+
+    assert (result["step_id"], result["menu_options"]) == ("settings", ["live_updates"])
+    assert result["description_placeholders"] == {"name": entry.title}
 
 
 async def test_the_printer_choice_labels(hass: HomeAssistant, bambuddy_api: SimpleNamespace) -> None:
@@ -1137,18 +1179,20 @@ async def test_the_printers_that_go_by_their_names_of_now(hass: HomeAssistant, b
     assert result["description_placeholders"]["removed"] == "- Bench (A1 Mini / 0309DA000000002)"
 
 
-async def test_an_entry_deleted_before_the_switch(hass: HomeAssistant, bambuddy_api: SimpleNamespace) -> None:
-    """Deleted in another tab while the summary was open: an ending that
-    says so, not "Unknown error" and a traceback."""
+@pytest.mark.parametrize("open_step", ["new_address_all", "confirm_same"])
+async def test_an_entry_deleted_before_the_switch(hass: HomeAssistant, bambuddy_api: SimpleNamespace, open_step: str) -> None:
+    """Deleted in another tab while the server question or the summary was
+    open: an ending that says so, not "Unknown error" and a traceback."""
     entry = await set_up(hass, X1C)
 
     result = await _reconfigure(hass, entry)
     result = await _submit(hass, result["flow_id"], {**_INPUT, "url": "http://192.0.2.99:8000"})
-    result = await _submit(hass, result["flow_id"], {"bambuddy": "same"})
-    assert result["step_id"] == "confirm_same"
+    if open_step == "confirm_same":
+        result = await _submit(hass, result["flow_id"], {"bambuddy": "same"})
+    assert result["step_id"] == open_step
     await hass.config_entries.async_remove(entry.entry_id)
     await hass.async_block_till_done()
-    result = await _submit(hass, result["flow_id"], {})
+    result = await _submit(hass, result["flow_id"], {"bambuddy": "same"} if open_step == "new_address_all" else {})
 
     assert (result["type"], result["reason"]) == (FlowResultType.ABORT, "reconfigure_entry_gone")
 
@@ -1202,8 +1246,7 @@ async def test_adding_printers_with_a_refused_key_says_so(hass: HomeAssistant, b
     entry = await set_up(hass, X1C)
     bambuddy_api.get_printers.side_effect = BamBuddyAuthError(401, "Invalid API key")
 
-    result: dict[str, Any] = await hass.config_entries.options.async_init(entry.entry_id)
-    result = await hass.config_entries.options.async_configure(result["flow_id"], {"next_step_id": "add_printer"})
+    result = await _options(hass, entry, "add_printer")
 
     assert (result["type"], result["reason"]) == (FlowResultType.ABORT, "key_refused")
     assert result["description_placeholders"] == {"name": entry.title}
@@ -1270,6 +1313,9 @@ async def test_configure_names_the_entry_it_belongs_to(hass: HomeAssistant, bamb
 
     menu: dict[str, Any] = await hass.config_entries.options.async_init(entry.entry_id)
     assert (menu["type"], menu["description_placeholders"]) == (FlowResultType.MENU, {"name": "Werkstatt"})
+    for submenu in ("printers", "settings"):
+        menu = await _options(hass, entry, submenu)
+        assert (menu["type"], menu["description_placeholders"]) == (FlowResultType.MENU, {"name": "Werkstatt"})
     for step in ("add_printer", "remove_printer"):
         result = await _options(hass, entry, step)
         assert (result["type"], result["step_id"], result["description_placeholders"]) == (FlowResultType.FORM, step, {"name": "Werkstatt"})
@@ -1281,8 +1327,9 @@ def test_configure_says_the_entrys_name_and_the_key_help_names_all_three() -> No
     for language in ("en", "de"):
         texts = json.loads((INTEGRATION / "translations" / f"{language}.json").read_text(encoding="utf-8"))
         options = texts["options"]
-        assert "{name}" not in options["step"]["init"]["title"]
-        for step in ("init", "add_printer", "remove_printer"):
+        for menu in ("init", "printers", "settings"):
+            assert "{name}" not in options["step"][menu]["title"], (language, menu)
+        for step in ("init", "printers", "settings", "add_printer", "remove_printer"):
             assert "{name}" in options["step"][step]["description"], (language, step)
         for reason in ("cannot_connect", "no_printers", "all_printers_added", "key_refused"):
             assert "{name}" in options["abort"][reason], (language, reason)
@@ -1485,3 +1532,177 @@ async def test_reauth_says_the_stored_keys_owner_is_gone(hass: HomeAssistant, ba
     result = await _submit(hass, result["flow_id"], {})
 
     assert result["errors"] == {"base": "stored_key_owner"}
+
+
+# --- Configure -> Settings -> Live updates ------------------------------------
+
+
+async def _save(hass: HomeAssistant, result: dict[str, Any], live_updates: bool = True, push_gap: str = "1") -> dict[str, Any]:
+    return await hass.config_entries.options.async_configure(  # type: ignore[return-value]
+        result["flow_id"], {"live_updates": live_updates, "push_gap": push_gap}
+    )
+
+
+async def test_live_updates_say_an_open_connection(hass: HomeAssistant, bambuddy_api: SimpleNamespace) -> None:
+    """The entry's own socket is open: no second one for the test."""
+    entry = await set_up(hass, X1C)
+    bambuddy_api.open_socket.side_effect = None
+    bambuddy_api.open_socket.return_value = FakeSocket()
+    entry.runtime_data.live.async_retry_now()
+    await _settle(hass)
+    assert entry.runtime_data.live.connected
+    tokens = bambuddy_api.get_ws_token.await_count
+
+    result = await _options(hass, entry, "live_updates")
+
+    assert (result["type"], result["step_id"], result["errors"]) == (FlowResultType.FORM, "live_updates", None)
+    assert bambuddy_api.get_ws_token.await_count == tokens
+    assert (await _save(hass, result))["type"] is FlowResultType.CREATE_ENTRY
+
+
+async def test_live_updates_test_a_connection_that_is_not_open(hass: HomeAssistant, bambuddy_api: SimpleNamespace) -> None:
+    """The entry's connection waits for its next attempt: the page opens a
+    socket of its own and closes it -- and wakes the connection, which
+    opens its socket at once instead of waiting out its minute."""
+    entry = await set_up(hass, X1C)
+    live = entry.runtime_data.live
+    tested, kept = FakeSocket(), FakeSocket()
+    bambuddy_api.open_socket.side_effect = [tested, kept]
+
+    result = await _options(hass, entry, "live_updates")
+
+    assert (result["type"], result["step_id"], result["errors"]) == (FlowResultType.FORM, "live_updates_tested", None)
+    assert tested.closes == 1
+    await _settle(hass)
+    assert live.connected
+    assert live._socket is kept
+    assert (await _save(hass, result))["type"] is FlowResultType.CREATE_ENTRY
+
+
+@pytest.mark.parametrize(
+    ("call", "error", "key", "kind"),
+    [
+        # The code alone: what it means is not sure from here.
+        ("open_socket", BamBuddyNotFoundError(404, "HTTP 404", "GET /ws"), "live_failed", "HTTP 404"),
+        ("open_socket", BamBuddyPermissionError(403, "HTTP 403", "GET /ws"), "live_failed", "HTTP 403"),
+        ("get_ws_token", BamBuddyPermissionError(403, "API key lacks websocket:connect", "POST /auth/ws-token"), "live_failed", "HTTP 403"),
+        ("open_socket", BamBuddyConnectionError("WebSocket: ClientConnectorError"), "live_failed", "WebSocket: ClientConnectorError"),
+        ("get_ws_token", BamBuddyAuthError(401, "Invalid API key", "POST /auth/ws-token"), "live_failed", "HTTP 401"),
+        ("get_ws_token", BamBuddyConnectionError("POST /auth/ws-token: HTTP 404"), "live_failed", "POST /auth/ws-token: HTTP 404"),
+    ],
+)
+async def test_live_updates_name_what_failed(
+    hass: HomeAssistant, bambuddy_api: SimpleNamespace, call: str, error: Exception, key: str, kind: str
+) -> None:
+    """A proxy that does not pass WebSockets, a refusal, anything else by
+    its kind -- the settings can be saved all the same."""
+    entry = await set_up(hass, X1C)
+    waiting = entry.runtime_data.live._later
+    assert waiting is not None
+    getattr(bambuddy_api, call).side_effect = error
+
+    result = await _options(hass, entry, "live_updates")
+
+    assert (result["type"], result["step_id"], result["errors"]) == (FlowResultType.FORM, "live_updates_failed", {"base": key})
+    assert result["description_placeholders"] == {"error": kind}
+    # A test that failed leaves the entry's connection waiting as it was.
+    await _settle(hass)
+    assert entry.runtime_data.live._later is waiting
+    assert (await _save(hass, result, live_updates=False))["type"] is FlowResultType.CREATE_ENTRY
+    assert entry.options["live_updates"] is False
+
+
+async def test_live_updates_give_up_after_ten_seconds(hass: HomeAssistant, bambuddy_api: SimpleNamespace) -> None:
+    """A proxy that swallows the request: the page shows after the limit."""
+    entry = await set_up(hass, X1C)
+    waiting = entry.runtime_data.live._later
+
+    async def never(*_: Any) -> str:
+        await asyncio.Event().wait()
+        return WS_TOKEN
+
+    bambuddy_api.get_ws_token.side_effect = never
+    with patch("custom_components.bambuddy.live.LIVE_TEST_TIMEOUT", 0.05):
+        result = await _options(hass, entry, "live_updates")
+
+    # A line of its own: no answer within the limit.
+    assert (result["step_id"], result["errors"]) == ("live_updates_failed", {"base": "live_timeout"})
+    assert result["description_placeholders"] == {"error": "TimeoutError"}
+    await _settle(hass)
+    assert entry.runtime_data.live._later is waiting
+    assert (await _save(hass, result))["type"] is FlowResultType.CREATE_ENTRY
+
+
+async def test_live_updates_while_switched_off_still_test(hass: HomeAssistant, bambuddy_api: SimpleNamespace) -> None:
+    """Off: the page tests all the same; the entry stays without a socket."""
+    entry = make_entry(hass, X1C, live_updates=False)
+    await setup_integration(hass, entry)
+    socket = FakeSocket()
+    bambuddy_api.open_socket.side_effect = None
+    bambuddy_api.open_socket.return_value = socket
+
+    result = await _options(hass, entry, "live_updates")
+
+    assert result["step_id"] == "live_updates_tested"
+    assert socket.closes == 1
+    await _settle(hass)
+    assert bambuddy_api.get_ws_token.await_count == 1
+    assert not entry.runtime_data.live.connected
+    assert (await _save(hass, result, live_updates=False))["type"] is FlowResultType.CREATE_ENTRY
+
+
+async def test_live_updates_on_an_entry_that_did_not_load(hass: HomeAssistant, bambuddy_api: SimpleNamespace) -> None:
+    """The entry waits for BamBuddy: the page tests with a client of its
+    own; what is saved there the next setup takes."""
+    bambuddy_api.get_printers.side_effect = BamBuddyConnectionError("refused")
+    entry = make_entry(hass, X1C)
+    await hass.config_entries.async_setup(entry.entry_id)
+    await hass.async_block_till_done()
+    assert entry.state is ConfigEntryState.SETUP_RETRY
+    socket = FakeSocket()
+    bambuddy_api.open_socket.side_effect = None
+    bambuddy_api.open_socket.return_value = socket
+
+    result = await _options(hass, entry, "live_updates")
+    assert (result["step_id"], socket.closes) == ("live_updates_tested", 1)
+    result = await _save(hass, result, live_updates=False, push_gap="5")
+    assert result["type"] is FlowResultType.CREATE_ENTRY
+
+    bambuddy_api.get_printers.side_effect = None
+    await hass.config_entries.async_reload(entry.entry_id)
+    await hass.async_block_till_done()
+    assert entry.state is ConfigEntryState.LOADED
+    assert not entry.runtime_data.live.enabled
+    assert entry.runtime_data.printers[X1C].push_gap == 5
+
+
+async def test_live_updates_show_the_stored_settings(hass: HomeAssistant, bambuddy_api: SimpleNamespace) -> None:
+    entry = make_entry(hass, X1C, live_updates=False, push_gap=5)
+
+    result = await _options(hass, entry, "live_updates")
+
+    schema = result["data_schema"].schema
+    assert {str(key): key.default() for key in schema} == {"live_updates": False, "push_gap": "5"}
+    gap = next(value for key, value in schema.items() if str(key) == "push_gap")
+    assert (gap.config["options"], gap.config["translation_key"], gap.config["mode"]) == (["1", "2", "5"], "push_gap", "list")
+    # A switch, whose help Home Assistant writes as large as the gap's (a
+    # checkbox's in 10 px).
+    assert isinstance(next(value for key, value in schema.items() if str(key) == "live_updates"), BooleanSelector)
+    assert (await _save(hass, result, live_updates=False, push_gap="5"))["type"] is FlowResultType.CREATE_ENTRY
+
+
+async def test_saving_live_updates_keeps_the_printers(hass: HomeAssistant, bambuddy_api: SimpleNamespace) -> None:
+    """Saved: the printers stay, the gap is a number, the running entry
+    takes both at once."""
+    entry = await set_up(hass, X1C, A1_MINI)
+    before = dict(entry.options)
+    runtime = entry.runtime_data
+
+    result = await _save(hass, await _options(hass, entry, "live_updates"), live_updates=False, push_gap="2")
+    await hass.async_block_till_done()
+
+    assert result["type"] is FlowResultType.CREATE_ENTRY
+    assert entry.options == {**before, "live_updates": False, "push_gap": 2}
+    assert entry.runtime_data is runtime
+    assert {printer.push_gap for printer in runtime.printers.values()} == {2}
+    assert not runtime.live.enabled

@@ -3,6 +3,7 @@ uses, under the base URL the user gave (scheme, host, port and the path of
 a reverse proxy, without /api/v1)."""
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Awaitable
 import logging
 from typing import Any
@@ -36,6 +37,13 @@ _PLUG_TIMEOUT = aiohttp.ClientTimeout(total=30, connect=5)
 # BamBuddy asks the printer for its K profiles live: three tries of 5 s.
 _KPROFILES_TIMEOUT = aiohttp.ClientTimeout(total=25, connect=5)
 _PLUG_QUICK = aiohttp.ClientTimeout(total=5, connect=5)
+# BamBuddy's live connection: the upgrade within 10 s (aiohttp's own limit
+# for it is the session's five minutes); then no limit between messages --
+# BamBuddy may be quiet for long --, a ping when it is quiet, and a short
+# close: an unload waits for it.
+_WS_HANDSHAKE_TIMEOUT = 10.0
+_WS_HEARTBEAT = 30.0
+_WS_TIMEOUT = aiohttp.ClientWSTimeout(ws_receive=None, ws_close=2.0)
 _API_PATH = "/api/v1"
 # A gateway's answers: a proxy without BamBuddy behind it.
 _GATEWAY = (502, 503, 504)
@@ -336,6 +344,35 @@ class BamBuddyClient:
         """A camera token, valid for 60 minutes."""
         answer = await self._request("POST", "/printers/camera/stream-token")
         return str(answer.get("token", "")) if isinstance(answer, dict) else ""
+
+    # Live connection
+
+    async def get_ws_token(self) -> str:
+        """A token for BamBuddy's WebSocket, valid for 60 minutes (Read
+        Status may ask for one; with BamBuddy's authentication off any
+        request gets one, and the socket needs none)."""
+        answer = await self._request("POST", "/auth/ws-token")
+        token = answer.get("token") if isinstance(answer, dict) else None
+        if not isinstance(token, str) or not token:
+            raise BamBuddyBadAnswerError(200, "No token in the answer", "POST /auth/ws-token")
+        return token
+
+    async def open_socket(self, token: str) -> aiohttp.ClientWebSocketResponse:
+        """BamBuddy's WebSocket, which tells of every change of a printer.
+        The token travels in the URL, which aiohttp's errors name: none of
+        them goes on, only its kind."""
+        if self._session.closed:
+            raise BamBuddyConnectionError("WebSocket: the session is closed")
+        try:
+            async with asyncio.timeout(_WS_HANDSHAKE_TIMEOUT):
+                return await self._session.ws_connect(
+                    f"{self._api}/ws", params={"token": token}, heartbeat=_WS_HEARTBEAT, ssl=self._ssl, timeout=_WS_TIMEOUT
+                )
+        except aiohttp.WSServerHandshakeError as err:
+            error = _ERRORS.get(err.status, BamBuddyApiError)
+            raise error(err.status, f"HTTP {err.status}", "GET /ws") from None
+        except (aiohttp.ClientError, TimeoutError, RuntimeError) as err:
+            raise BamBuddyConnectionError(f"WebSocket: {type(err).__name__}") from None
 
     def stream_url(self, printer_id: int, token: str, fps: int) -> str:
         return f"{self._api}/printers/{printer_id}/camera/stream?fps={fps}&token={token}"
