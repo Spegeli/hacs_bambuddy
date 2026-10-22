@@ -86,6 +86,20 @@ const MENU_MARGIN = 8;
 /** The groups a press may disable its own button in, nearest first: the
  * keyboard goes to the next button of the nearest one. */
 const FOCUS_GROUPS = [".stepper", ".heat-set", ".heat-row", ".heating"];
+/** How long the browser may take to grant full screen before the window
+ * stands in. */
+const FULLSCREEN_WAIT_MS = 1500;
+/** Each full screen's history entry, told apart from another card's and
+ * from one an earlier page load left: history outlives a reload. */
+let fullscreenEntries = 0;
+const FULLSCREEN_PAGE = Date.now().toString(36);
+/** A card taken off the page keeps its live view this long: a dashboard
+ * may put it back (a masonry view laying its columns out anew appends each
+ * card once it has measured it). */
+const LIVE_GRACE_MS = 2000;
+
+/** A key pressed in an open dialog: the dialog's, not full screen's. */
+const inOpenDialog = (event: Event): boolean => event.composedPath().some((node) => node instanceof HTMLDialogElement && node.open);
 
 export class BamBuddyPrinterCard extends LitElement {
   static override properties = {
@@ -94,6 +108,7 @@ export class BamBuddyPrinterCard extends LitElement {
     config: { state: true },
     view: { state: true },
     liveWanted: { state: true },
+    fullscreen: { state: true },
     pageVisible: { state: true },
     streamFailed: { state: true },
     brokenCover: { state: true },
@@ -117,6 +132,22 @@ export class BamBuddyPrinterCard extends LitElement {
   protected config?: CardConfig;
   protected view: View = "status";
   protected liveWanted = false;
+  /** Off, or the live view full screen: the browser's own, or the window
+   * where the browser has none. */
+  protected fullscreen: "off" | "native" | "window" = "off";
+  /** The window's top layer is shown: the popover to hide on leaving. */
+  private popoverShown = false;
+  /** Each request for full screen, so an answer that comes after the
+   * picture was left again does nothing. */
+  private fullscreenAsk = 0;
+  private fullscreenWait?: ReturnType<typeof setTimeout>;
+  /** The browser is asked and has not answered yet. */
+  private fullscreenAsking = false;
+  /** The history entry this full screen pushed: back leaves full screen,
+   * not the dashboard. */
+  private fullscreenEntry = "";
+  /** Off the page with a live view: it ends when this runs out. */
+  private liveGrace?: ReturnType<typeof setTimeout>;
   protected pageVisible = document.visibilityState !== "hidden";
   protected streamFailed = false;
   protected brokenCover?: string;
@@ -142,6 +173,12 @@ export class BamBuddyPrinterCard extends LitElement {
   private streamSrc?: string;
   /** The frame rate the running stream asked for. */
   private streamFps?: number;
+  /** The stream addresses this page loaded: started again at one of them,
+   * the browser would show the picture it kept of the ended stream and ask
+   * for nothing. A count makes such an address new (Home Assistant ignores
+   * it). */
+  private readonly streamsLoaded = new Set<string>();
+  private streamRun = 0;
   /** The control the keyboard was on last, and when a key was last pressed
    * in the card: a keyboard user's place, kept when a press takes the
    * control away. */
@@ -234,6 +271,15 @@ export class BamBuddyPrinterCard extends LitElement {
 
   // --- Life cycle -----------------------------------------------------------
 
+  /** Off the page for good: the live view ends. */
+  private endLiveAway(): void {
+    this.liveGrace = undefined;
+    this.attached = false;
+    this.leaveFullscreen();
+    this.stopStream();
+    this.liveWanted = false;
+  }
+
   private readonly onVisibility = (): void => {
     this.pageVisible = document.visibilityState !== "hidden";
     if (!this.pageVisible) this.stopStream();
@@ -248,6 +294,11 @@ export class BamBuddyPrinterCard extends LitElement {
 
   override connectedCallback(): void {
     super.connectedCallback();
+    // Back within the grace: the live view goes on (in the window, where the
+    // move ended the browser's full screen).
+    clearTimeout(this.liveGrace);
+    this.liveGrace = undefined;
+    this.pageVisible = document.visibilityState !== "hidden";
     this.attached = true;
     this.inEditor = inCardEditor(this);
     // Back while a check runs: its seconds count on.
@@ -258,12 +309,21 @@ export class BamBuddyPrinterCard extends LitElement {
   }
 
   override disconnectedCallback(): void {
-    this.attached = false;
     document.removeEventListener("visibilitychange", this.onVisibility);
     document.removeEventListener("pointerdown", this.onPointerDown);
     this.menuOpen = false;
-    this.stopStream();
-    this.liveWanted = false;
+    // Leaving the page took the picture out of the top layer, and out of
+    // the browser's full screen -- which says so only a frame later, maybe
+    // after a dashboard put the card back: the window stands in now.
+    this.popoverShown = false;
+    if (this.fullscreen === "native") this.fullscreen = "window";
+    if (this.streamSrc || this.liveWanted || this.fullscreen !== "off") {
+      // A dashboard may put the card back at once: the live view waits.
+      clearTimeout(this.liveGrace);
+      this.liveGrace = setTimeout(() => this.endLiveAway(), LIVE_GRACE_MS);
+    } else {
+      this.endLiveAway();
+    }
     // An error belongs to the moment it happened: none waits for the return.
     clearTimeout(this.errorTimer);
     this.followStarting(false);
@@ -312,6 +372,9 @@ export class BamBuddyPrinterCard extends LitElement {
       this.seenDevices = hass.devices;
       this.refs = findPrinter(hass, this.config.printer);
     }
+    // Full screen ends with the stream (a new frame rate only restarts it):
+    // the camera gone, the live view closed, the page hidden, a broken stream.
+    if ((this.fullscreen !== "off" || this.fullscreenAsking) && !this.streaming()) this.leaveFullscreen();
     // A stream a state ends goes as one that is closed: its image still
     // holds the address here, and the browser would keep loading it.
     if (!this.streaming()) {
@@ -322,7 +385,9 @@ export class BamBuddyPrinterCard extends LitElement {
       if (this.streamSrc && rate !== undefined && rate !== this.streamFps) this.stopStream();
       if (!this.streamSrc) {
         this.streamFps = rate;
-        this.streamSrc = this.streamUrl();
+        const url = this.streamUrl();
+        this.streamSrc = this.streamsLoaded.has(url) ? `${url}&run=${++this.streamRun}` : url;
+        this.streamsLoaded.add(url);
       }
     }
     // A sent target goes once its entity reports a new state; a toggle once
@@ -377,6 +442,16 @@ export class BamBuddyPrinterCard extends LitElement {
     // above it. Measured open: a closed dialog lays out nothing.
     const foot = dialog?.open ? dialog.querySelector<HTMLElement>(".dlg-actions") : null;
     if (dialog && foot) dialog.style.scrollPaddingBottom = `${foot.offsetHeight + 12}px`;
+    // The window's picture goes to the top layer once it is a popover.
+    const live = this.liveElement();
+    if (this.fullscreen === "window" && !this.popoverShown && live?.hasAttribute("popover")) {
+      try {
+        live.showPopover();
+        this.popoverShown = true;
+      } catch {
+        // Its own layer covers the window all the same.
+      }
+    }
   }
 
   /** A press took the keyboard's control away -- a stepper's end, a
@@ -496,6 +571,154 @@ export class BamBuddyPrinterCard extends LitElement {
     this.streamFailed = false;
     this.focusAfterUpdate("button.picture", ".btn.live-btn", '.tabs [aria-selected="true"]');
   };
+
+  private liveElement(): HTMLElement | null {
+    return this.renderRoot.querySelector<HTMLElement>(".live");
+  }
+
+  /** Whether the browser shows this card's picture full screen. Seen from
+   * the card's own shadow root: the document sees only the outermost shadow
+   * host, Home Assistant's own element. */
+  private ownFullscreen(): boolean {
+    const live = this.liveElement();
+    return live !== null && (this.renderRoot as ShadowRoot).fullscreenElement === live;
+  }
+
+  /** The full-screen icon: in, or out again. The browser's full screen is
+   * asked for within the click -- Firefox and Safari allow it only right
+   * after one. The same element grows: no second stream. */
+  private readonly toggleFullscreen = (): void => {
+    if (this.fullscreen !== "off") {
+      this.leaveFullscreen();
+      return;
+    }
+    const live = this.liveElement();
+    if (!live || this.fullscreenAsking) return;
+    this.followFullscreen(true);
+    const ask = ++this.fullscreenAsk;
+    if (document.fullscreenEnabled && typeof live.requestFullscreen === "function") {
+      let asked: Promise<void> | undefined;
+      try {
+        asked = live.requestFullscreen();
+      } catch {
+        asked = undefined;
+      }
+      if (asked && typeof asked.then === "function") {
+        this.fullscreenAsking = true;
+        // Neither granted nor refused in time: the window stands in.
+        this.fullscreenWait = setTimeout(() => this.useWindow(ask), FULLSCREEN_WAIT_MS);
+        asked.then(
+          () => {
+            clearTimeout(this.fullscreenWait);
+            this.fullscreenAsking = false;
+            // Granted after the window stood in, or after the picture was
+            // left again: not wanted.
+            if (this.fullscreen === "window" || ask !== this.fullscreenAsk) document.exitFullscreen().catch(() => undefined);
+          },
+          () => {
+            clearTimeout(this.fullscreenWait);
+            this.fullscreenAsking = false;
+            this.useWindow(ask);
+          },
+        );
+        return;
+      }
+    }
+    this.useWindow(ask);
+  };
+
+  /** Where the browser has no full screen for the picture (an iPhone), or
+   * refuses it: the picture fills the window. */
+  private useWindow(ask: number): void {
+    if (ask !== this.fullscreenAsk) return;
+    this.fullscreenAsking = false;
+    if (this.fullscreen === "off") this.enterMode("window");
+  }
+
+  /** In full screen: an entry in the history of its own -- back (a gesture,
+   * the mouse's button, Alt+Left) leaves full screen, not the dashboard. It
+   * carries no address: Home Assistant's router and dialogs read none of it. */
+  private enterMode(mode: "native" | "window"): void {
+    this.fullscreen = mode;
+    this.fullscreenEntry = `${FULLSCREEN_PAGE}-${++fullscreenEntries}`;
+    history.pushState({ bambuddyFullscreen: this.fullscreenEntry }, "");
+    window.addEventListener("popstate", this.onPopState);
+    this.focusAfterUpdate(".live .live-full");
+  }
+
+  /** Back went past this full screen's entry. One that lands on it -- a
+   * dialog's entry above it gone -- keeps full screen. */
+  private readonly onPopState = (): void => {
+    if (this.ownEntryIsCurrent()) return;
+    this.leaveFullscreen(true);
+  };
+
+  private ownEntryIsCurrent(): boolean {
+    return (history.state as { bambuddyFullscreen?: string } | null)?.bambuddyFullscreen === this.fullscreenEntry;
+  }
+
+  /** The browser's full screen came or went: by the card, Esc, or the
+   * system's back. */
+  private readonly onFullscreenChange = (): void => {
+    if (this.ownFullscreen()) {
+      if (this.fullscreen === "off") this.enterMode("native");
+      return;
+    }
+    if (this.fullscreen === "native") this.leaveFullscreen();
+  };
+
+  /** In full screen nothing behind the picture is reachable: Tab stays on
+   * its icon. */
+  private readonly onFullscreenKey = (event: KeyboardEvent): void => {
+    if (event.key === "Escape") {
+      // The browser's full screen has its own Esc; one that closes a dialog
+      // is the dialog's.
+      if (this.fullscreen !== "window" || inOpenDialog(event)) return;
+      this.leaveFullscreen();
+      return;
+    }
+    if (event.key !== "Tab" || this.fullscreen === "off" || inOpenDialog(event)) return;
+    event.preventDefault();
+    this.renderRoot.querySelector<HTMLElement>(".live .live-full")?.focus();
+  };
+
+  /** Listens while the live view is full screen (or on its way), and no longer. */
+  private followFullscreen(on: boolean): void {
+    if (on) {
+      document.addEventListener("fullscreenchange", this.onFullscreenChange);
+      document.addEventListener("keydown", this.onFullscreenKey);
+    } else {
+      document.removeEventListener("fullscreenchange", this.onFullscreenChange);
+      document.removeEventListener("keydown", this.onFullscreenKey);
+    }
+  }
+
+  /** `fromHistory`: back took the entry already. */
+  private leaveFullscreen(fromHistory = false): void {
+    window.removeEventListener("popstate", this.onPopState);
+    // Its entry goes too -- only while it is the current one: another (a
+    // dialog's, a page's) is not the card's to take.
+    if (!fromHistory && this.fullscreen !== "off" && this.ownEntryIsCurrent()) history.back();
+    this.fullscreen = "off";
+    this.fullscreenAsk += 1;
+    this.fullscreenAsking = false;
+    clearTimeout(this.fullscreenWait);
+    this.followFullscreen(false);
+    if (this.popoverShown) {
+      this.popoverShown = false;
+      try {
+        this.liveElement()?.hidePopover();
+      } catch {
+        // Gone from the top layer already.
+      }
+    }
+    if (this.ownFullscreen()) document.exitFullscreen().catch(() => undefined);
+    // The focus goes back to the card's icon only from inside the picture:
+    // one elsewhere is not the card's to take.
+    if (this.liveElement()?.matches(":focus-within")) {
+      this.focusAfterUpdate(".live .live-full", ".live.failed .btn", "button.picture", '.tabs [aria-selected="true"]');
+    }
+  }
 
   private readonly streamBroke = (): void => {
     this.stopStream();
@@ -1334,7 +1557,13 @@ export class BamBuddyPrinterCard extends LitElement {
     const rate = this.frameRate(true) ?? this.streamFps;
     // Tenths below 1 (a slow chamber image), in the user's language.
     const fps = rate === undefined ? undefined : formatNumber(hass, rate, 1);
-    return html`<div class="live">
+    const full = this.fullscreen !== "off";
+    const fullLabel = t(hass, full ? "fullscreen_close" : "fullscreen_open");
+    // Full screen takes the picture out of the card: the holder keeps its
+    // place, so the page behind does not jump.
+    // The window's picture goes to the top layer where the browser has one.
+    const popover = this.fullscreen === "window" && typeof HTMLElement.prototype.showPopover === "function" ? "manual" : nothing;
+    return html`${full ? html`<div class="live-holder"></div>` : nothing}<div class="live ${full ? "full" : ""}" popover=${popover}>
       <img class="stream" src=${this.streamSrc} alt=${t(hass, "live")} @error=${this.streamBroke} />
       <div class="live-tags">
         <span class="live-badge">${t(hass, "live_badge")}</span>
@@ -1343,6 +1572,9 @@ export class BamBuddyPrinterCard extends LitElement {
           : html`<span class="live-badge live-fps" role="img" aria-label=${t(hass, "fps_aria", { fps })}>${t(hass, "fps_value", { fps })}</span>`}
       </div>
       <div class="live-tools">${settings}${close}</div>
+      <button class="icon-btn live-full" aria-label=${fullLabel} title=${fullLabel} @click=${this.toggleFullscreen}>
+        ${icon(full ? "fullscreenExit" : "fullscreen")}
+      </button>
     </div>`;
   }
 

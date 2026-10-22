@@ -153,6 +153,8 @@ export const en = {
   live: "Live view",
   live_badge: "Live",
   live_stop: "Close the live view",
+  fullscreen_open: "Full screen",
+  fullscreen_close: "Exit full screen",
   camera_failed: "The camera is not available.",
   fps_value: "{fps} fps",
   fps_aria: "{fps} frames a second",

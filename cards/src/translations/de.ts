@@ -150,6 +150,8 @@ export const de: Texts = {
   live: "Livebild",
   live_badge: "Live",
   live_stop: "Livebild schließen",
+  fullscreen_open: "Vollbild",
+  fullscreen_close: "Vollbild verlassen",
   camera_failed: "Die Kamera ist nicht verfügbar.",
   fps_value: "{fps} fps",
   fps_aria: "{fps} Bilder pro Sekunde",

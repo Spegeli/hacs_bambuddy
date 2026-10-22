@@ -1074,6 +1074,54 @@ export const cardStyles = css`
     background: rgba(0, 0, 0, 0.55);
     color: #fff;
   }
+  .live-full {
+    position: absolute;
+    bottom: 6px;
+    right: 6px;
+  }
+  /* Full screen -- the browser's own, or the window where it has none
+     (above Home Assistant's header and sidebar). The whole screen, black,
+     the picture fitted; the tools stay in the card. */
+  .live.full {
+    position: fixed;
+    inset: 0;
+    z-index: 7;
+    width: 100%;
+    height: 100%;
+    max-height: none;
+    margin: 0;
+    border: 0;
+    padding: 0;
+    border-radius: 0;
+    aspect-ratio: auto;
+  }
+  .live.full .live-tools {
+    display: none;
+  }
+  .live.full .live-tags {
+    top: max(8px, env(safe-area-inset-top));
+    left: max(8px, env(safe-area-inset-left));
+    right: auto;
+    bottom: auto;
+  }
+  .live.full .live-full {
+    bottom: max(6px, env(safe-area-inset-bottom));
+    right: max(6px, env(safe-area-inset-right));
+    /* Large enough to find on a phone, a light disc that shows on the
+       black around the picture. */
+    width: 52px;
+    height: 52px;
+    background: rgba(255, 255, 255, 0.18);
+  }
+  .live.full .live-full .icon {
+    width: 30px;
+    height: 30px;
+  }
+  /* Where the picture was while it is full screen. */
+  .live-holder {
+    margin: 6px 16px 0;
+    aspect-ratio: 16 / 9;
+  }
   .live.failed {
     flex-direction: column;
     gap: 8px;
@@ -2852,7 +2900,8 @@ export const cardStyles = css`
     .slots {
       grid-template-columns: repeat(2, minmax(0, 1fr));
     }
-    .live {
+    .live,
+    .live-holder {
       max-height: 360px;
     }
     .control {
@@ -3089,7 +3138,8 @@ export const cardStyles = css`
     .live-tags {
       top: auto;
       bottom: 8px;
-      right: 8px;
+      /* Clear of the full-screen icon in the corner. */
+      right: 46px;
       flex-wrap: wrap-reverse;
     }
     .job {
