@@ -113,7 +113,7 @@
       },
       "confirm_other": {
         "title": "Confirm the switch",
-        "description": "New address: {url}\n\nAnother BamBuddy server: the history of the server's own figures (print statistics, storage …) is deleted. The printers under “Kept” keep theirs.\n\n**Kept:**\n{kept}\n\n**Removed** (with their AMS units and smart plugs):\n{removed}\n\n**Added:**\n{added}\n\nChoose “Switch” to apply this; close the dialog to leave everything as it is.",
+        "description": "New address: {url}\n\nAnother BamBuddy server: the history of the server's own figures (print statistics, storage …) is deleted. The printers under “Kept” keep theirs.\n\n**Smart plugs** of the printers under “Kept” come from the new server, each as a new device: an area or name you gave a plug device starts afresh. A plug that uses the same Tasmota, Home Assistant entity or MQTT topic as before keeps its entity IDs and history; the others get new ones. Plugs the new server does not have for them are removed.\n\n**Kept:**\n{kept}\n\n**Removed** (with their AMS units and smart plugs):\n{removed}\n\n**Added:**\n{added}\n\nChoose “Switch” to apply this; close the dialog to leave everything as it is.",
         "submit": "Switch"
       },
       "new_address_no_printers": {

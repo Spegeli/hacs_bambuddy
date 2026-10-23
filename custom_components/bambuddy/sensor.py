@@ -701,14 +701,13 @@ def _add_plug_sensors(coordinator: BamBuddyPlugCoordinator, async_add_entities: 
     metering gets none -- no "0 W" for nothing); one known
     from before keeps its place while the plug has not answered yet."""
     registry = er.async_get(coordinator.hass)
-    entry_id = coordinator.config_entry.entry_id
 
     def create(plug: Plug) -> list[tuple[str, Callable[[], SensorEntity]]]:
         return [
             (description.key, partial(BamBuddyPlugSensor, coordinator, plug, description))
             for description in PLUG_SENSORS
             if coordinator.reported(plug.id, description.field)
-            or registry.async_get_entity_id("sensor", DOMAIN, f"{entry_id}_plug{plug.id}_{description.key}")
+            or registry.async_get_entity_id("sensor", DOMAIN, coordinator.entity_unique_id(plug.id, description.key) or "")
         ]
 
     async_add_plug_entities(coordinator, async_add_entities, create)

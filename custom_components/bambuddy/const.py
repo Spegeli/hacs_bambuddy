@@ -95,6 +95,10 @@ LIVE_TEST_TIMEOUT = 10.0
 # and 2 s after a switch.
 PLUG_INTERVAL = timedelta(seconds=15)
 PLUG_LIST_INTERVAL = 60.0
+# A smart plug entity ID no entity took for this long loses its statistics.
+PLUG_STATISTICS_KEEP = timedelta(days=10)
+# How often that is looked at, beside each setup.
+PLUG_HISTORY_INTERVAL = timedelta(days=1)
 REFRESH_AFTER_PLUG = 2.0
 # A printer BamBuddy no longer lists: its list read so often until it is back.
 MISSING_INTERVAL = timedelta(seconds=60)

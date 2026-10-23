@@ -36,6 +36,7 @@ from homeassistant.helpers.selector import SelectSelector
 import pytest
 from pytest_homeassistant_custom_component.common import MockConfigEntry, async_fire_time_changed
 
+from custom_components.bambuddy import plug_identity
 from custom_components.bambuddy.api import BamBuddyClient, BamBuddyConnectionError
 from custom_components.bambuddy.const import DOMAIN
 
@@ -61,6 +62,15 @@ INTEGRATION = Path(__file__).parent.parent / "custom_components" / "bambuddy"
 @pytest.fixture(autouse=True)
 def auto_enable_custom_integrations(enable_custom_integrations: None) -> None:
     """Let Home Assistant load custom_components/bambuddy in every test."""
+
+
+# The smart plugs' HMAC secret in every test, so their digests are known.
+TEST_SECRET = bytes(32)
+
+
+@pytest.fixture(autouse=True)
+def plug_secret(hass_storage: dict[str, Any]) -> None:
+    hass_storage["bambuddy.plug_secret"] = {"version": 1, "minor_version": 1, "key": "bambuddy.plug_secret", "data": {"secret": TEST_SECRET.hex()}}
 
 
 def load_fixture(name: str) -> Any:
@@ -251,6 +261,30 @@ def entity_id(hass: HomeAssistant, platform: str, unique_id: str) -> str:
     found = er.async_get(hass).async_get_entity_id(platform, DOMAIN, unique_id)
     assert found is not None, (platform, unique_id)
     return found
+
+
+def plug_unique_id(hass: HomeAssistant, entry_id: str, plug_id: int, key: str) -> str:
+    """A linked plug's entity's unique ID, as the running entry makes it:
+    take it before a change, look it up in the registry after it."""
+    entry = hass.config_entries.async_get_entry(entry_id)
+    assert entry is not None
+    unique_id = entry.runtime_data.plugs.entity_unique_id(plug_id, key)
+    assert unique_id is not None, (plug_id, key)
+    return str(unique_id)
+
+
+def plug_identifier_of(hass: HomeAssistant, entry_id: str, plug_id: int) -> tuple[str, str]:
+    """A linked plug's device identifier, as the running entry makes it."""
+    entry = hass.config_entries.async_get_entry(entry_id)
+    assert entry is not None
+    identifier: tuple[str, str] | None = entry.runtime_data.plugs.identifier(plug_id)
+    assert identifier is not None, plug_id
+    return identifier
+
+
+def plug_digest(plug_type: str, source: str) -> str:
+    """The six characters a plug's entity IDs carry for what it switches."""
+    return plug_identity.source_key(TEST_SECRET, plug_type, source)[:6]
 
 
 def no_entity(hass: HomeAssistant, platform: str, unique_id: str) -> bool:

@@ -32,7 +32,6 @@ from custom_components.bambuddy.api import (
 )
 from custom_components.bambuddy.const import DOMAIN
 from custom_components.bambuddy.coordinator import find_device, missing_issue, names_issue
-from custom_components.bambuddy.plugs import plug_identifier
 
 from tests.conftest import (
     A1_MINI,
@@ -48,6 +47,7 @@ from tests.conftest import (
     load_fixture,
     make_entry,
     next_refresh,
+    plug_identifier_of,
     no_entity,
     printer_device,
     printer_entry,
@@ -2016,7 +2016,7 @@ async def test_plug_and_bambuddy_devices_keep_a_name_given_in_home_assistant(
     bambuddy_api.get_smart_plugs.return_value = load_fixture("smart_plugs.json")
     entry = await set_up(hass, X1C)
     registry = dr.async_get(hass)
-    devices = [find_device(hass, entry.entry_id, identifier) for identifier in (plug_identifier(entry.entry_id, 3), (DOMAIN, entry.entry_id))]
+    devices = [find_device(hass, entry.entry_id, identifier) for identifier in (plug_identifier_of(hass, entry.entry_id, 3), (DOMAIN, entry.entry_id))]
     for device in devices:
         assert device is not None
         registry.async_update_device(device.id, name_by_user="Mine")

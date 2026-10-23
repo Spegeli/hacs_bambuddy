@@ -210,9 +210,9 @@ class AutoOff:
         the limit is over (a time ahead of now counts as now), as a running
         one ends: from now, and "only after the next print" used up.
         `every_print`: the setting as it was stored (its own switch restores
-        it too). `printer`: the printer the phase was stored with -- a plug
-        moved in BamBuddy meanwhile starts over at its new printer, armed as
-        it was."""
+        it too). The settings are the printer's: its switch-off's entities
+        belong to it, whichever plug is its own. `printer`: the printer the
+        phase was stored with -- one stored for another starts over."""
         self.armed = armed
         self.every_print = every_print
         now = dt_util.utcnow()

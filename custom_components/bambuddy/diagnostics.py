@@ -38,6 +38,7 @@ TO_REDACT = {
 # whatever a later BamBuddy adds -- is redacted.
 _PLUG_FIELDS = {
     "id",
+    "created_at",
     "name",
     "plug_type",
     "printer_id",
@@ -67,9 +68,19 @@ def _plug(runtime: BamBuddyData, plug: Plug) -> dict[str, Any]:
         for key, value in plug.info.items()
     }
     auto_off = runtime.auto_offs.get(plug.id)
+    # How the plug is known: never what it switches, its key or the secret.
+    identity = runtime.plugs.identity(plug.id)
     return {
         "info": info,
         "status": plug.status,
+        "identity": None
+        if identity is None
+        else {
+            "digest": identity.digest,
+            "record_known": identity.epoch is not None,
+            "known_by": identity.known_by,
+            "rank": identity.rank,
+        },
         "auto_off": None
         if auto_off is None
         else {

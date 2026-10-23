@@ -69,7 +69,8 @@ from .models import (
     short_name,
     stored_key,
 )
-from .plugs import ENERGY_FIELDS, Plug, main_of, plug_device_name, plug_identifier
+from .plug_identity import PlugIdentity, device_identifier, entity_unique_id, identities, known_from_registry
+from .plugs import ENERGY_FIELDS, Plug, main_of, plug_device_name
 
 if TYPE_CHECKING:
     from .auto_off import AutoOff
@@ -874,10 +875,19 @@ class BamBuddyPlugCoordinator(DataUpdateCoordinator[dict[int, Plug]]):
         entry: BamBuddyConfigEntry,
         client: BamBuddyClient,
         printers: dict[int, BamBuddyPrinterCoordinator],
+        secret: bytes,
     ) -> None:
         super().__init__(hass, _LOGGER, config_entry=entry, name=f"{DOMAIN} plugs", update_interval=PLUG_INTERVAL)
         self.client = client
         self.printers = printers
+        self._secret = secret
+        # The linked plugs as the integration knows them: what they switch
+        # (their entities) and their BamBuddy record (their device).
+        self.identities: dict[int, PlugIdentity] = {}
+        # What the entities were built from: the setup's identities (None:
+        # its list read failed), and those of plugs added later.
+        self.built: dict[int, PlugIdentity] | None = None
+        self._planned = False
         self._listed: list[dict[str, Any]] = []
         self._listed_at: float | None = None
         # The figures each plug has reported once: only those get a sensor.
@@ -904,8 +914,9 @@ class BamBuddyPlugCoordinator(DataUpdateCoordinator[dict[int, Plug]]):
         if self._listed_at is None or now - self._listed_at >= PLUG_LIST_INTERVAL - PLUG_INTERVAL.total_seconds() / 2:
             self._listed = await self._read_list()
             self._listed_at = now
+            self._follow_identities_of(self._listed)
             self._follow_names()
-            self._follow_roles()
+            self._follow_identities()
         linked = [info for info in self._listed if info.get("printer_id") in self.printers]
         # Home Assistant's start waits for the first read: 5 s per plug then.
         patient = self.data is not None
@@ -948,7 +959,37 @@ class BamBuddyPlugCoordinator(DataUpdateCoordinator[dict[int, Plug]]):
         """When the plug went from off to on, while it stays on."""
         return self._on_since.get(plug_id)
 
-    def _follow_roles(self) -> None:
+    @callback
+    def async_built(self, identities: dict[int, PlugIdentity] | None) -> None:
+        """The setup's identities, which its entities are built from."""
+        self.built = identities
+        self._planned = True
+
+    def note_built(self, plug_id: int) -> None:
+        """A plug linked while the entry runs got its entities: its changes
+        reload from now on, as a plug the setup built."""
+        identity = self.identities.get(plug_id)
+        if self.built is not None and identity is not None:
+            self.built.setdefault(plug_id, identity)
+
+    def _follow_identities(self) -> None:
+        """What a built plug switches changed, it was created anew, it
+        ranks otherwise among plugs that switch the same, it is gone, or its
+        role changed: one reload builds it anew. A setup that could not read
+        the list built nothing: the first list read reloads it."""
+        changed = self._roles_changed()
+        if self._planned:
+            if self.built is None:
+                changed = True
+            else:
+                changed = changed or any(
+                    (now := self.identities.get(plug_id)) is None or not now.same_as(built) for plug_id, built in self.built.items()
+                )
+        if changed:
+            _LOGGER.debug("A smart plug changed what it switches, its record, its printer or its role in BamBuddy: the entry reloads")
+            async_schedule_reload(self.hass, self.config_entry)
+
+    def _roles_changed(self) -> bool:
         """A plug moved to another printer in BamBuddy, no longer powering
         it, of another kind, no longer or now the printer's own, or deleted
         there: its device, its card and its switch-off after the print follow
@@ -964,9 +1005,7 @@ class BamBuddyPlugCoordinator(DataUpdateCoordinator[dict[int, Plug]]):
             or any(plug_id not in roles for plug_id in self._roles)
         )
         self._roles = roles
-        if changed:
-            _LOGGER.debug("A smart plug changed its printer or role in BamBuddy, or was deleted there: the entry reloads")
-            async_schedule_reload(self.hass, self.config_entry)
+        return changed
 
     async def _read_list(self) -> list[dict[str, Any]]:
         listed = await fetch(self.client.get_smart_plugs(), entry=self.config_entry)
@@ -983,8 +1022,26 @@ class BamBuddyPlugCoordinator(DataUpdateCoordinator[dict[int, Plug]]):
         """Whether the plug has reported this figure once."""
         return field in self._seen.get(plug_id, set())
 
-    def identifier(self, plug_id: int) -> tuple[str, str]:
-        return plug_identifier(self.config_entry.entry_id, plug_id)
+    def _follow_identities_of(self, listed: list[dict[str, Any]]) -> None:
+        """The linked plugs' identities, from what was known of them: the
+        last read's, else the registry's (a part an answer lacks keeps it)."""
+        known = known_from_registry(self.hass, self.config_entry.entry_id)
+        known.update({plug_id: identity.known() for plug_id, identity in self.identities.items()})
+        linked = [info for info in listed if info.get("printer_id") in self.printers]
+        self.identities = identities(self._secret, linked, known)
+
+    def identity(self, plug_id: int) -> PlugIdentity | None:
+        return self.identities.get(plug_id)
+
+    def identifier(self, plug_id: int) -> tuple[str, str] | None:
+        """A linked plug's device identifier: its BamBuddy record."""
+        identity = self.identities.get(plug_id)
+        return device_identifier(self.config_entry.entry_id, identity) if identity else None
+
+    def entity_unique_id(self, plug_id: int, key: str) -> str | None:
+        """A linked plug's entity's unique ID: what it switches."""
+        identity = self.identities.get(plug_id)
+        return entity_unique_id(self.config_entry.entry_id, identity, key) if identity else None
 
     def main_plug(self, printer_id: int | None) -> int | None:
         """The printer's own plug: BamBuddy's choice among the plugs that
@@ -1001,7 +1058,11 @@ class BamBuddyPlugCoordinator(DataUpdateCoordinator[dict[int, Plug]]):
         registry = dr.async_get(self.hass)
         for info in self._listed:
             plug = Plug(info)
-            device = find_device(self.hass, self.config_entry.entry_id, self.identifier(plug.id))
+            identifier = self.identifier(plug.id)
+            if identifier is None:
+                # Linked to no printer set up here: no device.
+                continue
+            device = find_device(self.hass, self.config_entry.entry_id, identifier)
             name = self.device_name(plug)
             if device is not None and (device.name, device.model) != (name, plug.model):
                 registry.async_update_device(device.id, name=name, model=plug.model)

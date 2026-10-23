@@ -6,8 +6,6 @@ from collections.abc import Iterable
 from dataclasses import dataclass
 from typing import Any, Literal
 
-from .const import DOMAIN
-
 # BamBuddy's plug types, as the device's model.
 PLUG_TYPES = {"tasmota": "Tasmota", "homeassistant": "Home Assistant", "mqtt": "MQTT", "rest": "REST"}
 
@@ -15,12 +13,6 @@ PLUG_TYPES = {"tasmota": "Tasmota", "homeassistant": "Home Assistant", "mqtt": "
 ENERGY_FIELDS = ("power", "today", "total")
 
 type PlugKind = Literal["switch", "script", "monitor"]
-
-
-def plug_identifier(entry_id: str, plug_id: int) -> tuple[str, str]:
-    """A plug device's identifier, by BamBuddy's number: a plug has no
-    serial; a restored BamBuddy database numbers them anew."""
-    return (DOMAIN, f"{entry_id}_plug_{plug_id}")
 
 
 def _number(value: Any) -> float | None:

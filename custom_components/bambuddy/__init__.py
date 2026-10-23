@@ -45,6 +45,7 @@ from .const import (
     DOMAIN,
     MIN_BAMBUDDY_VERSION,
     MISSING_INTERVAL,
+    PLUG_HISTORY_INTERVAL,
 )
 from .coordinator import (
     BamBuddyConfigEntry,
@@ -65,12 +66,12 @@ from .coordinator import (
     names_issue,
     printer_identifier,
 )
-from .entity import instance_device_info, printer_device_info
+from .entity import instance_device_info, plug_device_info, printer_device_info, switch_off_unique_id
 from .key import KeyCheck, KeyGuard
 from .live import BamBuddyLive, live_settings
 from .models import ams_key, display_model, find_printers, model_changed, stored_key, stored_printer, too_old
-from .plugs import plug_identifier
-from . import renames
+from .plug_identity import parse_unique_id
+from . import plug_history, plug_identity, renames
 from .rekey import async_rekey_ams_units
 from .services import async_setup_services
 
@@ -154,8 +155,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: BamBuddyConfigEntry) -> 
         basis = _reload_basis(entry)
         # The printers' smart plugs: when BamBuddy cannot list them, only
         # their entities wait.
-        plugs = BamBuddyPlugCoordinator(hass, entry, client, printers)
+        plugs = BamBuddyPlugCoordinator(hass, entry, client, printers, await plug_identity.async_secret(hass))
         await asyncio.gather(figures, plugs.async_refresh())
+        plugs.async_built(dict(plugs.identities) if plugs.last_update_success else None)
     except BaseException:
         figures.cancel()
         raise
@@ -173,7 +175,10 @@ async def async_setup_entry(hass: HomeAssistant, entry: BamBuddyConfigEntry) -> 
     # A removed printer's names notice goes; a stored one's stays until Home Assistant restarts.
     named = {names_issue(entry.entry_id, stored_key(printer)) for printer in stored}
     _delete_issues(hass, entry, keep=missing | named | noticed)
-    _remove_stale_devices(hass, entry, set(plugs.data or {}) if plugs.last_update_success else None)
+    # What a setup removes is noted at once: its statistics go in time, also
+    # if the platforms fail.
+    await plug_history.async_vanished(hass, _follow_plug_identities(hass, entry, plugs) if plugs.last_update_success else [])
+    _remove_stale_devices(hass, entry)
     if plugs.last_update_success:
         _remove_spare_switch_offs(hass, entry, plugs)
 
@@ -197,6 +202,11 @@ async def async_setup_entry(hass: HomeAssistant, entry: BamBuddyConfigEntry) -> 
     # minute each: the setup does not wait for them, their entities do.
     entry.async_create_background_task(hass, updates.async_refresh(), "bambuddy update checks")
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
+    # What the platforms took again leaves the list; the rest loses its statistics in time.
+    await plug_history.async_purge(hass)
+    entry.async_on_unload(
+        async_track_time_interval(hass, partial(_async_purge_plug_history, hass), PLUG_HISTORY_INTERVAL, cancel_on_shutdown=True)
+    )
     entry.runtime_data.key.async_start()
     # BamBuddy's live connection: a printer's change read at once.
     entry.async_on_unload(entry.runtime_data.live.async_stop)
@@ -304,17 +314,21 @@ def _remove_what_the_model_lacks(hass: HomeAssistant, entry: ConfigEntry, printe
             devices.async_update_device(device.id, model=display_model(printer.info.get("model")) or None)
 
 
+async def _async_purge_plug_history(hass: HomeAssistant, _now: datetime) -> None:
+    await plug_history.async_purge(hass)
+
+
 def _remove_spare_switch_offs(hass: HomeAssistant, entry: ConfigEntry, plugs: BamBuddyPlugCoordinator) -> None:
-    """A plug that no longer gets the switch-off after the print -- another
-    became the printer's own in BamBuddy, or it no longer powers the
-    printer -- loses its entities: they would stay as entities no longer
-    provided."""
+    """A printer whose own plug gets no switch-off after the print -- it has
+    none any more, or one that does not switch -- loses its switch-off's
+    entities: they would stay as entities no longer provided."""
     registry = er.async_get(hass)
-    for plug in (plugs.data or {}).values():
-        if gets_auto_off(plugs, plug):
+    for printer in plugs.printers.values():
+        own = (plugs.data or {}).get(plugs.main_plug(printer.printer_id) or -1)
+        if own is not None and gets_auto_off(plugs, own):
             continue
         for domain, key in AUTO_OFF_ENTITIES:
-            if entity_id := registry.async_get_entity_id(domain, DOMAIN, f"{entry.entry_id}_plug{plug.id}_{key}"):
+            if entity_id := registry.async_get_entity_id(domain, DOMAIN, switch_off_unique_id(entry.entry_id, printer.key, key)):
                 registry.async_remove(entity_id)
 
 
@@ -333,23 +347,71 @@ def _delete_issues(hass: HomeAssistant, entry: ConfigEntry, keep: set[str] | Non
             ir.async_delete_issue(hass, DOMAIN, issue_id)
 
 
-def _remove_stale_devices(hass: HomeAssistant, entry: ConfigEntry, plugs: set[int] | None) -> None:
-    """Devices of printers no longer added (and their AMS units) go, and of
-    plugs BamBuddy no longer links to them -- `plugs` None: the list could
-    not be read, every plug keeps its device."""
+def _follow_plug_identities(hass: HomeAssistant, entry: ConfigEntry, plugs: BamBuddyPlugCoordinator) -> list[str]:
+    """Before the platforms: each linked plug's device (its BamBuddy
+    record) is there, the entities of what it switches and the switch-off
+    of its printer moved onto it -- moved, never deleted and made again,
+    which would lose the user's ID and name on Home Assistant 2025.5 --,
+    then what no plug needs any more goes: entities of a source no plug
+    switches now, devices no plug is -- the first betas' by BamBuddy's
+    number with their entities. The entity IDs it removed."""
+    entry_id = entry.entry_id
+    devices = dr.async_get(hass)
+    entities = er.async_get(hass)
+    linked = {plug_id: plug for plug_id, plug in (plugs.data or {}).items() if plugs.identity(plug_id) is not None}
+    planned: dict[int, str] = {}
+    for plug_id, plug in linked.items():
+        printer = plugs.printers.get(plug.printer_id or -1)
+        identifier = plugs.identifier(plug_id)
+        if identifier is None:
+            continue
+        info = plug_device_info(hass, entry_id, identifier, plugs.device_name(plug), plug.model, printer.identifier if printer else None)
+        planned[plug_id] = devices.async_get_or_create(config_entry_id=entry_id, **info).id
+    by_source = {(identity.internal, identity.rank): plug_id for plug_id, identity in plugs.identities.items() if plug_id in planned}
+    switch_offs = {
+        printer.key: planned[own]
+        for printer in plugs.printers.values()
+        if (own := plugs.main_plug(printer.printer_id)) in planned and gets_auto_off(plugs, linked[own])
+    }
+    removed: list[str] = []
+    for entity in er.async_entries_for_config_entry(entities, entry_id):
+        unique_id = entity.unique_id or ""
+        target: str | None
+        if (parsed := parse_unique_id(entry_id, unique_id)) is not None:
+            owner = by_source.get(parsed[:2])
+            target = planned[owner] if owner is not None else None
+        elif unique_id.startswith(switch_off := f"{entry_id}_switchoff_"):
+            # A printer without an own plug keeps its switch-off for `_remove_spare_switch_offs`.
+            target = next((device for key, device in switch_offs.items() if unique_id.startswith(f"{switch_off}{key}_")), entity.device_id)
+        else:
+            continue
+        if target is None:
+            removed.append(entity.entity_id)
+            entities.async_remove(entity.entity_id)
+        elif entity.device_id != target:
+            entities.async_update_entity(entity.entity_id, device_id=target)
+    kept = set(planned.values())
+    for device in dr.async_entries_for_config_entry(devices, entry_id):
+        is_plug = any(domain == DOMAIN and name.startswith(f"{entry_id}_plug_") for domain, name in device.identifiers)
+        if is_plug and device.id not in kept:
+            removed.extend(entity.entity_id for entity in er.async_entries_for_device(entities, device.id, include_disabled_entities=True))
+            devices.async_remove_device(device.id)
+    return removed
+
+
+def _remove_stale_devices(hass: HomeAssistant, entry: ConfigEntry) -> None:
+    """Devices of printers no longer added (and their AMS units) go; the
+    plugs' are `_follow_plug_identities`'s."""
     configured = {
         printer_identifier(entry.entry_id, stored_key(printer))[1] for printer in entry.options.get(CONF_PRINTERS, [])
     }
     registry = dr.async_get(hass)
-    plug_prefix = plug_identifier(entry.entry_id, 0)[1].removesuffix("0")
+    plug_prefix = f"{entry.entry_id}_plug_"
     for device in dr.async_entries_for_config_entry(registry, entry.entry_id):
         names = {identifier for domain, identifier in device.identifiers if domain == DOMAIN}
         if entry.entry_id in names:
             continue
-        plug = next((name.removeprefix(plug_prefix) for name in names if name.startswith(plug_prefix)), None)
-        if plug is not None:
-            if plugs is not None and not (plug.isdigit() and int(plug) in plugs):
-                registry.async_remove_device(device.id)
+        if any(name.startswith(plug_prefix) for name in names):
             continue
         if not any(name == printer or name.startswith(f"{printer}_ams_") for name in names for printer in configured):
             registry.async_remove_device(device.id)

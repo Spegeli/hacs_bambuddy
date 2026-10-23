@@ -183,3 +183,32 @@ def test_configure_is_named_as_every_supported_version_shows_it():
             assert not re.search(r"\bgear\b|Zahnrad", text), (name, key)
     readme = (INTEGRATION.parent.parent / "README.md").read_text(encoding="utf-8")
     assert "choose **Configure** (⚙)" not in readme
+
+
+# The switch to another server says what becomes of the kept printers' plugs (words as approved).
+_PLUGS_ON_ANOTHER_SERVER = {
+    "en": (
+        "The printers under “Kept” keep theirs.",
+        "**Smart plugs** of the printers under “Kept” come from the new server, each as a new device: an area or name you gave a "
+        "plug device starts afresh. A plug that uses the same Tasmota, Home Assistant entity or MQTT topic as before keeps its entity "
+        "IDs and history; the others get new ones. Plugs the new server does not have for them are removed.",
+        "**Kept:**",
+    ),
+    "de": (
+        "Der Verlauf der Drucker unter „Behalten“ bleibt.",
+        "**Steckdosen** der Drucker unter „Behalten“ kommen vom neuen Server, jede als neues Gerät: Bereich und Name, die du "
+        "einem Steckdosen-Gerät gegeben hast, beginnen neu. Eine Steckdose, die dieselbe Tasmota, Home-Assistant-Entität oder "
+        "dasselbe MQTT-Topic nutzt wie bisher, behält ihre Entitäts-IDs und ihren Verlauf; die anderen bekommen neue. "
+        "Steckdosen, die der neue Server für sie nicht hat, werden entfernt.",
+        "**Behalten:**",
+    ),
+}
+
+
+def test_the_switch_to_another_server_names_the_plugs() -> None:
+    """A paragraph of its own, after the server's history and before the lists."""
+    for name, language in (("strings.json", "en"), ("translations/en.json", "en"), ("translations/de.json", "de")):
+        before, paragraph, after = _PLUGS_ON_ANOTHER_SERVER[language]
+        description = _load(name)["config"]["step"]["confirm_other"]["description"]
+        assert f"{before}\n\n{paragraph}\n\n{after}" in description, name
+        assert paragraph not in _load(name)["config"]["step"]["confirm_same"]["description"], name

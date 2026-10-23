@@ -73,7 +73,7 @@ export function printStatus(hass: Hass, deviceId: string): string | undefined {
 }
 
 // A printer device's identifier: "<entry>_printer_<serial>" -- an AMS
-// unit's goes on with "_ams_<serial>", a plug's is "<entry>_plug_<n>".
+// unit's goes on with "_ams_<serial>", a plug's is "<entry>_plug_<n>_<epoch>".
 const PRINTER_IDENTIFIER = /^[^_]+_printer_[^_]+$/;
 
 /** Whether the device is a BamBuddy printer by its identifier, also before

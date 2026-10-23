@@ -16,7 +16,7 @@ from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 from .api import BamBuddyClient
 from .auto_off import AutoOff, auto_off_for
 from .coordinator import BamBuddyConfigEntry, BamBuddyPlugCoordinator
-from .entity import BamBuddyDescribedEntity, BamBuddyPlugEntity, async_add_plug_entities, async_run_command, async_switch_plug
+from .entity import BamBuddyDescribedEntity, BamBuddyPlugEntity, async_add_plug_entities, async_run_command, async_switch_plug, key_by_printer
 from .models import ACTIVE_STATES, ENDED_STATES, JOB_STATES, PrinterData
 from .plugs import Plug
 
@@ -166,6 +166,7 @@ class BamBuddyAutoOffSkip(BamBuddyPlugEntity, ButtonEntity):
     def __init__(self, coordinator: BamBuddyPlugCoordinator, plug: Plug, auto_off: AutoOff) -> None:
         super().__init__(coordinator, plug, "auto_off_skip")
         self.auto_off = auto_off
+        key_by_printer(self, auto_off.printer, "auto_off_skip")
 
     async def async_added_to_hass(self) -> None:
         await super().async_added_to_hass()

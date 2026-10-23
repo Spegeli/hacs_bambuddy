@@ -15,15 +15,33 @@ from freezegun.api import FrozenDateTimeFactory
 from homeassistant.core import Event, HomeAssistant, State, callback
 from homeassistant.exceptions import ServiceValidationError
 from homeassistant.helpers import entity_registry as er
-from homeassistant.util import dt as dt_util
+from homeassistant.util import dt as dt_util, slugify
 from homeassistant.util.unit_system import US_CUSTOMARY_SYSTEM
 from pytest_homeassistant_custom_component.common import mock_restore_cache, mock_restore_cache_with_extra_data
 import pytest
 
 from custom_components.bambuddy.api import BamBuddyApiError, BamBuddyConnectionError, BamBuddyPermissionError
 from custom_components.bambuddy.const import DOMAIN
+from custom_components.bambuddy.coordinator import find_device
+from custom_components.bambuddy.models import display_model
 
-from tests.conftest import H2D, P1S, X1C, load_fixture, make_entry, next_refresh, set_up, setup_integration, state_at
+from tests.conftest import (
+    A1_MINI,
+    H2D,
+    P1S,
+    X1C,
+    load_fixture,
+    make_entry,
+    next_refresh,
+    plug_identifier_of,
+    plug_unique_id,
+    printer_info,
+    printer_key,
+    printer_serial,
+    set_up,
+    setup_integration,
+    state_at,
+)
 
 # The X1C's plug: Tasmota, powers the printer, BamBuddy's own auto off off.
 PLUG = 3
@@ -39,10 +57,30 @@ def with_plugs(bambuddy_api: SimpleNamespace) -> None:
     bambuddy_api.get_smart_plugs.return_value = _plugs()
 
 
+# The switch-off's keys: its entities belong to the printer, not the plug.
+_SWITCH_OFF_KEYS = ("auto_off", "auto_off_every_print", "auto_off_temperature", "auto_off_skip")
+
+
+def _unique_id(hass: HomeAssistant, entry_id: str, key: str, plug_id: int = PLUG) -> str:
+    if key in _SWITCH_OFF_KEYS:
+        entry = hass.config_entries.async_get_entry(entry_id)
+        assert entry is not None
+        plugs = entry.runtime_data.plugs
+        printer = plugs.printers[plugs.data[plug_id].printer_id or -1]
+        return f"{entry_id}_switchoff_{printer.key}_{key}"
+    return plug_unique_id(hass, entry_id, plug_id, key)
+
+
 def _entity_id(hass: HomeAssistant, entry_id: str, domain: str, key: str, plug_id: int = PLUG) -> str:
-    entity_id = er.async_get(hass).async_get_entity_id(domain, DOMAIN, f"{entry_id}_plug{plug_id}_{key}")
+    entity_id = er.async_get(hass).async_get_entity_id(domain, DOMAIN, _unique_id(hass, entry_id, key, plug_id))
     assert entity_id is not None, key
     return entity_id
+
+
+def _switch_off_entity_id(domain: str, key: str, printer_id: int = X1C) -> str:
+    """The entity ID a printer's switch-off entity is given: model, serial, key."""
+    model = display_model(printer_info(printer_id).get("model")) or "printer"
+    return f"{domain}.{slugify(f'{model} {printer_serial(printer_id)} {key}')}"
 
 
 async def _tick(hass: HomeAssistant, freezer: FrozenDateTimeFactory, seconds: float = 16) -> None:
@@ -94,8 +132,10 @@ async def test_the_entities_of_a_printers_plug(hass: HomeAssistant, bambuddy_api
     assert armed is not None and every is not None and temperature is not None
     assert (armed.state, armed.attributes["phase"], every.state, temperature.state) == ("off", "idle", "off", "50.0")
     assert (temperature.attributes["min"], temperature.attributes["max"], temperature.attributes["unit_of_measurement"]) == (30, 100, "°C")
-    # Only the plug that powers the printer: not its accessory.
-    assert er.async_get(hass).async_get_entity_id("switch", DOMAIN, f"{entry.entry_id}_plug4_auto_off") is None
+    # Only on the plug that powers the printer: not its accessory.
+    switch_off = er.async_get(hass).async_get(_entity_id(hass, entry.entry_id, "switch", "auto_off"))
+    device = find_device(hass, entry.entry_id, plug_identifier_of(hass, entry.entry_id, PLUG))
+    assert switch_off is not None and device is not None and switch_off.device_id == device.id
 
 
 async def test_1_switches_off_once_the_nozzle_is_cool(hass: HomeAssistant, bambuddy_api: SimpleNamespace, freezer: FrozenDateTimeFactory) -> None:
@@ -284,7 +324,7 @@ async def test_11_bambuddys_own_auto_off_comes_first(hass: HomeAssistant, bambud
 
 
 async def test_12_the_wait_goes_on_after_a_restart(hass: HomeAssistant, bambuddy_api: SimpleNamespace, freezer: FrozenDateTimeFactory) -> None:
-    entity_id = f"switch.bambuddy_smart_plug_{PLUG}_auto_off"
+    entity_id = _switch_off_entity_id("switch", "auto_off")
     mock_restore_cache(hass, [State(entity_id, "on", {"phase": "waiting", "since": dt_util.utcnow().isoformat()})])
     _printer(bambuddy_api, state="FINISH", nozzle=30.0)
     entry = make_entry(hass, X1C)
@@ -393,10 +433,10 @@ async def test_settings_survive_a_restart(hass: HomeAssistant, bambuddy_api: Sim
     mock_restore_cache_with_extra_data(
         hass,
         [
-            (State(f"switch.bambuddy_smart_plug_{PLUG}_auto_off", "on", {"phase": "idle"}), {}),
-            (State(f"switch.bambuddy_smart_plug_{PLUG}_auto_off_every_print", "off"), {}),
+            (State(_switch_off_entity_id("switch", "auto_off"), "on", {"phase": "idle"}), {}),
+            (State(_switch_off_entity_id("switch", "auto_off_every_print"), "off"), {}),
             (
-                State(f"number.bambuddy_smart_plug_{PLUG}_auto_off_temperature", "42.0"),
+                State(_switch_off_entity_id("number", "auto_off_temperature"), "42.0"),
                 {"native_value": 42.0, "native_unit_of_measurement": "°C", "native_min_value": 30.0, "native_max_value": 100.0, "native_step": 1.0},
             )
         ],
@@ -415,7 +455,7 @@ async def test_the_threshold_survives_a_restart_in_fahrenheit(hass: HomeAssistan
     """With US customary units Home Assistant stores the state in °F (42 °C reads 107.6): the
     threshold comes back from its own value, not from the state."""
     hass.config.units = US_CUSTOMARY_SYSTEM
-    number = f"number.bambuddy_smart_plug_{PLUG}_auto_off_temperature"
+    number = _switch_off_entity_id("number", "auto_off_temperature")
     mock_restore_cache_with_extra_data(
         hass,
         [
@@ -500,7 +540,7 @@ async def test_a_wait_older_than_the_limit_is_over_after_a_restart(
 ) -> None:
     """Over as a running wait is over: from now, and "only after the next print" used up -- days later
     the next print must not switch the printer off unasked."""
-    entity_id = f"switch.bambuddy_smart_plug_{PLUG}_auto_off"
+    entity_id = _switch_off_entity_id("switch", "auto_off")
     since = (dt_util.utcnow() - timedelta(hours=3)).isoformat()
     mock_restore_cache(hass, [State(entity_id, "on", {"phase": "waiting", "since": since, "every_print": every_print})])
     _printer(bambuddy_api, state="FINISH", nozzle=30.0)
@@ -851,7 +891,7 @@ async def test_a_failed_read_before_the_switch_off_is_not_the_plug(
 async def test_a_restart_keeps_done_while_the_plug_is_off(hass: HomeAssistant, bambuddy_api: SimpleNamespace, freezer: FrozenDateTimeFactory) -> None:
     """Switched off in the evening, Home Assistant restarted at night: still
     done, from the same time, until the plug is on again."""
-    entity_id = f"switch.bambuddy_smart_plug_{PLUG}_auto_off"
+    entity_id = _switch_off_entity_id("switch", "auto_off")
     since = (dt_util.utcnow() - timedelta(hours=8)).isoformat()
     mock_restore_cache(hass, [State(entity_id, "off", {"phase": "done", "since": since})])
     bambuddy_api.plug_statuses[str(PLUG)]["state"] = "OFF"
@@ -901,7 +941,8 @@ async def test_a_plug_moved_while_waiting_does_not_switch_its_new_printer_off(
 ) -> None:
     """Linked to another printer in BamBuddy while its switch-off waits: the
     entry reloads, and the wait -- the last printer's -- does not go over to
-    the new one. Still armed: it acts after the new printer's next print."""
+    the new one. The switch-off belongs to the printer: the new printer's
+    is its own, off until armed there."""
     entry = await set_up(hass, X1C, P1S)
     await _arm(hass, entry.entry_id)
     _printer(bambuddy_api, state="FINISH", nozzle=120.0)
@@ -918,7 +959,7 @@ async def test_a_plug_moved_while_waiting_does_not_switch_its_new_printer_off(
 
     assert not _switched_off(bambuddy_api)
     assert _phase(hass, entry.entry_id) == "idle"
-    assert state_at(hass, _entity_id(hass, entry.entry_id, "switch", "auto_off")).state == "on"
+    assert state_at(hass, _entity_id(hass, entry.entry_id, "switch", "auto_off")).state == "off"
 
 
 async def test_a_wait_restored_for_another_printer_starts_over(
@@ -926,7 +967,7 @@ async def test_a_wait_restored_for_another_printer_starts_over(
 ) -> None:
     """The plug was moved in BamBuddy while Home Assistant was off: the
     stored phase belongs to the last printer."""
-    entity_id = f"switch.bambuddy_smart_plug_{PLUG}_auto_off"
+    entity_id = _switch_off_entity_id("switch", "auto_off")
     since = (dt_util.utcnow() - timedelta(minutes=20)).isoformat()
     mock_restore_cache_with_extra_data(
         hass, [(State(entity_id, "on", {"phase": "waiting", "since": since}), {"printer": "a printer of before"})]
@@ -953,8 +994,15 @@ def _second_plug(api: SimpleNamespace, **changes: Any) -> dict[str, Any]:
 
 
 def _switch_off_of(hass: HomeAssistant, entry_id: str, plug_id: int) -> list[str | None]:
+    """The printer's switch-off entities that sit on this plug's device."""
     registry = er.async_get(hass)
-    return [registry.async_get_entity_id(domain, DOMAIN, f"{entry_id}_plug{plug_id}_{key}") for domain, key in SWITCH_OFF]
+    device = find_device(hass, entry_id, plug_identifier_of(hass, entry_id, plug_id))
+    found: list[str | None] = []
+    for domain, key in SWITCH_OFF:
+        entity_id = registry.async_get_entity_id(domain, DOMAIN, _unique_id(hass, entry_id, key, plug_id))
+        entity = registry.async_get(entity_id) if entity_id else None
+        found.append(entity_id if entity is not None and device is not None and entity.device_id == device.id else None)
+    return found
 
 
 async def test_only_the_printers_own_plug_switches_it_off_after_the_print(hass: HomeAssistant, bambuddy_api: SimpleNamespace) -> None:
@@ -967,7 +1015,7 @@ async def test_only_the_printers_own_plug_switches_it_off_after_the_print(hass: 
     assert None not in _switch_off_of(hass, entry.entry_id, PLUG)
     assert _switch_off_of(hass, entry.entry_id, 11) == [None] * 4
     # Its own switch stays.
-    assert er.async_get(hass).async_get_entity_id("switch", DOMAIN, f"{entry.entry_id}_plug11_power") is not None
+    assert er.async_get(hass).async_get_entity_id("switch", DOMAIN, plug_unique_id(hass, entry.entry_id, 11, "power")) is not None
 
 
 async def test_the_switch_off_follows_bambuddys_pick_of_the_printers_plug(
@@ -987,3 +1035,84 @@ async def test_the_switch_off_follows_bambuddys_pick_of_the_printers_plug(
 
     assert None not in _switch_off_of(hass, entry.entry_id, 11)
     assert _switch_off_of(hass, entry.entry_id, PLUG) == [None] * 4
+
+
+
+# --- The switch-off belongs to its printer ----------------------------------------
+
+
+async def _set_threshold(hass: HomeAssistant, entry_id: str, value: float, plug_id: int = PLUG) -> None:
+    await hass.services.async_call(
+        "number", "set_value", {"entity_id": _entity_id(hass, entry_id, "number", "auto_off_temperature", plug_id), "value": value}, blocking=True
+    )
+
+
+def _settings(hass: HomeAssistant, entry_id: str, plug_id: int) -> tuple[str, str, str]:
+    """Armed, after every print, threshold: as the printer's switch-off shows them."""
+    return (
+        state_at(hass, _entity_id(hass, entry_id, "switch", "auto_off", plug_id)).state,
+        state_at(hass, _entity_id(hass, entry_id, "switch", "auto_off_every_print", plug_id)).state,
+        state_at(hass, _entity_id(hass, entry_id, "number", "auto_off_temperature", plug_id)).state,
+    )
+
+
+async def _reload(hass: HomeAssistant, entry_id: str) -> None:
+    assert await hass.config_entries.async_reload(entry_id)
+    await hass.async_block_till_done()
+
+
+async def test_a_swap_leaves_each_printer_its_settings(hass: HomeAssistant, bambuddy_api: SimpleNamespace) -> None:
+    """The two printers' Tasmotas swapped in BamBuddy: each printer keeps
+    its own settings -- printer 2 is not armed to cut its power because
+    printer 1 was."""
+    entry = await set_up(hass, X1C, A1_MINI)
+    await _arm(hass, entry.entry_id)
+    await _every_print(hass, entry.entry_id)
+    await _set_threshold(hass, entry.entry_id, 40)
+    plugs = load_fixture("smart_plugs.json")
+    three, eight = (next(plug["ip_address"] for plug in plugs if plug["id"] == number) for number in (3, 8))
+    bambuddy_api.get_smart_plugs.return_value = _plugs(**{"3": {"ip_address": eight}, "8": {"ip_address": three}})
+
+    await _reload(hass, entry.entry_id)
+
+    assert _settings(hass, entry.entry_id, PLUG) == ("on", "on", "40.0")
+    assert _settings(hass, entry.entry_id, 8) == ("off", "off", "50.0")
+
+
+async def test_another_own_plug_takes_the_switch_off_along(
+    hass: HomeAssistant, bambuddy_api: SimpleNamespace, freezer: FrozenDateTimeFactory
+) -> None:
+    """Another plug became the printer's own in BamBuddy: the switch-off
+    goes onto its device with its IDs and settings."""
+    second = _second_plug(bambuddy_api, ha_power_entity="sensor.second_power")
+    bambuddy_api.get_smart_plugs.return_value = [*_plugs(), second]
+    entry = await set_up(hass, X1C)
+    await _arm(hass, entry.entry_id)
+    await _set_threshold(hass, entry.entry_id, 40)
+    before = _entity_id(hass, entry.entry_id, "switch", "auto_off")
+
+    bambuddy_api.get_smart_plugs.return_value = [*_plugs(**{str(PLUG): {"enabled": False}}), second]
+    await _tick(hass, freezer, 61)
+    await hass.async_block_till_done()
+
+    assert _entity_id(hass, entry.entry_id, "switch", "auto_off", 11) == before
+    assert None not in _switch_off_of(hass, entry.entry_id, 11)
+    assert _settings(hass, entry.entry_id, 11)[::2] == ("on", "40.0")
+
+
+@pytest.mark.parametrize("change", [{"printer_id": None}, {"controls_printer_power": False}])
+async def test_a_printer_without_an_own_plug_loses_its_switch_off(
+    hass: HomeAssistant, bambuddy_api: SimpleNamespace, change: dict[str, Any]
+) -> None:
+    """Its Tasmota unlinked in BamBuddy, or now an accessory that powers
+    nothing: no plug powers the printer, its switch-off's four entities go
+    -- also from a plug device that stays."""
+    entry = await set_up(hass, X1C)
+    bambuddy_api.get_smart_plugs.return_value = _plugs(**{str(PLUG): change})
+
+    await _reload(hass, entry.entry_id)
+
+    registry = er.async_get(hass)
+    assert [
+        registry.async_get_entity_id(domain, DOMAIN, f"{entry.entry_id}_switchoff_{printer_key(X1C)}_{key}") for domain, key in SWITCH_OFF
+    ] == [None] * 4

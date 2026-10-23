@@ -15,7 +15,7 @@ import pytest
 import voluptuous as vol
 import yaml
 
-from custom_components.bambuddy import auto_off, coordinator, models, plugs, services
+from custom_components.bambuddy import auto_off, coordinator, models, plug_identity, plugs, services
 from custom_components.bambuddy.models import DRYING_MAX, HMS_ANSWERS, MATERIALS
 
 from tests.conftest import INTEGRATION
@@ -100,7 +100,8 @@ def test_the_card_tells_a_printer_device_by_the_integrations_identifier() -> Non
     entry_id = "01JENTRY0000000000000000AB"
     assert pattern.match(coordinator.printer_identifier(entry_id, "00M00A000000001")[1])
     assert not pattern.match(coordinator.ams_identifier(entry_id, "00M00A000000001", "00600A3B0000001")[1])
-    assert not pattern.match(plugs.plug_identifier(entry_id, 3)[1])
+    plug = plug_identity.identities(bytes(32), [{"id": 3, "plug_type": "tasmota", "ip_address": "192.0.2.10", "created_at": "2026-09-01T10:00:00"}], {})[3]
+    assert not pattern.match(plug_identity.device_identifier(entry_id, plug)[1])
     assert not pattern.match(entry_id)
 
 

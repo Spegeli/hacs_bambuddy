@@ -17,7 +17,7 @@ from homeassistant.util import dt as dt_util
 
 from .auto_off import AutoOff, auto_off_for
 from .coordinator import BamBuddyConfigEntry, BamBuddyPlugCoordinator, BamBuddyPrinterCoordinator
-from .entity import BamBuddyPlugEntity, BamBuddyToggle, async_add_plug_entities, async_switch_plug
+from .entity import BamBuddyPlugEntity, BamBuddyToggle, async_add_plug_entities, async_switch_plug, key_by_printer
 from .models import detectors, plate_position_only
 from .plugs import Plug
 
@@ -186,6 +186,7 @@ class _AutoOffEntity(BamBuddyPlugEntity, RestoreEntity):
     def __init__(self, coordinator: BamBuddyPlugCoordinator, plug: Plug, key: str, auto_off: AutoOff) -> None:
         super().__init__(coordinator, plug, key)
         self.auto_off = auto_off
+        key_by_printer(self, auto_off.printer, key)
 
     @property
     def available(self) -> bool:

@@ -30,6 +30,7 @@ from .entity import (
     BamBuddyPrinterEntity,
     async_add_plug_entities,
     async_run_command,
+    key_by_printer,
 )
 from .models import CAMERA_FPS_STEP, CAMERA_MIN_FPS, PrinterData, camera_max_fps, heater_max
 from .plugs import Plug
@@ -173,6 +174,7 @@ class BamBuddyAutoOffTemperature(BamBuddyPlugEntity, RestoreNumber):
     def __init__(self, coordinator: BamBuddyPlugCoordinator, plug: Plug, auto_off: AutoOff) -> None:
         super().__init__(coordinator, plug, "auto_off_temperature")
         self.auto_off = auto_off
+        key_by_printer(self, auto_off.printer, "auto_off_temperature")
 
     @property
     def available(self) -> bool:

@@ -201,3 +201,28 @@ def test_the_readmes_own_images_are_in_the_repository_with_a_text() -> None:
         alt = re.search(r'alt="([^"]*)"', tag)
         assert alt and alt.group(1).strip(), tag
     assert not (_ROOT / "logo.png").exists()
+
+
+
+def test_the_readme_says_how_plugs_are_known() -> None:
+    """A plug's entities belong to what it switches, its device to BamBuddy's plug (words as approved)."""
+    assert (
+        "Its entities belong to what it switches: a Tasmota by its IP address, a Home Assistant plug by its entity, an MQTT plug by "
+        "its topic and the path BamBuddy reads there, a REST plug by the plug in BamBuddy. Pointed at another one in BamBuddy, the plug keeps its device and gets new "
+        "entities — also for a Tasmota given a new IP address, which BamBuddy knows only by its address —; two plugs swapped in "
+        "BamBuddy keep their devices and swap their entities, with their history. The switch-off after the print stays with its "
+        "printer either way. Deleted in BamBuddy, or linked to no printer set up here, its device goes within a minute, and its "
+        "entities with it — unless another plug switches the same device, which then takes them over. Entities that go keep their "
+        "recorded history until the recorder purges it; their statistics are deleted once their entity ID has been unused for 10 days."
+    ) in _README
+    assert (
+        "A smart plug's carry a short code made from what the plug switches — `switch.bambuddy_smart_plug_3f9a2c` (the plug "
+        "itself), `sensor.bambuddy_smart_plug_3f9a2c_power`, `sensor.bambuddy_smart_plug_3f9a2c_energy_today` —: they stay when "
+        "the plug is renamed or moved to another printer, and go with what it switches (see [Per smart plug](#per-smart-plug)); a "
+        "second plug that switches the same device ends in `_2`."
+    ) in _README
+    assert (
+        "and you can add those only it has. On another server the kept printers' smart plugs become new devices; a plug that uses "
+        "the same Tasmota, Home Assistant entity or MQTT topic and path as before keeps its entity IDs and history."
+    ) in _README
+    assert "A smart plug's carry BamBuddy's number of the plug" not in _README

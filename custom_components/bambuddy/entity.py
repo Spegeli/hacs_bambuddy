@@ -25,6 +25,7 @@ from .coordinator import (
     find_device,
 )
 from .models import PrinterData, ams_key, ams_model, ams_name, ams_object_id, ams_serial, display_model, short_name
+from .plug_identity import PlugIdentity, device_identifier, entity_unique_id
 from .plugs import Plug
 
 _T = TypeVar("_T")
@@ -110,15 +111,36 @@ def suggest_instance_entity_id(entity: Any, key: str) -> None:
     _suggest(entity, "bambuddy", key.removeprefix("bambuddy_"))
 
 
-def suggest_plug_entity_id(entity: Any, plug_id: int, key: str) -> None:
-    """The ID a new entity of a smart plug gets: BamBuddy's number of the
-    plug and the English key -- it stays when the plug is renamed or moved
-    to another printer in BamBuddy; a second instance's get Home
-    Assistant's `_2`. The plug's own switch or state is named as its device,
-    without the key: `switch.bambuddy_smart_plug_3` beside its power sensor
-    `sensor.bambuddy_smart_plug_3_power`."""
+def suggest_plug_entity_id(entity: Any, identity: PlugIdentity, key: str) -> None:
+    """The ID a new entity of a smart plug gets: six characters of what the
+    plug switches and the English key -- it stays when the plug is renamed,
+    moved to another printer or found on another BamBuddy; a second plug
+    that switches the same gets Home Assistant's `_2`. The plug's own switch
+    or state is named as its device, without the key:
+    `switch.bambuddy_smart_plug_3f9a2c` beside its power sensor
+    `sensor.bambuddy_smart_plug_3f9a2c_power`."""
     own = key == "power" and _domain_of(entity) in ("switch", "binary_sensor")
-    _suggest(entity, "bambuddy smart plug", str(plug_id), *(() if own else (key,)))
+    _suggest(entity, "bambuddy smart plug", identity.digest, *(() if own else (key,)))
+
+
+def switch_off_unique_id(entry_id: str, printer_key: str, key: str) -> str:
+    """Our switch-off after the print belongs to its printer: its settings
+    stay with it whichever plug is the printer's own."""
+    return f"{entry_id}_switchoff_{printer_key}_{key}"
+
+
+def key_by_printer(entity: Any, printer: BamBuddyPrinterCoordinator, key: str) -> None:
+    """A switch-off entity's unique ID and entity ID, by its printer."""
+    entity._attr_unique_id = switch_off_unique_id(printer.config_entry.entry_id, printer.key, key)
+    suggest_entity_id(entity, printer, key)
+
+
+def plug_device_info(
+    hass: HomeAssistant, entry_id: str, identifier: tuple[str, str], name: str, model: str, printer: tuple[str, str] | None
+) -> DeviceInfo:
+    """A plug's device, under its printer's where there is one."""
+    device = DeviceInfo(identifiers={identifier}, name=name, model=model)
+    return device if printer is None else _with_parent(hass, entry_id, device, printer)
 
 
 class BamBuddyInstanceEntity(CoordinatorEntity[BamBuddyInstanceCoordinator]):
@@ -368,16 +390,22 @@ async def async_run_command(
 
 class BamBuddyPlugEntity(CoordinatorEntity[BamBuddyPlugCoordinator]):
     """An entity of a smart plug's device, a child of its printer's. The
-    plug is known by BamBuddy's number: it has no serial."""
+    entity belongs to what the plug switches, the device to BamBuddy's plug
+    (`plug_identity`); BamBuddy's number is only what it is asked by."""
 
     _attr_has_entity_name = True
 
     def __init__(self, coordinator: BamBuddyPlugCoordinator, plug: Plug, key: str) -> None:
         super().__init__(coordinator)
+        identity = coordinator.identity(plug.id)
+        if identity is None:
+            # Entities are made for linked plugs only, each known by then.
+            raise RuntimeError(f"smart plug {plug.id} has no identity")
         self.plug_id = plug.id
         self._printer_id = plug.printer_id
-        self._attr_unique_id = f"{coordinator.config_entry.entry_id}_plug{plug.id}_{key}"
-        suggest_plug_entity_id(self, plug.id, key)
+        self._identity = identity
+        self._attr_unique_id = entity_unique_id(coordinator.config_entry.entry_id, identity, key)
+        suggest_plug_entity_id(self, identity, key)
 
     @property
     def plug(self) -> Plug | None:
@@ -416,16 +444,17 @@ class BamBuddyPlugEntity(CoordinatorEntity[BamBuddyPlugCoordinator]):
     def device_info(self) -> DeviceInfo:
         """Read when the entity is added: the plug as BamBuddy lists it then."""
         coordinator = self.coordinator
+        entry_id = coordinator.config_entry.entry_id
         plug = self.plug or Plug({"id": self.plug_id, "printer_id": self._printer_id})
-        device = DeviceInfo(
-            identifiers={coordinator.identifier(self.plug_id)},
-            name=coordinator.device_name(plug),
-            model=plug.model,
-        )
         printer = coordinator.printers.get(plug.printer_id or -1)
-        if printer is None:
-            return device
-        return _with_parent(self.hass, coordinator.config_entry.entry_id, device, printer.identifier)
+        return plug_device_info(
+            self.hass,
+            entry_id,
+            device_identifier(entry_id, self._identity),
+            coordinator.device_name(plug),
+            plug.model,
+            printer.identifier if printer else None,
+        )
 
 
 def async_add_plug_entities(
@@ -439,12 +468,19 @@ def async_add_plug_entities(
 
     @callback
     def add_new() -> None:
+        if coordinator.config_entry.runtime_data.reloading:
+            # The reload builds anew: meanwhile a unique ID may have moved
+            # to another plug that still holds it.
+            return
         entities: list[Entity] = []
-        for plug in (coordinator.data or {}).values():
+        # By number: of two plugs that switch the same, the second gets the _2
+        # (BamBuddy lists its plugs by name).
+        for plug in sorted((coordinator.data or {}).values(), key=lambda plug: plug.id):
             for key, make in create(plug):
                 if (plug.id, key) not in known:
                     known.add((plug.id, key))
                     entities.append(make())
+                    coordinator.note_built(plug.id)
         if entities:
             async_add_entities(entities)
 
