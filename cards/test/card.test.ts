@@ -1044,10 +1044,7 @@ describe("a printer whose developer mode is off", () => {
 });
 
 describe("the live view", () => {
-  const visibility = (state: "visible" | "hidden"): void => {
-    Object.defineProperty(document, "visibilityState", { configurable: true, get: () => state });
-    document.dispatchEvent(new Event("visibilitychange"));
-  };
+  const visibility = pageState;
 
   afterEach(() => {
     Object.defineProperty(document, "visibilityState", { configurable: true, get: () => "visible" });
@@ -4423,7 +4420,7 @@ describe("the live view in full screen", () => {
 /** happy-dom's own shadow-root getter, put back after each test. */
 const shadowFullscreen = Object.getOwnPropertyDescriptor(ShadowRoot.prototype, "fullscreenElement");
 
-function fullscreenApi(answer: "take" | "refuse" | "throw" | "nothing" | "hang" = "take") {
+function fullscreenApi(answer: "take" | "refuse" | "throw" | "nothing" | "hang" | "app" = "take") {
   let element: Element | null = null;
   const change = (): boolean => document.dispatchEvent(new Event("fullscreenchange"));
   // As browsers retarget it: the document sees the outermost shadow host
@@ -4445,11 +4442,34 @@ function fullscreenApi(answer: "take" | "refuse" | "throw" | "nothing" | "hang" 
       return retarget(this);
     },
   });
+  /** As Home Assistant's Android app (2026.8, seen in its WebView): right
+   * after the request the page is hidden for 30-100 ms while the app shows
+   * its full screen view; Blink grants the request in that time only if the
+   * element is still on the page, and tells of the change after the page is
+   * visible again. */
+  const appFullscreen = (target: Element): Promise<void> =>
+    new Promise<void>((resolve, reject) => {
+      setTimeout(() => pageState("hidden"), 10);
+      setTimeout(() => {
+        if (!target.isConnected) {
+          pageState("visible");
+          reject(new TypeError("Element is not connected"));
+          return;
+        }
+        element = target;
+        resolve();
+        setTimeout(() => {
+          pageState("visible");
+          change();
+        }, 10);
+      }, 25);
+    });
   const request = vi.fn(function (this: Element): Promise<void> | undefined {
     if (answer === "throw") throw new TypeError("not allowed");
     if (answer === "nothing") return undefined;
     if (answer === "refuse") return Promise.reject(new TypeError("not allowed"));
     if (answer === "hang") return new Promise<void>(() => undefined);
+    if (answer === "app") return appFullscreen(this);
     element = this;
     change();
     return Promise.resolve();
@@ -4480,6 +4500,12 @@ function fullscreenApi(answer: "take" | "refuse" | "throw" | "nothing" | "hang" 
   };
 }
 
+/** The page hidden or shown, as a browser tells it. */
+function pageState(state: "visible" | "hidden"): void {
+  Object.defineProperty(document, "visibilityState", { configurable: true, get: () => state });
+  document.dispatchEvent(new Event("visibilitychange"));
+}
+
 function withoutFullscreenApi(): void {
   if (shadowFullscreen) Object.defineProperty(ShadowRoot.prototype, "fullscreenElement", shadowFullscreen);
   else Reflect.deleteProperty(ShadowRoot.prototype, "fullscreenElement");
@@ -4503,6 +4529,45 @@ async function fullCard(config: Record<string, unknown> = { camera: "always" }) 
   const found = await cardFor("x1c", config);
   return { ...found, live: () => find(found.card, ".live") as HTMLElement };
 }
+
+describe("full screen in Home Assistant's Android app", () => {
+  afterEach(async () => {
+    vi.useRealTimers();
+    vi.restoreAllMocks();
+    Object.defineProperty(document, "visibilityState", { configurable: true, get: () => "visible" });
+    await endFullscreens();
+    withoutFullscreenApi();
+  });
+
+  it("goes full screen with one tap, though the app hides the page for a moment", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    fullscreenApi("app");
+    const { card, live } = await fullCard();
+    const stream = find<HTMLImageElement>(card, "img.stream");
+    const src = stream?.getAttribute("src");
+    button(card, "Full screen").click();
+    await vi.advanceTimersByTimeAsync(50);
+    await settle(card);
+    expect(live().classList.contains("full")).toBe(true);
+    expect(button(card, "Exit full screen")).toBeTruthy();
+    // The same stream: the moment hidden ended nothing.
+    expect(find(card, "img.stream")).toBe(stream);
+    expect(stream?.getAttribute("src")).toBe(src);
+  });
+
+  it("leaves the app's full screen with one tap", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    const api = fullscreenApi("app");
+    const { card, live } = await fullCard();
+    button(card, "Full screen").click();
+    await vi.advanceTimersByTimeAsync(50);
+    await settle(card);
+    button(card, "Exit full screen").click();
+    await settle(card);
+    expect(api.exit).toHaveBeenCalledTimes(1);
+    expect(live().classList.contains("full")).toBe(false);
+  });
+});
 
 describe("the live view in the browser's full screen", () => {
   afterEach(async () => {
@@ -4828,6 +4893,19 @@ describe("the live view filling the window", () => {
     expect(api.request).toHaveBeenCalledTimes(1);
   });
 
+  it("fills no window for a card taken off the page while the browser decides", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    const popover = popoverApi();
+    fullscreenApi("hang");
+    const { card } = await fullCard();
+    const mark = historyMark();
+    button(card, "Full screen").click();
+    card.remove();
+    await vi.advanceTimersByTimeAsync(1600);
+    expect(popover.shown).not.toHaveBeenCalled();
+    expect(historyMark()).toBe(mark);
+  });
+
   it("leaves the window on Esc", async () => {
     popoverApi();
     const { card, live } = await fullCard();
@@ -4949,10 +5027,7 @@ describe("back leaving the live view's full screen", () => {
 });
 
 describe("full screen ending by itself, and a card moved on the dashboard", () => {
-  const visibility = (state: "visible" | "hidden"): void => {
-    Object.defineProperty(document, "visibilityState", { configurable: true, get: () => state });
-    document.dispatchEvent(new Event("visibilitychange"));
-  };
+  const visibility = pageState;
   const inFullscreen = (card: FakeCard): boolean => hasButton(card, "Exit full screen");
 
   afterEach(async () => {
@@ -5058,6 +5133,44 @@ describe("full screen ending by itself, and a card moved on the dashboard", () =
     expect(live().classList.contains("full")).toBe(true);
     expect(live().getAttribute("popover")).toBe("manual");
     expect(historyMark()).toEqual(expect.any(String));
+  });
+
+  it("ends the stream and the request when the page stays hidden while the browser decides", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    popoverApi();
+    fullscreenApi("hang");
+    const { card } = await fullCard();
+    button(card, "Full screen").click();
+    visibility("hidden");
+    await settle(card);
+    // A moment only, it might be the Android app bringing up its full screen.
+    expect(find(card, "img.stream")).not.toBeNull();
+    await vi.advanceTimersByTimeAsync(1000);
+    await settle(card);
+    expect(find(card, "img.stream")).toBeNull();
+    await vi.advanceTimersByTimeAsync(1000);
+    await settle(card);
+    // The browser's answer never came, and the window does not stand in.
+    expect(inFullscreen(card)).toBe(false);
+  });
+
+  it("keeps the stream of a card moved while the page was hidden for a moment", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    popoverApi();
+    fullscreenApi("hang");
+    const { card } = await fullCard();
+    const stream = find<HTMLImageElement>(card, "img.stream");
+    const src = stream?.getAttribute("src");
+    button(card, "Full screen").click();
+    visibility("hidden");
+    card.remove();
+    // Visible again while the card is away: it hears nothing of it.
+    visibility("visible");
+    await vi.advanceTimersByTimeAsync(1200);
+    document.body.append(card);
+    await settle(card);
+    expect(find(card, "img.stream")).toBe(stream);
+    expect(stream?.getAttribute("src")).toBe(src);
   });
 
   it("reads the page's visibility again when it comes back", async () => {

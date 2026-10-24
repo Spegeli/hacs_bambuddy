@@ -89,6 +89,10 @@ const FOCUS_GROUPS = [".stepper", ".heat-set", ".heat-row", ".heating"];
 /** How long the browser may take to grant full screen before the window
  * stands in. */
 const FULLSCREEN_WAIT_MS = 1500;
+/** Hidden this long while the browser is asked for full screen, the page is
+ * hidden for good: Home Assistant's Android app hides it for up to a tenth
+ * of a second while it brings the picture into full screen. */
+const PAGE_HIDDEN_GRACE_MS = 1000;
 /** Each full screen's history entry, told apart from another card's and
  * from one an earlier page load left: history outlives a reload. */
 let fullscreenEntries = 0;
@@ -149,6 +153,7 @@ export class BamBuddyPrinterCard extends LitElement {
   /** Off the page with a live view: it ends when this runs out. */
   private liveGrace?: ReturnType<typeof setTimeout>;
   protected pageVisible = document.visibilityState !== "hidden";
+  private hiddenWait?: ReturnType<typeof setTimeout>;
   protected streamFailed = false;
   protected brokenCover?: string;
   protected pending: ReadonlySet<string> = new Set();
@@ -280,10 +285,36 @@ export class BamBuddyPrinterCard extends LitElement {
     this.liveWanted = false;
   }
 
+  /** Hidden, the stream stops -- and full screen with it. While the browser
+   * is asked for full screen only after a moment: taken out at once, the
+   * picture would leave the page before the Android app's full screen shows
+   * it, and the browser refuses it. Otherwise at once: a phone may run no
+   * timer on a hidden page. */
   private readonly onVisibility = (): void => {
-    this.pageVisible = document.visibilityState !== "hidden";
-    if (!this.pageVisible) this.stopStream();
+    this.stopHiddenWait();
+    if (document.visibilityState !== "hidden") {
+      this.pageVisible = true;
+      return;
+    }
+    if (!this.fullscreenAsking) {
+      this.pageHidden();
+      return;
+    }
+    this.hiddenWait = setTimeout(() => {
+      this.hiddenWait = undefined;
+      this.pageHidden();
+    }, PAGE_HIDDEN_GRACE_MS);
   };
+
+  private pageHidden(): void {
+    this.pageVisible = false;
+    this.stopStream();
+  }
+
+  private stopHiddenWait(): void {
+    clearTimeout(this.hiddenWait);
+    this.hiddenWait = undefined;
+  }
 
   /** A tap anywhere but in the menu closes it. */
   private readonly onPointerDown = (event: Event): void => {
@@ -310,6 +341,8 @@ export class BamBuddyPrinterCard extends LitElement {
 
   override disconnectedCallback(): void {
     document.removeEventListener("visibilitychange", this.onVisibility);
+    // Away, the page's visibility is read anew on the return.
+    this.stopHiddenWait();
     document.removeEventListener("pointerdown", this.onPointerDown);
     this.menuOpen = false;
     // Leaving the page took the picture out of the top layer, and out of
@@ -632,7 +665,8 @@ export class BamBuddyPrinterCard extends LitElement {
   private useWindow(ask: number): void {
     if (ask !== this.fullscreenAsk) return;
     this.fullscreenAsking = false;
-    if (this.fullscreen === "off") this.enterMode("window");
+    // Taken off the page meanwhile: no window to fill, no history entry.
+    if (this.fullscreen === "off" && this.isConnected) this.enterMode("window");
   }
 
   /** In full screen: an entry in the history of its own -- back (a gesture,
