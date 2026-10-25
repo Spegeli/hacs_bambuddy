@@ -478,16 +478,17 @@ export const cardStyles = css`
     max-width: 100%;
     white-space: normal;
   }
-  /* The airduct mode: last in the heating section. */
-  .airduct {
+  /* Keeping a P2S's chamber warm: off and on, each wide enough for its word. */
+  .keep-warm .seg button {
+    min-width: 52px;
+    white-space: nowrap;
+  }
+  /* „Lüften“ under the heaters: its own head and row. */
+  .vent-part {
     display: flex;
     flex-direction: column;
     gap: 6px;
-    padding-top: 10px;
-    border-top: 1px solid var(--bb-divider);
-  }
-  .airduct .hint {
-    margin: 0;
+    margin-top: 12px;
   }
   /* The AMS filament backup: a setting between the AMS units and the
      external spool. */
@@ -1219,6 +1220,13 @@ export const cardStyles = css`
   .temp.heating .temp-target {
     color: color-mix(in srgb, var(--bb-heat) 55%, var(--bb-text));
   }
+  /* A ventilated chamber, in the ventilation's tone. */
+  .temp.venting .temp-head .icon {
+    color: var(--bb-accent);
+  }
+  .temp.venting .temp-target {
+    color: color-mix(in srgb, var(--bb-accent) 55%, var(--bb-text));
+  }
 
   /* Fans. */
   .fans {
@@ -1624,10 +1632,6 @@ export const cardStyles = css`
     height: 16px;
     color: var(--bb-heat);
   }
-  .heat-head .btn {
-    min-height: 32px;
-    font-size: 13px;
-  }
   .heat-row {
     display: grid;
     grid-template-columns: minmax(0, 1fr) auto auto;
@@ -1671,6 +1675,11 @@ export const cardStyles = css`
   .heat-name.on .heat-label .icon {
     color: var(--bb-heat);
   }
+  /* Ventilation in its own tone: the head always, the row while it runs. */
+  .vent-head .section-label .icon,
+  .heat-name.vent.on .heat-label .icon {
+    color: var(--bb-accent);
+  }
   /* The name keeps its room: a tag that does not fit goes below it. */
   .heat-title {
     display: flex;
@@ -1698,13 +1707,22 @@ export const cardStyles = css`
     font-variant-numeric: tabular-nums;
     white-space: nowrap;
   }
+  /* The fans the ventilation runs: two of them take a second line, never the stepper's room. */
+  .heat-name.vent .heat-now {
+    white-space: normal;
+  }
   .heat-set {
     display: flex;
     align-items: center;
     gap: 4px;
   }
-  /* The steppers and the heater's off button. */
+  /* The steppers and the power symbol, and the place of one that cannot be used. */
   .heat-row .btn.icon-only {
+    width: 34px;
+    min-height: 34px;
+    height: 34px;
+  }
+  .heat-row .heat-off-space {
     width: 34px;
     min-height: 34px;
     height: 34px;
@@ -1726,6 +1744,13 @@ export const cardStyles = css`
   }
   .btn.heat-off:not(:disabled):hover {
     color: var(--bb-text);
+  }
+  /* On in the tone of what it does. */
+  .btn.heat-off.on.tone-heat {
+    color: var(--bb-heat);
+  }
+  .btn.heat-off.on.tone-vent {
+    color: var(--bb-accent);
   }
   /* The print options: folded under a head that says what is off; a row
      per detection, only its switch taps. */
@@ -2997,6 +3022,11 @@ export const cardStyles = css`
       height: 30px;
       min-height: 30px;
     }
+    .heat-row .heat-off-space {
+      width: 30px;
+      height: 30px;
+      min-height: 30px;
+    }
     .heat-target {
       min-width: 54px;
       font-size: 14px;
@@ -3090,6 +3120,10 @@ export const cardStyles = css`
       grid-row: 1;
     }
     .heat-row .heat-off {
+      grid-column: 2;
+      grid-row: 1;
+    }
+    .heat-row .heat-off-space {
       grid-column: 2;
       grid-row: 1;
     }
@@ -3281,6 +3315,11 @@ export const cardStyles = css`
       height: 44px;
     }
     .heat-row .btn.heat-off {
+      width: 44px;
+      height: 44px;
+      min-height: 44px;
+    }
+    .heat-row .heat-off-space {
       width: 44px;
       height: 44px;
       min-height: 44px;

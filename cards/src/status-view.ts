@@ -53,6 +53,7 @@ import {
   type CardContext,
   type Slot,
 } from "./parts";
+import { chamberActivity } from "./heating";
 import { offlinePower, powerSection } from "./power";
 import { printerTitle } from "./header";
 import type { Heater, StatusBlock } from "./types";
@@ -182,19 +183,29 @@ function temperatureTile(ctx: CardContext, label: string, heater: Heater, iconNa
   // so. Off is the target number's minimum (32 in °F).
   const on = target !== undefined && target > targetFloor(hass, heater.target);
   const value = current === undefined ? "—" : formatTemperatureOf(hass, heater.sensor, current);
-  const targetText =
-    target === undefined
-      ? undefined
-      : on
-        ? t(hass, "target", { value: formatTemperatureOf(hass, heater.target, target) })
-        : t(hass, "heater_off");
+  // The chamber of a printer with an airduct says what else it does: kept
+  // warm (the P2S) or ventilated, else off.
+  const airduct = iconName === "chamber" && (ctx.refs.airduct !== undefined || ctx.refs.ventilation !== undefined);
+  const activity = airduct && !on ? chamberActivity(ctx) : undefined;
+  const warm = on || activity?.kind === "warm";
+  const targetText = on
+    ? t(hass, "target", { value: formatTemperatureOf(hass, heater.target, target as number) })
+    : activity?.kind === "warm"
+      ? t(hass, "keep_warm")
+      : activity?.kind === "vent"
+        ? t(hass, "tile_vent", { value: formatPercent(hass, activity.percent) })
+        : target !== undefined || airduct
+          ? t(hass, "heater_off")
+          : undefined;
   return html`<button
-    class="temp ${on ? "heating" : ""}"
+    class="temp ${warm ? "heating" : ""} ${activity?.kind === "vent" ? "venting" : ""}"
     aria-label=${[active ? `${label} ${t(hass, "nozzle_active")}` : label, value, targetText].filter(Boolean).join(", ")}
-    @click=${() => ctx.moreInfo(ctx.viewOnly ? heater.sensor : (heater.target ?? heater.sensor))}
+    @click=${() =>
+      // What the tile shows: the ventilation while it runs, else the target.
+      ctx.moreInfo(ctx.viewOnly ? heater.sensor : activity?.kind === "vent" ? (ctx.refs.ventilation ?? heater.sensor) : (heater.target ?? heater.sensor))}
   >
     <span class="temp-head"
-      >${icon(on ? "heat" : iconName)}<span>${label}</span> ${active ? html`<span class="temp-tag">${t(hass, "nozzle_active")}</span>` : nothing}</span
+      >${icon(warm ? "heat" : activity?.kind === "vent" ? "fan" : iconName)}<span>${label}</span> ${active ? html`<span class="temp-tag">${t(hass, "nozzle_active")}</span>` : nothing}</span
     >
     <span class="temp-value">${value}</span>
     ${targetText ? html`<span class="temp-target">${targetText}</span>` : nothing}

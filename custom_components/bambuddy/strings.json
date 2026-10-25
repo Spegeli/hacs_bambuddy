@@ -357,6 +357,12 @@
       },
       "left_auxiliary_fan": {
         "name": "Left auxiliary fan"
+      },
+      "right_auxiliary_fan": {
+        "name": "Right auxiliary fan"
+      },
+      "ventilation": {
+        "name": "Ventilation"
       }
     },
     "image": {
@@ -827,6 +833,18 @@
     },
     "chamber_heating": {
       "message": "The chamber is heating: switch the chamber heater off first."
+    },
+    "ventilation_heating_print": {
+      "message": "{printer} prints in heating mode: ventilation is possible once the print is done."
+    },
+    "keep_warm_on": {
+      "message": "The chamber is kept warm: switch Keep warm off first."
+    },
+    "ventilation_on": {
+      "message": "The chamber is being ventilated: switch the ventilation off first."
+    },
+    "chamber_cooling_print": {
+      "message": "{printer} prints in cooling mode: the chamber can be heated once the print is done."
     },
     "not_now": {
       "message": "{printer} cannot do this right now."

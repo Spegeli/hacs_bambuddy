@@ -128,7 +128,7 @@ export interface CardConfig {
 /** The print status sensor's states (the integration's enum). */
 export type PrintStatus = "idle" | "preparing" | "slicing" | "printing" | "paused" | "finished" | "failed" | "offline" | "unknown";
 
-export type FanKey = "part" | "aux" | "chamber" | "exhaust" | "left_aux";
+export type FanKey = "part" | "aux" | "chamber" | "exhaust" | "left_aux" | "right_aux";
 
 /** The print options' switches, by translation key, in the order the card
  * lists them. The build plate's: position only (X1 and A series) or type and
@@ -256,6 +256,8 @@ export interface PrinterRefs {
   maintenance?: string;
   /** The airduct mode: cooling or heating (P2S, X2D, H2 series); laser while the printer has set it for its laser module. */
   airduct?: string;
+  /** The ventilation fan of a printer with an airduct: the airduct on cooling and its fans (attribute `fans`). */
+  ventilation?: string;
   /** The AMS filament backup switch: with an AMS unit. */
   filamentBackup?: string;
   /** Per nozzle -- the only one, or left and right --, where it has one. */

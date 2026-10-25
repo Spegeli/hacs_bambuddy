@@ -78,6 +78,9 @@ interface Draft {
 
 const clamp = (value: number, min: number, max: number): number => Math.min(max, Math.max(min, value));
 
+/** A fan entity: stepped by its percentage, not a number's state. */
+const isFan = (entityId: string): boolean => entityId.startsWith("fan.");
+
 /** How long after a key in the card its place is kept for the keyboard, in ms. */
 const KEYBOARD_PLACE_FOR = 15_000;
 /** The open menu's least room to the screen's edges, in px. */
@@ -431,7 +434,7 @@ export class BamBuddyPrinterCard extends LitElement {
       if (draft.wish) draft.moved ||= state !== draft.sentFrom;
       const done = draft.wish
         ? (state !== "on" && state !== "off") || (state === draft.wish && draft.moved === true)
-        : draft.sentFrom !== undefined && state !== draft.sentFrom;
+        : draft.sentFrom !== undefined && this.draftMark(entityId) !== draft.sentFrom;
       if (done) this.dropDraft(entityId);
     }
   }
@@ -488,7 +491,7 @@ export class BamBuddyPrinterCard extends LitElement {
   }
 
   /** A press took the keyboard's control away -- a stepper's end, a
-   * heater's Off or Heating off, the plate cleared, a load that starts a
+   * heater's off, the plate cleared, a load that starts a
    * filament change, an HMS answer that closes its dialog: the nearest
    * group's next button takes the focus, else the selected tab, else the
    * menu button. Only right after a key in the card, and only while the
@@ -799,7 +802,24 @@ export class BamBuddyPrinterCard extends LitElement {
   // --- Heater targets -------------------------------------------------------
 
   private targetOf(entityId: string): number | undefined {
-    return this.drafts.get(entityId)?.value ?? numericState(this.hass as Hass, entityId);
+    return this.drafts.get(entityId)?.value ?? this.reported(entityId);
+  }
+
+  /** A heater's target, or a fan's percentage (0 while it is off). */
+  private reported(entityId: string): number | undefined {
+    const hass = this.hass as Hass;
+    if (!isFan(entityId)) return numericState(hass, entityId);
+    const state = hass.states[entityId];
+    if (!state || state.state === "unavailable" || state.state === "unknown") return undefined;
+    const percentage = state.attributes["percentage"];
+    return typeof percentage === "number" ? percentage : 0;
+  }
+
+  /** What tells that an entity reported anew: a fan's percentage (its state
+   * stays "on" between speeds), else its state. */
+  private draftMark(entityId: string): string {
+    const state = (this.hass as Hass).states[entityId];
+    return isFan(entityId) ? String(state?.attributes["percentage"] ?? 0) : (state?.state ?? "");
   }
 
   private setDraft(entityId: string, draft: Draft): void {
@@ -826,7 +846,6 @@ export class BamBuddyPrinterCard extends LitElement {
   }
 
   private async sendTarget(entityId: string): Promise<void> {
-    const hass = this.hass as Hass;
     const draft = this.drafts.get(entityId) as Draft;
     const key = `target_${entityId}`;
     // The previous target of this heater is still on its way: this one follows.
@@ -834,9 +853,11 @@ export class BamBuddyPrinterCard extends LitElement {
       this.later(entityId, TARGET_DELAY, () => void this.sendTarget(entityId));
       return;
     }
-    this.setDraft(entityId, { value: draft.value, sentFrom: hass.states[entityId]?.state ?? "" });
+    this.setDraft(entityId, { value: draft.value, sentFrom: this.draftMark(entityId) });
     this.later(entityId, TARGET_HOLD, () => this.dropDraft(entityId));
-    const sent = await this.run(key, "number", "set_value", { entity_id: entityId, value: draft.value });
+    const sent = isFan(entityId)
+      ? await this.run(key, "fan", "set_percentage", { entity_id: entityId, percentage: draft.value })
+      : await this.run(key, "number", "set_value", { entity_id: entityId, value: draft.value });
     // A tap made while this target was on its way is kept and sent.
     if (!sent && this.drafts.get(entityId)?.sentFrom !== undefined) this.dropDraft(entityId);
   }
@@ -863,7 +884,7 @@ export class BamBuddyPrinterCard extends LitElement {
     if (!sent) this.dropDraft(entityId);
   }
 
-  /** Off and Heating off: sent at once. */
+  /** A power symbol's on or off: sent at once. */
   private setTargets(targets: [string, number][]): void {
     for (const [entityId, value] of targets) {
       this.setDraft(entityId, { value });

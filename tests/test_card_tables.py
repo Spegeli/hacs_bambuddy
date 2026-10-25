@@ -15,7 +15,7 @@ import pytest
 import voluptuous as vol
 import yaml
 
-from custom_components.bambuddy import auto_off, coordinator, models, plug_identity, plugs, services
+from custom_components.bambuddy import auto_off, coordinator, fan, models, plug_identity, plugs, services
 from custom_components.bambuddy.models import DRYING_MAX, HMS_ANSWERS, MATERIALS
 
 from tests.conftest import INTEGRATION
@@ -70,6 +70,11 @@ def test_the_same_drying_limits() -> None:
 
 def test_the_same_extrusion_minimum() -> None:
     assert _constant(_card("control-view.ts"), "MIN_EXTRUDE_TEMPERATURE") == services.MIN_EXTRUDE_TEMPERATURE
+
+
+def test_the_same_ventilation_start() -> None:
+    """The card's „+“ and the entity turned on without a speed start alike."""
+    assert _constant(_card("heating.ts"), "VENT_START") == fan.VENT_START
 
 
 def test_the_same_switch_off_temperatures() -> None:

@@ -209,15 +209,15 @@ describe("the slot reset's question", () => {
   });
 });
 
-describe("the radio groups of the airduct and of the switch-off", () => {
+describe("the radio groups of keeping warm and of the switch-off", () => {
   const leave = (card: FakeCard): boolean =>
     root(card).activeElement?.dispatchEvent(new FocusEvent("focusout", { bubbles: true, composed: true, relatedTarget: null })) ?? false;
 
-  it("give the stop back to the chosen option once the focus leaves the group: the airduct", async () => {
+  it("give the stop back to the chosen option once the focus leaves the group: keeping warm", async () => {
     const card = await mountCard(makeHass({ devices: x1c({ status: "idle", stage: "idle", airduct: "cooling" }) }), { printer: "dev-x1c" });
     for (const tab of findAll<HTMLButtonElement>(card, ".tabs [role=tab]")) if (text(tab) === "Control") tab.click();
     await card.updateComplete;
-    const radios = (): HTMLButtonElement[] => findAll<HTMLButtonElement>(card, ".airduct [role=radio]");
+    const radios = (): HTMLButtonElement[] => findAll<HTMLButtonElement>(card, ".keep-warm [role=radio]");
     expect(radios().map((radio) => radio.tabIndex)).toEqual([0, -1]);
     radios()[0]?.focus();
     keyPress(radios()[0] as HTMLButtonElement, "ArrowRight");

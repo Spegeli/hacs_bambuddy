@@ -14,8 +14,8 @@ from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 from .api import BamBuddyClient
 from .const import PRINT_SPEEDS
 from .coordinator import BamBuddyConfigEntry
-from .entity import BamBuddyDescribedEntity, async_run_command
-from .models import JOB_STATES, PrinterData
+from .entity import BamBuddyDescribedEntity, async_run_command, refuse
+from .models import JOB_STATES, PrinterData, ventilating
 
 PARALLEL_UPDATES = 1
 
@@ -36,10 +36,9 @@ class BamBuddySelectDescription(SelectEntityDescription):
     allowed: Callable[[PrinterData], bool] | None = None
     refusal: str = "not_now"
     idle_only: bool = False
-    # One choice the printer's state rules out, with its own refusal (in place
-    # of `allowed`).
-    option_allowed: Callable[[PrinterData, str], bool] | None = None
-    option_refusal: str = "not_now"
+    # A choice the printer's state rules out: raises its own refusal
+    # (`refuse(key, printer=name)`), given the state, the choice and the name.
+    option_check: Callable[[PrinterData, str, str], None] | None = None
 
 
 def _chamber_heats(data: PrinterData) -> bool:
@@ -72,10 +71,7 @@ SELECTS: tuple[BamBuddySelectDescription, ...] = (
         # The print sets it at its start (Bambu Studio refuses a change
         # during one).
         idle_only=True,
-        # Cooling beside a heating chamber is a state Bambu describes
-        # nowhere: the chamber goes off first.
-        option_allowed=lambda data, mode: mode != "cooling" or not _chamber_heats(data),
-        option_refusal="chamber_heating",
+        option_check=lambda data, mode, name: _airduct_check(data, mode, name),
     ),
     BamBuddySelectDescription(
         key="active_nozzle",
@@ -121,17 +117,26 @@ class BamBuddySelect(BamBuddyDescribedEntity, SelectEntity):
         description = self.entity_description
         if option not in (description.options or []):
             return  # the mode it is in, which only the printer sets
-        allowed, refusal = description.allowed, description.refusal
-        if (option_allowed := description.option_allowed) is not None:
-            allowed, refusal = partial(_option_allowed, option_allowed, option), description.option_refusal
+        option_check = description.option_check
         await async_run_command(
             self.coordinator,
             partial(description.select_fn, self.coordinator.client, self.coordinator.printer_id, option),
-            allowed=allowed,
-            refusal=refusal,
+            allowed=description.allowed,
+            refusal=description.refusal,
             idle_only=description.idle_only,
+            check=None if option_check is None else partial(_check_option, option_check, option),
         )
 
 
-def _option_allowed(check: Callable[[PrinterData, str], bool], option: str, data: PrinterData) -> bool:
-    return check(data, option)
+def _check_option(check: Callable[[PrinterData, str, str], None], option: str, data: PrinterData, name: str) -> None:
+    check(data, option, name)
+
+
+def _airduct_check(data: PrinterData, mode: str, name: str) -> None:
+    """Cooling beside a heating chamber is a state Bambu describes nowhere:
+    the chamber goes off first. Heating (on the P2S: keeping the chamber
+    warm) waits while the chamber is ventilated."""
+    if mode == "cooling" and _chamber_heats(data):
+        raise refuse("chamber_heating", printer=name)
+    if mode == "heating" and ventilating(data):
+        raise refuse("ventilation_on", printer=name)

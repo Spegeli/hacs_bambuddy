@@ -233,7 +233,7 @@ describe("the visual editor", () => {
         multiple: true,
         reorder: true,
         options: [
-          { value: "heating", label: "Heating" },
+          { value: "heating", label: "Heating and ventilation" },
           { value: "options", label: "Print options" },
           { value: "motion", label: "Axes and extruder" },
         ],
@@ -318,7 +318,7 @@ describe("the visual editor", () => {
     );
     expect(form.computeHelper({ name: "control_sections" })).toBe("The sections of the “Control” tab. Drag a section where you want it; × hides it.");
     expect(form.computeHelper({ name: "read_only" })).toBe(
-      "Shows the printer only: the light, heating, the airduct mode and the print options as states, without buttons; the print and filament buttons, drying, the plugs' switches, and the axes and extruder go. No lock: actions, automations and the device page still control it.",
+      "Shows the printer only: the light, heating, ventilation and the print options as states, without buttons; the print and filament buttons, drying, the plugs' switches, and the axes and extruder go. No lock: actions, automations and the device page still control it.",
     );
   });
 
@@ -336,13 +336,13 @@ describe("the visual editor", () => {
     );
     expect(form.computeHelper({ name: "control_sections" })).toBe("Die Bereiche im Tab „Steuerung“. Ziehe einen Bereich an die gewünschte Stelle; × blendet ihn aus.");
     expect(form.computeHelper({ name: "read_only" })).toBe(
-      "Zeigt den Drucker nur an: Licht, Heizen, Luftführung und Druckoptionen als Zustand, ohne Knöpfe; Druck- und Filamentknöpfe, Trocknen, die Schalter der Steckdosen sowie Achsen und Extruder fallen weg. Keine Sperre: Aktionen, Automationen und die Geräteseite steuern ihn weiter.",
+      "Zeigt den Drucker nur an: Licht, Heizen, Lüften und Druckoptionen als Zustand, ohne Knöpfe; Druck- und Filamentknöpfe, Trocknen, die Schalter der Steckdosen sowie Achsen und Extruder fallen weg. Keine Sperre: Aktionen, Automationen und die Geräteseite steuern ihn weiter.",
     );
     expect(form.computeHelper({ name: "status_blocks" })).toBe(
       "Die Bereiche im Tab „Status“ unter dem Druckauftrag. Ziehe einen Bereich an die gewünschte Stelle; × blendet ihn aus. Drucksteuerung und Druckgeschwindigkeit erscheinen nur während eines Drucks, Strom nur, wenn BamBuddy dem Drucker eine Steckdose zuordnet.",
     );
     // Each toggle's text says what it does.
-    expect(form.computeHelper({ name: "show_control_tab" })).toBe("Blendet den Tab mit Heizen, Druckoptionen, Achsen und Extruder ein oder aus.");
+    expect(form.computeHelper({ name: "show_control_tab" })).toBe("Blendet den Tab mit Heizen und Lüften, Druckoptionen, Achsen und Extruder ein oder aus.");
     expect(form.computeHelper({ name: "show_filament_tab" })).toBe(
       "Blendet den Tab mit den AMS-Einheiten und der externen Spule ein oder aus – zum Laden, Entladen, Festlegen und Trocknen des Filaments.",
     );

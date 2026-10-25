@@ -70,7 +70,8 @@ describe("finding a printer's entities", () => {
     ]);
     expect(refs?.chamber.target).toBe("number.h2d_chamber_target_temperature");
     expect(refs?.externalSpools).toEqual(["sensor.h2d_left_external_spool", "sensor.h2d_right_external_spool"]);
-    expect(refs?.fans.map((fan) => fan.key)).toEqual(["part", "aux", "chamber", "left_aux"]);
+    // The H2 series' fan 3 is its exhaust fan (Bambu Studio, the wiki).
+    expect(refs?.fans.map((fan) => fan.key)).toEqual(["part", "aux", "exhaust"]);
     // The fixture lists the AMS HT first; BamBuddy numbers it after the AMS.
     expect(refs?.ams.map((unit) => [unit.name, unit.model])).toEqual([
       ["AMS A", "AMS 2 Pro"],
@@ -78,6 +79,19 @@ describe("finding a printer's entities", () => {
     ]);
     expect(refs?.ams[0]?.drying).toBe("binary_sensor.dev-h2d_ams_0_drying");
     expect(refs?.ams[0]?.dryingRemaining).toBe("sensor.dev-h2d_ams_0_drying_remaining_time");
+  });
+
+  it("finds the X2D's auxiliary fans by their side", () => {
+    const devices = x1c({
+      fans: [
+        { key: "part_cooling_fan", percent: 0 },
+        { key: "exhaust_fan", percent: 0 },
+        { key: "right_auxiliary_fan", percent: 30 },
+        { key: "left_auxiliary_fan", percent: 0 },
+      ],
+    });
+    const refs = findPrinter(makeHass({ devices }), "dev-x1c");
+    expect(refs?.fans.map((fan) => fan.key)).toEqual(["part", "exhaust", "left_aux", "right_aux"]);
   });
 
   it("names an AMS unit without its printer's name and its model and serial, also after the printer was renamed", () => {

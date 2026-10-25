@@ -3,8 +3,8 @@ Home Assistant's entities: print status and stage, the AMS units and their
 slots, and what each printer model has."""
 from __future__ import annotations
 
-from dataclasses import dataclass
 import re
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
 
@@ -147,10 +147,14 @@ _ETHERNET = frozenset({"X1E", "H2D PRO"})
 # No SD slot but a USB port (and internal storage): BamBuddy's SD card flag
 # tells a USB drive.
 _USB_DRIVE = frozenset({"P2S", "X2D", "H2C", "H2D", "H2D PRO", "H2S"})
-# "Exhaust fan" is Bambu's name for the chamber fan of these; on the P2S it is the External Exhaust Fan
-# kit, there only when BamBuddy reports it (`exhaust_fan_present`: airduct part 3, bambu_mqtt.py).
-_EXHAUST_FAN = frozenset({"P2S", "X2D"})
+# "Exhaust fan" is Bambu's name for fan 3 of these (Bambu Studio's default; the H2 wiki's
+# „Bauraumabluftlüfter“); on the P2S it is the External Exhaust Fan kit, there only when BamBuddy
+# reports it (`exhaust_fan_present`: airduct part 3, bambu_mqtt.py).
+_EXHAUST_FAN = frozenset({"P2S", "X2D", "H2C", "H2D", "H2D PRO", "H2S"})
 _EXHAUST_KIT = frozenset({"P2S"})
+# Fan 2 is the left auxiliary fan and fan 10 the right one here; the P2S has them the other way
+# round (Bambu Studio's N6.json and N7.json; BamBuddy calls fan 10 "left" on both, #3373).
+_SWAPPED_AUX = frozenset({"X2D"})
 # Fans the stock printer lacks -- the X1 an auxiliary fan, the P1P that and a chamber fan (Bambu's pages);
 # kits add them and BamBuddy cannot tell: offered, disabled at first.
 _NO_STOCK_AUX_FAN = frozenset({"X1", "P1P"})
@@ -259,6 +263,67 @@ def model_key(model: str | None) -> str:
     as its model."""
     key = (model or "").strip().upper()
     return _CANONICAL.get(key, key)
+
+
+@dataclass(frozen=True)
+class VentFan:
+    """A fan that ventilates the chamber: its name for the card, BamBuddy's
+    name in fan-speed, and its status field."""
+
+    name: str
+    fan: str
+    field: str
+
+
+_VENT_AUX = VentFan("aux", "aux", "big_fan1_speed")
+_VENT_RIGHT_AUX = VentFan("right_aux", "aux2", "left_aux_fan_speed")
+_VENT_EXHAUST = VentFan("exhaust", "chamber", "big_fan2_speed")
+
+
+def ventilation_fans(data: PrinterData) -> tuple[VentFan, ...]:
+    """The fans that bring the air through the chamber in cooling mode
+    (Bambu's wiki, Studio's printer files): the H2 series' exhaust fan, the
+    X2D's right auxiliary fan (once BamBuddy reports it) and exhaust fan,
+    the P2S's auxiliary fan and, with the kit, its exhaust fan."""
+    if not data.has_airduct():
+        return ()
+    if model_key(data.model) in _EXHAUST_KIT:
+        return (_VENT_AUX, _VENT_EXHAUST) if data.status.get("exhaust_fan_present") else (_VENT_AUX,)
+    if data.swapped_aux_fans():
+        right = (_VENT_RIGHT_AUX,) if data.status.get(_VENT_RIGHT_AUX.field) is not None else ()
+        return (*right, _VENT_EXHAUST)
+    return (_VENT_EXHAUST,)
+
+
+def _speed(data: PrinterData, fan: VentFan) -> int:
+    value = data.status.get(fan.field)
+    return round_ten(value) if isinstance(value, int | float) and not isinstance(value, bool) else 0
+
+
+def ventilation_speed(data: PrinterData) -> int:
+    """The fastest ventilation fan, in tens."""
+    return max((_speed(data, fan) for fan in ventilation_fans(data)), default=0)
+
+
+def ventilating(data: PrinterData) -> bool:
+    """The airduct on cooling and a ventilation fan running."""
+    return data.status.get("airduct_mode") == 0 and ventilation_speed(data) > 0
+
+
+def chamber_heats(data: PrinterData) -> bool:
+    """The chamber is heated: a target above 0 where BamBuddy reports a
+    heater, else (the P2S) the airduct on heating, which keeps the warmth."""
+    if data.status.get("supports_chamber_heater"):
+        target = data.temperatures.get("chamber_target")
+        return isinstance(target, int | float) and not isinstance(target, bool) and target > 0
+    return data.has_airduct() and data.status.get("airduct_mode") == 1
+
+
+def round_ten(value: float) -> int:
+    """A fan's speed to the nearest ten, half up, within 0-100: the printer
+    reports its fans in fifteenths, BamBuddy makes percent of them (level 7
+    is 47 %, 8 is 53 %), and Bambu's apps set and show tens."""
+    return int(min(100.0, max(0.0, value)) / 10 + 0.5) * 10
 
 
 def heater_max(model: str | None, heater: str) -> int | None:
@@ -416,7 +481,7 @@ class PrinterData:
         return model_key(self.model) in _USB_DRIVE
 
     def has_chamber_fan(self) -> bool:
-        """A chamber fan Bambu calls so (on the P2S and the X2D it is the exhaust fan)."""
+        """A chamber fan Bambu calls so (on the P2S, the X2D and the H2 series it is the exhaust fan)."""
         return self.has_aux_fans() and model_key(self.model) not in _EXHAUST_FAN
 
     def has_exhaust_fan(self) -> bool:
@@ -424,6 +489,10 @@ class PrinterData:
         if model in _EXHAUST_KIT:
             return bool(self.status.get("exhaust_fan_present"))
         return model in _EXHAUST_FAN
+
+    def swapped_aux_fans(self) -> bool:
+        """Fan 2 is the left auxiliary fan, fan 10 the right one (the X2D)."""
+        return model_key(self.model) in _SWAPPED_AUX
 
     def fan_kits(self) -> frozenset[str]:
         """The fans BamBuddy learns of from the printer's airduct report -- the P2S's exhaust fan kit,

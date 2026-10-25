@@ -2,7 +2,9 @@
 light -- what each sends, and when a printer cannot take it."""
 from __future__ import annotations
 
+import json
 import logging
+from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 
@@ -25,6 +27,7 @@ from tests.conftest import (
     H2D,
     P1S,
     X1C,
+    as_model,
     entity_id,
     load_fixture,
     make_entry,
@@ -36,6 +39,8 @@ from tests.conftest import (
     state_at,
     state_of,
 )
+
+_TRANSLATIONS = Path(__file__).parents[1] / "custom_components" / "bambuddy" / "translations"
 
 
 async def _call(hass: HomeAssistant, domain: str, service: str, entity_id: str, **data: Any) -> None:
@@ -342,13 +347,34 @@ async def test_the_fans(
     bambuddy_api.set_fan_speed.assert_awaited_once_with(X1C, "aux", speed)
 
 
-async def test_the_fans_show_bambuddys_speeds(hass: HomeAssistant, bambuddy_api: SimpleNamespace) -> None:
+async def test_the_fans_show_bambuddys_speeds_in_tens(hass: HomeAssistant, bambuddy_api: SimpleNamespace) -> None:
+    """BamBuddy's percent of the printer's fifteenths, to the nearest ten:
+    what Bambu's apps set and show."""
+    bambuddy_api.statuses[X1C].update({"cooling_fan_speed": 47, "big_fan1_speed": 53, "big_fan2_speed": 7})
     entry = await set_up(hass, X1C)
-    status = bambuddy_api.statuses[X1C]
 
-    for key, field in (("part_cooling_fan", "cooling_fan_speed"), ("aux_fan", "big_fan1_speed"), ("chamber_fan", "big_fan2_speed")):
+    for key, shown in (("part_cooling_fan", 50), ("aux_fan", 50), ("chamber_fan", 10)):
         state = state_of(hass, "fan", printer_uid(entry, key))
-        assert (state.state, state.attributes["percentage"]) == ("on" if status[field] else "off", status[field]), key
+        assert (state.state, state.attributes["percentage"], state.attributes["percentage_step"]) == ("on", shown, 10.0), key
+
+
+async def test_a_fan_at_0_is_off(hass: HomeAssistant, bambuddy_api: SimpleNamespace) -> None:
+    bambuddy_api.statuses[X1C]["big_fan1_speed"] = 0
+    entry = await set_up(hass, X1C)
+
+    state = state_of(hass, "fan", printer_uid(entry, "aux_fan"))
+    assert (state.state, state.attributes["percentage"]) == ("off", 0)
+
+
+@pytest.mark.parametrize(("given", "sent"), [(47, 50), (5, 10), (95, 100), (4, 0)])
+async def test_a_percentage_is_sent_in_tens(
+    hass: HomeAssistant, bambuddy_api: SimpleNamespace, given: int, sent: int
+) -> None:
+    entry = await set_up(hass, X1C)
+
+    await _call(hass, "fan", "set_percentage", entity_id(hass, "fan", printer_uid(entry, "aux_fan")), percentage=given)
+
+    bambuddy_api.set_fan_speed.assert_awaited_once_with(X1C, "aux", sent)
 
 
 async def test_an_a1_mini_has_only_the_part_cooling_fan(hass: HomeAssistant, bambuddy_api: SimpleNamespace) -> None:
@@ -358,12 +384,42 @@ async def test_an_a1_mini_has_only_the_part_cooling_fan(hass: HomeAssistant, bam
     assert fans == {printer_uid(entry, "part_cooling_fan", A1_MINI)}
 
 
-async def test_an_h2d_has_an_exhaust_fan_name_only_where_bambu_uses_it(
-    hass: HomeAssistant, bambuddy_api: SimpleNamespace
-) -> None:
+async def test_the_h2_series_names_its_p3_the_exhaust_fan(hass: HomeAssistant, bambuddy_api: SimpleNamespace) -> None:
+    """Bambu Studio's name for the H2's fan 3, the wiki's „Bauraumabluftlüfter“;
+    the unique ID keeps its key."""
     entry = await set_up(hass, H2D)
 
-    assert state_of(hass, "fan", printer_uid(entry, "chamber_fan", H2D)).attributes["friendly_name"].endswith("Chamber fan")
+    entity = entity_id(hass, "fan", printer_uid(entry, "chamber_fan", H2D))
+    assert state_at(hass, entity).attributes["friendly_name"].endswith("Exhaust fan")
+    assert entity.endswith("_exhaust_fan")
+    registered = er.async_get(hass).async_get(entity)
+    assert registered is not None and registered.translation_key == "exhaust_fan"
+
+
+async def test_the_x2d_names_its_auxiliary_fans_by_side(hass: HomeAssistant, bambuddy_api: SimpleNamespace) -> None:
+    """The X2D's fan 2 is its left one, fan 10 its right one (Bambu Studio's N6.json)."""
+    as_model(bambuddy_api, "X2D")
+    bambuddy_api.statuses[X1C]["left_aux_fan_speed"] = 0
+    entry = await set_up(hass, X1C)
+
+    registry = er.async_get(hass)
+    for key, name, translation in (("aux_fan", "Left auxiliary fan", "left_auxiliary_fan"), ("left_aux_fan", "Right auxiliary fan", "right_auxiliary_fan")):
+        entity = entity_id(hass, "fan", printer_uid(entry, key))
+        assert state_at(hass, entity).attributes["friendly_name"].endswith(name), key
+        registered = registry.async_get(entity)
+        assert registered is not None and registered.translation_key == translation, key
+    german = json.loads((_TRANSLATIONS / "de.json").read_text(encoding="utf-8"))["entity"]["fan"]
+    assert (german["left_auxiliary_fan"]["name"], german["right_auxiliary_fan"]["name"]) == ("Linker Zusatzlüfter", "Rechter Zusatzlüfter")
+
+
+async def test_the_p2s_keeps_its_fan_names(hass: HomeAssistant, bambuddy_api: SimpleNamespace) -> None:
+    """The P2S's fan 2 is its right one, fan 10 its left one (N7.json): the names it had."""
+    as_model(bambuddy_api, "P2S")
+    bambuddy_api.statuses[X1C]["left_aux_fan_speed"] = 0
+    entry = await set_up(hass, X1C)
+
+    for key, name in (("aux_fan", "Auxiliary fan"), ("left_aux_fan", "Left auxiliary fan")):
+        assert state_of(hass, "fan", printer_uid(entry, key)).attributes["friendly_name"].endswith(name), key
 
 
 @pytest.mark.parametrize(("service", "on"), [("turn_on", True), ("turn_off", False)])
@@ -528,22 +584,17 @@ async def test_the_single_detectors_of_an_h2d(
 
 
 
-def _as_model(bambuddy_api: SimpleNamespace, model: str) -> None:
-    """The X1C's place listed as another model."""
-    printers = load_fixture("printers.json")
-    for printer in printers:
-        if printer["id"] == X1C:
-            printer["model"] = model
-    bambuddy_api.get_printers.return_value = printers
-
-
-@pytest.mark.parametrize(("kit", "fans"), [(False, {"part_cooling_fan", "aux_fan"}), (True, {"part_cooling_fan", "aux_fan", "chamber_fan"})])
+# Its ventilation runs the auxiliary fan, with the kit the exhaust fan too.
+@pytest.mark.parametrize(
+    ("kit", "fans"),
+    [(False, {"part_cooling_fan", "aux_fan", "ventilation"}), (True, {"part_cooling_fan", "aux_fan", "chamber_fan", "ventilation"})],
+)
 async def test_a_p2s_has_an_exhaust_fan_only_with_the_kit(
     hass: HomeAssistant, bambuddy_api: SimpleNamespace, kit: bool, fans: set[str]
 ) -> None:
     """The base P2S has no chamber fan; the External Exhaust Fan kit is one, which BamBuddy reports
     (exhaust_fan_present)."""
-    _as_model(bambuddy_api, "P2S")
+    as_model(bambuddy_api, "P2S")
     bambuddy_api.statuses[X1C]["exhaust_fan_present"] = kit
     entry = await set_up(hass, X1C)
 
@@ -558,7 +609,7 @@ async def test_fans_the_stock_printer_lacks_start_disabled(
     hass: HomeAssistant, bambuddy_api: SimpleNamespace, model: str, disabled: set[str]
 ) -> None:
     """A kit may add them; BamBuddy cannot tell: there, but disabled at first."""
-    _as_model(bambuddy_api, model)
+    as_model(bambuddy_api, model)
     entry = await set_up(hass, X1C)
 
     registry = er.async_get(hass)

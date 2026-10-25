@@ -78,6 +78,12 @@
       },
       "left_auxiliary_fan": {
         "default": "mdi:fan"
+      },
+      "right_auxiliary_fan": {
+        "default": "mdi:fan"
+      },
+      "ventilation": {
+        "default": "mdi:weather-windy"
       }
     },
     "image": {

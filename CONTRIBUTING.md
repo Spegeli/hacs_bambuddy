@@ -112,7 +112,8 @@ The integration lives in `custom_components/bambuddy/`; the dashboard card's sou
 | `coordinator.py` | One coordinator per printer (`/printers/{id}/status` every 10 seconds, when BamBuddy's live connection tells of a change, and twice after a command; print hours, BamBuddy's name and details once a minute, and the device names after them; its maintenance every 10 minutes and after a print), the instance's (`/archives/stats` every minute, `/system/info` every 5 minutes), the update checks' (`/updates/check`, `/firmware/updates` every 6 hours) and the smart plugs' (the list every minute, each plug's state every 15 seconds) |
 | `diagnostics.py` | Entry and device diagnostics, redacted (`TO_REDACT`) |
 | `entity.py` | Device infos; the base entities — availability, unique IDs and entity IDs; `async_run_command`, how a command reaches a printer |
-| `fan.py` | Part cooling, auxiliary, chamber or exhaust, and left auxiliary fan |
+| `fan.py` | Part cooling, auxiliary, chamber or exhaust, and left (on the X2D right) auxiliary fan, in tens; the ventilation of a printer with an airduct (the airduct on cooling and the fans that bring the air through, `models.ventilation_fans`) |
+| `fan_ids.py` | The X2D's two auxiliary fans: their entity IDs from 2.0.0-beta.2 renamed after their side in the setup |
 | `frontend/bambuddy-card.js` | The dashboard card, built from `cards/` — never edited by hand |
 | `icons.json` | Entity and action icons |
 | `image.py` | The cover image of the current print job |
@@ -137,7 +138,7 @@ The integration lives in `custom_components/bambuddy/`; the dashboard card's sou
 
 **Not every endpoint takes the key.** All are under `/api/v1`, and all but four need the `X-API-Key` header: `/updates/version` and `/auth/status` take none, the camera's stream and snapshot a camera token as `?token=` instead — which is why a request's query is never logged.
 
-**BamBuddy's field names are not always the obvious ones.** The current layer is `layer_num`, not `current_layer`; `remaining_time` is in minutes; the print speed is `speed_level` (1 Silent, 2 Standard, 3 Sport, 4 Ludicrous); the auxiliary and chamber fans are `big_fan1_speed` and `big_fan2_speed`.
+**BamBuddy's field names are not always the obvious ones.** The current layer is `layer_num`, not `current_layer`; `remaining_time` is in minutes; the print speed is `speed_level` (1 Silent, 2 Standard, 3 Sport, 4 Ludicrous); the auxiliary and chamber fans are `big_fan1_speed` and `big_fan2_speed`, in percent of the printer's fifteenths (so 47 or 53 for a fan set to 50 %); the second auxiliary fan — the X2D's right one, the P2S's left one — is `left_aux_fan_speed`, in whole percent.
 
 **Some reads write.** BamBuddy's maintenance routes (`/maintenance/printers/{id}`) add missing default tasks to its database when they read: read them rarely.
 

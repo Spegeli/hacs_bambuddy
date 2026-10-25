@@ -31,8 +31,9 @@ from .entity import (
     async_add_plug_entities,
     async_run_command,
     key_by_printer,
+    refuse,
 )
-from .models import CAMERA_FPS_STEP, CAMERA_MIN_FPS, PrinterData, camera_max_fps, heater_max
+from .models import CAMERA_FPS_STEP, CAMERA_MIN_FPS, PrinterData, camera_max_fps, heater_max, ventilating
 from .plugs import Plug
 
 PARALLEL_UPDATES = 1
@@ -152,10 +153,35 @@ class BamBuddyTemperature(BamBuddyDescribedEntity, NumberEntity):
         return float(value) if isinstance(value, int | float) and not isinstance(value, bool) else None
 
     async def async_set_native_value(self, value: float) -> None:
-        await async_run_command(
-            self.coordinator,
-            partial(self.entity_description.set_fn, self.coordinator.client, self.coordinator.printer_id, round(value)),
-        )
+        coordinator, description, target = self.coordinator, self.entity_description, round(value)
+        if description.key != "chamber_target" or target <= 0 or not self.data.has_airduct():
+            await async_run_command(coordinator, partial(description.set_fn, coordinator.client, coordinator.printer_id, target))
+            return
+
+        async def heat() -> None:
+            # As Bambu's start G-code: the airduct on heating first -- where a
+            # print or a filament change does not keep the mode it set.
+            data = coordinator.data
+            if not data.job_running and not data.changing_filament and data.status.get("airduct_mode") != 1:
+                await coordinator.client.set_airduct_mode(coordinator.printer_id, "heating")
+            await description.set_fn(coordinator.client, coordinator.printer_id, target)
+
+        await async_run_command(coordinator, heat, check=_may_heat_chamber)
+
+
+def _may_heat_chamber(data: PrinterData, name: str) -> None:
+    """A chamber target waits while the chamber is ventilated, and goes not
+    into a print or a filament change in cooling mode (Bambu Studio: "Chamber
+    temperature cannot be changed in cooling mode while printing")."""
+    cooling = data.status.get("airduct_mode") == 0
+    if data.job_running:
+        if cooling:
+            raise refuse("chamber_cooling_print", printer=name)
+    elif data.changing_filament:
+        if cooling:
+            raise refuse("filament_change", printer=name)
+    elif ventilating(data):
+        raise refuse("ventilation_on", printer=name)
 
 
 class BamBuddyAutoOffTemperature(BamBuddyPlugEntity, RestoreNumber):

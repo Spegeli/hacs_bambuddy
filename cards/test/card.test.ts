@@ -209,11 +209,18 @@ describe("the status view", () => {
     expect(text(find(full, ".fan .fan-label.full"))).toBe("Blower");
   });
 
-  it("names the left auxiliary fan side first in German, as the entity does", async () => {
-    const { card } = await cardFor("h2d", {}, { language: "de" });
+  it("names the auxiliary fans side first in German, as the entities do", async () => {
+    // The X2D's fan 2 is its left one, fan 10 its right one.
+    const fans = [
+      { key: "part_cooling_fan", percent: 0 },
+      { key: "exhaust_fan", percent: 0 },
+      { key: "left_auxiliary_fan", percent: 0 },
+      { key: "right_auxiliary_fan", percent: 30 },
+    ];
+    const { card } = await cardFor("x1c", {}, { language: "de", devices: x1c({ fans }) });
     // "Bauteil" alone read as "component off".
-    expect(findAll(card, ".fan .fan-label.short").map(text)).toEqual(["Teilekühlung", "Zusatz", "Kammer", "Linker Zusatz", "Hotend"]);
-    expect(findAll(card, ".fan .fan-label.full").map(text)).toContain("Linker Zusatzlüfter");
+    expect(findAll(card, ".fan .fan-label.short").map(text)).toEqual(["Teilekühlung", "Abluft", "Linker Zusatz", "Rechter Zusatz", "Hotend"]);
+    expect(findAll(card, ".fan .fan-label.full").map(text)).toEqual(expect.arrayContaining(["Linker Zusatzlüfter", "Rechter Zusatzlüfter"]));
   });
 
   it("shows the loaded filament: colour, material, the slot in use and the AMS humidity", async () => {
@@ -497,7 +504,7 @@ describe("the status view", () => {
     expect(findAll(card, ".temp-head").map(text)).toEqual(["Left nozzle active", "Right nozzle", "Bed", "Chamber"]);
     expect(findAll(card, ".temp-target").map(text)).toEqual([`Target 250${NBSP}°C`, "Off", `Target 90${NBSP}°C`, `Target 45${NBSP}°C`]);
     expect(find(card, ".temps")?.classList.contains("n4")).toBe(true);
-    expect(findAll(card, ".fan").map((fan) => text(fan.querySelector(".fan-label.short")))).toEqual(["Part cooling", "Auxiliary", "Chamber", "Left auxiliary", "Hotend"]);
+    expect(findAll(card, ".fan").map((fan) => text(fan.querySelector(".fan-label.short")))).toEqual(["Part cooling", "Auxiliary", "Exhaust", "Hotend"]);
     expect(findAll(card, ".ams-name").map(text)).toEqual(["AMS A", "AMS HT A", "Ext"]);
     // The two external spools say their side; the temperatures sit two by two.
     expect(findAll(card, ".ams-strip .slot-side").map(text)).toEqual(["L", "R"]);
@@ -1700,13 +1707,9 @@ describe("the heating section", () => {
     button(card, "Nozzle: turn off").focus();
     keyPress(button(card, "Nozzle: turn off"));
     await tap(card, "Nozzle: turn off");
-    expect(root(card).activeElement).toBe(button(card, `Nozzle: heat to 220${NBSP}°C`));
-
-    await tap(card, `Nozzle: heat to 220${NBSP}°C`);
-    button(card, "Heating off").focus();
-    keyPress(button(card, "Heating off"));
-    await tap(card, "Heating off");
-    expect(root(card).activeElement).toBe(button(card, `Nozzle: heat to 220${NBSP}°C`));
+    // The power symbol stays usable: it heats now, and keeps the focus.
+    const power = root(card).activeElement;
+    expect([power?.classList.contains("heat-off"), power?.getAttribute("aria-label")]).toEqual([true, `Nozzle: heat to 220${NBSP}°C`]);
   });
 
   it("takes no focus back once it went elsewhere, nor a mouse's", async () => {
@@ -1781,8 +1784,13 @@ describe("the heating section", () => {
     expect(findAll(card, ".heat-row").map((row) => text(row.querySelector(".heat-label")))).toEqual(["Nozzle", "Bed"]);
     expect(targets(card)).toEqual(["Off", "Off"]);
     expect(findAll(card, ".heat-now").map(text)).toEqual([`Now 27${NBSP}°C`, `Now 25${NBSP}°C`]);
-    expect(button(card, "Heating off").disabled).toBe(true);
-    expect(findAll<HTMLButtonElement>(card, ".heat-off").every((item) => item.disabled)).toBe(true);
+    // Nothing switches every heater off at once: each has its own power symbol.
+    expect(hasButton(card, "Heating off")).toBe(false);
+    // Off, their power symbols switch them on, as + does.
+    expect(findAll<HTMLButtonElement>(card, ".heat-row .heat-off").map((item) => [item.getAttribute("aria-label"), item.disabled])).toEqual([
+      [`Nozzle: heat to 220${NBSP}°C`, false],
+      [`Bed: heat to 55${NBSP}°C`, false],
+    ]);
     expect(button(card, `Nozzle 5${NBSP}°C cooler`).disabled).toBe(true);
     await tap(card, `Nozzle: heat to 220${NBSP}°C`);
     expect(targets(card)).toEqual([`220${NBSP}°C`, "Off"]);
@@ -1830,22 +1838,15 @@ describe("the heating section", () => {
     expect(hass.calls.at(-1)).toEqual(setValue("number.h2d_bed_target_temperature", 0));
   });
 
-  it("turns one heater off, or all at once, only without a print", async () => {
+  it("turns a heater off only without a print", async () => {
     const { card, hass } = await withX1c({ status: "idle", nozzles: [[200, 220]], bed: [50, 55] });
     await showView(card, "Control");
     await press(card, "Nozzle: turn off");
     expect(hass.calls).toEqual([setValue("number.x1c_nozzle_target_temperature", 0)]);
     expect(targets(card)).toEqual(["Off", `55${NBSP}°C`]);
-    const { card: other, hass: otherHass } = await withX1c({ status: "idle", nozzles: [[200, 220]], bed: [50, 55] });
-    await showView(other, "Control");
-    await press(other, "Heating off");
-    expect(otherHass.calls).toEqual([setValue("number.x1c_nozzle_target_temperature", 0), setValue("number.x1c_bed_target_temperature", 0)]);
-    expect(targets(other)).toEqual(["Off", "Off"]);
-    expect(button(other, "Heating off").disabled).toBe(true);
-    // While printing: the steppers stay, Off and Heating off would end the print.
+    // While printing: the steppers stay, an off would end the print.
     const { card: printing } = await cardFor("x1c");
     await showView(printing, "Control");
-    expect(hasButton(printing, "Heating off")).toBe(false);
     expect(findAll(printing, ".heat-off")).toHaveLength(0);
     expect(button(printing, `Nozzle 5${NBSP}°C hotter`).disabled).toBe(false);
   });
@@ -1948,9 +1949,10 @@ describe("the heating section", () => {
     const { card } = await cardFor("a1mini", {}, { language: "de" });
     await showView(card, "Steuerung");
     expect(text(find(card, ".section-label"))).toBe("Heizen");
-    expect(hasButton(card, "Heizen aus")).toBe(true);
+    expect(hasButton(card, "Heizen aus")).toBe(false);
     expect(hasButton(card, `Düse auf 220${NBSP}°C heizen`)).toBe(true);
-    expect(hasButton(card, "Bett ausschalten")).toBe(true);
+    // Off, the power symbols heat, as + does.
+    expect(findAll(card, ".heat-row .heat-off").map((item) => item.getAttribute("aria-label"))).toEqual([`Düse auf 220${NBSP}°C heizen`, `Bett auf 55${NBSP}°C heizen`]);
     expect(findAll(card, ".heat-now").map(text)).toEqual([`Jetzt 27${NBSP}°C`, `Jetzt 25${NBSP}°C`]);
   });
 });
@@ -3051,15 +3053,13 @@ describe("a command that went through", () => {
 });
 
 describe("switching every heater off", () => {
-  it("names what it does and looks like each heater's own off switch", async () => {
-    // It only switches the heaters off -- no fan cools: not "Cool down",
-    // no snowflake, not in the accent's blue.
+  it("is no button of its own: each heater has its power symbol", async () => {
     const { card } = await cardFor("x1c", { start_view: "control" }, { devices: x1c({ status: "idle", stage: "idle" }) });
-    const all = button(card, "Heating off");
-    expect(all.classList.contains("heat-off")).toBe(true);
-    expect(all.querySelector("path")?.getAttribute("d")).toBe(ICONS.power);
+    expect(hasButton(card, "Heating off")).toBe(false);
+    expect(find(card, ".heat-head .btn")).toBeNull();
+    expect(findAll(card, ".heat-row .heat-off").every((item) => item.querySelector("path")?.getAttribute("d") === ICONS.power)).toBe(true);
     const { card: german } = await cardFor("x1c", { start_view: "control" }, { language: "de", devices: x1c({ status: "idle", stage: "idle" }) });
-    expect(hasButton(german, "Heizen aus")).toBe(true);
+    expect(hasButton(german, "Heizen aus")).toBe(false);
   });
 });
 
@@ -3393,9 +3393,11 @@ describe("a filament change", () => {
       expect(findAll<HTMLButtonElement>(card, ".pad button, .axis-col button, .nozzle-row button").every((item) => item.disabled), state).toBe(true);
       expect(button(card, `Left nozzle 5${NBSP}°C hotter`).disabled, state).toBe(false);
       expect(button(card, `Bed 5${NBSP}°C cooler`).disabled, state).toBe(false);
-      // Cooling would break the change.
-      expect(button(card, "Heating off").disabled, state).toBe(true);
-      expect(findAll<HTMLButtonElement>(card, ".heat-off").every((item) => item.disabled), state).toBe(true);
+      // Cooling would break the change: switching off waits; the right nozzle is off: its power symbol heats, as + does.
+      const powers = findAll<HTMLButtonElement>(card, ".heat-off").filter((item) => !item.getAttribute("aria-label")?.includes("heat to"));
+      expect(powers.length, state).toBeGreaterThan(0);
+      expect(powers.every((item) => item.disabled), state).toBe(true);
+      expect(button(card, `Right nozzle: heat to 220${NBSP}°C`).disabled, state).toBe(false);
     }
   });
 
@@ -3408,7 +3410,7 @@ describe("a filament change", () => {
       await showView(card, "Control");
       expect(find(card, ".note"), state).toBeNull();
       expect(findAll<HTMLButtonElement>(card, ".pad button, .nozzle-row button").every((item) => !item.disabled), state).toBe(true);
-      expect(button(card, "Heating off").disabled, state).toBe(false);
+      expect(findAll<HTMLButtonElement>(card, ".heat-row .heat-off").every((item) => !item.disabled), state).toBe(true);
     }
   });
 
@@ -4116,6 +4118,8 @@ describe("the layout of a narrow card and on a touch screen", () => {
     // width: beside a thumb's 44 px Off they would shrink under 24 px.
     expect(narrow).toMatch(rule("\\.heat-name", "grid-column: 1;[^}]*grid-row: 1;"));
     expect(narrow).toMatch(rule("\\.heat-row \\.heat-off", "grid-column: 2;[^}]*grid-row: 1;"));
+    // The place of a power symbol that cannot be used, beside it.
+    expect(narrow).toMatch(rule("\\.heat-row \\.heat-off-space", "grid-column: 2;[^}]*grid-row: 1;"));
     expect(narrow).toMatch(rule("\\.heat-set", "grid-column: 1 / -1;"));
     expect(narrow).toMatch(rule("\\.heat-target", "min-width: 44px;"));
     // A heater's name wraps in whole words, never cut ("Right nozzle").
@@ -4185,6 +4189,7 @@ describe("the layout of a narrow card and on a touch screen", () => {
     const touch = atRule("@media (pointer: coarse)");
     expect(touch).toMatch(rule("\\.head \\.icon-btn", "width: 44px;[^}]*height: 44px;"));
     expect(touch).toMatch(rule("\\.heat-row \\.btn\\.heat-off", "width: 44px;[^}]*height: 44px;[^}]*min-height: 44px;"));
+    expect(touch).toMatch(rule("\\.heat-row \\.heat-off-space", "width: 44px;[^}]*height: 44px;"));
     // After the narrow card's smaller steppers, so that it wins there too.
     const sheet = styleText();
     expect(sheet.lastIndexOf("@media (pointer: coarse)")).toBeGreaterThan(sheet.indexOf("@container (max-width: 280px)"));

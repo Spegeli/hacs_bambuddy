@@ -422,58 +422,50 @@ describe("checking the connection", () => {
   });
 });
 
-describe("the airduct mode", () => {
-  const heating = (card: FakeCard): Element | null => find(card, ".airduct");
-  const radios = (card: FakeCard): HTMLButtonElement[] => findAll<HTMLButtonElement>(card, ".airduct [role=radio]");
+describe("keeping the chamber warm (an airduct printer without a chamber heater, the P2S)", () => {
+  // The X1C's fixture with an airduct select and no chamber target: as a P2S.
+  const row = (card: FakeCard): Element | null => find(card, ".keep-warm");
+  const radios = (card: FakeCard): HTMLButtonElement[] => findAll<HTMLButtonElement>(card, ".keep-warm [role=radio]");
+  const section = (card: FakeCard): Element | null => find(card, ".heating");
 
-  it("switches between cooling and heating without a print, and says what each does", async () => {
+  it("switches keeping warm off and on without a print, under Heating, and says what heating and ventilation do", async () => {
     const { card, hass } = await withX1c({ airduct: "cooling", status: "idle", stage: "idle" }, { start_view: "control" });
+    expect(text(row(card)?.querySelector(".heat-name") ?? null)).toBe("Chamber Keep warm");
     expect(radios(card).map((item) => [text(item), item.getAttribute("aria-checked")])).toEqual([
-      ["Cooling", "true"],
-      ["Heating", "false"],
+      ["Off", "true"],
+      ["On", "false"],
     ]);
-    expect(text(heating(card))).toContain(
-      "Cooling draws in fresh air (PLA, TPU); Heating keeps the warmth in the chamber (ABS, ASA, PC, PA). The printer sets it itself at every print start.",
+    expect(find(card, ".airduct")).toBeNull();
+    expect(text(section(card))).toContain(
+      "Heating keeps the warmth in the chamber (ABS, ASA, PC, PA), ventilation draws fresh air in (PLA, TPU). The printer sets this itself at every print start.",
     );
     radios(card)[1]?.click();
     await settle(card);
     expect(hass.calls.at(-1)).toMatchObject({ domain: "select", service: "select_option", data: { entity_id: "select.x1c_airduct_mode", option: "heating" } });
   });
 
-  it("keeps cooling out of reach while the chamber heats, and says how to cool", async () => {
-    const { card } = await withX1c({ airduct: "heating", status: "idle", stage: "idle", chamber: [40, 50] }, { start_view: "control" });
+  it("keeps the warmth on out of reach while the chamber is ventilated, and says how", async () => {
+    const ventilated = { airduct: "cooling", status: "idle", stage: "idle", ventilation: { percent: 60, fans: ["aux"] } };
+    const { card } = await withX1c(ventilated, { start_view: "control" });
+    // Only on waits: a lock never takes the way off.
     expect(radios(card).map((item) => [text(item), item.disabled])).toEqual([
-      ["Cooling", true],
-      ["Heating", false],
+      ["Off", false],
+      ["On", true],
     ]);
-    expect(text(heating(card))).toContain("While the chamber heats, the airduct stays on Heating. To cool, first switch the chamber off under Heating above.");
-    const german = await withX1c({ airduct: "heating", status: "idle", stage: "idle", chamber: [40, 50] }, { start_view: "control" }, "de");
-    expect(text(heating(german.card))).toContain(
-      "Solange die Kammer heizt, bleibt die Luftführung auf Heizen. Zum Kühlen schalte zuerst oben unter „Heizen“ die Kammer aus.",
-    );
-    // Reported on cooling all the same: the keyboard still reaches Heating.
-    const stale = await withX1c({ airduct: "cooling", status: "idle", stage: "idle", chamber: [40, 50] }, { start_view: "control" });
-    expect(radios(stale.card).map((item) => item.getAttribute("tabindex"))).toEqual(["-1", "0"]);
-    // And again once the focus has left the group.
-    find(stale.card, ".airduct .seg")?.dispatchEvent(new FocusEvent("focusout", { relatedTarget: null }));
-    expect(radios(stale.card).map((item) => item.tabIndex)).toEqual([-1, 0]);
-    // The chamber off: both again, and no word of it.
-    const off = await withX1c({ airduct: "heating", status: "idle", stage: "idle", chamber: [40, 0] }, { start_view: "control" });
-    expect(radios(off.card).map((item) => item.disabled)).toEqual([false, false]);
-    expect(text(heating(off.card))).not.toContain("While the chamber heats");
-    // Without controls: what holds, without the step there is no button for.
-    const view = await withX1c({ airduct: "heating", status: "idle", stage: "idle", chamber: [40, 50] }, { read_only: true, start_view: "control" }, "de");
-    expect(text(find(view.card, ".airduct"))).toContain("Solange die Kammer heizt, bleibt die Luftführung auf Heizen.");
-    expect(text(find(view.card, ".airduct"))).not.toContain("Zum Kühlen");
+    expect(text(section(card))).toContain("While the chamber is ventilated, it cannot be kept warm. First switch the chamber off under Ventilation below.");
+    const german = await withX1c(ventilated, { start_view: "control" }, "de");
+    expect(text(section(german.card))).toContain("Solange die Kammer gelüftet wird, lässt sie sich nicht warm halten. Schalte zuerst unten unter „Lüften“ die Kammer aus.");
+    // The keyboard comes in on the choice it has.
+    expect(radios(card).map((item) => item.getAttribute("tabindex"))).toEqual(["0", "-1"]);
   });
 
   it("waits during a print and during a filament change", async () => {
     const printing = await withX1c({ airduct: "heating" }, { start_view: "control" });
     expect(radios(printing.card).every((item) => item.disabled)).toBe(true);
-    expect(text(heating(printing.card))).toContain("Can be changed once the print is done.");
+    expect(text(section(printing.card))).toContain("Can be changed once the print is done.");
     const changing = await withX1c({ airduct: "heating", status: "idle", stage: "idle", amsStatus: "feeding" }, { start_view: "control" });
     expect(radios(changing.card).every((item) => item.disabled)).toBe(true);
-    expect(text(heating(changing.card))).toContain("Wait until the filament change is done.");
+    expect(text(section(changing.card))).toContain("Wait until the filament change is done.");
   });
 
   it("chooses nothing for a mode it does not know", async () => {
@@ -481,27 +473,16 @@ describe("the airduct mode", () => {
     expect(radios(card).map((item) => item.getAttribute("aria-checked"))).toEqual(["false", "false"]);
   });
 
-  it("says the laser mode the printer set, and offers only cooling and heating", async () => {
-    const { card, hass } = await withX1c({ airduct: "laser", status: "idle", stage: "idle" }, { start_view: "control" });
-    expect(radios(card).map((item) => [text(item), item.getAttribute("aria-checked")])).toEqual([
-      ["Cooling", "false"],
-      ["Heating", "false"],
-    ]);
-    expect(text(heating(card))).toContain("Now in laser mode: the printer sets it for its laser module.");
-    radios(card)[0]?.click();
-    await settle(card);
-    expect(hass.calls.at(-1)).toMatchObject({ domain: "select", service: "select_option", data: { option: "cooling" } });
-  });
-
-  it("shows the laser mode as text without controls", async () => {
-    const { card } = await withX1c({ airduct: "laser", status: "idle", stage: "idle" }, { read_only: true, start_view: "control" }, "de");
-    expect(text(find(card, ".airduct .det-state"))).toBe("Lasermodus");
-    expect(find(card, ".airduct [role=radio]")).toBeNull();
+  it("shows keeping warm as text without controls", async () => {
+    const { card } = await withX1c({ airduct: "heating", status: "idle", stage: "idle" }, { read_only: true, start_view: "control" }, "de");
+    expect(text(find(card, ".keep-warm .heat-target"))).toBe("An");
+    expect(find(card, ".keep-warm [role=radio]")).toBeNull();
   });
 
   it("is not there without the select", async () => {
     const { card } = await withX1c({}, { start_view: "control" });
-    expect(heating(card)).toBeNull();
+    expect(row(card)).toBeNull();
+    expect(text(section(card))).not.toContain("ventilation draws fresh air in");
   });
 });
 
@@ -1064,11 +1045,10 @@ describe("Hide controls shows states", () => {
     expect(opened).toEqual(["sensor.x1c_hotend_fan"]);
   });
 
-  it("shows the Control tab read-only: targets, print options and the airduct as text, no axes", async () => {
+  it("shows the Control tab read-only: targets, print options and keeping warm as text, no axes", async () => {
     const { card, hass } = await withX1c({ airduct: "heating", status: "idle", stage: "idle" }, { ...hidden, start_view: "control" }, "de");
     expect(find(card, ".heating button")).toBeNull();
-    expect(findAll(card, ".heat-target").map(shown)).toEqual(["220 °C", "55 °C"].map((value) => value.replace(" ", "\u00a0")));
-    expect(text(find(card, ".airduct .det-state"))).toBe("Heizen");
+    expect(findAll(card, ".heat-target").map(shown)).toEqual(["220 °C", "55 °C", "An"].map((value) => value.replace(" ", "\u00a0")));
     expect(find(card, ".pad")).toBeNull();
     (find(card, ".det-head") as HTMLButtonElement).click();
     await card.updateComplete;

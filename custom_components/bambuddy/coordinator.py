@@ -3,7 +3,7 @@ the instance's figures, one for the update checks, one for the smart plugs."""
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Awaitable
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timedelta
 import hashlib
@@ -670,6 +670,19 @@ class BamBuddyPrinterCoordinator(DataUpdateCoordinator[PrinterData]):
         device = find_device(self.hass, self.config_entry.entry_id, self.identifier)
         if device is not None and device.sw_version != firmware:
             dr.async_get(self.hass).async_update_device(device.id, sw_version=firmware)
+
+    async def async_wait_for(self, check: Callable[[PrinterData], bool], timeout: float, interval: float) -> bool:
+        """Read the status every `interval` until `check` holds or `timeout`
+        has passed (the first read after one interval: the printer reports a
+        command a moment after BamBuddy passed it on); whether it held."""
+        waited = 0.0
+        while waited < timeout:
+            await asyncio.sleep(interval)
+            waited += interval
+            await self.async_refresh()
+            if self.data is not None and check(self.data):
+                return True
+        return False
 
     @callback
     def async_refresh_soon(self) -> None:

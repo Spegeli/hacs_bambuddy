@@ -338,6 +338,10 @@ export interface PrinterSpec {
   control?: boolean;
   speed?: string;
   fans?: { key: string; percent: number }[];
+  /** The integration's ventilation fan (printers with an airduct): its
+   * percentage in tens, the fans it runs (`aux`, `right_aux`, `exhaust`),
+   * unavailable as with the printer offline. */
+  ventilation?: { percent: number; fans: string[]; available?: boolean };
   light?: boolean;
   camera?: boolean;
   cover?: boolean;
@@ -610,6 +614,16 @@ export function printerDevice(spec: PrinterSpec): FakeDevice {
         attributes: { percentage: fan.percent, friendly_name },
       });
     }
+    if (spec.ventilation) {
+      const { percent, fans, available = true } = spec.ventilation;
+      // Its fans are a capability attribute: kept while it is unavailable.
+      entities.push({
+        entityId: `fan.${p}_ventilation`,
+        key: "ventilation",
+        state: available ? value(percent > 0 ? "on" : "off") : "unavailable",
+        attributes: available ? { percentage: percent, percentage_step: 10, fans } : { fans },
+      });
+    }
     entities.push(
       { entityId: `light.${p}_chamber_light`, key: "chamber_light", state: value(spec.light ? "on" : "off") },
     );
@@ -798,8 +812,8 @@ export function h2d(overrides: Partial<PrinterSpec> = {}): FakeDevice[] {
     fans: [
       { key: "part_cooling_fan", percent: 0 },
       { key: "auxiliary_fan", percent: 60 },
-      { key: "chamber_fan", percent: 20 },
-      { key: "left_auxiliary_fan", percent: 0 },
+      // The H2 series' fan 3 is its exhaust fan.
+      { key: "exhaust_fan", percent: 20 },
     ],
     light: false,
     externalSpools: [

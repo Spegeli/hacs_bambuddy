@@ -357,6 +357,12 @@
       },
       "left_auxiliary_fan": {
         "name": "Linker Zusatzlüfter"
+      },
+      "right_auxiliary_fan": {
+        "name": "Rechter Zusatzlüfter"
+      },
+      "ventilation": {
+        "name": "Lüftung"
       }
     },
     "image": {
@@ -827,6 +833,18 @@
     },
     "chamber_heating": {
       "message": "Die Kammer heizt: schalte zuerst die Kammerheizung aus."
+    },
+    "ventilation_heating_print": {
+      "message": "{printer} druckt im Heizmodus: Lüften geht erst nach dem Druck."
+    },
+    "keep_warm_on": {
+      "message": "Die Kammer wird warm gehalten: schalte zuerst „Wärme halten“ aus."
+    },
+    "ventilation_on": {
+      "message": "Die Kammer wird gelüftet: schalte zuerst die Lüftung aus."
+    },
+    "chamber_cooling_print": {
+      "message": "{printer} druckt im Kühlmodus: Die Kammer lässt sich erst nach dem Druck heizen."
     },
     "not_now": {
       "message": "{printer} kann das gerade nicht."

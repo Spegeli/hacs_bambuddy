@@ -95,13 +95,20 @@ def _suggest(entity: Any, *words: str) -> None:
         entity.entity_id = f"{domain}.{slugify(' '.join(words))}"
 
 
-def suggest_entity_id(entity: Any, coordinator: BamBuddyPrinterCoordinator, *parts: str) -> None:
-    """The ID a new printer entity gets: model, serial number and key --
+def printer_object_id(coordinator: BamBuddyPrinterCoordinator, *parts: str) -> str:
+    """The object ID a new printer entity gets: model, serial number and key --
     the same whatever the printer is called in BamBuddy, in any language."""
     info = coordinator.info
     serial = str(info.get("serial_number") or "").strip() or coordinator.key
     # Without a model, "printer" in its place: no entity ID begins with a digit.
-    _suggest(entity, display_model(info.get("model")) or "printer", serial, *parts)
+    return slugify(" ".join((display_model(info.get("model")) or "printer", serial, *parts)))
+
+
+def suggest_entity_id(entity: Any, coordinator: BamBuddyPrinterCoordinator, *parts: str) -> None:
+    """The ID a new printer entity gets (`printer_object_id`)."""
+    domain = _domain_of(entity)
+    if domain:
+        entity.entity_id = f"{domain}.{printer_object_id(coordinator, *parts)}"
 
 
 def suggest_instance_entity_id(entity: Any, key: str) -> None:
@@ -327,6 +334,7 @@ async def async_run_command(
     paused_ok: bool = False,
     offline_ok: bool = False,
     refresh: bool = True,
+    check: Callable[[PrinterData, str], None] | None = None,
 ) -> _T:
     """Send a command to a printer, unless it cannot take it now; BamBuddy's
     refusals as translated errors; the status read again shortly after.
@@ -338,6 +346,8 @@ async def async_run_command(
     takes it -- a filament swap by hand, between the colours of a print.
     `offline_ok`: BamBuddy acts without the printer (it sends it nothing).
     `refresh`: a command, not a read: read the status again soon after.
+    `check`: raises `refuse(key, printer=name)` where the printer's state
+    rules the command out for a reason of its own, after `allowed`.
     A refusal (401, 403) goes to the key's guard: it says whether the key is
     the cause, and alone starts a reauthentication."""
     data = coordinator.data
@@ -356,6 +366,8 @@ async def async_run_command(
         raise refuse("filament_change", printer=name)
     if allowed is not None and not allowed(data):
         raise refuse(refusal, printer=name)
+    if check is not None:
+        check(data, name)
     if refresh:
         coordinator.note_command()
     try:

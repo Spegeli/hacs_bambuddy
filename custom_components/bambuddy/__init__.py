@@ -72,6 +72,7 @@ from .live import BamBuddyLive, live_settings
 from .models import ams_key, display_model, find_printers, model_changed, stored_key, stored_printer, too_old
 from .plug_identity import parse_unique_id
 from . import plug_history, plug_identity, renames
+from .fan_ids import async_rename_x2d_fans
 from .rekey import async_rekey_ams_units
 from .services import async_setup_services
 
@@ -167,6 +168,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: BamBuddyConfigEntry) -> 
     stored = entry.options.get(CONF_PRINTERS, [])
     await renames.async_keep(hass, entry.entry_id, {stored_key(printer) for printer in stored})
     renamed = async_rekey_ams_units(hass, entry, printers)
+    # And the X2D's auxiliary fans: their IDs after their side.
+    async_rename_x2d_fans(hass, entry, printers)
     grown = {key for key, pairs in renamed.items() if await renames.async_add(hass, entry.entry_id, key, pairs)}
     names = {stored_key(printer): _device_name(hass, entry, printer) for printer in absent}
     names.update({coordinator.key: coordinator.printer_name for coordinator in printers.values()})

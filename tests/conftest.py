@@ -107,6 +107,15 @@ def ams_key(printer_id: int, ams_id: int) -> str:
     return str(unit.get("serial_number") or ams_id)
 
 
+def as_model(bambuddy_api: SimpleNamespace, model: str, printer_id: int = X1C) -> None:
+    """The printer's place listed as another model."""
+    printers = load_fixture("printers.json")
+    for printer in printers:
+        if printer["id"] == printer_id:
+            printer["model"] = model
+    bambuddy_api.get_printers.return_value = printers
+
+
 def printer_entry(printer_id: int) -> dict[str, Any]:
     """A printer as the entry's options store it."""
     return {"printer_id": printer_id, "printer_name": printer_name(printer_id), "serial_number": printer_serial(printer_id)}

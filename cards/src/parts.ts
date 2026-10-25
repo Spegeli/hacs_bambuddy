@@ -89,7 +89,7 @@ export interface CardContext {
   targetOf: (entityId: string) => number | undefined;
   /** Sets a heater's target once the taps stop. */
   stepTarget: (entityId: string, value: number) => void;
-  /** Sets targets at once: Off, Heating off. */
+  /** Sets targets at once: a power symbol's on or off. */
   setTargets: (targets: [string, number][]) => void;
   /** A switch as the card shows it: the state just set, else its own. */
   switchOn: (entityId: string) => boolean;

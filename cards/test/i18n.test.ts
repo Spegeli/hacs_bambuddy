@@ -32,6 +32,7 @@ describe("the card's texts", () => {
       ["chamber", "fan.chamber_fan"],
       ["exhaust", "fan.exhaust_fan"],
       ["left_aux", "fan.left_auxiliary_fan"],
+      ["right_aux", "fan.right_auxiliary_fan"],
       ["hotend", "sensor.hotend_fan"],
     ];
     for (const language of ["en", "de"] as const) {

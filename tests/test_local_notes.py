@@ -20,6 +20,8 @@ _POINTERS = re.compile(
     # "spec §3.1", "spec 12.4", "spec D12" -- also across a line break and
     # the comment sign that starts the next line.
     r"|\bspecs?\s+(?:#\s*)?(?:section\b|§|\d|D\d)"
+    # A decision by its number alone: "(D10)", "what D8 calls".
+    r"|\(D\d{1,2}\)|\bD\d{1,2}\s+(?:calls|says)\b"
     r"|§\s*\d"
     r"|\bthe spec\b"
     # A ruling or a review finding: "ruling R9", "review Important 3",

@@ -195,6 +195,8 @@ const FAN_KEYS: Record<string, FanKey> = {
   "fan.chamber_fan": "chamber",
   "fan.exhaust_fan": "exhaust",
   "fan.left_auxiliary_fan": "left_aux",
+  // The X2D's fan 10.
+  "fan.right_auxiliary_fan": "right_aux",
 };
 
 /** The entities only a printer with two nozzles has. */
@@ -280,6 +282,8 @@ export function findPrinter(hass: Hass, deviceId: string | undefined): PrinterRe
     storageUsb: !keys.has("binary_sensor.sd_card") && keys.has("binary_sensor.usb_drive"),
     maintenance: one("sensor.maintenance"),
     airduct: one("select.airduct_mode"),
+    // Airduct printers: cooling and the fans that bring the air through.
+    ventilation: one("fan.ventilation"),
     filamentBackup: one("switch.ams_filament_backup"),
     nozzleDiameters: perNozzle("nozzle_diameter"),
     nozzleTypes: perNozzle("nozzle_type"),
@@ -310,6 +314,7 @@ export function hasControls(refs: PrinterRefs): boolean {
     refs.speed,
     refs.activeNozzle,
     refs.airduct,
+    refs.ventilation,
     refs.filamentBackup,
     ...heaters,
   ];

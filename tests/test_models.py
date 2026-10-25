@@ -18,6 +18,7 @@ from custom_components.bambuddy.models import (
     ams_name,
     ams_number,
     camera_max_fps,
+    chamber_heats,
     detectors,
     display_model,
     find_tray,
@@ -26,10 +27,12 @@ from custom_components.bambuddy.models import (
     printer_name,
     print_stage,
     print_status,
+    round_ten,
     short_name,
     slot_attributes,
     slot_state,
     tray_id,
+    ventilating,
 )
 
 
@@ -285,9 +288,9 @@ def test_find_tray() -> None:
         ("a1", False, False, False, False, True, False, False),
         ("P1S", True, False, False, False, True, False, False),
         # No SD slot: BamBuddy's flag tells a USB drive.
-        ("H2D", True, True, True, False, True, False, True),
-        ("H2D Pro", True, True, True, True, True, False, True),
-        ("O1E", True, True, True, True, True, False, True),
+        ("H2D", True, True, True, False, True, True, True),
+        ("H2D Pro", True, True, True, True, True, True, True),
+        ("O1E", True, True, True, True, True, True, True),
         # The P2S's exhaust fan is a kit: here without it (see the next test).
         ("P2S", True, True, True, False, True, False, True),
         # The X2D's is fitted.
@@ -333,12 +336,12 @@ _T, _F = True, False
         ("A04", (_F, _F, _F, _F, _F, _F, _F, _F, _F, _F, _T, _T)),
         ("A2L", (_F, _F, _F, _F, _F, _F, _F, _F, _F, _F, _T, _F)),
         ("N9", (_F, _F, _F, _F, _F, _F, _F, _F, _F, _F, _T, _F)),
-        ("H2D", (_T, _T, _T, _T, _F, _T, _T, _F, _T, _T, _F, _F)),
-        ("H2D Pro", (_T, _T, _T, _T, _T, _T, _T, _F, _T, _T, _F, _F)),
-        ("O1E", (_T, _T, _T, _T, _T, _T, _T, _F, _T, _T, _F, _F)),
-        ("H2S", (_T, _T, _T, _T, _F, _T, _T, _F, _T, _T, _F, _F)),
-        ("H2C", (_T, _T, _T, _T, _F, _T, _T, _F, _T, _T, _F, _F)),
-        ("O1C2", (_T, _T, _T, _T, _F, _T, _T, _F, _T, _T, _F, _F)),
+        ("H2D", (_T, _T, _T, _T, _F, _T, _F, _T, _T, _F, _F, _F)),
+        ("H2D Pro", (_T, _T, _T, _T, _T, _T, _F, _T, _T, _F, _F, _F)),
+        ("O1E", (_T, _T, _T, _T, _T, _T, _F, _T, _T, _F, _F, _F)),
+        ("H2S", (_T, _T, _T, _T, _F, _T, _F, _T, _T, _F, _F, _F)),
+        ("H2C", (_T, _T, _T, _T, _F, _T, _F, _T, _T, _F, _F, _F)),
+        ("O1C2", (_T, _T, _T, _T, _F, _T, _F, _T, _T, _F, _F, _F)),
         ("X2D", (_T, _T, _T, _T, _F, _T, _F, _T, _T, _F, _F, _F)),
     ],
 )
@@ -547,7 +550,9 @@ def test_a_camera_bambuddy_takes_from_elsewhere_gives_15() -> None:
         ("P2S", {"exhaust_fan_present": True}, False, True),
         ("N7", {"exhaust_fan_present": True}, False, True),
         ("X2D", {}, False, True),
-        ("H2D", {}, True, False),
+        # Bambu calls the H2 series' fan 3 the exhaust fan (Studio's default, the wiki).
+        ("H2D", {}, False, True),
+        ("H2S", {}, False, True),
         ("X1C", {}, True, False),
         ("A1", {}, False, False),
     ],
@@ -560,7 +565,7 @@ def test_the_chamber_and_the_exhaust_fan(model: str, status: dict[str, Any], cha
 @pytest.mark.parametrize(
     ("model", "aux", "chamber"),
     [("X1", False, True), ("BL-P002", False, True), ("P1P", False, False), ("C11", False, False), ("X1C", True, True),
-     ("P1S", True, True), ("H2D", True, True)],
+     ("P1S", True, True), ("H2D", True, False)],
 )
 def test_fans_the_stock_printer_lacks(model: str, aux: bool, chamber: bool) -> None:
     """The stock X1 has no auxiliary fan, the P1P neither that nor a chamber fan (Bambu's pages);
@@ -637,3 +642,52 @@ def test_which_printers_have_a_chamber(model: str, enclosed: bool) -> None:
 )
 def test_every_model_heats_as_far_as_it_can(model: str, nozzle: int | None, bed: int | None) -> None:
     assert (heater_max(model, "nozzle"), heater_max(model, "bed")) == (nozzle, bed)
+
+
+@pytest.mark.parametrize(
+    ("value", "ten"),
+    [(0, 0), (4, 0), (5, 10), (7, 10), (13, 10), (47, 50), (53, 50), (55, 60), (93, 90), (95, 100), (100, 100), (104, 100), (-3, 0)],
+)
+def test_round_ten(value: float, ten: int) -> None:
+    """The printer reports its fans in fifteenths; BamBuddy makes percent of
+    them (level 7 = 47 %, 8 = 53 %), Bambu's apps set and show tens."""
+    assert round_ten(value) == ten
+
+
+@pytest.mark.parametrize(("model", "swapped"), [("X2D", True), ("N6", True), ("P2S", False), ("H2D", False), ("X1C", False)])
+def test_only_the_x2d_has_its_auxiliary_fans_the_other_way_round(model: str, swapped: bool) -> None:
+    """Fan 2 is the X2D's left one and fan 10 its right one; the P2S has them
+    the other way round (Bambu Studio's N6.json and N7.json)."""
+    assert _printer({}, model).swapped_aux_fans() is swapped
+
+
+@pytest.mark.parametrize(
+    ("model", "status", "heats"),
+    [
+        # Where BamBuddy reports a heater: its target.
+        ("H2D", {"supports_chamber_heater": True, "temperatures": {"chamber_target": 40}, "airduct_mode": 0}, True),
+        ("H2D", {"supports_chamber_heater": True, "temperatures": {"chamber_target": 0}, "airduct_mode": 1}, False),
+        # Where it reports none (the P2S): the airduct on heating keeps the warmth.
+        ("P2S", {"supports_chamber_heater": False, "airduct_mode": 1}, True),
+        ("P2S", {"supports_chamber_heater": False, "airduct_mode": 0}, False),
+        ("X1C", {"supports_chamber_heater": False, "airduct_mode": 1}, False),
+    ],
+)
+def test_chamber_heats(model: str, status: dict[str, Any], heats: bool) -> None:
+    assert chamber_heats(_printer(status, model)) is heats
+
+
+@pytest.mark.parametrize(
+    ("model", "status", "on"),
+    [
+        ("H2D", {"airduct_mode": 0, "big_fan2_speed": 7}, True),
+        ("H2D", {"airduct_mode": 0, "big_fan2_speed": 0}, False),
+        ("H2D", {"airduct_mode": 1, "big_fan2_speed": 60}, False),
+        # The X2D's fan 10 in whole percent: 3 % reads as 0.
+        ("X2D", {"airduct_mode": 0, "left_aux_fan_speed": 3, "big_fan2_speed": 0}, False),
+        ("P2S", {"airduct_mode": 0, "big_fan1_speed": 53}, True),
+        ("X1C", {"airduct_mode": 0, "big_fan2_speed": 60}, False),
+    ],
+)
+def test_ventilating(model: str, status: dict[str, Any], on: bool) -> None:
+    assert ventilating(_printer(status, model)) is on
