@@ -1,0 +1,13 @@
+{
+    "type": "filament",
+    "name": "Bambu Support For PLA @base",
+    "inherits": "fdm_filament_pla",
+    "instantiation": "false",
+    "filament_id": "GFS02",
+    "filament_vendor": [
+        "Bambu Lab"
+    ],
+    "filament_is_support": [
+        "1"
+    ]
+}

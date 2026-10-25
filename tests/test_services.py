@@ -24,6 +24,7 @@ from tests.conftest import (
     X1C,
     ams_device,
     ams_uid,
+    as_model,
     device_id,
     entity_id,
     load_fixture,
@@ -346,18 +347,19 @@ async def test_only_answers_that_send_something_are_listed(hass: HomeAssistant, 
     assert sensor is not None and sensor.attributes["errors"][0]["actions"] == ["RESUME_PRINTING", "STOP_PRINTING"]
 
 
-async def test_more_materials(hass: HomeAssistant, bambuddy_api: SimpleNamespace) -> None:
+async def test_more_generic_filaments(hass: HomeAssistant, bambuddy_api: SimpleNamespace) -> None:
     """Bambu's generic profiles, with Bambu Studio's nozzle ranges -- the
     external spool needs them too."""
-    entry = await set_up(hass, A1_MINI)
+    entry = await set_up(hass, H2D)
 
-    await _set_filament(hass, ams_uid(entry, 0, "slot_2", A1_MINI), material="PPS-CF")
+    await _set_filament(hass, printer_uid(entry, "external_spool", H2D), filament="GFT98")
 
     kwargs = bambuddy_api.configure_slot.await_args.kwargs
-    assert {key: kwargs[key] for key in ("tray_type", "name", "tray_info_idx", "temp_min", "temp_max")} == {
+    assert {key: kwargs[key] for key in ("tray_type", "name", "tray_info_idx", "setting_id", "temp_min", "temp_max")} == {
         "tray_type": "PPS-CF",
         "name": "Generic PPS-CF",
         "tray_info_idx": "GFT98",
+        "setting_id": "GFST98_04",
         "temp_min": 310,
         "temp_max": 340,
     }
@@ -398,12 +400,12 @@ async def test_a_two_nozzle_printers_k_profiles_are_its_nozzles(hass: HomeAssist
 
 
 async def test_a_k_profile_for_a_slot(hass: HomeAssistant, bambuddy_api: SimpleNamespace) -> None:
-    """Chosen with a material or alone; sent with its filament, so BamBuddy
+    """Chosen with a filament or alone; sent with its filament, so BamBuddy
     selects it where the printer files it."""
     entry = await set_up(hass, A1_MINI)
     slot = ams_uid(entry, 0, "slot_2", A1_MINI)
 
-    await _set_filament(hass, slot, material="PLA", k_profile=3)
+    await _set_filament(hass, slot, filament="GFL99", k_profile=3)
     kwargs = bambuddy_api.configure_slot.await_args.kwargs
     assert {key: kwargs[key] for key in ("tray_type", "cali_idx", "kprofile_filament_id", "kprofile_setting_id", "k_value")} == {
         "tray_type": "PLA",
@@ -748,8 +750,8 @@ async def test_a_new_colour_keeps_the_slot_s_filament(hass: HomeAssistant, bambu
     await _set_filament(hass, ams_uid(entry, 0, "slot_2", A1_MINI), color=[193, 46, 31])
 
     bambuddy_api.configure_slot.assert_awaited_once_with(
-        A1_MINI, 0, 1, tray_type="PETG", name="PETG", color="C12E1FFF", temp_min=220, temp_max=260,
-        tray_info_idx="", cali_idx=-1, nozzle_diameter="0.4",
+        A1_MINI, 0, 1, tray_type="PETG", name="Generic PETG", color="C12E1FFF", temp_min=220, temp_max=260,
+        tray_info_idx="GFG99", setting_id="GFSG99", cali_idx=-1, nozzle_diameter="0.4",
     )
 
 
@@ -767,20 +769,238 @@ async def test_a_described_spool_takes_a_colour_whatever_exists_says(
     bambuddy_api.configure_slot.assert_awaited_once()
 
 
-async def test_a_new_material_takes_its_generic_profile(
+async def test_a_vendor_profile_is_set_with_bambu_studios_ids(hass: HomeAssistant, bambuddy_api: SimpleNamespace) -> None:
+    """SUNLU PLA+ on the A1 mini's slot without a chip: its id and setting id
+    as Bambu Studio sends them, never derived."""
+    entry = await set_up(hass, A1_MINI)
+
+    await _set_filament(hass, ams_uid(entry, 0, "slot_2", A1_MINI), filament="GFSNL03", color=[0, 0, 0])
+
+    bambuddy_api.configure_slot.assert_awaited_once_with(
+        A1_MINI, 0, 1, tray_type="PLA", name="SUNLU PLA+", color="000000FF", temp_min=190, temp_max=240,
+        tray_info_idx="GFSNL03", setting_id="GFSNLS03_04", cali_idx=-1, nozzle_diameter="0.4",
+    )
+
+
+async def test_a_bambu_spool_with_a_broken_chip(hass: HomeAssistant, bambuddy_api: SimpleNamespace) -> None:
+    """Bambu PLA Basic on a slot without a chip; no K profile named: the
+    printer's default, no calibration of another filament."""
+    entry = await set_up(hass, X1C)
+
+    await _set_filament(hass, ams_uid(entry, 0, "slot_3"), filament="GFA00")
+
+    kwargs = bambuddy_api.configure_slot.await_args.kwargs
+    assert (kwargs["tray_info_idx"], kwargs["setting_id"], kwargs["name"], kwargs["cali_idx"]) == ("GFA00", "GFSA00_04", "Bambu PLA Basic", -1)
+    assert not {"kprofile_filament_id", "kprofile_setting_id", "k_value"} & set(kwargs)
+
+
+async def test_tpu_for_ams_goes_as_bambu_studios_type(hass: HomeAssistant, bambuddy_api: SimpleNamespace) -> None:
+    entry = await set_up(hass, A1_MINI)
+
+    await _set_filament(hass, ams_uid(entry, 0, "slot_2", A1_MINI), filament="GFU98")
+
+    kwargs = bambuddy_api.configure_slot.await_args.kwargs
+    assert {key: kwargs[key] for key in ("tray_type", "tray_info_idx", "setting_id", "temp_min", "temp_max")} == {
+        "tray_type": "TPU-AMS", "tray_info_idx": "GFU98", "setting_id": "GFSU98_02", "temp_min": 200, "temp_max": 250,
+    }  # fmt: skip
+
+
+@pytest.mark.parametrize(
+    ("data", "key", "placeholders"),
+    [
+        # Bambu Studio offers the A1 mini no ABS, and no PPS-CF.
+        ({"filament": "GFB99"}, "filament_not_offered", {"filament": "Generic ABS", "printer": "Desk"}),
+        ({"filament": "GFT98"}, "filament_not_offered", {"filament": "Generic PPS-CF", "printer": "Desk"}),
+        # An id Bambu Studio does not have.
+        ({"filament": "GFNLS03"}, "filament_not_offered", {"filament": "GFNLS03", "printer": "Desk"}),
+        # Plain TPU is for the external spool.
+        ({"filament": "GFU99"}, "filament_not_for_ams", {"filament": "Generic TPU"}),
+    ],
+)
+async def test_a_filament_bambu_studio_would_refuse(
+    hass: HomeAssistant, bambuddy_api: SimpleNamespace, data: dict[str, Any], key: str, placeholders: dict[str, str]
+) -> None:
+    entry = await set_up(hass, A1_MINI)
+
+    with pytest.raises(ServiceValidationError) as raised:
+        await _set_filament(hass, ams_uid(entry, 0, "slot_2", A1_MINI), **data)
+
+    assert raised.value.translation_key == key
+    assert {name: raised.value.translation_placeholders[name] for name in placeholders} == placeholders
+    bambuddy_api.configure_slot.assert_not_awaited()
+
+
+async def test_plain_tpu_on_the_external_spool(hass: HomeAssistant, bambuddy_api: SimpleNamespace) -> None:
+    entry = await set_up(hass, A1_MINI)
+
+    await _set_filament(hass, printer_uid(entry, "external_spool", A1_MINI), filament="GFU99")
+
+    assert bambuddy_api.configure_slot.await_args.kwargs["tray_info_idx"] == "GFU99"
+
+
+async def test_the_h2ds_right_nozzle_refuses_pet_cf(hass: HomeAssistant, bambuddy_api: SimpleNamespace) -> None:
+    """The right external spool feeds the right nozzle, which Bambu Studio
+    gives no Bambu PET-CF."""
+    entry = await set_up(hass, H2D)
+
+    with pytest.raises(ServiceValidationError) as raised:
+        await _set_filament(hass, printer_uid(entry, "external_spool_2", H2D), filament="GFT01")
+
+    assert (raised.value.translation_key, raised.value.translation_placeholders["filament"]) == ("filament_not_right", "Bambu PET-CF")
+
+
+@pytest.mark.parametrize(
+    ("spool", "code", "filament", "key"),
+    [
+        # The left spool feeds the left nozzle, which takes no Generic TPU.
+        ("external_spool", "HS01", "GFU99", "filament_not_left"),
+        # A TPU high-flow nozzle on the right takes only its own TPUs.
+        ("external_spool_2", "HU01", "GFU98", "filament_not_for_nozzle"),
+    ],
+)
+async def test_the_h2ds_nozzles(
+    hass: HomeAssistant, bambuddy_api: SimpleNamespace, freezer: FrozenDateTimeFactory, spool: str, code: str, filament: str, key: str
+) -> None:
+    entry = await set_up(hass, H2D)
+    bambuddy_api.statuses[H2D]["nozzles"][0]["nozzle_type"] = code
+    await next_refresh(hass, freezer)
+
+    with pytest.raises(ServiceValidationError) as raised:
+        await _set_filament(hass, printer_uid(entry, spool, H2D), filament=filament)
+
+    assert raised.value.translation_key == key
+
+
+async def test_set_filament_takes_no_material(hass: HomeAssistant, bambuddy_api: SimpleNamespace) -> None:
+    """One way to name a profile: its id, the generic ones among them."""
+    entry = await set_up(hass, A1_MINI)
+
+    with pytest.raises(vol.Invalid):
+        await _set_filament(hass, ams_uid(entry, 0, "slot_2", A1_MINI), material="PLA")
+
+    bambuddy_api.configure_slot.assert_not_awaited()
+
+
+async def test_an_empty_filament_is_none(hass: HomeAssistant, bambuddy_api: SimpleNamespace) -> None:
+    entry = await set_up(hass, A1_MINI)
+
+    with pytest.raises(ServiceValidationError) as raised:
+        await _set_filament(hass, ams_uid(entry, 0, "slot_2", A1_MINI), filament="")
+
+    assert raised.value.translation_key == "nothing_to_set"
+
+
+async def test_a_colour_alone_keeps_a_generic_profile(
     hass: HomeAssistant, bambuddy_api: SimpleNamespace, freezer: FrozenDateTimeFactory
 ) -> None:
-    """Bambu's generic profile of the material; the K value goes back to
+    """Generic PETG HF stays Generic PETG HF: the slot's id goes back with
+    the colour (with none, BamBuddy picks the generic of the type)."""
+    entry = await set_up(hass, A1_MINI)
+    bambuddy_api.statuses[A1_MINI]["ams"][0]["tray"][1]["tray_info_idx"] = "GFG96"
+    await next_refresh(hass, freezer)
+
+    await _set_filament(hass, ams_uid(entry, 0, "slot_2", A1_MINI), color=[0, 0, 0])
+
+    kwargs = bambuddy_api.configure_slot.await_args.kwargs
+    assert (kwargs["tray_info_idx"], kwargs["setting_id"], kwargs["name"]) == ("GFG96", "GFSG96_04", "Generic PETG HF")
+
+
+async def test_a_colour_alone_keeps_a_foreign_id(
+    hass: HomeAssistant, bambuddy_api: SimpleNamespace, freezer: FrozenDateTimeFactory
+) -> None:
+    """An id Bambu Studio does not have (a user's own, BamBuddy's misread
+    SUNLU): sent back as it is, without a setting id of ours."""
+    entry = await set_up(hass, A1_MINI)
+    bambuddy_api.statuses[A1_MINI]["ams"][0]["tray"][1]["tray_info_idx"] = "GFNLS03"
+    await next_refresh(hass, freezer)
+
+    await _set_filament(hass, ams_uid(entry, 0, "slot_2", A1_MINI), color=[0, 0, 0])
+
+    kwargs = bambuddy_api.configure_slot.await_args.kwargs
+    assert (kwargs["tray_info_idx"], kwargs["setting_id"]) == ("GFNLS03", "")
+
+
+async def _get_filaments(hass: HomeAssistant, slot: str) -> dict[str, Any]:
+    response = await hass.services.async_call(
+        DOMAIN, "get_filaments", {"entity_id": entity_id(hass, "sensor", slot)}, blocking=True, return_response=True
+    )
+    assert isinstance(response, dict)
+    return response
+
+
+def _offered(response: dict[str, Any]) -> set[str]:
+    return {item["id"] for vendor in response["vendors"] for item in vendor["filaments"]}
+
+
+async def test_get_filaments_answers_the_slots_offer(hass: HomeAssistant, bambuddy_api: SimpleNamespace) -> None:
+    entry = await set_up(hass, A1_MINI)
+
+    response = await _get_filaments(hass, ams_uid(entry, 0, "slot_2", A1_MINI))
+
+    assert response["current"] == "GFG99"
+    assert [vendor["name"] for vendor in response["vendors"]] == ["Bambu Lab", "Generic", "Polymaker", "Overture", "SUNLU", "eSUN"]
+    generic = response["vendors"][1]["filaments"]
+    assert generic[0] == {"id": "GFL99", "name": "PLA", "type": "PLA"}
+    assert "GFB99" not in _offered(response) and "GFU99" not in _offered(response)
+
+
+async def test_get_filaments_for_an_empty_slot_and_an_offline_printer(
+    hass: HomeAssistant, bambuddy_api: SimpleNamespace, freezer: FrozenDateTimeFactory
+) -> None:
+    entry = await set_up(hass, A1_MINI)
+    bambuddy_api.statuses[A1_MINI]["connected"] = False
+    await next_refresh(hass, freezer)
+
+    response = await _get_filaments(hass, ams_uid(entry, 0, "slot_4", A1_MINI))
+
+    assert response["current"] is None
+    assert "GFL99" in _offered(response)
+
+
+async def test_a_switch_slot_is_offered_what_either_nozzle_takes(
+    hass: HomeAssistant, bambuddy_api: SimpleNamespace, freezer: FrozenDateTimeFactory
+) -> None:
+    """The H2D's AMS on the filament track switch (BamBuddy leaves it out of
+    its map): Bambu PPA-CF goes through the left nozzle."""
+    entry = await set_up(hass, H2D)
+    slot = ams_uid(entry, 0, "slot_1", H2D)
+    assert "GFN06" not in _offered(await _get_filaments(hass, slot))  # unit 0 feeds the right nozzle
+
+    bambuddy_api.statuses[H2D]["ams_extruder_map"] = {"128": 1}
+    await next_refresh(hass, freezer)
+
+    assert "GFN06" in _offered(await _get_filaments(hass, slot))
+
+
+@pytest.mark.parametrize(("code", "absent", "present"), [("N1", "GFB99", "GFL99"), ("O1E", "GFSNL03", "GFT98")])
+async def test_a_model_code_is_read_as_its_model(
+    hass: HomeAssistant, bambuddy_api: SimpleNamespace, code: str, absent: str, present: str
+) -> None:
+    """BamBuddy may store a model code: N1 is the A1 mini (no ABS), O1E the
+    H2D Pro (no SUNLU, but PPS-CF)."""
+    as_model(bambuddy_api, code)
+    entry = await set_up(hass, X1C)
+
+    offered = _offered(await _get_filaments(hass, ams_uid(entry, 0, "slot_3")))
+
+    assert absent not in offered and present in offered
+
+
+
+async def test_a_generic_filament_takes_its_profile(
+    hass: HomeAssistant, bambuddy_api: SimpleNamespace, freezer: FrozenDateTimeFactory
+) -> None:
+    """A generic filament: Bambu's generic profile; the K value goes back to
     the default, as on the printer's screen."""
     entry = await set_up(hass, X1C)
     bambuddy_api.statuses[X1C]["ams"][0]["tray"][2]["cali_idx"] = 4
     await next_refresh(hass, freezer)
 
-    await _set_filament(hass, ams_uid(entry, 0, "slot_3"), material="PETG HF")
+    await _set_filament(hass, ams_uid(entry, 0, "slot_3"), filament="GFG96")
 
     bambuddy_api.configure_slot.assert_awaited_once_with(
         X1C, 0, 2, tray_type="PETG", name="Generic PETG HF", color="FFFFFFFF", temp_min=220, temp_max=270,
-        tray_info_idx="GFG96", cali_idx=-1, nozzle_diameter="0.4",
+        tray_info_idx="GFG96", setting_id="GFSG96_04", cali_idx=-1, nozzle_diameter="0.4",
     )
 
 
@@ -796,12 +1016,12 @@ async def test_the_colour_alone_keeps_the_k_value(
     await _set_filament(hass, ams_uid(entry, 0, "slot_3"), color=[0, 0, 0])
 
     bambuddy_api.configure_slot.assert_awaited_once_with(
-        X1C, 0, 2, tray_type="PLA", name="PLA", color="000000FF", temp_min=200, temp_max=220,
-        tray_info_idx="", cali_idx=4, nozzle_diameter="0.6",
+        X1C, 0, 2, tray_type="PLA", name="Generic PLA", color="000000FF", temp_min=200, temp_max=220,
+        tray_info_idx="GFL99", setting_id="GFSL99", cali_idx=4, nozzle_diameter="0.6",
     )
 
 
-async def test_a_slot_without_a_nozzle_range_takes_its_material_s(
+async def test_a_slot_without_a_nozzle_range_takes_its_profile_s(
     hass: HomeAssistant, bambuddy_api: SimpleNamespace, freezer: FrozenDateTimeFactory
 ) -> None:
     entry = await set_up(hass, X1C)
@@ -812,6 +1032,36 @@ async def test_a_slot_without_a_nozzle_range_takes_its_material_s(
 
     kwargs = bambuddy_api.configure_slot.await_args.kwargs
     assert (kwargs["temp_min"], kwargs["temp_max"]) == (190, 240)
+
+
+@pytest.mark.parametrize(
+    ("tray_type", "nozzle_range"),
+    [
+        ("TPU-AMS", (200, 250)),  # Generic TPU for AMS, not PLA's
+        ("PLA-S", (190, 240)),  # Bambu Support For PLA: no Generic of the type
+        ("PA-S", (260, 300)),  # Bambu Support For PA/PET
+        ("Wood", (190, 240)),  # a type Bambu Studio does not have: Generic PLA's
+    ],
+)
+async def test_a_foreign_profile_without_a_range_takes_its_type_s(
+    hass: HomeAssistant,
+    bambuddy_api: SimpleNamespace,
+    freezer: FrozenDateTimeFactory,
+    tray_type: str,
+    nozzle_range: tuple[int, int],
+) -> None:
+    """A profile the list lacks and no range of the slot's own: the range of
+    the profile the slot's type stands for."""
+    entry = await set_up(hass, X1C)
+    bambuddy_api.statuses[X1C]["ams"][0]["tray"][2].update(
+        {"tray_info_idx": "P4d64437", "tray_type": tray_type, "nozzle_temp_min": 0, "nozzle_temp_max": 0}
+    )
+    await next_refresh(hass, freezer)
+
+    await _set_filament(hass, ams_uid(entry, 0, "slot_3"), color=[0, 0, 0])
+
+    kwargs = bambuddy_api.configure_slot.await_args.kwargs
+    assert (kwargs["tray_info_idx"], kwargs["temp_min"], kwargs["temp_max"]) == ("P4d64437", *nozzle_range)
 
 
 @pytest.mark.parametrize(("printer_id", "tray", "diameter"), [(X1C, 0, "0.4"), (H2D, 0, "0.6"), (H2D, 1, "0.4")])
@@ -829,11 +1079,11 @@ async def test_the_external_spool_gets_its_filament(
         await next_refresh(hass, freezer)
     external = "external_spool_2" if tray else "external_spool"
 
-    await _set_filament(hass, printer_uid(entry, external, printer_id), material="PLA", color=[255, 106, 19])
+    await _set_filament(hass, printer_uid(entry, external, printer_id), filament="GFL99", color=[255, 106, 19])
 
     bambuddy_api.configure_slot.assert_awaited_once_with(
         printer_id, 255, tray, tray_type="PLA", name="Generic PLA", color="FF6A13FF", temp_min=190, temp_max=240,
-        tray_info_idx="GFL99", cali_idx=-1, nozzle_diameter=diameter,
+        tray_info_idx="GFL99", setting_id="GFSL99", cali_idx=-1, nozzle_diameter=diameter,
     )
 
 
@@ -842,7 +1092,7 @@ async def test_the_external_spool_gets_its_filament(
     [
         # A Bambu spool's chip says what it holds; the printer reads it again.
         (X1C, {}, "slot_1", {"color": [0, 0, 0]}, "rfid_spool"),
-        (X1C, {}, "slot_4", {"material": "PLA"}, "slot_empty"),
+        (X1C, {}, "slot_4", {"filament": "GFL99"}, "slot_empty"),
         # The slot printing right now.
         (A1_MINI, {"state": "RUNNING", "tray_now": 1}, "slot_2", {"color": [0, 0, 0]}, "slot_in_use"),
         (A1_MINI, {"ams_status_main": 1, "ams_status_sub": 3}, "slot_2", {"color": [0, 0, 0]}, "filament_change"),
@@ -894,7 +1144,7 @@ async def test_an_unknown_material_needs_a_choice(hass: HomeAssistant, bambuddy_
     assert raised.value.translation_key == "material_needed"
 
 
-async def test_set_filament_needs_a_material_or_a_colour(hass: HomeAssistant, bambuddy_api: SimpleNamespace) -> None:
+async def test_set_filament_needs_a_filament_or_a_colour(hass: HomeAssistant, bambuddy_api: SimpleNamespace) -> None:
     entry = await set_up(hass, X1C)
 
     with pytest.raises(ServiceValidationError) as raised:
@@ -944,7 +1194,7 @@ async def test_the_slot_feeding_the_other_nozzle_is_in_use(
     assert raised.value.translation_key == "slot_in_use"
 
 
-async def test_a_material_without_a_colour_is_opaque(
+async def test_a_filament_without_a_colour_is_opaque(
     hass: HomeAssistant, bambuddy_api: SimpleNamespace, freezer: FrozenDateTimeFactory
 ) -> None:
     """A slot BamBuddy reset carries a transparent black: the new filament
@@ -953,23 +1203,23 @@ async def test_a_material_without_a_colour_is_opaque(
     bambuddy_api.statuses[X1C]["ams"][0]["tray"][2]["tray_color"] = "00000000"
     await next_refresh(hass, freezer)
 
-    await _set_filament(hass, ams_uid(entry, 0, "slot_3"), material="PLA-CF")
+    await _set_filament(hass, ams_uid(entry, 0, "slot_3"), filament="GFL98")
 
     kwargs = bambuddy_api.configure_slot.await_args.kwargs
     assert (kwargs["color"], kwargs["temp_min"], kwargs["temp_max"]) == ("000000FF", 190, 240)
 
 
-async def test_a_new_material_keeps_a_translucent_colour(
+async def test_a_new_filament_keeps_a_translucent_colour(
     hass: HomeAssistant, bambuddy_api: SimpleNamespace, freezer: FrozenDateTimeFactory
 ) -> None:
     """A translucent filament's colour carries its transparency: a new
-    material keeps it. Only a colour chosen anew is opaque -- Home
+    filament keeps it. Only a colour chosen anew is opaque -- Home
     Assistant's colour picker has no transparency."""
     entry = await set_up(hass, X1C)
     bambuddy_api.statuses[X1C]["ams"][0]["tray"][2]["tray_color"] = "00ae42cc"
     await next_refresh(hass, freezer)
 
-    await _set_filament(hass, ams_uid(entry, 0, "slot_3"), material="PETG HF")
+    await _set_filament(hass, ams_uid(entry, 0, "slot_3"), filament="GFG96")
     assert bambuddy_api.configure_slot.await_args.kwargs["color"] == "00AE42CC"
 
     await _set_filament(hass, ams_uid(entry, 0, "slot_3"), color=[255, 0, 0])
@@ -1000,7 +1250,7 @@ async def test_the_external_spool_feeding_a_nozzle_is_in_use(
     await next_refresh(hass, freezer)
 
     with pytest.raises(ServiceValidationError) as raised:
-        await _set_filament(hass, printer_uid(entry, external, H2D), material="PLA")
+        await _set_filament(hass, printer_uid(entry, external, H2D), filament="GFL99")
 
     assert raised.value.translation_key == "slot_in_use"
 
@@ -1013,7 +1263,7 @@ async def test_the_left_external_spool_is_free_while_the_right_one_feeds(
     bambuddy_api.statuses[H2D].update({"tray_now": 254, "active_extruder": 0})
     entry = await set_up(hass, H2D)
 
-    await _set_filament(hass, printer_uid(entry, "external_spool", H2D), material="PLA")
+    await _set_filament(hass, printer_uid(entry, "external_spool", H2D), filament="GFL99")
 
     bambuddy_api.configure_slot.assert_awaited_once()
 
@@ -1104,7 +1354,7 @@ async def test_a_slot_of_a_printer_bambuddy_does_not_list_now_points_to_its_repa
     await hass.config_entries.async_reload(entry.entry_id)
     await hass.async_block_till_done()
 
-    for action, data in (("load_filament", {}), ("set_filament", {"material": "PLA"})):
+    for action, data in (("load_filament", {}), ("set_filament", {"filament": "GFL99"})):
         with pytest.raises(ServiceValidationError) as raised:
             await hass.services.async_call(DOMAIN, action, {"entity_id": slot, **data}, blocking=True)
         assert raised.value.translation_key == "printer_not_listed"

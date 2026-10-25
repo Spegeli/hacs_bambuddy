@@ -1,0 +1,8 @@
+{
+    "type": "machine",
+    "name": "Bambu Lab X1 Carbon 0.4 nozzle",
+    "instantiation": "true",
+    "physical_extruder_map": [
+        "0"
+    ]
+}

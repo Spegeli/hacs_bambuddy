@@ -32,6 +32,7 @@ from custom_components.bambuddy.models import (
     slot_attributes,
     slot_state,
     tray_id,
+    tray_label,
     ventilating,
 )
 
@@ -702,3 +703,20 @@ def test_chamber_heats(model: str, status: dict[str, Any], heats: bool) -> None:
 )
 def test_ventilating(model: str, status: dict[str, Any], on: bool) -> None:
     assert ventilating(_printer(status, model)) is on
+
+
+@pytest.mark.parametrize(
+    ("tray", "name"),
+    [
+        ({"tray_type": "PLA", "tray_info_idx": "GFA00", "tray_sub_brands": ""}, "PLA Basic"),
+        ({"tray_type": "PLA", "tray_info_idx": "GFL99", "tray_sub_brands": ""}, "Generic PLA"),
+        ({"tray_type": "PLA", "tray_info_idx": "GFSNL03", "tray_sub_brands": ""}, "SUNLU PLA+"),
+        # BamBuddy's misreading of a cloud preset, a user's own: as today.
+        ({"tray_type": "PLA", "tray_info_idx": "GFNLS03", "tray_sub_brands": ""}, "PLA"),
+        ({"tray_type": "PLA", "tray_info_idx": "P4d64437", "tray_sub_brands": "My PLA"}, "My PLA"),
+        # A chip names its spool.
+        ({"tray_type": "PLA", "tray_info_idx": "GFA00", "tray_sub_brands": "PLA Matte", "tag_uid": "AB12"}, "PLA Matte"),
+    ],
+)
+def test_a_slot_is_named_by_its_profile(tray: dict[str, Any], name: str) -> None:
+    assert tray_label(tray) == name

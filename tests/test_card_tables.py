@@ -15,8 +15,8 @@ import pytest
 import voluptuous as vol
 import yaml
 
-from custom_components.bambuddy import auto_off, coordinator, fan, models, plug_identity, plugs, services
-from custom_components.bambuddy.models import DRYING_MAX, HMS_ANSWERS, MATERIALS
+from custom_components.bambuddy import auto_off, coordinator, fan, filaments, models, plug_identity, plugs, services
+from custom_components.bambuddy.models import DRYING_MAX, HMS_ANSWERS
 
 from tests.conftest import INTEGRATION
 
@@ -41,15 +41,21 @@ def test_the_same_hms_answers() -> None:
     assert set(re.findall(r"^\s*([A-Z_]+):", block.group(1), re.M)) == set(HMS_ANSWERS)
 
 
-def test_the_same_materials() -> None:
-    """The card's list, the action's choices and the integration's table: the same materials, profiles
-    and types, in one order."""
-    block = re.search(r"const GENERIC: readonly \[string, string, string\]\[\] = \[(.*?)\];", _card("dialogs.ts"), re.S)
-    assert block
-    card = re.findall(r'\["([^"]+)", "([^"]+)", "([^"]+)"\]', block.group(1))
-    assert card == [(name, material.profile, material.tray_type) for name, material in MATERIALS.items()]
+def test_set_filament_names_a_profile_by_its_id_alone() -> None:
+    """The filament field alone names a profile (no material beside it);
+    the card asks the integration for its filaments: get_filaments."""
     actions = yaml.safe_load((INTEGRATION / "services.yaml").read_text(encoding="utf-8"))
-    assert actions["set_filament"]["fields"]["material"]["selector"]["select"]["options"] == list(MATERIALS)
+    assert "material" not in actions["set_filament"]["fields"]
+    assert "GENERIC" not in _card("dialogs.ts")
+
+
+def test_the_filament_choice_is_the_list() -> None:
+    """The action's filament field offers every profile of the list, by
+    vendor in Bambu Studio's order, each named in full."""
+    actions = yaml.safe_load((INTEGRATION / "services.yaml").read_text(encoding="utf-8"))
+    options = actions["set_filament"]["fields"]["filament"]["selector"]["select"]["options"]
+    expected = sorted(filaments.FILAMENTS.values(), key=filaments._rank)
+    assert options == [{"label": item.name, "value": item.id} for item in expected]
 
 
 def test_the_same_drying_limits() -> None:

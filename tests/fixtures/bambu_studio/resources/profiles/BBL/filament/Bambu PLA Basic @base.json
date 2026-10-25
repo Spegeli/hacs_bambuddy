@@ -1,0 +1,10 @@
+{
+    "type": "filament",
+    "name": "Bambu PLA Basic @base",
+    "inherits": "fdm_filament_pla",
+    "instantiation": "false",
+    "filament_id": "GFA00",
+    "filament_vendor": [
+        "Bambu Lab"
+    ]
+}

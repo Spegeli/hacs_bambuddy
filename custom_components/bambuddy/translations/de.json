@@ -895,10 +895,25 @@
       "message": "{printer} druckt gerade aus diesem Fach. Pausiere den Druck, um sein Filament zu ändern."
     },
     "material_needed": {
-      "message": "Für dieses Fach kennt der Drucker noch kein Material: Wähle eines aus."
+      "message": "Für dieses Fach kennt der Drucker noch kein Filament: Wähle eines aus."
+    },
+    "filament_not_offered": {
+      "message": "Bambu Studio bietet {filament} für {printer} mit dieser Düse nicht an."
+    },
+    "filament_not_for_ams": {
+      "message": "Bambu Studio lässt {filament} nicht im AMS zu: Lege es auf eine externe Spule."
+    },
+    "filament_not_for_nozzle": {
+      "message": "Bambu Studio lässt {filament} mit der Düse dieses Druckers nicht zu."
+    },
+    "filament_not_left": {
+      "message": "Bambu Studio lässt {filament} an der linken Düse nicht zu."
+    },
+    "filament_not_right": {
+      "message": "Bambu Studio lässt {filament} an der rechten Düse nicht zu."
     },
     "nothing_to_set": {
-      "message": "Wähle mindestens eines von Material, Farbe und K-Profil."
+      "message": "Wähle mindestens eines von Filament, Farbe und K-Profil."
     },
     "no_answer": {
       "message": "BamBuddy hat nicht rechtzeitig geantwortet, der Befehl kann den Drucker trotzdem noch erreichen. Prüfe, ob BamBuddy läuft und nicht überlastet ist."
@@ -1147,15 +1162,15 @@
     },
     "set_filament": {
       "name": "Filament festlegen",
-      "description": "Legt Material und Farbe eines AMS-Fachs oder der externen Spule fest – wie der Drucker es nach dem Einlegen einer Spule ohne Chip abfragt. Eine neue Farbe behält das Profil des Fachs; ein neues Material nutzt das generische Profil von Bambu und den Standard-K-Wert (Flussdynamik). Nicht für Bambu-Spulen mit Chip: Die liest der Drucker selbst.",
+      "description": "Legt Filament und Farbe eines AMS-Fachs oder der externen Spule fest – wie der Drucker es nach dem Einlegen einer Spule ohne Chip abfragt. Eine neue Farbe behält das Profil des Fachs; ein neues Filament nutzt sein Profil aus Bambu Studio, mit dem Standard-K-Wert (Flussdynamik). Nicht für Bambu-Spulen mit Chip: Die liest der Drucker selbst.",
       "fields": {
         "entity_id": {
           "name": "Fach",
           "description": "Der Sensor des AMS-Fachs oder der externen Spule, zum Beispiel „… Fach 2“ oder „… Externe Spule“."
         },
-        "material": {
-          "name": "Material",
-          "description": "Leer lassen, um das Material des Fachs zu behalten."
+        "filament": {
+          "name": "Filament",
+          "description": "Ein Profil, das Bambu Studio für diesen Drucker, seine Düse und dieses Fach anbietet. Leer lassen, um das Filament des Fachs zu behalten."
         },
         "color": {
           "name": "Farbe",
@@ -1216,6 +1231,16 @@
         "entity_id": {
           "name": "Fach",
           "description": "Der Sensor des Fachs (oder der externen Spule)."
+        }
+      }
+    },
+    "get_filaments": {
+      "name": "Filamente abrufen",
+      "description": "Nennt die Filamente, die Bambu Studio für ein Fach anbietet, nach Hersteller geordnet, und das aktuelle Filament des Fachs. Liest nur.",
+      "fields": {
+        "entity_id": {
+          "name": "Fach",
+          "description": "Der Sensor des AMS-Fachs oder der externen Spule, zum Beispiel „… Fach 2“ oder „… Externe Spule“."
         }
       }
     },

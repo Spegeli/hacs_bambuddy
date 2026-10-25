@@ -11,6 +11,7 @@ from typing import Any
 from awesomeversion import AwesomeVersion, AwesomeVersionException
 from homeassistant.util import slugify
 
+from . import filaments
 from .const import CONF_PRINTER_ID, CONF_PRINTER_NAME, CONF_SERIAL, MIN_BAMBUDDY_VERSION
 
 # The print status sensor's states. BamBuddy passes the firmware's
@@ -835,7 +836,14 @@ def spool_present(tray: dict[str, Any]) -> bool:
 
 
 def tray_label(tray: dict[str, Any]) -> str:
-    """The filament's name: its product ("PLA Basic"), else its material."""
+    """The filament's name: a chip's product ("PLA Matte"); else its Bambu
+    Studio profile's ("PLA Basic", "Generic PLA", "SUNLU PLA+" -- the
+    printer reports no name for a slot set by hand); else what BamBuddy
+    reports, the material at last."""
+    if not has_rfid(tray):
+        named = filaments.label(tray.get("tray_info_idx"))
+        if named:
+            return named
     return str(tray.get("tray_sub_brands") or tray.get("tray_type") or "")
 
 
@@ -887,16 +895,6 @@ def has_chip_ids(tray: dict[str, Any]) -> bool:
     return bool(tray.get("tray_uuid") and tray.get("tag_uid"))
 
 
-@dataclass(frozen=True)
-class Material:
-    """A material as Bambu's generic profile describes it."""
-
-    tray_type: str
-    profile: str
-    temp_min: int
-    temp_max: int
-
-
 # The answers to an HMS message that send the printer something (BamBuddy's
 # hms_actions.py): Bambu's catalogue also names buttons of its own screen
 # -- the assistant, the live view, "load", "cancel", "close" -- that send
@@ -942,42 +940,6 @@ def hms_code(error: dict[str, Any]) -> str:
     """A message's full code, as the printer and BamBuddy take it back."""
     # In capitals first: a leading 0X goes as a 0x does (the action's code too).
     return str(error.get("full_code") or error.get("code") or "").upper().removeprefix("0X")
-
-
-# The materials a slot or an external spool can be set to: Bambu's generic
-# profiles (BamBuddy's list of them), with Bambu Studio's nozzle ranges of
-# each profile.
-MATERIALS: dict[str, Material] = {
-    "PLA": Material("PLA", "GFL99", 190, 240),
-    "PLA Silk": Material("PLA", "GFL96", 190, 240),
-    "PLA High Speed": Material("PLA", "GFL95", 190, 240),
-    "PLA-CF": Material("PLA-CF", "GFL98", 190, 240),
-    "PETG": Material("PETG", "GFG99", 220, 270),
-    "PETG HF": Material("PETG", "GFG96", 220, 270),
-    "PETG-CF": Material("PETG-CF", "GFG98", 240, 270),
-    "PCTG": Material("PCTG", "GFG97", 240, 270),
-    "ABS": Material("ABS", "GFB99", 240, 280),
-    "ASA": Material("ASA", "GFB98", 240, 280),
-    "PC": Material("PC", "GFC99", 260, 290),
-    "PA": Material("PA", "GFN99", 240, 280),
-    "PA-CF": Material("PA-CF", "GFN98", 260, 300),
-    "PPA-CF": Material("PPA-CF", "GFN97", 280, 320),
-    "PPA-GF": Material("PPA-GF", "GFN96", 280, 320),
-    "TPU": Material("TPU", "GFU99", 200, 250),
-    "TPU for AMS": Material("TPU", "GFU98", 200, 250),
-    "PVA": Material("PVA", "GFS99", 190, 240),
-    "HIPS": Material("HIPS", "GFS98", 220, 270),
-    "BVOH": Material("BVOH", "GFS97", 190, 240),
-    "PE": Material("PE", "GFP99", 175, 220),
-    "PE-CF": Material("PE-CF", "GFP98", 175, 220),
-    "PP": Material("PP", "GFP97", 220, 250),
-    "PP-CF": Material("PP-CF", "GFP96", 220, 250),
-    "PP-GF": Material("PP-GF", "GFP95", 220, 250),
-    "EVA": Material("EVA", "GFR99", 175, 220),
-    "PHA": Material("PHA", "GFR98", 190, 240),
-    "PPS": Material("PPS", "GFT97", 300, 340),
-    "PPS-CF": Material("PPS-CF", "GFT98", 310, 340),
-}
 
 
 def active_tray(data: PrinterData) -> int | None:

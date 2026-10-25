@@ -1,0 +1,6 @@
+{
+    "type": "machine",
+    "name": "Bambu Lab H2D 0.4 nozzle",
+    "inherits": "fdm_bbl_3dp_002_common",
+    "instantiation": "true"
+}

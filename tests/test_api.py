@@ -367,6 +367,21 @@ async def test_configuring_a_slot(hass: HomeAssistant, aioclient_mock: AiohttpCl
     )
 
 
+async def test_configuring_a_slot_with_bambu_studios_setting_id(hass: HomeAssistant, aioclient_mock: AiohttpClientMocker) -> None:
+    """Bambu Studio's own setting id goes with its profile: BamBuddy derives
+    a wrong one for SUNLU's (and the support filaments') ids."""
+    url = f"{API}/printers/1/slots/0/2/configure"
+    aioclient_mock.post(url, json={"success": True, "message": "Configured"})
+
+    await _client(hass).configure_slot(
+        1, 0, 2, tray_type="PLA", name="SUNLU PLA+", color="000000FF", temp_min=190, temp_max=240,
+        tray_info_idx="GFSNL03", setting_id="GFSNLS03_04",
+    )
+
+    [(_, called, _, _)] = aioclient_mock.mock_calls
+    assert (called.query["tray_info_idx"], called.query["setting_id"]) == ("GFSNL03", "GFSNLS03_04")
+
+
 async def test_a_slot_with_its_k_profile(hass: HomeAssistant, aioclient_mock: AiohttpClientMocker) -> None:
     """The printer's own calibration: BamBuddy selects it for the slot under
     the profile's filament, so the selection holds."""

@@ -895,10 +895,25 @@
       "message": "{printer} is printing from this slot. Pause the print to change its filament."
     },
     "material_needed": {
-      "message": "The printer knows no material for this slot yet: choose one."
+      "message": "The printer knows no filament for this slot yet: choose one."
+    },
+    "filament_not_offered": {
+      "message": "Bambu Studio does not offer {filament} for {printer} with this nozzle."
+    },
+    "filament_not_for_ams": {
+      "message": "Bambu Studio does not allow {filament} in the AMS: put it on an external spool."
+    },
+    "filament_not_for_nozzle": {
+      "message": "Bambu Studio does not allow {filament} with this printer's nozzle."
+    },
+    "filament_not_left": {
+      "message": "Bambu Studio does not allow {filament} on the left nozzle."
+    },
+    "filament_not_right": {
+      "message": "Bambu Studio does not allow {filament} on the right nozzle."
     },
     "nothing_to_set": {
-      "message": "Choose at least one of material, color and K profile."
+      "message": "Choose at least one of filament, color and K profile."
     },
     "no_answer": {
       "message": "BamBuddy did not answer in time; the command may still reach the printer. Check that BamBuddy is running and not overloaded."
@@ -1147,15 +1162,15 @@
     },
     "set_filament": {
       "name": "Set filament",
-      "description": "Sets the material and color of an AMS slot or of the external spool, as the printer asks after a spool without a chip goes in. A new color keeps the slot's profile; a new material takes Bambu's generic profile and the default flow dynamics (K) value. Not for Bambu spools with a chip: the printer reads those itself.",
+      "description": "Sets the filament and color of an AMS slot or of the external spool, as the printer asks after a spool without a chip goes in. A new color keeps the slot's profile; a new filament takes its Bambu Studio profile, with the default flow dynamics (K) value. Not for Bambu spools with a chip: the printer reads those itself.",
       "fields": {
         "entity_id": {
           "name": "Slot",
           "description": "The sensor of the AMS slot or of the external spool, for example \"… Slot 2\" or \"… External spool\"."
         },
-        "material": {
-          "name": "Material",
-          "description": "Leave empty to keep the slot's material."
+        "filament": {
+          "name": "Filament",
+          "description": "A profile Bambu Studio offers for this printer, its nozzle and this slot. Leave empty to keep the slot's filament."
         },
         "color": {
           "name": "Color",
@@ -1216,6 +1231,16 @@
         "entity_id": {
           "name": "Slot",
           "description": "The sensor of the slot (or of the external spool)."
+        }
+      }
+    },
+    "get_filaments": {
+      "name": "Get filaments",
+      "description": "Lists the filaments Bambu Studio offers for a slot, by vendor, and the slot's current filament. Read only.",
+      "fields": {
+        "entity_id": {
+          "name": "Slot",
+          "description": "The sensor of the AMS slot or of the external spool, for example \"… Slot 2\" or \"… External spool\"."
         }
       }
     },

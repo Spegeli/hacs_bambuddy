@@ -408,6 +408,9 @@
     "get_k_profiles": {
       "service": "mdi:tune-vertical"
     },
+    "get_filaments": {
+      "service": "mdi:format-list-bulleted-type"
+    },
     "reset_slot": {
       "service": "mdi:backup-restore"
     },

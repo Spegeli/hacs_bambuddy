@@ -191,7 +191,7 @@ describe("a slot's tools", () => {
     );
   });
 
-  it("says spool, not slot, in an external spool's K field, and asks for a material with a K profile alone", async () => {
+  it("says spool, not slot, in an external spool's K field, and asks for a filament with a K profile alone", async () => {
     const failing = async (call: { service: string }): Promise<unknown> => {
       if (call.service === "get_k_profiles") throw new Error("no answer");
       return undefined;
@@ -211,7 +211,7 @@ describe("a slot's tools", () => {
     select.value = "-1";
     select.dispatchEvent(new Event("change"));
     await settle(blank);
-    expect(text(find(blank, "dialog .dlg-need"))).toBe("Choose a material too.");
+    expect(text(find(blank, "dialog .dlg-need"))).toBe("Choose a filament too.");
   });
 });
 
@@ -391,22 +391,14 @@ describe("each of a slot's texts", () => {
     );
   });
 
-  it("keeps the other-material note until there is a material", async () => {
+  it("offers a slot without a filament only the printer's default K", async () => {
     const card = await mount(inactive(x1c({ status: "idle", stage: "idle" })), "dev-x1c", {}, { callService: answering });
     await showView(card, "Filament");
     (findAll(card, ".slot")[3]?.querySelector(".btn.edit") as HTMLButtonElement).click();
     await settle(card);
-    await chooseK(card, "2");
+    // No filament chosen: no profile is the filament's yet.
+    expect([...(find<HTMLSelectElement>(card, "dialog select#fil-k") as HTMLSelectElement).options].map((option) => option.text)).toEqual(["Printer's default (K 0.020)"]);
     expect(text(find(card, "dialog .k-hint"))).toBe("If unsure, leave this as it is.");
-  });
-
-  it("says spool in the external spool's other-material note", async () => {
-    const card = await mount(a1mini({ status: "idle", stage: "idle" }), "dev-a1mini", {}, { callService: answering });
-    await showView(card, "Filament");
-    (findAll(card, ".slot").at(-1)?.querySelector(".btn.edit") as HTMLButtonElement).click();
-    await settle(card);
-    await chooseK(card, "2");
-    expect(text(find(card, "dialog .k-hint"))).toBe("A K profile of another material: BamBuddy then files the spool under that material.");
   });
 });
 

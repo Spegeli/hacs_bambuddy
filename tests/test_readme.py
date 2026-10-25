@@ -226,3 +226,10 @@ def test_the_readme_says_how_plugs_are_known() -> None:
         "the same Tasmota, Home Assistant entity or MQTT topic and path as before keeps its entity IDs and history."
     ) in _README
     assert "A smart plug's carry BamBuddy's number of the plug" not in _README
+
+
+def test_the_readme_names_get_filaments() -> None:
+    """Every response action has its row in the actions table."""
+    row = next((line for line in _README.splitlines() if line.startswith("| `bambuddy.get_filaments` |")), None)
+    assert row is not None
+    assert row.count(" | ") == 2 and "`entity_id`" in row and "response only" in row

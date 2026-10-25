@@ -2539,6 +2539,35 @@ export const cardStyles = css`
   .field.kfield .select {
     max-width: none;
   }
+  /* Vendor and filament: beside their labels, in one column so the two
+     selects line up, each over the rest of the row; on a dialog too narrow
+     for the list's longest name and its "Keep" beside the widest label,
+     under their labels at the dialog's width, as the colour and the K
+     profile. */
+  .fil-fields {
+    container-type: inline-size;
+  }
+  .fil-grid {
+    display: grid;
+    grid-template-columns: max-content minmax(0, 1fr);
+    align-items: center;
+    gap: 14px 12px;
+  }
+  .fil-grid > .field {
+    display: contents;
+  }
+  .fil-grid .select {
+    max-width: none;
+  }
+  @container (max-width: 329px) {
+    .fil-grid {
+      grid-template-columns: minmax(0, 1fr);
+      gap: 6px;
+    }
+    .fil-grid > .field + .field label {
+      margin-top: 8px;
+    }
+  }
   .rfid-spool {
     font-weight: 500;
   }

@@ -39,6 +39,6 @@ filterwarnings = [
 # runner's own Python), one more reason they stay plain stdlib.
 [tool.mypy]
 packages = ["custom_components.bambuddy"]
-modules = ["release", "ha_version"]
+modules = ["release", "ha_version", "bambu_filaments"]
 mypy_path = [".github/scripts"]
 strict = true

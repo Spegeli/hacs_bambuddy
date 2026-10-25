@@ -14,6 +14,8 @@ import {
   makeHass,
   missingFromBamBuddy,
   mountCard,
+  OFFER,
+  offerFor,
   offlineP1s,
   p1s,
   plugDevice,
@@ -2683,10 +2685,6 @@ describe("the filament view", () => {
 });
 
 describe("setting a slot's filament", () => {
-  const MATERIALS = [
-    "PLA", "PLA Silk", "PLA High Speed", "PLA-CF", "PETG", "PETG HF", "PETG-CF", "PCTG", "ABS", "ASA", "PC", "PA", "PA-CF", "PPA-CF", "PPA-GF",
-    "TPU", "TPU for AMS", "PVA", "HIPS", "BVOH", "PE", "PE-CF", "PP", "PP-CF", "PP-GF", "EVA", "PHA", "PPS", "PPS-CF",
-  ];
   const COLORS = ["White", "Black", "Gray", "Silver", "Red", "Orange", "Yellow", "Green", "Turquoise", "Cyan", "Blue", "Purple", "Pink", "Brown", "Beige", "Gold"];
   const SLOT_3 = "sensor.dev-x1c_ams_0_slot_3";
 
@@ -2694,14 +2692,19 @@ describe("setting a slot's filament", () => {
   const editable = (card: FakeCard): boolean[] => findAll(card, ".slot").map((row) => row.querySelector(".btn.edit") !== null);
   const edit = async (card: FakeCard, row: number): Promise<void> => {
     (findAll(card, ".slot")[row]?.querySelector(".btn.edit") as HTMLButtonElement).click();
+    await settle(card);
+  };
+  const vendors = (card: FakeCard): HTMLSelectElement => find<HTMLSelectElement>(card, "dialog select#fil-vendor") as HTMLSelectElement;
+  const filaments = (card: FakeCard): HTMLSelectElement | null => find<HTMLSelectElement>(card, "dialog select#fil-filament");
+  const texts = (select: HTMLSelectElement | null): string[] => [...(select?.options ?? [])].map((option) => option.text);
+  const choose = async (card: FakeCard, select: HTMLSelectElement | null, value: string): Promise<void> => {
+    (select as HTMLSelectElement).value = value;
+    (select as HTMLSelectElement).dispatchEvent(new Event("change"));
     await card.updateComplete;
   };
-  const material = (card: FakeCard): HTMLSelectElement => find<HTMLSelectElement>(card, "dialog select") as HTMLSelectElement;
-  const choose = async (card: FakeCard, value: string): Promise<void> => {
-    material(card).value = value;
-    material(card).dispatchEvent(new Event("change"));
-    await card.updateComplete;
-  };
+  const vendor = async (card: FakeCard, value: string): Promise<void> => choose(card, vendors(card), value);
+  const filament = async (card: FakeCard, value: string): Promise<void> => choose(card, filaments(card), value);
+  const answering = (offer: unknown) => async (call: { service: string }): Promise<unknown> => (call.service === "get_filaments" ? { response: offer } : undefined);
   const swatches = (card: FakeCard): HTMLButtonElement[] => findAll<HTMLButtonElement>(card, "dialog [role=radiogroup] [role=radio]");
   const checked = (card: FakeCard): string[] => swatches(card).filter((item) => item.getAttribute("aria-checked") === "true").map((item) => item.getAttribute("aria-label") ?? "");
   const pick = async (card: FakeCard, name: string): Promise<void> => {
@@ -2765,15 +2768,19 @@ describe("setting a slot's filament", () => {
     expect(findAll(plain, ".slot .btn.edit")).toHaveLength(0);
   });
 
-  it("keeps the slot's material, offers the 29 generic ones, and preselects its colour", async () => {
-    const { card } = await cardFor("x1c");
+  it("keeps the slot's filament under its vendor, offers Bambu Studio's, and preselects its colour", async () => {
+    const { card, hass } = await cardFor("x1c");
     await showView(card, "Filament");
     await edit(card, 2);
+    expect(hass.calls.find((call) => call.service === "get_filaments")).toMatchObject({ domain: "bambuddy", data: { entity_id: SLOT_3 }, returnResponse: true });
     expect(text(find(card, "dialog h2"))).toBe("Filament of Slot 3 · AMS A");
-    expect(text(find(card, "dialog label[for=fil-material]"))).toBe("Material");
-    expect([...material(card).options].map((option) => option.text)).toEqual(["Keep PLA", ...MATERIALS]);
-    expect(material(card).value).toBe("keep");
-    expect(material(card).classList.contains("unset")).toBe(false);
+    expect(text(find(card, "dialog label[for=fil-vendor]"))).toBe("Vendor");
+    expect(texts(vendors(card))).toEqual(["Choose …", "Bambu Lab", "Generic", "SUNLU"]);
+    expect(vendors(card).value).toBe("Generic");
+    expect(text(find(card, "dialog label[for=fil-filament]"))).toBe("Filament");
+    expect(texts(filaments(card))).toEqual(["Keep PLA", "PLA", "PETG", "PETG HF", "TPU for AMS", "PVA"]);
+    expect(filaments(card)?.value).toBe("keep");
+    expect(filaments(card)?.classList.contains("unset")).toBe(false);
     expect(find(card, "dialog [role=radiogroup]")?.getAttribute("aria-label")).toBe("Color");
     expect(swatches(card).map((item) => item.getAttribute("aria-label"))).toEqual(COLORS);
     expect(swatches(card).map((item) => item.getAttribute("style"))).toContain("--c: #C12E1F");
@@ -2781,7 +2788,7 @@ describe("setting a slot's filament", () => {
     // White and black keep the outline that makes them visible on every theme.
     expect(swatches(card).filter((item) => item.classList.contains("outline")).map((item) => item.getAttribute("aria-label"))).toEqual(["White", "Black", "Yellow", "Beige"]);
     expect(text(find(card, "dialog .other-color"))).toBe("Other color …");
-    expect(text(find(card, "dialog .dlg-note"))).toBe("For spools without a chip. For a new material, the printer uses Bambu Lab's standard settings for it.");
+    expect(text(find(card, "dialog .dlg-note"))).toBe("For spools without a chip. You can choose what Bambu Studio offers for this printer, its nozzle and this slot. Other profiles can be set on the printer or in BamBuddy.");
     expect(findAll(card, "dialog .dlg-actions .btn").map(text)).toEqual(["Cancel", "Set"]);
     expect(root(card).activeElement).toBe(find(card, "dialog .btn.safe"));
     // Nothing changed yet.
@@ -2789,7 +2796,7 @@ describe("setting a slot's filament", () => {
     expect(setButton(card).classList.contains("primary")).toBe(true);
   });
 
-  it("sends only what changed: the colour, the material, or both", async () => {
+  it("sends only what changed: the colour, the filament, or both", async () => {
     const { card, hass } = await cardFor("x1c");
     await showView(card, "Filament");
     await edit(card, 2);
@@ -2804,50 +2811,165 @@ describe("setting a slot's filament", () => {
     expect(hass.calls.at(-1)).toEqual({ domain: "bambuddy", service: "set_filament", data: { entity_id: SLOT_3, color: [193, 46, 31] }, notifyOnError: false });
     expect(text(find(card, ".sent"))).toBe("Sent");
     await edit(card, 2);
-    await choose(card, "PETG HF");
+    await filament(card, "GFG96");
     expect(setButton(card).disabled).toBe(false);
     await confirmDialog(card);
-    expect(hass.calls.at(-1)?.data).toEqual({ entity_id: SLOT_3, material: "PETG HF" });
+    expect(hass.calls.at(-1)?.data).toEqual({ entity_id: SLOT_3, filament: "GFG96" });
+    // Another vendor: its filament still to choose.
     await edit(card, 2);
-    await choose(card, "PLA");
+    await vendor(card, "SUNLU");
+    expect(texts(filaments(card))).toEqual(["Choose …", "PLA+"]);
+    expect(filaments(card)?.value).toBe("");
+    expect(setButton(card).disabled).toBe(true);
+    expect(text(find(card, "dialog .dlg-actions .dlg-need"))).toBe("Choose a filament too.");
+    await filament(card, "GFSNL03");
     await pick(card, "Gold");
     await confirmDialog(card);
-    expect(hass.calls.at(-1)?.data).toEqual({ entity_id: SLOT_3, material: "PLA", color: [228, 189, 104] });
-    // Keep again: nothing changed.
+    expect(hass.calls.at(-1)?.data).toEqual({ entity_id: SLOT_3, filament: "GFSNL03", color: [228, 189, 104] });
+    // Keep again, and back to the slot's own vendor: nothing changed.
     await edit(card, 2);
-    await choose(card, "TPU");
-    await choose(card, "keep");
+    await filament(card, "GFU98");
+    await filament(card, "keep");
+    expect(setButton(card).disabled).toBe(true);
+    await vendor(card, "Bambu Lab");
+    await vendor(card, "Generic");
+    expect(filaments(card)?.value).toBe("keep");
     expect(setButton(card).disabled).toBe(true);
     await press(card, "Cancel");
     expect(find(card, "dialog")).toBeNull();
-    // The K profiles asked at each opening aside.
     expect(hass.calls.filter((call) => call.service === "set_filament")).toHaveLength(3);
   });
 
-  it("asks for a material where the slot has none yet", async () => {
+  it("asks for a filament where the slot has none yet", async () => {
     const { card, hass } = await cardFor("x1c");
     await showView(card, "Filament");
     await edit(card, 3);
     expect(text(find(card, "dialog h2"))).toBe("Filament of Slot 4 · AMS A");
-    const options = [...material(card).options];
-    expect(options.map((option) => option.text)).toEqual(["Choose …", ...MATERIALS]);
+    const options = [...vendors(card).options];
+    expect(options.map((option) => option.text)).toEqual(["Choose …", "Bambu Lab", "Generic", "SUNLU"]);
     expect(options[0]?.disabled).toBe(true);
-    expect(material(card).value).toBe("");
+    expect(vendors(card).value).toBe("");
     // The prompt reads as one, not as a value.
-    expect(material(card).classList.contains("unset")).toBe(true);
+    expect(vendors(card).classList.contains("unset")).toBe(true);
+    expect(filaments(card)).toBeNull();
     // No colour to preselect; a colour alone is not enough, and it says so.
     expect(checked(card)).toEqual([]);
     expect(swatches(card)[0]?.getAttribute("tabindex")).toBe("0");
     expect(find(card, "dialog .dlg-need")).toBeNull();
     await pick(card, "Black");
     expect(setButton(card).disabled).toBe(true);
-    expect(text(find(card, "dialog .dlg-actions .dlg-need"))).toBe("Choose a material too.");
-    await choose(card, "PETG-CF");
+    expect(text(find(card, "dialog .dlg-actions .dlg-need"))).toBe("Choose a filament too.");
+    await vendor(card, "Generic");
+    expect(texts(filaments(card))[0]).toBe("Choose …");
+    expect(text(find(card, "dialog .dlg-actions .dlg-need"))).toBe("Choose a filament too.");
+    await filament(card, "GFG99");
     expect(find(card, "dialog .dlg-need")).toBeNull();
-    expect(material(card).classList.contains("unset")).toBe(false);
+    expect(vendors(card).classList.contains("unset")).toBe(false);
     expect(setButton(card).disabled).toBe(false);
     await confirmDialog(card);
-    expect(hass.calls.at(-1)?.data).toEqual({ entity_id: "sensor.dev-x1c_ams_0_slot_4", material: "PETG-CF", color: [0, 0, 0] });
+    expect(hass.calls.at(-1)?.data).toEqual({ entity_id: "sensor.dev-x1c_ams_0_slot_4", filament: "GFG99", color: [0, 0, 0] });
+  });
+
+  it("keeps a profile the offer lacks in the vendor field", async () => {
+    const { card, hass } = await cardFor("x1c", {}, { callService: answering({ ...OFFER, current: "P4d64437" }) });
+    await showView(card, "Filament");
+    await edit(card, 2);
+    expect(texts(vendors(card))).toEqual(["Keep PLA", "Bambu Lab", "Generic", "SUNLU"]);
+    expect(vendors(card).value).toBe("keep");
+    expect(filaments(card)).toBeNull();
+    // A vendor: its filaments, none of them the slot's.
+    await vendor(card, "Generic");
+    expect(texts(filaments(card))[0]).toBe("Choose …");
+    await vendor(card, "keep");
+    expect(filaments(card)).toBeNull();
+    expect(setButton(card).disabled).toBe(true);
+    await pick(card, "Red");
+    await confirmDialog(card);
+    expect(hass.calls.at(-1)?.data).toEqual({ entity_id: SLOT_3, color: [193, 46, 31] });
+  });
+
+  it("sets vendor and filament beside their labels in one column, under them on a dialog too narrow", async () => {
+    const { card } = await cardFor("x1c");
+    await showView(card, "Filament");
+    await edit(card, 2);
+    const grid = find(card, "dialog .fil-fields > .fil-grid");
+    expect([...(grid?.querySelectorAll("label, select") ?? [])].map((item) => item.getAttribute("for") ?? item.id)).toEqual([
+      "fil-vendor",
+      "fil-vendor",
+      "fil-filament",
+      "fil-filament",
+    ]);
+    const sheet = styleText();
+    expect(sheet).toMatch(/\.fil-fields\s*\{[^}]*container-type: inline-size;/);
+    expect(sheet).toMatch(/\.fil-grid\s*\{[^}]*grid-template-columns: max-content minmax\(0, 1fr\);/);
+    // Beside, a select takes the rest of the row: the 200 px of the other selects would cut a long name.
+    expect(sheet).toMatch(/\.fil-grid \.select\s*\{[^}]*max-width: none;/);
+    // Under its label below the width the longest name with its "Keep" needs beside the widest label.
+    expect(sheet).toMatch(/@container \(max-width: 329px\)\s*\{\s*\.fil-grid\s*\{[^}]*grid-template-columns: minmax\(0, 1fr\);/);
+  });
+
+  it("says so where Bambu Studio offers the slot nothing", async () => {
+    const { card, hass } = await cardFor("x1c", {}, { callService: answering({ vendors: [] }) });
+    await showView(card, "Filament");
+    await edit(card, 2);
+    expect(vendors(card)).toBeNull();
+    expect(findAll(card, "dialog .dlg-note").map(text)).toContain("Bambu Studio offers no filament for this slot with the nozzle that feeds it. A profile can be set on the printer or in BamBuddy.");
+    // No promise of a new filament beside it.
+    expect(findAll(card, "dialog .dlg-note").map(text)).not.toContain("For spools without a chip. You can choose what Bambu Studio offers for this printer, its nozzle and this slot. Other profiles can be set on the printer or in BamBuddy.");
+    // The slot's own filament stays; its colour can change.
+    await pick(card, "Red");
+    await confirmDialog(card);
+    expect(hass.calls.at(-1)?.data).toEqual({ entity_id: SLOT_3, color: [193, 46, 31] });
+    // A slot without a filament: nothing can be set there -- the note and the slot's tools only.
+    const { card: blank } = await cardFor("x1c", {}, { callService: answering({ vendors: [] }) });
+    await showView(blank, "Filament");
+    await edit(blank, 3);
+    expect(findAll(blank, "dialog .dlg-note").map(text)).toContain("Bambu Studio offers no filament for this slot with the nozzle that feeds it. A profile can be set on the printer or in BamBuddy.");
+    expect(swatches(blank)).toEqual([]);
+    expect(find(blank, "dialog select#fil-k")).toBeNull();
+    // The slot's tools stay (an unset slot has nothing to reset).
+    expect(button(blank, "Read the chip again")).not.toBeNull();
+    expect(findAll(blank, "dialog .dlg-actions .btn").map(text)).toEqual(["Close"]);
+    expect(find(blank, "dialog .dlg-actions .dlg-need")).toBeNull();
+  });
+
+  it("waits for the offer, and keeps the slot's filament where none comes", async () => {
+    let answer: (value: unknown) => void = () => undefined;
+    const slow = async (call: { service: string }): Promise<unknown> => (call.service === "get_filaments" ? new Promise((resolve) => (answer = resolve)) : undefined);
+    const { card } = await cardFor("x1c", {}, { callService: slow });
+    await showView(card, "Filament");
+    await edit(card, 2);
+    expect(vendors(card).disabled).toBe(true);
+    expect(texts(vendors(card))).toEqual(["Keep PLA"]);
+    answer({ response: offerFor(SLOT_3) });
+    await settle(card);
+    expect(vendors(card).disabled).toBe(false);
+    expect(vendors(card).value).toBe("Generic");
+    // No answer at all: the slot's own, nothing else to choose.
+    const failing = async (call: { service: string }): Promise<unknown> => {
+      if (call.service === "get_filaments") throw new Error("no answer");
+      return undefined;
+    };
+    const { card: failed } = await cardFor("x1c", {}, { callService: failing });
+    await showView(failed, "Filament");
+    await edit(failed, 2);
+    expect(texts(vendors(failed))).toEqual(["Keep PLA"]);
+    expect(vendors(failed).disabled).toBe(true);
+    expect(findAll(failed, "dialog .dlg-note").map(text)).toContain("The filament list did not arrive. To ask again, close the dialog and open it once more.");
+    expect(findAll(failed, "dialog .dlg-note").map(text)).not.toContain("For spools without a chip. You can choose what Bambu Studio offers for this printer, its nozzle and this slot. Other profiles can be set on the printer or in BamBuddy.");
+    // The colour can still change.
+    expect(swatches(failed).length).toBeGreaterThan(0);
+    await press(failed, "Cancel");
+    // An answer without vendors is none either; on a slot without a filament nothing can be set:
+    // the note and the slot's tools only.
+    const { card: empty } = await cardFor("x1c", {}, { callService: answering({}) });
+    await showView(empty, "Filament");
+    await edit(empty, 3);
+    expect(findAll(empty, "dialog .dlg-note").map(text)).toContain("The filament list did not arrive. To ask again, close the dialog and open it once more.");
+    expect(vendors(empty)).toBeNull();
+    expect(swatches(empty)).toEqual([]);
+    expect(find(empty, "dialog select#fil-k")).toBeNull();
+    expect(findAll(empty, "dialog .dlg-actions .btn").map(text)).toEqual(["Close"]);
   });
 
   it("shows a colour outside the palette and takes any other", async () => {
@@ -2855,7 +2977,7 @@ describe("setting a slot's filament", () => {
     await showView(card, "Filament");
     await edit(card, 2);
     expect(text(find(card, "dialog h2"))).toBe("Filament of Slot 3 · AMS A");
-    expect([...material(card).options][0]?.text).toBe("Keep PETG");
+    expect(texts(filaments(card))[0]).toBe("Keep PETG");
     // The slot's own green, checked, after the palette's.
     expect(checked(card)).toEqual(["Current color"]);
     const current = swatches(card).find((item) => item.getAttribute("aria-label") === "Current color");
@@ -2884,11 +3006,13 @@ describe("setting a slot's filament", () => {
     await showView(card, "Filament");
     await edit(card, 4);
     expect(text(find(card, "dialog h2"))).toBe("Filament of the external spool");
-    expect([...material(card).options][0]?.text).toBe("Keep TPU 95A HF");
+    expect(vendors(card).value).toBe("Bambu Lab");
+    expect(texts(filaments(card))[0]).toBe("Keep TPU 95A HF");
     expect(checked(card)).toEqual(["Orange"]);
-    await choose(card, "TPU");
+    await vendor(card, "Generic");
+    await filament(card, "GFU98");
     await confirmDialog(card);
-    expect(hass.calls.at(-1)?.data).toEqual({ entity_id: "sensor.a1_mini_external_spool", material: "TPU" });
+    expect(hass.calls.at(-1)?.data).toEqual({ entity_id: "sensor.a1_mini_external_spool", filament: "GFU98" });
     const { card: dual } = await cardFor("h2d");
     await showView(dual, "Filament");
     const spools = findAll(dual, ".unit").at(-1) as HTMLElement;
@@ -2943,10 +3067,11 @@ describe("setting a slot's filament", () => {
 
   it("says why it failed", async () => {
     const refused = { message: "This slot is empty.", translation_domain: "bambuddy", translation_key: "slot_empty" };
-    const { card } = await cardFor("x1c", {}, { callService: async () => Promise.reject(refused) });
+    const { card } = await cardFor("x1c", {}, { callService: async (call) => (call.service === "set_filament" ? Promise.reject(refused) : undefined) });
     await showView(card, "Filament");
     await edit(card, 3);
-    await choose(card, "PLA");
+    await vendor(card, "Generic");
+    await filament(card, "GFL99");
     await confirmDialog(card);
     expect(text(find(card, ".toast"))).toBe("This slot is empty.");
   });
@@ -2969,19 +3094,20 @@ describe("setting a slot's filament", () => {
     expect(findAll(card, ".slot-name").map(text).slice(3)).toEqual(["Nicht festgelegt", "Nicht festgelegt"]);
     await edit(card, 2);
     expect(text(find(card, "dialog h2"))).toBe("Filament von Fach 3 · AMS A");
-    expect([...material(card).options][0]?.text).toBe("PLA behalten");
+    expect(text(find(card, "dialog label[for=fil-vendor]"))).toBe("Hersteller");
+    expect(texts(filaments(card))[0]).toBe("PLA behalten");
     expect(find(card, "dialog [role=radiogroup]")?.getAttribute("aria-label")).toBe("Farbe");
     expect(swatches(card).map((item) => item.getAttribute("aria-label"))).toEqual([
       "Weiß", "Schwarz", "Grau", "Silber", "Rot", "Orange", "Gelb", "Grün", "Türkis", "Cyan", "Blau", "Lila", "Pink", "Braun", "Beige", "Gold",
     ]);
     expect(text(find(card, "dialog .other-color"))).toBe("Andere Farbe …");
-    expect(text(find(card, "dialog .dlg-note"))).toBe("Für Spulen ohne Chip. Bei einem neuen Material nimmt der Drucker dafür die Standardeinstellungen von Bambu Lab.");
+    expect(text(find(card, "dialog .dlg-note"))).toBe("Für Spulen ohne Chip. Zur Wahl steht, was Bambu Studio für diesen Drucker, seine Düse und dieses Fach anbietet. Andere Profile kannst du am Drucker oder in BamBuddy setzen.");
     expect(findAll(card, "dialog .dlg-actions .btn").map(text)).toEqual(["Abbrechen", "Übernehmen"]);
     await press(card, "Abbrechen");
     await edit(card, 3);
-    expect([...material(card).options][0]?.text).toBe("Wählen …");
+    expect(texts(vendors(card))[0]).toBe("Wählen …");
     await pick(card, "Schwarz");
-    expect(text(find(card, "dialog .dlg-need"))).toBe("Wähle noch ein Material.");
+    expect(text(find(card, "dialog .dlg-need"))).toBe("Wähle noch ein Filament.");
     await press(card, "Abbrechen");
     await edit(card, 4);
     expect(text(find(card, "dialog h2"))).toBe("Filament der externen Spule");
@@ -3180,7 +3306,7 @@ describe("a slot's tools: K profile, chip, reset", () => {
     expect(findAll(printing, "dialog .dlg-note").map(text)).toContain("Pause the print first to reset the spool.");
   });
 
-  it("offers the printer's own K profiles, those of the material first", async () => {
+  it("offers the printer's own K profiles of the slot's filament", async () => {
     const { card, hass } = await cardFor("x1c", {}, { devices: idle(), callService: answering });
     await showView(card, "Filament");
     await editRow(card, 2);
@@ -3189,12 +3315,12 @@ describe("a slot's tools: K profile, chip, reset", () => {
     expect(text(find(card, "dialog label[for=fil-k]"))).toBe("K profile (flow dynamics)");
     // Nothing to warn of: what to do when unsure.
     expect(text(find(card, "dialog .k-hint"))).toBe("If unsure, leave this as it is.");
-    expect([...kSelect(card).querySelectorAll("optgroup")].map((group) => group.label)).toEqual(["Matching PLA", "Other K profiles on this printer"]);
+    // Only those filed under its filament (Generic PLA), as Bambu Studio offers them.
+    expect([...kSelect(card).querySelectorAll("optgroup")].map((group) => group.label)).toEqual(["Matching PLA"]);
     expect([...kSelect(card).options].map((option) => option.text)).toEqual([
       "Printer's default (K 0.020)",
       "Generic PLA (K 0.020)",
       "Grey PLA matte (K 0.018)",
-      "Generic PETG (K 0.035)",
     ]);
     kSelect(card).value = "3";
     kSelect(card).dispatchEvent(new Event("change"));
@@ -3277,60 +3403,68 @@ describe("a slot's tools: K profile, chip, reset", () => {
     expect((button(card, "Reset slot") as HTMLButtonElement).disabled).toBe(true);
   });
 
-  it("takes the new material's first K profile, as BamBuddy's own dialog does", async () => {
+  const pickFilament = async (card: FakeCard, id: string): Promise<void> => {
+    const select = find<HTMLSelectElement>(card, "dialog select#fil-filament") as HTMLSelectElement;
+    select.value = id;
+    select.dispatchEvent(new Event("change"));
+    await card.updateComplete;
+  };
+
+  it("takes the new filament's first K profile, as Bambu Studio offers them", async () => {
     const { card, hass } = await cardFor("x1c", {}, { devices: idle(), callService: answering });
     await showView(card, "Filament");
     await editRow(card, 2);
     kSelect(card).value = "1";
     kSelect(card).dispatchEvent(new Event("change"));
     await card.updateComplete;
-    const material = find<HTMLSelectElement>(card, "dialog select#fil-material") as HTMLSelectElement;
-    material.value = "PETG";
-    material.dispatchEvent(new Event("change"));
-    await card.updateComplete;
-    // The PLA profile chosen goes; PETG's own comes.
+    await pickFilament(card, "GFG99");
+    // The PLA profile chosen goes; Generic PETG's own comes, and only it.
     expect(kSelect(card).value).toBe("2");
+    expect([...kSelect(card).options].map((option) => option.text)).toEqual(["Printer's default (K 0.020)", "Generic PETG (K 0.035)"]);
     (findAll<HTMLButtonElement>(card, "dialog .dlg-actions .btn").at(-1) as HTMLButtonElement).click();
     await settle(card);
-    expect(hass.calls.at(-1)?.data).toEqual({ entity_id: SLOT_3, material: "PETG", k_profile: 2 });
-    // A material without a profile: the printer's default.
+    expect(hass.calls.at(-1)?.data).toEqual({ entity_id: SLOT_3, filament: "GFG99", k_profile: 2 });
+    // A filament without a profile: the printer's default.
     await editRow(card, 2);
-    const again = find<HTMLSelectElement>(card, "dialog select#fil-material") as HTMLSelectElement;
-    again.value = "PVA";
-    again.dispatchEvent(new Event("change"));
-    await card.updateComplete;
+    await pickFilament(card, "GFS99");
     expect(kSelect(card).value).toBe("-1");
   });
 
-  it("keeps the slot's own K profile when the material goes back to Keep", async () => {
+  it("never takes another filament's K profile, whatever its name says", async () => {
+    const { card } = await cardFor("x1c", {}, { devices: idle(), callService: answering });
+    await showView(card, "Filament");
+    await editRow(card, 2);
+    const vendorSelect = find<HTMLSelectElement>(card, "dialog select#fil-vendor") as HTMLSelectElement;
+    vendorSelect.value = "Bambu Lab";
+    vendorSelect.dispatchEvent(new Event("change"));
+    await card.updateComplete;
+    // Bambu PLA Basic: no profile filed under it; "Generic PLA" is no match.
+    await pickFilament(card, "GFA00");
+    expect(kSelect(card).value).toBe("-1");
+    expect([...kSelect(card).options].map((option) => option.text)).toEqual(["Printer's default (K 0.020)"]);
+  });
+
+  it("keeps the slot's own K profile when the filament goes back to Keep", async () => {
     const own = async (call: { service: string }): Promise<unknown> => (call.service === "get_k_profiles" ? { response: { ...PROFILES, current: 3 } } : undefined);
     const { card, hass } = await cardFor("x1c", {}, { devices: idle(), callService: own });
     await showView(card, "Filament");
     await editRow(card, 2);
     expect(kSelect(card).value).toBe("keep");
-    const material = (): HTMLSelectElement => find<HTMLSelectElement>(card, "dialog select#fil-material") as HTMLSelectElement;
-    material().value = "PETG";
-    material().dispatchEvent(new Event("change"));
-    await card.updateComplete;
+    await pickFilament(card, "GFG99");
     expect(kSelect(card).value).toBe("2");
-    material().value = "keep";
-    material().dispatchEvent(new Event("change"));
-    await card.updateComplete;
+    await pickFilament(card, "keep");
     expect(kSelect(card).value).toBe("keep");
     expect((findAll<HTMLButtonElement>(card, "dialog .dlg-actions .btn").at(-1) as HTMLButtonElement).disabled).toBe(true);
     expect(hass.calls.filter((call) => call.service === "set_filament")).toEqual([]);
   });
 
-  it("gives a material chosen before the K profiles came its first matching one", async () => {
+  it("gives a filament chosen before the K profiles came its first matching one", async () => {
     let answer: (value: unknown) => void = () => undefined;
     const slow = async (call: { service: string }): Promise<unknown> => (call.service === "get_k_profiles" ? new Promise((resolve) => (answer = resolve)) : undefined);
     const { card } = await cardFor("x1c", {}, { devices: idle(), callService: slow });
     await showView(card, "Filament");
     await editRow(card, 2);
-    const material = find<HTMLSelectElement>(card, "dialog select#fil-material") as HTMLSelectElement;
-    material.value = "PETG";
-    material.dispatchEvent(new Event("change"));
-    await card.updateComplete;
+    await pickFilament(card, "GFG99");
     answer({ response: PROFILES });
     await settle(card);
     expect(kSelect(card).value).toBe("2");
@@ -3359,16 +3493,83 @@ describe("a slot's tools: K profile, chip, reset", () => {
     expect(text(find(card, "dialog .k-hint"))).toBe("The printer did not list its K profiles: the slot keeps its own.");
   });
 
-  it("names a profile of the slot the printer did not list, and warns about another material's", async () => {
+  const ownK = (current: number, filaments?: () => never) => async (call: { service: string }): Promise<unknown> => {
+    if (call.service === "get_k_profiles") return { response: { ...PROFILES, current } };
+    if (call.service === "get_filaments" && filaments) filaments();
+    return undefined;
+  };
+  // The slot named as the integration names it (its Bambu Studio profile).
+  const named = (): FakeDevice[] => {
+    const all = idle();
+    for (const entity of (all[1] as FakeDevice).entities) {
+      if (entity.entityId === SLOT_3 && "attributes" in entity && entity.attributes) entity.attributes = { ...entity.attributes, name: "Generic PLA" };
+    }
+    return all;
+  };
+  const kOptions = (card: FakeCard): string[] => [...kSelect(card).options].map((option) => option.text);
+  const kGroups = (card: FakeCard): string[] => [...kSelect(card).querySelectorAll("optgroup")].map((group) => group.label);
+
+  it("names the K group as the Filament field does, kept or chosen", async () => {
+    const { card } = await cardFor("x1c", {}, { devices: named(), callService: ownK(3) });
+    await showView(card, "Filament");
+    await editRow(card, 2);
+    expect([...(find<HTMLSelectElement>(card, "dialog select#fil-filament")?.options ?? [])][0]?.text).toBe("Keep Generic PLA");
+    expect(kGroups(card)).toEqual(["Matching PLA"]);
+    await pickFilament(card, "GFL99");
+    expect(kGroups(card)).toEqual(["Matching PLA"]);
+  });
+
+  it("lists the kept K profile once, at the top", async () => {
+    const { card } = await cardFor("x1c", {}, { devices: named(), callService: ownK(3) });
+    await showView(card, "Filament");
+    await editRow(card, 2);
+    expect(kOptions(card)).toEqual(["Keep Grey PLA matte (K 0.018)", "Printer's default (K 0.020)", "Generic PLA (K 0.020)"]);
+    // Chosen anew, the filament has no kept profile: each of its own in the group.
+    await pickFilament(card, "GFL99");
+    expect(kOptions(card)).toEqual(["Printer's default (K 0.020)", "Generic PLA (K 0.020)", "Grey PLA matte (K 0.018)"]);
+  });
+
+  it("matches no K profile by a current one filed under no filament", async () => {
+    const unfiled = {
+      ...PROFILES,
+      current: 4,
+      profiles: [
+        ...PROFILES.profiles,
+        { index: 4, name: "Unfiled", k_value: 0.03, filament_id: "", nozzle: null },
+        { index: 5, name: "Unfiled too", k_value: 0.04, filament_id: "", nozzle: null },
+      ],
+    };
+    const answer = async (call: { service: string }): Promise<unknown> => {
+      if (call.service === "get_k_profiles") return { response: unfiled };
+      if (call.service === "get_filaments") throw new Error("no answer");
+      return undefined;
+    };
+    const { card } = await cardFor("x1c", {}, { devices: named(), callService: answer });
+    await showView(card, "Filament");
+    await editRow(card, 2);
+    expect(kOptions(card)).toEqual(["Keep Unfiled (K 0.030)", "Printer's default (K 0.020)"]);
+    expect(kGroups(card)).toEqual([]);
+  });
+
+  it("lists the slot's own filament's K profiles where the offer does not come", async () => {
+    const failing = (): never => {
+      throw new Error("no answer");
+    };
+    const { card } = await cardFor("x1c", {}, { devices: named(), callService: ownK(3, failing) });
+    await showView(card, "Filament");
+    await editRow(card, 2);
+    // Filed under the filament of the slot's own profile (Grey PLA matte: GFL99).
+    expect(kOptions(card)).toEqual(["Keep Grey PLA matte (K 0.018)", "Printer's default (K 0.020)", "Generic PLA (K 0.020)"]);
+    expect(kGroups(card)).toEqual(["Matching Generic PLA"]);
+  });
+
+  it("names a profile of the slot the printer did not list", async () => {
     const own = async (call: { service: string }): Promise<unknown> => (call.service === "get_k_profiles" ? { response: { ...PROFILES, current: 7 } } : undefined);
     const { card } = await cardFor("x1c", {}, { devices: idle(), callService: own });
     await showView(card, "Filament");
     await editRow(card, 2);
     expect([...kSelect(card).options].map((option) => option.text)[0]).toBe("Keep K profile no. 7");
-    kSelect(card).value = "2";
-    kSelect(card).dispatchEvent(new Event("change"));
-    await card.updateComplete;
-    expect(text(find(card, "dialog .k-hint"))).toBe("A K profile of another material: BamBuddy then files the slot under that material.");
+    expect(text(find(card, "dialog .k-hint"))).toBe("If unsure, leave this as it is.");
   });
 });
 

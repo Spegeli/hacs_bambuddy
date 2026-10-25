@@ -10,6 +10,9 @@ CLAUDE.md
 # Local research, notes and probe scripts
 umbau/
 
+# Bambu Studio's profiles, fetched by .github/scripts/bambu_filaments.py --fetch
+/.bambu-studio/
+
 # Local test environment — Home Assistant's configuration with the test API
 # key, its database and snapshots, the Docker files and the test scripts
 testenv/

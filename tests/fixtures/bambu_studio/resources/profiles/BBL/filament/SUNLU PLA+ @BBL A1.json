@@ -1,0 +1,10 @@
+{
+    "type": "filament",
+    "name": "SUNLU PLA+ @BBL A1",
+    "inherits": "SUNLU PLA+ @base",
+    "instantiation": "true",
+    "setting_id": "GFSNLS03_04",
+    "compatible_printers": [
+        "Bambu Lab A1 0.4 nozzle"
+    ]
+}

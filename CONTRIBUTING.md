@@ -114,6 +114,8 @@ The integration lives in `custom_components/bambuddy/`; the dashboard card's sou
 | `entity.py` | Device infos; the base entities — availability, unique IDs and entity IDs; `async_run_command`, how a command reaches a printer |
 | `fan.py` | Part cooling, auxiliary, chamber or exhaust, and left (on the X2D right) auxiliary fan, in tens; the ventilation of a printer with an airduct (the airduct on cooling and the fans that bring the air through, `models.ventilation_fans`) |
 | `fan_ids.py` | The X2D's two auxiliary fans: their entity IDs from 2.0.0-beta.2 renamed after their side in the setup |
+| `filaments.py` | Bambu Studio's filament profiles: a slot's name by its profile, what Bambu Studio offers a slot (per printer model, nozzle diameter, nozzle and slot) and why it refuses a filament there |
+| `filaments.json` | Bambu Studio's filament list, made by `.github/scripts/bambu_filaments.py --fetch` from Bambu Studio's profiles — never edited by hand |
 | `frontend/bambuddy-card.js` | The dashboard card, built from `cards/` — never edited by hand |
 | `icons.json` | Entity and action icons |
 | `image.py` | The cover image of the current print job |
@@ -159,6 +161,20 @@ The integration lives in `custom_components/bambuddy/`; the dashboard card's sou
 **The key needs three permissions.** The integration asks `/auth/me` at every setup, in the flows and every ten minutes, whatever BamBuddy's authentication setting: a key lacking Read Status, Control Printer or Manage Maintenance is refused (`const.REQUIRED_SCOPES`; `tests/test_key_scopes_table.py` ties every client call to one of them). BamBuddy itself enforces them only with its authentication on, so a route's refusal shows only then. Before BamBuddy 1.2.5.7, `/auth/me` claims every permission for any key — hence that minimum.
 
 **Home Assistant 2025.5 is the floor** (`homeassistant` in `hacs.json`), and only APIs that exist there may be used. Home Assistant 2025.5 runs on Python 3.13, so the integration must run on 3.13 too, although the tests and mypy run on 3.14: use no syntax and no standard-library API newer than 3.13 (such as `except A, B:` without parentheses), and keep `from __future__ import annotations` at the top of every module. 3.13 evaluates annotations as it defines a class or function, so without that line a name defined further down the module fails the import there, while 3.14 evaluates them only when asked. CI compiles the integration with Python 3.13, checks that every module keeps `from __future__ import annotations`, and runs the suite on 2025.5; what the tests do not reach is for review.
+
+## The filament list
+
+`custom_components/bambuddy/filaments.json` is Bambu Studio's list of filament profiles: what the card's slot dialog and `bambuddy.set_filament` offer, per printer model, nozzle diameter and nozzle. It is made from Bambu Studio's profiles, never edited by hand. From the repository's root:
+
+```bash
+python .github/scripts/bambu_filaments.py --fetch
+```
+
+- `--fetch` fetches only what the script reads (`resources/profiles/BBL` and `resources/printers`) into `.bambu-studio/`: a sparse clone in Bambu Studio's own layout, which git ignores and the next run brings up to date — a file changed there by hand goes back to Bambu Studio's, and a folder that is no clone of Bambu Studio is refused. It needs git. `--ref` makes the list of a given commit (its full id) or tag; a checkout of your own works with `<checkout> --commit <sha>`.
+- Make it anew when Bambu Studio's profiles change (the `version` in `resources/profiles/BBL.json`), and name the change in the commit.
+- The script writes no list while Bambu's filament blacklist holds a prohibition that `filaments.py` does not check as the script's `CHECKED_RULES` read and that `IGNORED_RULES` does not leave out with its reason, or while a filament names a printer in a form the script cannot read or one without a machine preset of that name: decide, then change `filaments.py` and the script together.
+- The `filament` choices of `set_filament` in `services.yaml` are written by hand from the list (by vendor, then type, then name); `tests/test_card_tables.py` names any it lacks or holds too many.
+- A printer whose own screen lists otherwise than Bambu Studio is corrected in the script's `MODEL_CORRECTIONS` and `EXTRA_FILAMENTS`, never in the JSON.
 
 ## Translations
 

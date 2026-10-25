@@ -502,6 +502,7 @@ class BamBuddyClient:
         temp_min: int,
         temp_max: int,
         tray_info_idx: str = "",
+        setting_id: str = "",
         cali_idx: int = -1,
         nozzle_diameter: str = "0.4",
         kprofile_filament_id: str | None = None,
@@ -513,8 +514,10 @@ class BamBuddyClient:
         empty `tray_info_idx` keeps the slot's preset when the material
         stays, else BamBuddy takes the material's generic one. A K profile
         (`cali_idx` of the printer's table) goes with its filament: BamBuddy
-        files the slot under it, so the printer keeps the selection."""
-        k_profile = {
+        files the slot under it, so the printer keeps the selection.
+        `setting_id`: Bambu Studio's for the profile, left out when empty
+        (BamBuddy then derives one from the filament id)."""
+        optional = {
             name: value
             for name, value in (
                 ("kprofile_filament_id", kprofile_filament_id),
@@ -523,6 +526,8 @@ class BamBuddyClient:
             )
             if value is not None
         }
+        if setting_id:
+            optional["setting_id"] = setting_id
         await self._command(
             f"/printers/{printer_id}/slots/{ams_id}/{slot}/configure",
             tray_info_idx=tray_info_idx,
@@ -533,7 +538,7 @@ class BamBuddyClient:
             nozzle_temp_max=temp_max,
             cali_idx=cali_idx,
             nozzle_diameter=nozzle_diameter,
-            **k_profile,
+            **optional,
         )
 
     async def reset_slot(self, printer_id: int, ams_id: int, slot: int) -> None:

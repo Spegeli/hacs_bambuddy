@@ -734,6 +734,7 @@ async def test_actions_need_no_entry(hass: HomeAssistant, bambuddy_api: SimpleNa
         "mark_maintenance_done",
         "answer_hms",
         "get_k_profiles",
+        "get_filaments",
         "reset_slot",
         "refresh_rfid",
     }

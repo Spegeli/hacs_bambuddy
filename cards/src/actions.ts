@@ -70,6 +70,38 @@ export async function kProfiles(hass: Hass, entityId: string): Promise<KProfiles
   };
 }
 
+/** A filament Bambu Studio offers a slot: its profile id, its name under
+ * its vendor ("PLA Basic"), its type. */
+export interface OfferedFilament {
+  id: string;
+  name: string;
+  type: string;
+}
+
+/** What Bambu Studio offers a slot, by vendor in its order, and the
+ * slot's own profile. */
+export interface FilamentOffer {
+  current?: string;
+  vendors: { name: string; filaments: OfferedFilament[] }[];
+}
+
+/** The integration's get_filaments action, called for its response; an
+ * answer without vendors is none (an empty list of vendors is an offer:
+ * nothing for this slot). */
+export async function filamentOffer(hass: Hass, entityId: string): Promise<FilamentOffer | undefined> {
+  const response = await responseOf(hass, "get_filaments", { entity_id: entityId });
+  if (!Array.isArray(response["vendors"])) return undefined;
+  const vendors = entriesOf(response["vendors"], "name", "string").map((vendor) => ({
+    name: vendor["name"] as string,
+    filaments: entriesOf(vendor["filaments"], "id", "string").map((item) => ({
+      id: item["id"] as string,
+      name: typeof item["name"] === "string" ? item["name"] : (item["id"] as string),
+      type: typeof item["type"] === "string" ? item["type"] : "",
+    })),
+  }));
+  return { ...(typeof response["current"] === "string" ? { current: response["current"] } : {}), vendors };
+}
+
 /** An object of the running print, as the integration lists it. */
 export interface PrintObject {
   id: number;

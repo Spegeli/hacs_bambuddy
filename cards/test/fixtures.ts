@@ -55,6 +55,46 @@ export interface ServiceCall {
   returnResponse?: boolean | undefined;
 }
 
+/** What the integration's get_filaments answers in these tests: a few of
+ * Bambu Studio's profiles for an X1 Carbon, by vendor. */
+export const OFFER = {
+  vendors: [
+    {
+      name: "Bambu Lab",
+      filaments: [
+        { id: "GFA00", name: "PLA Basic", type: "PLA" },
+        { id: "GFA01", name: "PLA Matte", type: "PLA" },
+        { id: "GFG02", name: "PETG HF", type: "PETG" },
+        { id: "GFU03", name: "TPU 95A HF", type: "TPU" },
+      ],
+    },
+    {
+      name: "Generic",
+      filaments: [
+        { id: "GFL99", name: "PLA", type: "PLA" },
+        { id: "GFG99", name: "PETG", type: "PETG" },
+        { id: "GFG96", name: "PETG HF", type: "PETG" },
+        { id: "GFU98", name: "TPU for AMS", type: "TPU-AMS" },
+        { id: "GFS99", name: "PVA", type: "PVA" },
+      ],
+    },
+    { name: "SUNLU", filaments: [{ id: "GFSNL03", name: "PLA+", type: "PLA" }] },
+  ],
+};
+
+/** The fixtures' slots by their profile, as get_filaments names it. */
+export const SLOT_PROFILES: Record<string, string> = {
+  "sensor.dev-x1c_ams_0_slot_3": "GFL99",
+  "sensor.dev-a1mini_ams_0_slot_3": "GFG99",
+  "sensor.a1_mini_external_spool": "GFU03",
+};
+
+/** get_filaments' answer for a slot: the offer, and its profile where the fixtures name one. */
+export const offerFor = (entityId: unknown): Record<string, unknown> => {
+  const current = typeof entityId === "string" ? SLOT_PROFILES[entityId] : undefined;
+  return { ...OFFER, ...(current ? { current } : {}) };
+};
+
 export interface FakeHassOptions {
   devices?: FakeDevice[];
   /** Entities of other integrations, or without a device. */
@@ -68,7 +108,8 @@ export interface FakeHassOptions {
   translations?: Record<string, string>;
   /** The user is an administrator; true when left out. */
   admin?: boolean;
-  /** Answers an action call; resolves when left out. */
+  /** Answers an action call; resolves when left out -- get_filaments with
+   * the fixtures' offer where it answers nothing. */
   callService?: (call: ServiceCall) => Promise<unknown>;
 }
 
@@ -229,7 +270,9 @@ export function makeHass(options: FakeHassOptions = {}): FakeHass {
   ): Promise<unknown> => {
     const call = { domain, service, data, notifyOnError, ...(returnResponse === undefined ? {} : { returnResponse }) };
     calls.push(call);
-    return options.callService ? options.callService(call) : undefined;
+    const answer = options.callService ? await options.callService(call) : undefined;
+    if (answer === undefined && service === "get_filaments" && returnResponse) return { response: offerFor(data?.["entity_id"]) };
+    return answer;
   };
 
   const keys = new Map<string, string>();

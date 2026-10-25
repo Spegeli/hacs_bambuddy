@@ -1,0 +1,15 @@
+{
+    "type": "filament",
+    "name": "Generic PLA",
+    "inherits": "fdm_filament_pla",
+    "instantiation": "true",
+    "filament_id": "GFL99",
+    "filament_vendor": [
+        "Generic"
+    ],
+    "setting_id": "GFSL99",
+    "compatible_printers": [
+        "Bambu Lab A1 0.4 nozzle",
+        "Bambu Lab A1 mini 0.4 nozzle"
+    ]
+}

@@ -13,10 +13,12 @@ from typing import Any
 import voluptuous as vol
 
 from homeassistant.core import HomeAssistant, ServiceCall, ServiceResponse, SupportsResponse, callback
+from homeassistant.exceptions import ServiceValidationError
 from homeassistant.helpers import config_validation as cv
 from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers import entity_registry as er
 
+from . import filaments
 from .api import BamBuddyApiError
 from .const import CONF_PRINTER_NAME, CONF_PRINTERS, DOMAIN, K_PROFILES_KEEP
 from .coordinator import BamBuddyConfigEntry, BamBuddyPrinterCoordinator, printer_identifier
@@ -25,7 +27,6 @@ from .models import (
     DRYING_MAX,
     EXTERNAL_LEFT,
     EXTERNAL_RIGHT,
-    MATERIALS,
     PRINTING_STATES,
     PrinterData,
     active_tray,
@@ -39,6 +40,7 @@ from .models import (
     hms_answers,
     hms_code,
     is_drying,
+    model_key,
     short_name,
     spool_present,
     stored_key,
@@ -54,7 +56,7 @@ ATTR_DISTANCE = "distance"
 ATTR_TEMPERATURE = "temperature"
 ATTR_DURATION = "duration"
 ATTR_OBJECTS = "objects"
-ATTR_MATERIAL = "material"
+ATTR_FILAMENT = "filament"
 ATTR_COLOR = "color"
 ATTR_TASK_ID = "task_id"
 ATTR_CODE = "code"
@@ -105,13 +107,15 @@ SCHEMAS: dict[str, vol.Schema] = {
     "set_filament": vol.Schema(
         {
             vol.Required(ATTR_ENTITY_ID): cv.entity_id,
-            vol.Optional(ATTR_MATERIAL): vol.In(list(MATERIALS)),
+            # A Bambu Studio profile by its id; empty reads as none.
+            vol.Optional(ATTR_FILAMENT): cv.string,
             vol.Optional(ATTR_COLOR): vol.All(vol.Coerce(tuple), vol.ExactSequence((cv.byte, cv.byte, cv.byte))),
             # The printer's K calibration by its index; -1 its default K.
             vol.Optional(ATTR_K_PROFILE): vol.All(vol.Coerce(int), vol.Range(min=-1)),
         }
     ),
     "get_k_profiles": vol.Schema({vol.Required(ATTR_ENTITY_ID): cv.entity_id}),
+    "get_filaments": vol.Schema({vol.Required(ATTR_ENTITY_ID): cv.entity_id}),
     "reset_slot": vol.Schema({vol.Required(ATTR_ENTITY_ID): cv.entity_id}),
     "refresh_rfid": vol.Schema({vol.Required(ATTR_ENTITY_ID): cv.entity_id}),
 }
@@ -299,11 +303,13 @@ async def _unload_filament(hass: HomeAssistant, call: ServiceCall) -> None:
 
 
 async def _set_filament(hass: HomeAssistant, call: ServiceCall) -> None:
-    """A slot's material and colour, for spools without a chip: what the
+    """A slot's filament and colour, for spools without a chip: what the
     printer's screen asks after a spool goes in. A new colour alone keeps
-    the slot's preset and its K value; a new material takes Bambu's generic
-    profile of it and the default K value, as on the printer's screen."""
-    if not {ATTR_MATERIAL, ATTR_COLOR, ATTR_K_PROFILE} & set(call.data):
+    the slot's profile and its K value; a new filament (a Bambu Studio
+    profile) takes its profile as Bambu Studio sends it and the default K
+    value, as on the printer's screen."""
+    filament_id = call.data.get(ATTR_FILAMENT) or None
+    if filament_id is None and not {ATTR_COLOR, ATTR_K_PROFILE} & set(call.data):
         raise _refuse("nothing_to_set")
     coordinator, ams, slot, tray = _place(hass, call.data[ATTR_ENTITY_ID])
     data = coordinator.data
@@ -319,23 +325,26 @@ async def _set_filament(hass: HomeAssistant, call: ServiceCall) -> None:
     # A paused print may relabel the spool swapped in by hand.
     if data.job_running and data.state != "PAUSE" and _in_use(data, ams, slot, tray):
         raise _refuse("slot_in_use", printer=short_name(coordinator.info))
-    material = MATERIALS.get(call.data.get(ATTR_MATERIAL, ""))
-    if material is not None:
-        tray_type, name, profile, cali_idx = (
-            material.tray_type,
-            f"Generic {call.data[ATTR_MATERIAL]}",
-            material.profile,
-            -1,
-        )
-        temp_min, temp_max = material.temp_min, material.temp_max
+    if filament_id is not None:
+        why = filaments.refusal(filament_id, _slot_of(data, ams, slot))
+        item = filaments.get(filament_id)
+        if why is not None or item is None:
+            raise _refused_filament(why, item.name if item else filament_id, short_name(coordinator.info))
+        tray_type, name, profile, setting_id, cali_idx = item.type, item.name, item.id, item.setting_id, -1
+        temp_min, temp_max = item.temp_min, item.temp_max
     else:
         tray_type = str(current.get("tray_type") or "")
         if not tray_type:
             raise _refuse("material_needed")
-        name, profile = tray_label(current), ""
+        # The slot's own profile goes back with the colour: with none,
+        # BamBuddy would take the generic of its type.
+        profile = str(current.get("tray_info_idx") or "")
+        listed = filaments.get(profile)
+        name = listed.name if listed else tray_label(current)
+        setting_id = listed.setting_id if listed else ""
         cali = current.get("cali_idx")
         cali_idx = cali if isinstance(cali, int) else -1
-        temp_min, temp_max = _temperatures(current, tray_type)
+        temp_min, temp_max = _temperatures(current, tray_type, listed)
     color = call.data.get(ATTR_COLOR)
     if color:
         # Home Assistant's colour picker has no transparency: opaque.
@@ -375,6 +384,7 @@ async def _set_filament(hass: HomeAssistant, call: ServiceCall) -> None:
             temp_min=temp_min,
             temp_max=temp_max,
             tray_info_idx=profile,
+            setting_id=setting_id,
             cali_idx=cali_idx,
             nozzle_diameter=_nozzle_diameter(data, ams, slot),
             **k_profile,
@@ -438,6 +448,25 @@ async def _get_k_profiles(hass: HomeAssistant, call: ServiceCall) -> ServiceResp
         "nozzle_diameter": float(diameter) if diameter.replace(".", "", 1).isdigit() else diameter,
         "current": current if isinstance(current, int) else -1,
         "profiles": [{key: value for key, value in item.items() if key != "setting_id"} for item in profiles],
+    }
+
+
+async def _get_filaments(hass: HomeAssistant, call: ServiceCall) -> ServiceResponse:
+    """A read of the integration's own list: the filaments Bambu Studio
+    offers the slot, by vendor, and the slot's profile."""
+    coordinator, ams, slot, tray = _place(hass, call.data[ATTR_ENTITY_ID])
+    data = coordinator.data
+    found = find_tray(data, tray)
+    current = str((found[0] if found else {}).get("tray_info_idx") or "") or None
+    return {
+        "current": current,
+        "vendors": [
+            {
+                "name": vendor,
+                "filaments": [{"id": item.id, "name": filaments.field_name(item), "type": item.type} for item in items],
+            }
+            for vendor, items in filaments.offer(_slot_of(data, ams, slot))
+        ],
     }
 
 
@@ -514,6 +543,31 @@ def _extruder(data: PrinterData, ams: int, slot: int) -> int | None:
     return None if fed is None else int(fed)
 
 
+def _slot_of(data: PrinterData, ams: int, slot: int) -> filaments.Slot:
+    """What Bambu Studio's offer for a slot depends on: the printer's model,
+    the diameter and codes of the nozzles it feeds (both on the filament
+    track switch), an AMS slot or an external spool."""
+    model = model_key(data.model) or None
+    extruder = _extruder(data, ams, slot)
+    extruders = frozenset({0, 1}) if extruder is None else frozenset({extruder})
+    nozzles = data.status.get("nozzles") or []
+    codes = {index: str(nozzles[index].get("nozzle_type") or "") for index in extruders if index < len(nozzles)}
+    return filaments.Slot(model, filaments.diameter(model, _nozzle_diameter(data, ams, slot)), ams != _EXTERNAL_AMS, extruders, codes)
+
+
+def _refused_filament(why: str | None, filament: str, printer: str) -> ServiceValidationError:
+    """The refusal of a filament Bambu Studio would not set here."""
+    if why == "filament_not_for_ams":
+        return _refuse("filament_not_for_ams", filament=filament)
+    if why == "filament_not_for_nozzle":
+        return _refuse("filament_not_for_nozzle", filament=filament)
+    if why == "filament_not_left":
+        return _refuse("filament_not_left", filament=filament)
+    if why == "filament_not_right":
+        return _refuse("filament_not_right", filament=filament)
+    return _refuse("filament_not_offered", filament=filament, printer=printer)
+
+
 def _nozzle_diameter(data: PrinterData, ams: int, slot: int) -> str:
     """The diameter of the nozzle the slot feeds -- the printer keeps a K
     value per diameter; a unit on both nozzles takes the first's (both are
@@ -526,13 +580,18 @@ def _nozzle_diameter(data: PrinterData, ams: int, slot: int) -> str:
     return "0.4"
 
 
-def _temperatures(tray: dict[str, Any], tray_type: str) -> tuple[int, int]:
-    """The slot's own nozzle range, else its material's."""
+# The profile a slot of a type the list lacks is taken for.
+_GENERIC_PLA = "GFL99"
+
+
+def _temperatures(tray: dict[str, Any], tray_type: str, listed: filaments.Filament | None = None) -> tuple[int, int]:
+    """The slot's own nozzle range, else its profile's, else that of the
+    profile its type stands for -- Generic PLA's for a type the list lacks."""
     low, high = tray.get("nozzle_temp_min"), tray.get("nozzle_temp_max")
     if isinstance(low, int) and isinstance(high, int) and 0 < low <= high:
         return low, high
-    material = MATERIALS.get(tray_type) or MATERIALS["PLA"]
-    return material.temp_min, material.temp_max
+    profile = listed or filaments.of_type(tray_type) or filaments.FILAMENTS[_GENERIC_PLA]
+    return profile.temp_min, profile.temp_max
 
 
 async def _start_drying(hass: HomeAssistant, call: ServiceCall) -> None:
@@ -711,11 +770,12 @@ _HANDLERS: dict[str, Callable[[HomeAssistant, ServiceCall], Coroutine[Any, Any, 
     "mark_maintenance_done": _mark_maintenance_done,
     "answer_hms": _answer_hms,
     "get_k_profiles": _get_k_profiles,
+    "get_filaments": _get_filaments,
     "reset_slot": _reset_slot,
     "refresh_rfid": _refresh_rfid,
 }
 # The actions that answer (and only answer).
-_RESPONSES = {"get_print_objects", "run_diagnostic", "get_k_profiles"}
+_RESPONSES = {"get_print_objects", "run_diagnostic", "get_k_profiles", "get_filaments"}
 
 
 @callback

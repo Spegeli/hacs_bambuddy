@@ -4,9 +4,9 @@
 // Assistant hands a card a new hass on every state change in the house.
 import { html, LitElement, nothing, type CSSResultGroup, type PropertyValues, type TemplateResult } from "lit";
 
-import { callAction, errorText, kProfiles, printObjects } from "./actions";
+import { callAction, errorText, filamentOffer, kProfiles, printObjects } from "./actions";
 import { controlView, sectionShown, type Step } from "./control-view";
-import { dialogView, DRYING, filamentChanges, inPalette, KEEP, matchingProfile, type Dialog, type DryingField, type DryingSpool, type FilamentDialog } from "./dialogs";
+import { dialogView, DRYING, filamentChanges, inPalette, KEEP, matchingProfile, ownVendor, type Dialog, type DryingField, type DryingSpool, type FilamentDialog } from "./dialogs";
 import { findPrinter, hasControls, isPrinterDevice, notListed, printerDevices, printerOnline, printStatus, shownUnits } from "./discovery";
 import { filamentView } from "./filament-view";
 import { BUSY, FILAMENT_CHANGE, formatNumber, formatPercent, hasValue, numericState, RUNNING, stateOf, textOrUndefined, WITH_JOB } from "./format";
@@ -987,30 +987,53 @@ export class BamBuddyPrinterCard extends LitElement {
     this.dialog = { ...dialog, chosen: chosen.sort((a, b) => order.indexOf(a) - order.indexOf(b)) };
   }
 
-  /** The dialog that sets a slot's filament: its material kept where it
-   * has one, its colour chosen -- also one outside the palette. */
+  /** The dialog that sets a slot's filament: its own kept where it has
+   * one, its colour chosen -- also one outside the palette. */
   private openFilament(slot: Slot, title: string): void {
     const hass = this.hass as Hass;
     const refs = this.refs as PrinterRefs;
-    // A slot with a material always has a name: its state at least.
+    // A slot with a filament always has a name: its state at least.
     const keep = slot.type ? slot.name : undefined;
     const current = slot.color?.toUpperCase();
     const opened: FilamentDialog = {
       kind: "filament",
       entityId: slot.entityId,
       title,
-      ...(keep ? { keep, material: KEEP } : {}),
+      ...(keep ? { keep, vendor: KEEP } : {}),
       ...(current ? { current, color: current, ...(inPalette(current) ? {} : { custom: current }) } : {}),
       rfid: slot.rfid,
       ...(slot.empty ? { empty: true } : {}),
       ams: !refs.externalSpools.includes(slot.entityId),
       active: slot.active,
       ...(slot.rfid ? { spool: [slot.name, slot.remaining === undefined ? "" : formatPercent(hass, slot.remaining)].filter(Boolean).join(" · ") } : {}),
-      type: slot.type,
-      ...(slot.rfid ? {} : { kprofiles: "loading" as const }),
+      ...(slot.rfid ? {} : { kprofiles: "loading" as const, offer: "loading" as const }),
     };
     this.dialog = opened;
-    if (!slot.rfid) void this.loadKProfiles(slot.entityId);
+    if (!slot.rfid) {
+      void this.loadOffer(slot.entityId);
+      void this.loadKProfiles(slot.entityId);
+    }
+  }
+
+  /** What Bambu Studio offers the open filament dialog's slot: the slot's
+   * own profile placed under its vendor once it comes. */
+  private async loadOffer(entityId: string): Promise<void> {
+    let found: FilamentDialog["offer"];
+    try {
+      found = (await filamentOffer(this.hass as Hass, entityId)) ?? "failed";
+    } catch {
+      found = "failed";
+    }
+    const placed = (open: FilamentDialog): FilamentDialog => {
+      const next = { ...open, offer: found };
+      const own = ownVendor(next);
+      return open.vendor === KEEP && own !== undefined ? { ...next, vendor: own, filament: KEEP } : next;
+    };
+    // Also into the dialog a question parked meanwhile (reset, then Cancel).
+    const dialog = this.dialog;
+    if (dialog?.kind === "filament" && dialog.entityId === entityId) this.dialog = placed(dialog);
+    const back = this.dialogBack;
+    if (back?.kind === "filament" && back.entityId === entityId) this.dialogBack = placed(back);
   }
 
   /** The printer's K profiles for the open filament dialog's slot: none
@@ -1022,11 +1045,11 @@ export class BamBuddyPrinterCard extends LitElement {
     } catch {
       found = "failed";
     }
-    // A new material chosen while the list came takes its first matching
+    // A new filament chosen while the list came takes its first matching
     // profile now, as it would have then.
     const listed = (open: FilamentDialog): FilamentDialog => {
       const next = { ...open, kprofiles: found };
-      return open.material !== undefined && open.material !== KEEP && open.kprofile === undefined ? { ...next, kprofile: matchingProfile(next) } : next;
+      return open.filament !== undefined && open.filament !== KEEP && open.kprofile === undefined ? { ...next, kprofile: matchingProfile(next) } : next;
     };
     // Also into the dialog a question parked meanwhile (reset, then Cancel).
     const dialog = this.dialog;
@@ -1166,12 +1189,18 @@ export class BamBuddyPrinterCard extends LitElement {
     confirm: this.confirmDialog,
     setDrying: (field: DryingField, value: number) => this.setDrying(field, value),
     toggleObject: (id: number) => this.toggleObject(id),
-    // A new material takes its first matching K profile, else the
-    // printer's default, as BamBuddy's own dialog does; back to the slot's
-    // own, its K profile stays.
-    setMaterial: (material: string) => {
-      const dialog = { ...(this.dialog as FilamentDialog), material };
-      this.editFilament({ material, kprofile: material === KEEP ? undefined : matchingProfile(dialog) });
+    // Another vendor: its filament still to choose -- the slot's own again
+    // under the slot's vendor; the K profile goes back to the slot's.
+    setVendor: (vendor: string) => {
+      const dialog = this.dialog as FilamentDialog;
+      const own = vendor !== KEEP && dialog.keep !== undefined && ownVendor(dialog) === vendor;
+      this.editFilament({ vendor, filament: own ? KEEP : undefined, kprofile: undefined });
+    },
+    // A new filament takes its first K profile, else the printer's default,
+    // as Bambu Studio offers them; back to the slot's own, its K profile stays.
+    setFilament: (filament: string) => {
+      const dialog = { ...(this.dialog as FilamentDialog), filament };
+      this.editFilament({ filament, kprofile: filament === KEEP ? undefined : matchingProfile(dialog) });
     },
     setKProfile: (kprofile: string) => this.editFilament({ kprofile }),
     resetSlot: () => this.resetSlot(),

@@ -1,13 +1,15 @@
 // The card's dialogs: a confirmation before an action that cannot be taken
 // back, the drying settings, the objects of a print to skip, a slot's
-// material and colour, and what the head's chips and menu open -- the HMS
+// filament and colour, and what the head's chips and menu open -- the HMS
 // messages, the firmware, the storage, the printer information, the plugs'
 // power and the switch-off after the print, the camera's frame rate,
 // maintenance, the connection check. The safe choice comes first and has
 // the focus; it says what stays as it is.
 import { html, nothing, type TemplateResult } from "lit";
+import { Directive, directive, type ChildPart } from "lit/directive.js";
+import { keyed } from "lit/directives/keyed.js";
 
-import type { KProfile, KProfiles, PrintObject } from "./actions";
+import type { FilamentOffer, KProfile, KProfiles, OfferedFilament, PrintObject } from "./actions";
 import { formatFixed, formatTemperature, needsOutline, rgbOf } from "./format";
 import { checkContent, type CheckDialog } from "./check";
 import { canClearHms, firmwareContent, hmsAnswered, hmsContent, infoContent, storageContent } from "./header";
@@ -59,49 +61,13 @@ export interface SkipDialog {
   error?: string;
 }
 
-/** The generic materials the integration sets (Bambu's generic profiles),
- * each with its profile id and the type it gives the slot -- the K profiles
- * of the printer are matched by them. */
-const GENERIC: readonly [string, string, string][] = [
-  ["PLA", "GFL99", "PLA"],
-  ["PLA Silk", "GFL96", "PLA"],
-  ["PLA High Speed", "GFL95", "PLA"],
-  ["PLA-CF", "GFL98", "PLA-CF"],
-  ["PETG", "GFG99", "PETG"],
-  ["PETG HF", "GFG96", "PETG"],
-  ["PETG-CF", "GFG98", "PETG-CF"],
-  ["PCTG", "GFG97", "PCTG"],
-  ["ABS", "GFB99", "ABS"],
-  ["ASA", "GFB98", "ASA"],
-  ["PC", "GFC99", "PC"],
-  ["PA", "GFN99", "PA"],
-  ["PA-CF", "GFN98", "PA-CF"],
-  ["PPA-CF", "GFN97", "PPA-CF"],
-  ["PPA-GF", "GFN96", "PPA-GF"],
-  ["TPU", "GFU99", "TPU"],
-  ["TPU for AMS", "GFU98", "TPU"],
-  ["PVA", "GFS99", "PVA"],
-  ["HIPS", "GFS98", "HIPS"],
-  ["BVOH", "GFS97", "BVOH"],
-  ["PE", "GFP99", "PE"],
-  ["PE-CF", "GFP98", "PE-CF"],
-  ["PP", "GFP97", "PP"],
-  ["PP-CF", "GFP96", "PP-CF"],
-  ["PP-GF", "GFP95", "PP-GF"],
-  ["EVA", "GFR99", "EVA"],
-  ["PHA", "GFR98", "PHA"],
-  ["PPS", "GFT97", "PPS"],
-  ["PPS-CF", "GFT98", "PPS-CF"],
-];
-const MATERIALS: readonly string[] = GENERIC.map(([name]) => name);
-
 /** The K profile choice that keeps the slot's own. */
 const K_KEEP = "keep";
 
 /** The printer's default K, where a slot has no profile of its own. */
 const DEFAULT_K = 0.02;
 
-/** The material choice that keeps the slot's own. */
+/** The vendor or filament choice that keeps the slot's own. */
 export const KEEP = "keep";
 
 /** Bambu's common basic colours, each with its name. */
@@ -131,12 +97,18 @@ export interface FilamentDialog {
   /** The slot or external spool sensor. */
   entityId: string;
   title: string;
-  /** The slot's filament, where it has a material: "Keep" offers it. */
+  /** The slot's filament, where it has one: "Keep" offers it. */
   keep?: string;
   /** The slot's colour, "#RRGGBB". */
   current?: string;
-  /** KEEP, a material, or none chosen yet. */
-  material?: string;
+  /** KEEP (the slot's filament, its profile outside the offer or not
+   * placed yet), a vendor of the offer, or none chosen yet. */
+  vendor?: string;
+  /** KEEP (the slot's own, under its vendor), a profile id, or none chosen yet. */
+  filament?: string;
+  /** What Bambu Studio offers the slot, while asked "loading", or "failed"
+   * when the integration did not answer. */
+  offer?: FilamentOffer | "loading" | "failed";
   /** The colour chosen, "#RRGGBB". */
   color?: string;
   /** A colour outside the palette: the slot's own, or one picked. */
@@ -151,8 +123,6 @@ export interface FilamentDialog {
   spool?: string;
   /** The slot feeds the printer now. */
   active?: boolean;
-  /** The slot's material type, for matching its K profiles. */
-  type?: string;
   /** The printer's K profiles for the slot, while asked "loading", or
    * "failed" when it did not list them. */
   kprofiles?: KProfiles | "loading" | "failed";
@@ -160,43 +130,74 @@ export interface FilamentDialog {
   kprofile?: string;
 }
 
-/** What the set_filament action is to change: only what differs from the
- * slot's. A colour as [r, g, b]. */
-export function filamentChanges(dialog: FilamentDialog): { material?: string; color?: number[]; k_profile?: number } {
-  const material = dialog.material !== undefined && dialog.material !== KEEP ? { material: dialog.material } : {};
-  const color = dialog.color;
-  const changed = color !== undefined && color !== dialog.current;
-  // A K profile chosen that differs from the slot's -- a new material takes
-  // the default otherwise, as on the printer's screen.
-  const chosen = dialog.kprofile !== undefined && dialog.kprofile !== K_KEEP ? Number(dialog.kprofile) : undefined;
-  // Not listed, the slot's own profile is not known: the default chosen is a change.
-  const current = typeof dialog.kprofiles === "object" ? dialog.kprofiles.current : undefined;
-  const kChanged = chosen !== undefined && ("material" in material ? chosen !== -1 : chosen !== current);
-  return { ...material, ...(changed ? { color: rgbOf(color) } : {}), ...(kChanged ? { k_profile: chosen } : {}) };
+/** The vendor whose filaments hold the slot's own profile, where the offer has it. */
+export function ownVendor(dialog: FilamentDialog): string | undefined {
+  const offer = dialog.offer;
+  if (typeof offer !== "object" || !offer.current) return undefined;
+  return offer.vendors.find((vendor) => vendor.filaments.some((item) => item.id === offer.current))?.name;
 }
 
-/** The printer's first K profile for the material the dialog holds now:
- * a new material takes it, as BamBuddy's own dialog does; none: the
+/** The filament chosen from the offer, none while the slot's is kept. */
+function chosenFilament(dialog: FilamentDialog): OfferedFilament | undefined {
+  const offer = dialog.offer;
+  if (typeof offer !== "object" || dialog.filament === undefined || dialog.filament === KEEP) return undefined;
+  return offer.vendors.flatMap((vendor) => vendor.filaments).find((item) => item.id === dialog.filament);
+}
+
+/** The slot keeps its filament: in the vendor field, or under its vendor. */
+const keeping = (dialog: FilamentDialog): boolean => dialog.vendor === KEEP || dialog.filament === KEEP;
+
+/** Bambu Studio offers the slot no filament at all. */
+const noOffer = (dialog: FilamentDialog): boolean => typeof dialog.offer === "object" && dialog.offer.vendors.length === 0;
+
+/** Nothing offered, or the offer did not arrive, and no filament to keep:
+ * nothing can be set on the slot. */
+const nothingToSet = (dialog: FilamentDialog): boolean => (noOffer(dialog) || dialog.offer === "failed") && dialog.keep === undefined;
+
+/** The profile the K profiles are matched by: the chosen one, else the slot's
+ * own -- without an offer, the filament its own K profile is filed under. */
+function profileId(dialog: FilamentDialog): string | undefined {
+  const chosen = chosenFilament(dialog);
+  if (chosen) return chosen.id;
+  if (!keeping(dialog)) return undefined;
+  if (typeof dialog.offer === "object") return dialog.offer.current;
+  const k = dialog.kprofiles;
+  // A profile filed under no filament matches none.
+  return typeof k === "object" ? k.profiles.find((profile) => profile.index === k.current)?.filamentId || undefined : undefined;
+}
+
+/** The kept filament as the Filament field names it (no vendor), where the offer has it. */
+function keptName(dialog: FilamentDialog): string | undefined {
+  const offer = dialog.offer;
+  if (typeof offer !== "object" || !offer.current) return undefined;
+  return offer.vendors.flatMap((vendor) => vendor.filaments).find((item) => item.id === offer.current)?.name;
+}
+
+/** What the set_filament action is to change: only what differs from the
+ * slot's. A colour as [r, g, b]. */
+export function filamentChanges(dialog: FilamentDialog): { filament?: string; color?: number[]; k_profile?: number } {
+  const chosen = chosenFilament(dialog);
+  const filament = chosen ? { filament: chosen.id } : {};
+  const color = dialog.color;
+  const changed = color !== undefined && color !== dialog.current;
+  // A K profile chosen that differs from the slot's -- a new filament takes
+  // the default otherwise, as on the printer's screen.
+  const k = dialog.kprofile !== undefined && dialog.kprofile !== K_KEEP ? Number(dialog.kprofile) : undefined;
+  // Not listed, the slot's own profile is not known: the default chosen is a change.
+  const current = typeof dialog.kprofiles === "object" ? dialog.kprofiles.current : undefined;
+  const kChanged = k !== undefined && (chosen ? k !== -1 : k !== current);
+  return { ...filament, ...(changed ? { color: rgbOf(color) } : {}), ...(kChanged ? { k_profile: k } : {}) };
+}
+
+/** The printer's first K profile filed under the filament the dialog holds
+ * now: a new filament takes it, as Bambu Studio offers them; none: the
  * printer's default. */
 export function matchingProfile(dialog: FilamentDialog): string | undefined {
   const state = dialog.kprofiles;
-  if (typeof state !== "object") return undefined;
-  const { id, type } = materialType(dialog);
-  const found = state.profiles.find((profile) => profileMatches(profile, id, type));
+  const id = chosenFilament(dialog)?.id;
+  if (typeof state !== "object" || id === undefined) return undefined;
+  const found = state.profiles.find((profile) => profile.filamentId === id);
   return found ? String(found.index) : undefined;
-}
-
-/** Whether a K profile is the material's: by its filament id, else its name. */
-function profileMatches(profile: KProfile, id: string | undefined, type: string): boolean {
-  return (id !== undefined && profile.filamentId === id) || (type !== "" && profile.name.toUpperCase().includes(type.toUpperCase()));
-}
-
-/** The material a slot will hold: the one chosen, else its own. */
-function materialType(dialog: FilamentDialog): { type: string; id?: string; name: string } {
-  const chosen = GENERIC.find(([name]) => name === dialog.material);
-  if (chosen) return { name: chosen[0], id: chosen[1], type: chosen[2] };
-  const type = dialog.type ?? "";
-  return { name: type, type };
 }
 
 /** The printer information; `copied` while "Copied" shows. */
@@ -231,7 +232,9 @@ export interface DialogActions {
   /** Takes a drying value; returns the one the dialog holds then. */
   setDrying: (field: DryingField, value: number) => number;
   toggleObject: (id: number) => void;
-  setMaterial: (material: string) => void;
+  /** The filament dialog's vendor, then its filament (KEEP: the slot's own). */
+  setVendor: (vendor: string) => void;
+  setFilament: (filament: string) => void;
   /** A colour of the palette, or the one outside it. */
   setColor: (color: string) => void;
   /** A colour from the browser's colour picker, "#rrggbb". */
@@ -385,22 +388,22 @@ function paletteKeys(event: KeyboardEvent): void {
   next.click();
 }
 
-/** The printer's K profiles for the slot: its default, those of the
- * material, the others -- as BamBuddy's own dialog offers them. */
+/** The printer's K profiles for the slot: its default, the slot's own,
+ * and those filed under the filament -- as Bambu Studio offers them. */
 function kField(hass: Hass, dialog: FilamentDialog, actions: DialogActions): TemplateResult {
   const state = dialog.kprofiles;
   const profiles = typeof state === "object" ? state.profiles : [];
   const current = typeof state === "object" ? state.current : -1;
-  const keeping = dialog.material === KEEP;
-  const { name, id, type } = materialType(dialog);
-  const matches = (profile: KProfile): boolean => profileMatches(profile, id, type);
-  const matching = profiles.filter(matches);
-  const others = profiles.filter((profile) => !matches(profile)).sort((a, b) => a.name.localeCompare(b.name));
+  const kept = keeping(dialog) && chosenFilament(dialog) === undefined;
+  const id = profileId(dialog);
+  const matching = id === undefined ? [] : profiles.filter((profile) => profile.filamentId === id);
+  // As the Filament field names it, kept or chosen; the slot's own name where the offer lacks it.
+  const name = chosenFilament(dialog)?.name ?? keptName(dialog) ?? dialog.keep ?? "";
   const label = (profile: KProfile): string => `${profile.name} (K ${formatFixed(hass, profile.k, 3)})`;
-  const listed = keeping ? profiles.find((profile) => profile.index === current) : undefined;
+  const listed = kept ? profiles.find((profile) => profile.index === current) : undefined;
   // The slot's own: by its name, by its number where the printer did not
   // list it, unnamed where the printer gave no list at all.
-  const keepText = !keeping
+  const keepText = !kept
     ? undefined
     : listed
       ? t(hass, "k_keep", { profile: label(listed) })
@@ -410,20 +413,11 @@ function kField(hass: Hass, dialog: FilamentDialog, actions: DialogActions): Tem
           ? t(hass, dialog.ams ? "k_keep_plain" : "k_keep_plain_spool")
           : undefined;
   const value = dialog.kprofile ?? (keepText ? K_KEEP : "-1");
-  const other = others.some((profile) => String(profile.index) === value);
+  // The kept profile stands at the top: not again in the group.
+  const grouped = listed ? matching.filter((profile) => profile.index !== listed.index) : matching;
   // What the field says below itself: the first that holds.
   const hint: TextKey =
-    state === "failed"
-      ? dialog.ams
-        ? "k_failed"
-        : "k_failed_spool"
-      : typeof state === "object" && !profiles.length
-        ? "k_none"
-        : other && dialog.material !== undefined
-          ? dialog.ams
-            ? "k_other_note"
-            : "k_other_note_spool"
-          : "k_unsure";
+    state === "failed" ? (dialog.ams ? "k_failed" : "k_failed_spool") : typeof state === "object" && !profiles.length ? "k_none" : "k_unsure";
   const option = (profile: KProfile): TemplateResult =>
     html`<option value=${String(profile.index)} .selected=${value === String(profile.index)}>${label(profile)}</option>`;
   return html`<div class="field kfield">
@@ -434,13 +428,78 @@ function kField(hass: Hass, dialog: FilamentDialog, actions: DialogActions): Tem
             ? html`<option selected>${t(hass, "k_loading")}</option>`
             : html`${keepText ? html`<option value=${K_KEEP} .selected=${value === K_KEEP}>${keepText}</option>` : nothing}
                 <option value="-1" .selected=${value === "-1"}>${t(hass, "k_default", { k: formatFixed(hass, DEFAULT_K, 3) })}</option>
-                ${matching.length ? html`<optgroup label=${t(hass, "k_matching", { material: type || name })}>${matching.map(option)}</optgroup>` : nothing}
-                ${others.length ? html`<optgroup label=${t(hass, "k_others")}>${others.map(option)}</optgroup>` : nothing}`}
+                ${grouped.length ? html`<optgroup label=${t(hass, "k_matching", { material: name })}>${grouped.map(option)}</optgroup>` : nothing}`}
         </select>
         ${icon("chevronDown")}
       </span>
       <span class="k-hint" id="k-hint" aria-live="polite">${t(hass, hint)}</span>
     </div>`;
+}
+
+/** Sets the select it stands in to a value, after the options before it. */
+class SelectValue extends Directive {
+  render(_value: string): typeof nothing {
+    return nothing;
+  }
+
+  override update(part: ChildPart, [value]: [string]): typeof nothing {
+    const select = part.parentNode;
+    if (select instanceof HTMLSelectElement && select.value !== value) select.value = value;
+    return nothing;
+  }
+}
+const selectValue = directive(SelectValue);
+
+/** Vendor, then filament, as on the printer's screen: what Bambu Studio
+ * offers the slot. The slot's own profile is kept under its vendor, or in
+ * the vendor field where the offer lacks it (a user's own, an unknown id). */
+function filamentFields(hass: Hass, dialog: FilamentDialog, actions: DialogActions): TemplateResult {
+  const offer = dialog.offer;
+  if (typeof offer === "object" && offer.vendors.length === 0) return dialogNote(t(hass, "offer_empty"));
+  const vendors = typeof offer === "object" ? offer.vendors : [];
+  const own = ownVendor(dialog);
+  // The slot's filament in the vendor field: its profile is not in the offer (or the offer not here).
+  const keepVendor = dialog.keep !== undefined && own === undefined;
+  const ready = typeof offer === "object";
+  const vendor = vendors.find((item) => item.name === dialog.vendor);
+  const pick = (event: Event): string => (event.target as HTMLSelectElement).value;
+  // A select whose options change is made anew, and its value set after its
+  // options (`selectValue`): an inserted option does not always take its
+  // "selected".
+  return html`<div class="fil-fields"><div class="fil-grid"><div class="field">
+      <label for="fil-vendor">${t(hass, "vendor")}</label>
+      <span class="select">
+        ${keyed(
+          ready ? "offer" : String(offer),
+          html`<select id="fil-vendor" class=${dialog.vendor === undefined ? "unset" : ""} ?disabled=${!ready} @change=${(event: Event) => actions.setVendor(pick(event))}>
+          ${keepVendor
+            ? html`<option value=${KEEP} .selected=${dialog.vendor === KEEP}>${t(hass, "material_keep", { name: dialog.keep ?? "" })}</option>`
+            : html`<option value="" disabled .selected=${dialog.vendor === undefined}>${t(hass, "material_choose")}</option>`}
+          ${vendors.map((item) => html`<option value=${item.name} .selected=${dialog.vendor === item.name}>${item.name}</option>`)}
+          ${selectValue(dialog.vendor ?? "")}
+        </select>`,
+        )}
+        ${icon("chevronDown")}
+      </span>
+    </div>
+    ${vendor
+      ? html`<div class="field">
+          <label for="fil-filament">${t(hass, "filament_field")}</label>
+          <span class="select">
+            ${keyed(
+              vendor.name,
+              html`<select id="fil-filament" class=${dialog.filament === undefined ? "unset" : ""} @change=${(event: Event) => actions.setFilament(pick(event))}>
+              ${dialog.keep !== undefined && own === vendor.name
+                ? html`<option value=${KEEP} .selected=${dialog.filament === KEEP}>${t(hass, "material_keep", { name: dialog.keep })}</option>`
+                : html`<option value="" disabled .selected=${dialog.filament === undefined}>${t(hass, "material_choose")}</option>`}
+              ${vendor.filaments.map((item) => html`<option value=${item.id} .selected=${dialog.filament === item.id}>${item.name}</option>`)}
+              ${selectValue(dialog.filament ?? "")}
+            </select>`,
+            )}
+            ${icon("chevronDown")}
+          </span>
+        </div>`
+      : nothing}</div></div>`;
 }
 
 /** What else a slot offers: its chip read again (AMS slots), reset. Both
@@ -480,24 +539,19 @@ function filamentContent(ctx: CardContext, dialog: FilamentDialog, actions: Dial
       ${dialog.spool ? html`<p class="rfid-spool">${dialog.spool}</p>` : nothing}
       ${slotTools(ctx, dialog, actions)}`;
   }
+  // Nothing to set: why (nothing offered, or no list) and the slot's tools.
+  if (nothingToSet(dialog)) {
+    return html`<h2 id="dlg-title">${dialog.title}</h2>
+      ${dialogNote(t(hass, dialog.offer === "failed" ? "offer_failed" : "offer_empty"))}
+      ${slotTools(ctx, dialog, actions)}`;
+  }
   const options = PALETTE.map((item) => ({ color: item.color, label: t(hass, item.name) }));
   const custom = dialog.custom ? { color: dialog.custom, label: t(hass, dialog.custom === dialog.current ? "color_current" : "color_chosen") } : undefined;
   // The chosen colour is the stop in the tab order, else the first.
   const stop = Math.max(0, [...options, ...(custom ? [custom] : [])].findIndex((item) => item.color === dialog.color));
   const picked = (event: Event): void => actions.pickColor((event.target as HTMLInputElement).value);
   return html`<h2 id="dlg-title">${dialog.title}</h2>
-    <div class="field">
-      <label for="fil-material">${t(hass, "material")}</label>
-      <span class="select">
-        <select id="fil-material" class=${dialog.material === undefined ? "unset" : ""} @change=${(event: Event) => actions.setMaterial((event.target as HTMLSelectElement).value)}>
-          ${dialog.keep === undefined
-            ? html`<option value="" disabled .selected=${dialog.material === undefined}>${t(hass, "material_choose")}</option>`
-            : html`<option value=${KEEP} .selected=${dialog.material === KEEP}>${t(hass, "material_keep", { name: dialog.keep })}</option>`}
-          ${MATERIALS.map((material) => html`<option value=${material} .selected=${dialog.material === material}>${material}</option>`)}
-        </select>
-        ${icon("chevronDown")}
-      </span>
-    </div>
+    ${filamentFields(hass, dialog, actions)}
     <div class="colors">
       <span class="field-label">${t(hass, "color")}</span>
       <div class="palette" role="radiogroup" aria-label=${t(hass, "color")} @keydown=${paletteKeys}>
@@ -512,7 +566,7 @@ function filamentContent(ctx: CardContext, dialog: FilamentDialog, actions: Dial
       </div>
     </div>
     ${kField(hass, dialog, actions)}
-    ${dialogNote(t(hass, "filament_note"))}
+    ${noOffer(dialog) ? nothing : dialogNote(t(hass, dialog.offer === "failed" ? "offer_failed" : "filament_note"))}
     ${slotTools(ctx, dialog, actions)}`;
 }
 
@@ -527,16 +581,19 @@ function buttons(ctx: CardContext, dialog: Dialog): { keep: string; confirm?: st
     case "drying":
       return { keep: t(hass, "cancel"), confirm: t(hass, "dry_start"), danger: false, ready: true };
     case "filament":
-      // A Bambu spool: its tools only.
-      if (dialog.rfid) return { keep: t(hass, "dismiss"), danger: false, ready: false };
-      // A material where the slot has none, and a change.
+      // A Bambu spool, or nothing to set: its tools only.
+      if (dialog.rfid || nothingToSet(dialog)) return { keep: t(hass, "dismiss"), danger: false, ready: false };
+      // A filament -- the slot's kept, or one chosen -- and a change.
       return {
         keep: t(hass, "cancel"),
         confirm: t(hass, "filament_set"),
         danger: false,
-        ready: dialog.material !== undefined && Object.keys(filamentChanges(dialog)).length > 0,
-        // A colour or a K profile chosen for a slot without a material: it needs one too.
-        ...(dialog.material === undefined && (dialog.color !== undefined || dialog.kprofile !== undefined) ? { need: t(hass, "filament_need_material") } : {}),
+        ready: (keeping(dialog) || chosenFilament(dialog) !== undefined) && Object.keys(filamentChanges(dialog)).length > 0,
+        // A vendor without its filament, or a colour or K profile for a slot without one: it needs one
+        // too -- where Bambu Studio offers one.
+        ...(!noOffer(dialog) && !keeping(dialog) && chosenFilament(dialog) === undefined && (dialog.vendor !== undefined || dialog.color !== undefined || dialog.kprofile !== undefined)
+          ? { need: t(hass, "filament_need_filament") }
+          : {}),
       };
     case "hms":
       return { keep: t(hass, "dismiss"), ...(canClearHms(ctx) ? { confirm: t(hass, "hms_clear") } : {}), danger: false, ready: true, quiet: hmsAnswered(ctx) };
