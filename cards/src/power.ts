@@ -336,13 +336,14 @@ function autoOffRow(ctx: CardContext, plug: PlugRefs): TemplateResult | typeof n
     ${skip === nothing ? nothing : html`<div class="p-skip">${skip}</div>`}`;
 }
 
-/** The plugs' rows, the printer's first with its switch-off under it;
- * offline without the printer's plug where the offline view has it: the
- * other plugs stay in reach -- the fan, the light, the dryer. */
+/** The plugs' rows, the printer's first -- named so, also alone: an
+ * accessory alone looks the same -- with its switch-off under it; offline
+ * without the printer's plug where the offline view has it: the other
+ * plugs stay in reach -- the fan, the light, the dryer. */
 function plugRows(ctx: CardContext, withoutPrinter = false): TemplateResult[] {
   const main = printerPlug(ctx);
   const plugs = withoutPrinter ? shownPlugs(ctx).filter((plug) => plug !== main) : shownPlugs(ctx);
-  return plugs.map((plug) => html`${plugRow(ctx, plug, plugs.length > 1 && plug === main)}${plug === main ? autoOffRow(ctx, plug) : nothing}`);
+  return plugs.map((plug) => html`${plugRow(ctx, plug, plug === main)}${plug === main ? autoOffRow(ctx, plug) : nothing}`);
 }
 
 /** The block "Power", where the printer has a plug BamBuddy shows. */

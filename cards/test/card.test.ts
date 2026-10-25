@@ -504,12 +504,15 @@ describe("the status view", () => {
     expect(find(card, ".temps")?.classList.contains("dual")).toBe(true);
   });
 
-  it("marks a heater that is still heating up", async () => {
-    const { card } = await withX1c({ status: "preparing", stage: "heating_nozzle", progress: 0, layer: 0, nozzles: [[143, 220]] });
+  it("marks every heater that is on, also once it holds its target", async () => {
+    const { card } = await withX1c({ status: "preparing", stage: "heating_nozzle", progress: 0, layer: 0, nozzles: [[143, 220]], bed: [55, 55] });
     expect(text(find(card, ".state"))).toBe("Heating nozzle");
-    expect(findAll(card, ".temp.heating").map((tile) => text(tile.querySelector(".temp-head")))).toEqual(["Nozzle"]);
+    expect(findAll(card, ".temp.heating").map((tile) => text(tile.querySelector(".temp-head")))).toEqual(["Nozzle", "Bed"]);
     // No layer before the first one.
     expect(findAll(card, ".meta span").map(text)).toEqual(["1 h 23 min left", "Ends 14:35"]);
+    // A heater switched off is not marked, however warm it still is.
+    const off = await withX1c({ status: "idle", stage: "idle", progress: 0, nozzles: [[180, 0]], bed: [31, 40] });
+    expect(findAll(off.card, ".temp.heating").map((tile) => text(tile.querySelector(".temp-head")))).toEqual(["Bed"]);
   });
 
   it("asks to clear the plate after a print, and says so", async () => {
@@ -1663,6 +1666,16 @@ describe("the fans", () => {
 });
 
 describe("the heating section", () => {
+  it("marks the row of a heater that is on, from the tap on", async () => {
+    vi.useFakeTimers();
+    const { card } = await withX1c({ status: "idle", stage: "idle", progress: 0, nozzles: [[30, 0]], bed: [31, 40] });
+    await showView(card, "Control");
+    expect(findAll(card, ".heat-name.on .heat-text").map(text)).toEqual(["Bed"]);
+    // With the target it shows, before the printer reports it.
+    await tap(card, `Nozzle: heat to 220${NBSP}°C`);
+    expect(findAll(card, ".heat-name.on .heat-text").map(text)).toEqual(["Nozzle", "Bed"]);
+  });
+
   /** A tap while every timer is fake: the card's own updates still run. */
   async function tap(card: FakeCard, name: string): Promise<void> {
     button(card, name).click();
@@ -2256,8 +2269,8 @@ describe("the active nozzle", () => {
     expect(text(find(card, ".note"))).toBe(`To extrude, heat the nozzle to at least 170${NBSP}°C under Heating.`);
   });
 
-  it("is tagged in the heating section", async () => {
-    const { card, hass } = await cardFor("h2d", {}, { devices: h2d({ status: "idle", hms: [] }) });
+  it("is tagged in the heating section while a job runs, as in the Status tab", async () => {
+    const { card, hass } = await cardFor("h2d", {}, { devices: h2d({ status: "printing", hms: [] }) });
     await showView(card, "Control");
     const tags = (): (string | null)[] => findAll(card, ".heat-row").map((row) => (row.querySelector(".heat-tag") ? text(row.querySelector(".heat-tag")) : null));
     expect(tags()).toEqual(["active", null, null, null]);
@@ -2270,6 +2283,10 @@ describe("the active nozzle", () => {
     expect(tags()).toEqual([null, "active", null, null]);
     await update(card, hass.withState("select.h2d_active_nozzle", "unavailable"));
     expect(tags()).toEqual([null, null, null, null]);
+    // Idle, "active" beside Off would read as on: the select below says which one.
+    const { card: idle } = await cardFor("h2d", {}, { devices: h2d({ status: "idle", hms: [] }) });
+    await showView(idle, "Control");
+    expect(find(idle, ".heat-tag")).toBeNull();
     const { card: single } = await cardFor("a1mini");
     await showView(single, "Control");
     expect(find(single, ".heat-tag")).toBeNull();
@@ -2280,7 +2297,9 @@ describe("the active nozzle", () => {
     await showView(card, "Steuerung");
     expect(text(find(card, ".nozzle-row .step-label"))).toBe("Aktive Düse");
     expect(findAll(card, ".nozzle-row [role=radio]").map(text)).toEqual(["Links", "Rechts"]);
-    expect(text(find(card, ".heat-tag"))).toBe("aktiv");
+    const { card: printing } = await cardFor("h2d", {}, { language: "de", devices: h2d({ status: "printing", hms: [] }) });
+    await showView(printing, "Steuerung");
+    expect(text(find(printing, ".heat-tag"))).toBe("aktiv");
     await update(card, hass.withState("select.h2d_active_nozzle", "right"));
     expect(text(find(card, ".note"))).toBe(`Zum Extrudieren heize die rechte Düse (aktiv) unter „Heizen“ auf mindestens 170${NBSP}°C.`);
     await update(card, hass.withState("sensor.h2d_left_nozzle_temperature", "120"));
@@ -4103,6 +4122,8 @@ describe("the layout of a narrow card and on a touch screen", () => {
     expect(sheet).toMatch(rule("\\.heat-label \\.heat-text", "white-space: normal;[^}]*overflow: visible;[^}]*overflow-wrap: break-word;"));
     // A heating tile's target in the readable mix, its icon in the pure tone.
     expect(sheet).toMatch(rule("\\.temp\\.heating \\.temp-head \\.icon", "color: var\\(--bb-heat\\);"));
+    // A heater that is on, in the Control tab: its icon in the same tone.
+    expect(sheet).toMatch(rule("\\.heat-name\\.on \\.heat-label \\.icon", "color: var\\(--bb-heat\\);"));
     expect(sheet).toMatch(rule("\\.temp\\.heating \\.temp-target", "color: color-mix\\(in srgb, var\\(--bb-heat\\) 55%, var\\(--bb-text\\)\\);"));
     // Two temperature tiles a row.
     expect(narrow).toMatch(rule("\\.temps", "grid-template-columns: repeat\\(2, minmax\\(0, 1fr\\)\\);"));

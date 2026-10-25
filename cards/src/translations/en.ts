@@ -548,6 +548,8 @@ export const en = {
   airduct_laser_now: "Now in laser mode: the printer sets it for its laser module.",
   airduct_hint: "Cooling draws in fresh air (PLA, TPU); Heating keeps the warmth in the chamber (ABS, ASA, PC, PA). The printer sets it itself at every print start.",
   airduct_busy: "Can be changed once the print is done.",
+  airduct_chamber_heats: "While the chamber heats, the airduct stays on Heating. To cool, first switch the chamber off under Heating above.",
+  airduct_chamber_heats_view: "While the chamber heats, the airduct stays on Heating.",
   backup: "AMS filament backup",
   backup_sub: "When a spool runs out, the printer continues with a matching spool from the AMS: same brand, material and color.",
   backup_dual: "With two nozzles, only spools on the same side.",

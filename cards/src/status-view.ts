@@ -16,7 +16,6 @@ import {
   minutesOf,
   targetFloor,
   temperatureUnit,
-  toCelsius,
   jobName,
   listedOptions,
   numericState,
@@ -179,13 +178,9 @@ function temperatureTile(ctx: CardContext, label: string, heater: Heater, iconNa
   const { hass } = ctx;
   const current = numericState(hass, heater.sensor);
   const target = numericState(hass, heater.target);
-  // Each in its entity's unit: Home Assistant may show them in °F.
+  // On, whether it still heats up or holds its target: the heat tone says
+  // so. Off is the target number's minimum (32 in °F).
   const on = target !== undefined && target > targetFloor(hass, heater.target);
-  // 3 °C, compared in one unit.
-  const heating =
-    on &&
-    current !== undefined &&
-    toCelsius(target as number, temperatureUnit(hass, heater.target)) - toCelsius(current, temperatureUnit(hass, heater.sensor)) > 3;
   const value = current === undefined ? "—" : formatTemperatureOf(hass, heater.sensor, current);
   const targetText =
     target === undefined
@@ -194,12 +189,12 @@ function temperatureTile(ctx: CardContext, label: string, heater: Heater, iconNa
         ? t(hass, "target", { value: formatTemperatureOf(hass, heater.target, target) })
         : t(hass, "heater_off");
   return html`<button
-    class="temp ${heating ? "heating" : ""}"
+    class="temp ${on ? "heating" : ""}"
     aria-label=${[active ? `${label} ${t(hass, "nozzle_active")}` : label, value, targetText].filter(Boolean).join(", ")}
     @click=${() => ctx.moreInfo(ctx.viewOnly ? heater.sensor : (heater.target ?? heater.sensor))}
   >
     <span class="temp-head"
-      >${icon(heating ? "heat" : iconName)}<span>${label}</span> ${active ? html`<span class="temp-tag">${t(hass, "nozzle_active")}</span>` : nothing}</span
+      >${icon(on ? "heat" : iconName)}<span>${label}</span> ${active ? html`<span class="temp-tag">${t(hass, "nozzle_active")}</span>` : nothing}</span
     >
     <span class="temp-value">${value}</span>
     ${targetText ? html`<span class="temp-target">${targetText}</span>` : nothing}

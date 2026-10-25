@@ -259,11 +259,22 @@ async def test_the_airduct_mode(
     assert raised.value.translation_key == "filament_change"
     bambuddy_api.set_airduct_mode.assert_not_awaited()
 
+    # The chamber heats (45 °C): the printer keeps the airduct on heating,
+    # cooling waits until the chamber is off.
     bambuddy_api.statuses[H2D].update({"ams_status_main": 0, "ams_status_sub": 0})
+    await next_refresh(hass, freezer)
+    with pytest.raises(ServiceValidationError) as raised:
+        await _call(hass, "select", "select_option", entity, option="cooling")
+    assert raised.value.translation_key == "chamber_heating"
+    bambuddy_api.set_airduct_mode.assert_not_awaited()
+    await _call(hass, "select", "select_option", entity, option="heating")
+    bambuddy_api.set_airduct_mode.assert_awaited_once_with(H2D, "heating")
+
+    bambuddy_api.statuses[H2D]["temperatures"]["chamber_target"] = 0.0
     await next_refresh(hass, freezer)
     await _call(hass, "select", "select_option", entity, option="cooling")
 
-    bambuddy_api.set_airduct_mode.assert_awaited_once_with(H2D, "cooling")
+    bambuddy_api.set_airduct_mode.assert_awaited_with(H2D, "cooling")
 
 
 @pytest.mark.parametrize(

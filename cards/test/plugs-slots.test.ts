@@ -256,7 +256,7 @@ describe("the plug, the cold-nozzle hint, the backup and the menu", () => {
     const card = await mount([...devices, plugDevice({ printer: devices[0] as FakeDevice, id: 5, name: "Power meter", kind: "state", watts: 156 })], "dev-p1s", { header_chips: ["power"] });
     (find(card, ".pill.power-chip") as HTMLButtonElement).click();
     await settle(card);
-    expect(findAll(card, "dialog .power-box .p-row").map(text)).toEqual([`Power meter On · 156${NBSP}W Display only: BamBuddy cannot switch this plug.`]);
+    expect(findAll(card, "dialog .power-box .p-row").map(text)).toEqual([`Power meter Printer On · 156${NBSP}W Display only: BamBuddy cannot switch this plug.`]);
   });
 
   it("is not sent to a heating section the card does not show", async () => {

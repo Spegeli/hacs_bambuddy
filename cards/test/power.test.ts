@@ -89,9 +89,15 @@ describe("the block Power", () => {
     expect(rows(card).map((row) => row.split(" ")[0])).toEqual(["Tasmota", "Shelly"]);
   });
 
-  it("names the printer's plug only beside another plug", async () => {
+  it("names the printer's own plug, also when it is the only one", async () => {
     const { card } = await mount(x1cWith(), "dev-x1c");
-    expect(rows(card)).toEqual([`Tasmota – FA3F19 On · 182${NBSP}W · today 1.27${NBSP}kWh`]);
+    expect(rows(card)).toEqual([`Tasmota – FA3F19 Printer On · 182${NBSP}W · today 1.27${NBSP}kWh`]);
+    // One that only measures has no switch-off under it: the name says it all the same.
+    const meter = await mount(x1cWith({}, { id: 7, name: "MQTT meter", kind: "state", watts: 150 }), "dev-x1c");
+    expect(rows(meter.card)).toEqual([`MQTT meter Printer On · 150${NBSP}W Display only: BamBuddy cannot switch this plug.`]);
+    // An accessory alone is not the printer's.
+    const accessory = await mount(x1cWith({}, ACCESSORY), "dev-x1c");
+    expect(rows(accessory.card)).toEqual([`Shelly – Abluftfilter On · 12${NBSP}W`]);
   });
 
   it("shows only the figures a plug reports, from 1000 W in kW", async () => {

@@ -440,6 +440,33 @@ describe("the airduct mode", () => {
     expect(hass.calls.at(-1)).toMatchObject({ domain: "select", service: "select_option", data: { entity_id: "select.x1c_airduct_mode", option: "heating" } });
   });
 
+  it("keeps cooling out of reach while the chamber heats, and says how to cool", async () => {
+    const { card } = await withX1c({ airduct: "heating", status: "idle", stage: "idle", chamber: [40, 50] }, { start_view: "control" });
+    expect(radios(card).map((item) => [text(item), item.disabled])).toEqual([
+      ["Cooling", true],
+      ["Heating", false],
+    ]);
+    expect(text(heating(card))).toContain("While the chamber heats, the airduct stays on Heating. To cool, first switch the chamber off under Heating above.");
+    const german = await withX1c({ airduct: "heating", status: "idle", stage: "idle", chamber: [40, 50] }, { start_view: "control" }, "de");
+    expect(text(heating(german.card))).toContain(
+      "Solange die Kammer heizt, bleibt die Luftführung auf Heizen. Zum Kühlen schalte zuerst oben unter „Heizen“ die Kammer aus.",
+    );
+    // Reported on cooling all the same: the keyboard still reaches Heating.
+    const stale = await withX1c({ airduct: "cooling", status: "idle", stage: "idle", chamber: [40, 50] }, { start_view: "control" });
+    expect(radios(stale.card).map((item) => item.getAttribute("tabindex"))).toEqual(["-1", "0"]);
+    // And again once the focus has left the group.
+    find(stale.card, ".airduct .seg")?.dispatchEvent(new FocusEvent("focusout", { relatedTarget: null }));
+    expect(radios(stale.card).map((item) => item.tabIndex)).toEqual([-1, 0]);
+    // The chamber off: both again, and no word of it.
+    const off = await withX1c({ airduct: "heating", status: "idle", stage: "idle", chamber: [40, 0] }, { start_view: "control" });
+    expect(radios(off.card).map((item) => item.disabled)).toEqual([false, false]);
+    expect(text(heating(off.card))).not.toContain("While the chamber heats");
+    // Without controls: what holds, without the step there is no button for.
+    const view = await withX1c({ airduct: "heating", status: "idle", stage: "idle", chamber: [40, 50] }, { read_only: true, start_view: "control" }, "de");
+    expect(text(find(view.card, ".airduct"))).toContain("Solange die Kammer heizt, bleibt die Luftführung auf Heizen.");
+    expect(text(find(view.card, ".airduct"))).not.toContain("Zum Kühlen");
+  });
+
   it("waits during a print and during a filament change", async () => {
     const printing = await withX1c({ airduct: "heating" }, { start_view: "control" });
     expect(radios(printing.card).every((item) => item.disabled)).toBe(true);
@@ -924,12 +951,14 @@ describe("the narrow card at 168 px", () => {
     expect(half).toMatch(rule("\\.heat-row \\+ \\.heat-row", "padding-top: 6px;"));
   });
 
-  it("marks the active nozzle in the Status tab only during a job; the Control tab always", async () => {
-    // Idle, "active" says only where the next load or extrusion goes: the Control tab's business.
+  it("marks the active nozzle only during a job, in the Status tab and the Control tab", async () => {
+    // Idle, "active" beside Off would read as on: the Control tab's select says which one is chosen.
     const idle = await mount(h2d({ status: "idle", stage: "idle", hms: [] }), "dev-h2d");
     expect(findAll(idle.card, ".temps .temp").slice(0, 2).map((tile) => text(tile.querySelector(".temp-head")))).toEqual(["Left nozzle", "Right nozzle"]);
     const control = await mount(h2d({ status: "idle", stage: "idle", hms: [] }), "dev-h2d", { start_view: "control" });
-    expect(text(find(control.card, ".heat-row .heat-label"))).toBe("Left nozzle active");
+    expect(text(find(control.card, ".heat-row .heat-label"))).toBe("Left nozzle");
+    const printing = await mount(h2d(), "dev-h2d", { start_view: "control" });
+    expect(text(find(printing.card, ".heat-row .heat-label"))).toBe("Left nozzle active");
   });
 
   it("marks the active nozzle in the Status tab too", async () => {

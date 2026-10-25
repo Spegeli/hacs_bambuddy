@@ -28,9 +28,12 @@ interface Row {
   active: boolean;
 }
 
-/** The heaters with a target the card can set, in the order of the tiles. */
+/** The heaters with a target the card can set, in the order of the tiles.
+ * The nozzle that prints is tagged during a job, as in the Status tab:
+ * idle, "active" beside Off would read as on -- the select below says
+ * which one is chosen. */
 function rows(ctx: CardContext): Row[] {
-  const active = activeNozzleIndex(ctx);
+  const active = ctx.busy ? activeNozzleIndex(ctx) : undefined;
   return heaters(ctx).flatMap(({ label, heater, kind, index }) =>
     heater.target
       ? [{ label, kind, target: heater.target, active: kind === "nozzle" && index === active, ...(heater.sensor ? { sensor: heater.sensor } : {}) }]
@@ -52,11 +55,12 @@ function nozzleStart(ctx: CardContext, row: Row): number {
   return typeof low === "number" && typeof high === "number" && high >= low && low > 0 ? round5((low + high) / 2) : START.nozzle;
 }
 
-/** A heater's name, its tag as the active nozzle, and what it reads now. */
-function heatName(ctx: CardContext, row: Row): TemplateResult {
+/** A heater's name, its tag as the active nozzle, and what it reads now;
+ * `on`, its icon in the heat tone, as the Status tab's tile. */
+function heatName(ctx: CardContext, row: Row, on: boolean): TemplateResult {
   const { hass } = ctx;
   const current = numericState(hass, row.sensor);
-  return html`<div class="heat-name">
+  return html`<div class="heat-name ${on ? "on" : ""}">
     <span class="heat-label"
       >${icon(row.kind as IconName)}<span class="heat-title"
         ><span class="heat-text">${row.label}</span> ${row.active ? html`<span class="heat-tag">${t(hass, "nozzle_active")}</span>` : nothing}</span
@@ -83,7 +87,9 @@ function heatTarget(ctx: CardContext, row: Row, target: number | undefined, live
 
 /** A heater's target as text, with Hide controls: nothing to set. */
 function heaterState(ctx: CardContext, row: Row): TemplateResult {
-  return html`<div class="heat-row view">${heatName(ctx, row)} ${heatTarget(ctx, row, numericState(ctx.hass, row.target))}</div>`;
+  const target = numericState(ctx.hass, row.target);
+  const on = target !== undefined && target > targetFloor(ctx.hass, row.target);
+  return html`<div class="heat-row view">${heatName(ctx, row, on)} ${heatTarget(ctx, row, target)}</div>`;
 }
 
 function heaterRow(ctx: CardContext, row: Row, options: { disabled: boolean; offered: boolean }): TemplateResult {
@@ -98,8 +104,9 @@ function heaterRow(ctx: CardContext, row: Row, options: { disabled: boolean; off
   const raised = off ? start : Math.min(max, (target as number) + TARGET_STEP);
   const lowered = off ? floor : Math.max(floor, (target as number) - TARGET_STEP);
   const what = row.label;
+  // The target shown, a tap's included: the icon goes with the number.
   return html`<div class="heat-row">
-    ${heatName(ctx, row)}
+    ${heatName(ctx, row, !off)}
     <div class="heat-set">
       ${actionButton({
         label: t(hass, "heat_lower", { what, step: TARGET_STEP, unit }),
@@ -143,17 +150,25 @@ function airductRow(ctx: CardContext): TemplateResult | typeof nothing {
   const { hass, refs } = ctx;
   const state = stateOf(hass, refs.airduct);
   if (!state) return nothing;
+  // The chamber heats: the printer keeps the airduct on heating, and
+  // cooling waits until the chamber is off (the integration refuses it).
+  const chamber = refs.chamber.target;
+  const chamberHeats = chamber !== undefined && (numericState(hass, chamber) ?? 0) > targetFloor(hass, chamber);
   if (ctx.viewOnly) {
     return html`<div class="airduct">
       <div class="nozzle-row">
         <span class="step-label">${t(hass, "airduct")}</span>
         <span class="det-state">${t(hass, AIRDUCT_TEXTS[state.state] ?? "unknown")}</span>
       </div>
+      ${chamberHeats ? note(t(hass, "airduct_chamber_heats_view")) : nothing}
       <p class="hint">${t(hass, "airduct_hint")}</p>
     </div>`;
   }
   const options = listedOptions(state, AIRDUCT_MODES, false).filter((option) => AIRDUCT_MODES.includes(option));
-  const stop = radioStop(options, state.state);
+  const blocked = (option: string): boolean => option === "cooling" && chamberHeats;
+  // The keyboard comes in on an option it can choose.
+  const chosen = radioStop(options, state.state);
+  const stop = blocked(options[chosen] ?? "") ? Math.max(0, options.findIndex((option) => !blocked(option))) : chosen;
   const pending = ctx.isPending("airduct");
   const waiting = ctx.busy ? "airduct_busy" : ctx.changing ? "changing_reason" : undefined;
   const label = t(hass, "airduct");
@@ -167,7 +182,7 @@ function airductRow(ctx: CardContext): TemplateResult | typeof nothing {
             aria-checked=${option === state.state ? "true" : "false"}
             tabindex=${index === stop ? 0 : -1}
             aria-disabled=${pending ? "true" : nothing}
-            ?disabled=${!ctx.online || waiting !== undefined || state.state === "unavailable"}
+            ?disabled=${!ctx.online || waiting !== undefined || state.state === "unavailable" || blocked(option)}
             @click=${() => ctx.run("airduct", "select", "select_option", { entity_id: refs.airduct, option })}
           >
             ${t(hass, AIRDUCT_TEXTS[option] as TextKey)}
@@ -176,7 +191,7 @@ function airductRow(ctx: CardContext): TemplateResult | typeof nothing {
       </div>
     </div>
     ${state.state === "laser" ? note(t(hass, "airduct_laser_now")) : nothing}
-    ${waiting ? note(t(hass, waiting)) : nothing}
+    ${waiting ? note(t(hass, waiting)) : chamberHeats ? note(t(hass, "airduct_chamber_heats")) : nothing}
     <p class="hint">${t(hass, "airduct_hint")}</p>
   </div>`;
 }

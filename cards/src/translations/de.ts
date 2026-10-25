@@ -543,6 +543,8 @@ export const de: Texts = {
   airduct_laser_now: "Gerade im Lasermodus: Den stellt der Drucker für sein Lasermodul ein.",
   airduct_hint: "Kühlen holt Frischluft (PLA, TPU), Heizen hält die Wärme in der Kammer (ABS, ASA, PC, PA). Der Drucker stellt das bei jedem Druckstart selbst ein.",
   airduct_busy: "Änderbar, sobald der Druck fertig ist.",
+  airduct_chamber_heats: "Solange die Kammer heizt, bleibt die Luftführung auf Heizen. Zum Kühlen schalte zuerst oben unter „Heizen“ die Kammer aus.",
+  airduct_chamber_heats_view: "Solange die Kammer heizt, bleibt die Luftführung auf Heizen.",
   backup: "AMS-Filament-Backup",
   backup_sub: "Ist eine Spule leer, druckt der Drucker mit einer gleichen Spule aus dem AMS weiter: gleiche Marke, gleiches Material, gleiche Farbe.",
   backup_dual: "Bei zwei Düsen nur Spulen derselben Seite.",

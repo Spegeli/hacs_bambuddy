@@ -93,16 +93,16 @@ describe("a Home Assistant in °F", () => {
     expect(text(find(card, ".temp .temp-target"))).toBe(`Target 428${NBSP}°F`);
   });
 
-  it("heats a tile by the same measure where its reading and its target show different units", async () => {
+  it("marks a tile as on by its target alone, also in °F", async () => {
     // After a switch to °F Home Assistant keeps registered sensors in their unit: the target in °F, the reading in °C.
     const devices = a1mini({ nozzles: [[220, 220]] });
     const hass = makeHass({ devices });
     const card = await mountCard(hass, { printer: "dev-a1mini" });
     await update(card, hass.withState(NOZZLE, "428", { unit_of_measurement: "°F", min: 32, max: 608 }));
-    expect(find(card, ".temp")?.classList.contains("heating")).toBe(false);
-    // And the other way: a reading in °F (106 °C) on its way to 220 °C.
-    await update(card, hass.withState(NOZZLE, "220", {}).withState("sensor.a1_mini_nozzle_temperature", "223", { unit_of_measurement: "°F" }));
     expect(find(card, ".temp")?.classList.contains("heating")).toBe(true);
+    // Off in °F is the number's minimum, 32 °F.
+    await update(card, hass.withState(NOZZLE, "32", { unit_of_measurement: "°F", min: 32, max: 608 }));
+    expect(find(card, ".temp")?.classList.contains("heating")).toBe(false);
   });
 
   it("lets no nozzle below 170 °C extrude, and says so in °F", async () => {

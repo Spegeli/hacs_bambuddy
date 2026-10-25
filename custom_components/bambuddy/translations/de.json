@@ -825,6 +825,9 @@
     "job_running": {
       "message": "{printer} druckt oder ist pausiert: Das geht erst, wenn der Druck fertig oder gestoppt ist."
     },
+    "chamber_heating": {
+      "message": "Die Kammer heizt: schalte zuerst die Kammerheizung aus."
+    },
     "not_now": {
       "message": "{printer} kann das gerade nicht."
     },

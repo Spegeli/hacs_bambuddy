@@ -36,6 +36,18 @@ class BamBuddySelectDescription(SelectEntityDescription):
     allowed: Callable[[PrinterData], bool] | None = None
     refusal: str = "not_now"
     idle_only: bool = False
+    # One choice the printer's state rules out, with its own refusal (in place
+    # of `allowed`).
+    option_allowed: Callable[[PrinterData, str], bool] | None = None
+    option_refusal: str = "not_now"
+
+
+def _chamber_heats(data: PrinterData) -> bool:
+    """The chamber heater has a target: the printer keeps the airduct on
+    heating (Bambu: "When the chamber is heated, the system will
+    automatically switch to the heating mode")."""
+    target = data.temperatures.get("chamber_target")
+    return isinstance(target, int | float) and not isinstance(target, bool) and target > 0
 
 
 SELECTS: tuple[BamBuddySelectDescription, ...] = (
@@ -60,6 +72,10 @@ SELECTS: tuple[BamBuddySelectDescription, ...] = (
         # The print sets it at its start (Bambu Studio refuses a change
         # during one).
         idle_only=True,
+        # Cooling beside a heating chamber is a state Bambu describes
+        # nowhere: the chamber goes off first.
+        option_allowed=lambda data, mode: mode != "cooling" or not _chamber_heats(data),
+        option_refusal="chamber_heating",
     ),
     BamBuddySelectDescription(
         key="active_nozzle",
@@ -105,10 +121,17 @@ class BamBuddySelect(BamBuddyDescribedEntity, SelectEntity):
         description = self.entity_description
         if option not in (description.options or []):
             return  # the mode it is in, which only the printer sets
+        allowed, refusal = description.allowed, description.refusal
+        if (option_allowed := description.option_allowed) is not None:
+            allowed, refusal = partial(_option_allowed, option_allowed, option), description.option_refusal
         await async_run_command(
             self.coordinator,
             partial(description.select_fn, self.coordinator.client, self.coordinator.printer_id, option),
-            allowed=description.allowed,
-            refusal=description.refusal,
+            allowed=allowed,
+            refusal=refusal,
             idle_only=description.idle_only,
         )
+
+
+def _option_allowed(check: Callable[[PrinterData, str], bool], option: str, data: PrinterData) -> bool:
+    return check(data, option)

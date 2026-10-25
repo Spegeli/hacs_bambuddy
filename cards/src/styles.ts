@@ -1667,6 +1667,10 @@ export const cardStyles = css`
     height: 16px;
     color: var(--bb-muted);
   }
+  /* A heater that is on, as the Status tab's tile. */
+  .heat-name.on .heat-label .icon {
+    color: var(--bb-heat);
+  }
   /* The name keeps its room: a tag that does not fit goes below it. */
   .heat-title {
     display: flex;

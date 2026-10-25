@@ -825,6 +825,9 @@
     "job_running": {
       "message": "{printer} is printing or paused: this works once the print is done or stopped."
     },
+    "chamber_heating": {
+      "message": "The chamber is heating: switch the chamber heater off first."
+    },
     "not_now": {
       "message": "{printer} cannot do this right now."
     },
