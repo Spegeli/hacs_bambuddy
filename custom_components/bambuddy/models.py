@@ -820,11 +820,18 @@ def _color(tray: dict[str, Any]) -> str | None:
 
 
 def tray_empty(tray: dict[str, Any]) -> bool:
-    """No spool, or one nobody told the printer about. BamBuddy's `exists`
-    where it reports one: the AMS HT says state 9 (empty) for a loaded tray."""
-    if tray.get("exists") is False:
-        return True
+    """No spool, or one nobody told the printer about: the printer names no
+    filament (the AMS HT says state 9, empty, for a loaded tray). BamBuddy's
+    `exists` does not decide it: BamBuddy sets it only from a report with the
+    presence bits and clears the filament with it, so a filament named after
+    it is newer -- a spool put in and described -- as BamBuddy's card reads it."""
     return not (tray.get("tray_type") or tray.get("tray_sub_brands"))
+
+
+def spool_present(tray: dict[str, Any]) -> bool:
+    """A spool sits there, described or not: a filament named, else
+    BamBuddy's `exists` (the external spools, without one, always count)."""
+    return not tray_empty(tray) or tray.get("exists") is not False
 
 
 def tray_label(tray: dict[str, Any]) -> str:
@@ -866,9 +873,7 @@ def slot_attributes(tray: dict[str, Any], slot: int, global_id: int, active_tray
         "drying_time": None if empty else tray.get("drying_time"),
         # A Bambu spool's chip describes it: nobody sets its filament by hand.
         "rfid": has_rfid(tray),
-        # A spool sits there, described or not (BamBuddy's `exists`; the
-        # external spools always count).
-        "present": tray.get("exists") is not False,
+        "present": spool_present(tray),
     }
 
 

@@ -40,6 +40,7 @@ from .models import (
     hms_code,
     is_drying,
     short_name,
+    spool_present,
     stored_key,
     tray_empty,
     tray_id,
@@ -309,7 +310,7 @@ async def _set_filament(hass: HomeAssistant, call: ServiceCall) -> None:
     found = find_tray(data, tray)
     current = found[0] if found else {}
     _online(coordinator)
-    if ams != _EXTERNAL_AMS and (found is None or current.get("exists") is False):
+    if ams != _EXTERNAL_AMS and (found is None or not spool_present(current)):
         raise _refuse("slot_empty")
     if has_rfid(current):
         raise _refuse("rfid_spool")
@@ -463,7 +464,7 @@ async def _refresh_rfid(hass: HomeAssistant, call: ServiceCall) -> None:
     _pause_first(coordinator)
     if data.connected:
         found = find_tray(data, tray)
-        if found is None or found[0].get("exists") is False:
+        if found is None or not spool_present(found[0]):
             raise _refuse("slot_empty")
         if active_tray(data) is not None:
             raise _refuse("rfid_unload_first", printer=short_name(coordinator.info))

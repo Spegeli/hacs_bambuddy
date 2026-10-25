@@ -180,7 +180,11 @@ _TRAY = {
     [
         (_TRAY, "PLA Basic"),
         ({**_TRAY, "tray_sub_brands": ""}, "PLA"),
-        ({**_TRAY, "exists": False}, "empty"),
+        # BamBuddy sets exists only from a report with the presence bits, and
+        # clears the filament with it: a filament named after it is newer --
+        # a spool put in and described (his A1, 2026-10-25), as BamBuddy's card reads it.
+        ({**_TRAY, "exists": False}, "PLA Basic"),
+        ({"id": 2, "tray_color": "", "tray_type": "", "tray_sub_brands": "", "exists": False}, "empty"),
         ({"id": 2, "tray_color": "", "tray_type": "", "tray_sub_brands": "", "exists": None}, "empty"),
         # The AMS HT reports state 9 for a loaded tray: the material decides.
         ({**_TRAY, "state": 9, "exists": None}, "PLA Basic"),
@@ -459,6 +463,13 @@ def test_a_spool_with_a_chip_describes_itself() -> None:
 )
 def test_detectors(model: str, firmware: str | None, expected: list[str]) -> None:
     assert detectors(_printer({"firmware_version": firmware}, model)) == expected
+
+
+def test_a_described_spool_is_there_whatever_exists_says() -> None:
+    """A filament the printer names after the last presence bits: the spool
+    is there (the card offers its pencil), as in BamBuddy's own card."""
+    attributes = slot_attributes({**_TRAY, "exists": False}, 2, 1, None)
+    assert (attributes["empty"], attributes["present"], attributes["name"]) == (False, True, "PLA Basic")
 
 
 def test_a_spool_nobody_described_is_there() -> None:

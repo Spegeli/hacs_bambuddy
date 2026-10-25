@@ -753,6 +753,20 @@ async def test_a_new_colour_keeps_the_slot_s_filament(hass: HomeAssistant, bambu
     )
 
 
+async def test_a_described_spool_takes_a_colour_whatever_exists_says(
+    hass: HomeAssistant, bambuddy_api: SimpleNamespace, freezer: FrozenDateTimeFactory
+) -> None:
+    """BamBuddy's exists still says empty from before the spool went in,
+    while the printer names its filament: the slot takes the colour."""
+    entry = await set_up(hass, A1_MINI)
+    bambuddy_api.statuses[A1_MINI]["ams"][0]["tray"][1]["exists"] = False
+    await next_refresh(hass, freezer)
+
+    await _set_filament(hass, ams_uid(entry, 0, "slot_2", A1_MINI), color=[193, 46, 31])
+
+    bambuddy_api.configure_slot.assert_awaited_once()
+
+
 async def test_a_new_material_takes_its_generic_profile(
     hass: HomeAssistant, bambuddy_api: SimpleNamespace, freezer: FrozenDateTimeFactory
 ) -> None:
