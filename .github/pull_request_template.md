@@ -12,9 +12,9 @@
 - [ ] New feature
 - [ ] Improvement (performance)
 - [ ] Security
-- [ ] Documentation
+- [ ] Documentation (the README)
 - [ ] Refactor / code quality
-- [ ] CI / repository
+- [ ] CI, tests, contributor documentation or repository
 - [ ] Breaking change — existing installations must act after updating
 
 ## How was this tested?
@@ -30,8 +30,8 @@ Never try the print controls on a printer that is printing.
 - [ ] Tests and `mypy --strict` pass locally, unless the change is documentation only (see CONTRIBUTING → Tests and typing)
 - [ ] Uses only Home Assistant APIs that exist in 2025.5, the supported floor (CONTRIBUTING → Things that are easy to get wrong)
 - [ ] Commit messages follow Conventional Commits — the release notes are built from them
-- [ ] Translations updated and in sync, if UI strings changed: `strings.json` and both `translations/*.json` (`en`, `de`)
-- [ ] No API key, camera token or other secret is logged or committed
+- [ ] Translations updated and in sync, if UI strings changed: `strings.json` and both `translations/*.json` (`en`, `de`), and the card's `cards/src/translations/en.ts` and `de.ts`
+- [ ] No API key, camera token, access code or other secret is logged, put into the diagnostics or committed
 - [ ] README updated, if user-facing behavior changed
 - [ ] Card changed: its tests and typecheck pass, and the rebuilt bundle `custom_components/bambuddy/frontend/bambuddy-card.js` is committed (`npm --prefix cards run build`)
 

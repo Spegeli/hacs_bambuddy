@@ -64,16 +64,18 @@ python -m mypy --strict
 The same in Docker, on any system, with the Python version and the requirements CI uses; each run installs them afresh, which takes a few minutes. On Windows, run it from PowerShell: Git Bash rewrites the mount path.
 
 ```bash
-docker run --rm -v "${PWD}:/workspace" -w /workspace python:3.14 sh -c 'pip install -q -r tests/requirements.txt "pytest-homeassistant-custom-component==$(python .github/scripts/ha_version.py --plugin)" && python -m pytest tests/ -q --cov=custom_components.bambuddy --cov-report=term-missing --cov-fail-under=95 && python -m mypy --strict'
+docker run --rm -v "${PWD}:/workspace" -w /workspace python:3.14 sh -c 'git config --global --add safe.directory /workspace && pip install -q -r tests/requirements.txt pytest-homeassistant-custom-component==$(python .github/scripts/ha_version.py --plugin) && python -m pytest tests/ -q --cov=custom_components.bambuddy --cov-report=term-missing --cov-fail-under=95 && python -m mypy --strict'
 ```
 
 On the minimum Home Assistant in `hacs.json`, as CI's second test job runs it (no coverage gate):
 
 ```bash
-docker run --rm -v "${PWD}:/workspace" -w /workspace python:3.13 sh -c 'pip install -q -r tests/requirements-floor.txt && python -m pytest tests/ -q'
+docker run --rm -v "${PWD}:/workspace" -w /workspace python:3.13 sh -c 'git config --global --add safe.directory /workspace && pip install -q -r tests/requirements-floor.txt && python -m pytest tests/ -q'
 ```
 
 CI runs both (see [Continuous integration](#continuous-integration)): the suite must pass on both Home Assistant releases, with at least 95 % line coverage on the newest, and `mypy --strict` must report no error. `config_flow.py` stays at 100 %, and every test that shows an error in a dialog goes on to finish that dialog.
+
+The suite has two layers. `tests/test_api.py` (and the camera's stream in `tests/test_camera.py`) checks what each `BamBuddyClient` method sends and makes of BamBuddy's answer, against Home Assistant's HTTP mock. Every other test sets the integration up in Home Assistant with the client's methods replaced by mocks — the fixture `bambuddy_api` in `tests/conftest.py`, answering from `tests/fixtures/` (BamBuddy's shapes, invented values) — and finds an entity by its unique ID, not by its entity ID. Some tests read the repository's documents and pin texts in them (`tests/test_readme.py`, `tests/test_contributing.py`, `tests/test_strings.py` …): a change there goes with its test.
 
 ## Dashboard card
 
@@ -82,13 +84,13 @@ The dashboard card, BamBuddy printer, is TypeScript and Lit in `cards/`. esbuild
 ```bash
 npm ci              # exactly the packages package-lock.json locks
 npm run typecheck   # tsc --noEmit, strict
-npm test            # Vitest with coverage; fails under 95 %
+npm test            # Vitest with coverage; fails under 95 % of lines, branches, functions or statements
 npm run build       # writes the bundle
 ```
 
 To see a change in Home Assistant, run `npm run build`, restart Home Assistant and reload the page: the integration reads the bundle's hash for its URL once per run (`cards.py`), and a page left open keeps the bundle it loaded under the old URL.
 
-The card finds a printer's entities by their translation keys, and its AMS units as the devices connected through the printer (`cards/src/discovery.ts`). A translation key, a state or an attribute the card reads is an interface: change the card in the same pull request. Its editor (`cards/src/editor.ts`) shows Home Assistant's own form with the fields of `cards/src/forms.ts`, filled with the defaults, and writes back only what the user changed. In the editor's preview, a section with nothing to show now shows as a faded example (`sample`, `cards/src/parts.ts`); the card knows that preview by Home Assistant's dialog `hui-dialog-edit-card` around it, because Home Assistant sets `preview` on every card of a dashboard in edit mode too. Its texts are English and German, `cards/src/translations/en.ts` as the source and `de.ts`, with the same keys and placeholders (`cards/test/i18n.test.ts`); entity states come translated from the integration.
+The card finds a printer's entities by their translation keys, and its AMS units and smart plugs as the devices connected through the printer (`cards/src/discovery.ts`). A translation key, a state or an attribute the card reads is an interface: change the card in the same pull request. Its editor (`cards/src/editor.ts`) shows Home Assistant's own form with the fields of `cards/src/forms.ts`, filled with the defaults, and writes back only what the user changed. In the editor's preview, a section with nothing to show now shows as a faded example (`sample`, `cards/src/parts.ts`); the card knows that preview by Home Assistant's dialog `hui-dialog-edit-card` around it, because Home Assistant sets `preview` on every card of a dashboard in edit mode too. Its texts are English and German, `cards/src/translations/en.ts` as the source and `de.ts`, with the same keys and placeholders (`cards/test/i18n.test.ts`); entity states come translated from the integration.
 
 Every change that can alter the build — under `cards/src`, or to `build.mjs`, `tsconfig.json` or `package-lock.json` — commits the rebuilt bundle with it, and nothing else ever changes the bundle: the check "Repository / Cards" rebuilds it and fails when the committed file differs. Pin every package to an exact version.
 
@@ -101,18 +103,18 @@ The integration lives in `custom_components/bambuddy/`; the dashboard card's sou
 | `__init__.py` | Setup and unload: the key's check, BamBuddy's printers, the devices, one coordinator per printer added in the options, a repair issue for a printer BamBuddy no longer lists; the actions and the card, once per run; Configure's live update settings taken by the running entry (any other change of the entry reloads it); migrating older entries; deleting a device from its device page (not the instance's, nor a smart plug BamBuddy still links, nor an AMS unit its printer still reports) |
 | `api.py` | `BamBuddyClient` — every HTTP call to BamBuddy, and its errors; `normalise_url` for the address |
 | `key.py` | The API key while the entry runs: checked every ten minutes and whenever BamBuddy refuses a request; the only place that starts a reauthentication (a 401 confirmed a minute later, never for an unreachable BamBuddy), and ends it once a check finds the key fine again |
-| `auto_off.py` | The switch-off after the print: Home Assistant's own, for the plug that powers a printer (waits for the nozzles, the AMS, a target; never beside BamBuddy's own auto off) |
+| `auto_off.py` | The switch-off after the print: Home Assistant's own, for the printer's own plug — BamBuddy's pick among the plugs that power it (waits for the nozzles, the AMS, a target; never beside BamBuddy's own auto off) |
 | `binary_sensor.py` | BamBuddy's connection; per printer online, door, build plate, SD card (a USB drive on the P2S, X2D and H2 series), developer mode, wired network, timelapse; per AMS unit drying; a plug's state where no switch shows it |
 | `brand/` | Icon and logo for Home Assistant's brands proxy |
 | `button.py` | Pause, resume, stop, plate cleared, clear HMS errors, refresh status; a script plug's Run; "Don't switch off this time" |
 | `camera.py` | MJPEG stream and snapshot through BamBuddy's camera proxy, with a stream token kept for 55 minutes |
 | `cards.py` | Serves the dashboard card's bundle and adds it to every dashboard |
 | `config_flow.py` | Setup (address, API key, certificate check, printers), reauthentication, reconfiguration (a new address, its printers matched by serial number), and the options (Configure): Manage printers (add and remove them) and Settings (the live updates, with a test of the connection) |
-| `const.py` | Domain, config keys, intervals, the minimum BamBuddy version, print speed modes |
+| `const.py` | Domain, config keys, the permissions the key needs (`REQUIRED_SCOPES`), intervals, the live updates' defaults, the minimum BamBuddy version, print speed modes |
 | `coordinator.py` | One coordinator per printer (`/printers/{id}/status` every 10 seconds, when BamBuddy's live connection tells of a change, and twice after a command; print hours, BamBuddy's name and details and the AMS units' names in BamBuddy (`/printers/{id}/ams-labels`) once a minute, and the device names after them; its maintenance every 10 minutes and after a print), the instance's (`/archives/stats` every minute, `/system/info` every 5 minutes), the update checks' (`/updates/check`, `/firmware/updates` every 6 hours) and the smart plugs' (the list every minute, each plug's state every 15 seconds) |
 | `diagnostics.py` | Entry and device diagnostics, redacted (`TO_REDACT`) |
 | `entity.py` | Device infos; the base entities — availability, unique IDs and entity IDs; `async_run_command`, how a command reaches a printer |
-| `fan.py` | Part cooling, auxiliary, chamber or exhaust, and left (on the X2D right) auxiliary fan, in tens; the ventilation of a printer with an airduct (the airduct on cooling and the fans that bring the air through, `models.ventilation_fans`) |
+| `fan.py` | Part cooling, auxiliary (on the X2D the left one), chamber or exhaust, and left (on the X2D right) auxiliary fan, in tens; the ventilation of a printer with an airduct (the airduct on cooling and the fans that bring the air through, `models.ventilation_fans`) |
 | `fan_ids.py` | The X2D's two auxiliary fans: their entity IDs from 2.0.0-beta.2 renamed after their side in the setup |
 | `filaments.py` | Bambu Studio's filament profiles: a slot's name by its profile, what Bambu Studio offers a slot (per printer model, nozzle diameter, nozzle and slot) and why it refuses a filament there |
 | `filaments.json` | Bambu Studio's filament list, made by `.github/scripts/bambu_filaments.py --fetch` from Bambu Studio's profiles — never edited by hand |
@@ -121,6 +123,7 @@ The integration lives in `custom_components/bambuddy/`; the dashboard card's sou
 | `image.py` | The cover image of the current print job |
 | `light.py` | Chamber light |
 | `live.py` | BamBuddy's live connection (its WebSocket), one per entry: a printer's change reads its status at once (`BamBuddyPrinterCoordinator.async_pushed`, at most once per the gap set under Configure → Settings → Live updates, a second by default), switched off and on there without a reload; between two attempts only a timer runs, never a task |
+| `manifest.json` | The integration's manifest: keys in alphabetical order after `domain` and `name`, no package under `requirements` that Home Assistant ships (hassfest refuses it); its `version` is set by Create Release, never by hand |
 | `models.py` | What BamBuddy's printer status means, independent of entities: print status and stage, what each model has, AMS units and slots, names and keys |
 | `number.py` | Target temperatures; the camera's frame rate; the switch-off's temperature |
 | `plug_history.py` | The statistics of a smart plug's entities that went, in the integration's own store: an entity ID no entity has taken again for 10 days loses its long-term statistics (its recorded states are the recorder's); a plug swapped, created again or switched back meanwhile keeps its history |
@@ -133,32 +136,32 @@ The integration lives in `custom_components/bambuddy/`; the dashboard card's sou
 | `sensor.py` | BamBuddy's figures; per printer status, job, temperatures, filament, maintenance and diagnostics; per AMS unit slots, humidity, temperature and drying time; a plug's power and energy |
 | `services.py`, `services.yaml` | The actions |
 | `strings.json`, `translations/` | UI strings, two languages (see [Translations](#translations)) |
-| `switch.py` | AMS filament backup (with an AMS unit, also one plugged in later), AI detection; a plug's switch; the switch-off after the print and its "after every print" |
+| `switch.py` | AMS filament backup (with an AMS unit, also one plugged in later), AI detection; a plug's switch; the switch-off after the print and its *Repeat after every print* |
 | `update.py` | New BamBuddy releases and printer firmware |
 
 ## Things that are easy to get wrong
 
-**Not every endpoint takes the key.** All are under `/api/v1`, and all but four need the `X-API-Key` header: `/updates/version` and `/auth/status` take none, the camera's stream and snapshot a camera token as `?token=` instead — which is why a request's query is never logged.
+**Not every endpoint takes the key.** All are under `/api/v1`, and all but five need the `X-API-Key` header: `/updates/version` and `/auth/status` take none, the camera's stream and snapshot a camera token as `?token=` instead, and the live connection (`/ws`) a token of its own from `/auth/ws-token`, also as `?token=` — which is why a request's query is never logged, nor the text of the live connection's errors (`open_socket`, `api.py`).
 
-**BamBuddy's field names are not always the obvious ones.** The current layer is `layer_num`, not `current_layer`; `remaining_time` is in minutes; the print speed is `speed_level` (1 Silent, 2 Standard, 3 Sport, 4 Ludicrous); the auxiliary and chamber fans are `big_fan1_speed` and `big_fan2_speed`, in percent of the printer's fifteenths (so 47 or 53 for a fan set to 50 %); the second auxiliary fan — the X2D's right one, the P2S's left one — is `left_aux_fan_speed`, in whole percent.
+**BamBuddy's field names are not always the obvious ones.** The current layer is `layer_num`, not `current_layer`; `remaining_time` is in minutes; the print speed is `speed_level` (1 Silent, 2 Standard, 3 Sport, 4 Ludicrous); the auxiliary and chamber fans are `big_fan1_speed` (the X2D's left auxiliary fan) and `big_fan2_speed` (the exhaust fan on the P2S, the X2D and the H2 series), in percent of the printer's fifteenths (so 47 or 53 for a fan set to 50 %); the second auxiliary fan — the X2D's right one, the P2S's left one — is `left_aux_fan_speed`, in whole percent.
 
 **Some reads write.** BamBuddy's maintenance routes (`/maintenance/printers/{id}`) add missing default tasks to its database when they read: read them rarely.
 
-**BamBuddy 1.2.5.7 reads the AMS filament backup only from the printer's `cfg`,** which the A1 and P1 series do not send: `ams_filament_backup` is `null` there (1.2.6 reads it), so the switch exists with an AMS and may be unknown.
+**BamBuddy 1.2.5.7 reads the AMS filament backup only from the printer's `cfg`,** which the A1 and P1 series do not send: `ams_filament_backup` is `null` there (BamBuddy 1.3.0 reads it from `home_flag`), so the switch exists with an AMS and may be unknown.
 
 **Two nozzles are counted both ways.** In `temperatures`, `nozzle` is the left nozzle and `nozzle_2` the right; in `nozzles`, the nozzle setpoint and `select-extruder`, 0 is the right (or only) nozzle and 1 the left. The entities are keyed like the temperatures (`nozzle_…`, `nozzle_2_…`).
 
 **Printers without a chamber sensor report `temperatures.chamber` as `null`** — the A1 Mini, for one. The *Chamber temperature* sensor is created only when the printer reports a value at setup.
 
-**An offline printer answers with its last values:** BamBuddy reports `connected: false` beside stale data. So a printer's entities are unavailable while it is offline, except those that tell about the connection itself (`available_when_offline`).
+**An offline printer answers with its last values:** BamBuddy reports `connected: false` beside stale data. So a printer's entities are unavailable while it is offline, except those that tell about the connection or hold what BamBuddy keeps itself (`available_when_offline`), and the camera's frame rate, a setting of Home Assistant's own.
 
-**BamBuddy's control routes do not check the printer's state** (only skipping objects and clearing the plate do). `async_run_command` (`entity.py`) refuses what the printer cannot take now: offline, a job under way (`idle_only`, `paused_ok`), a filament change, or the entity's own `allowed`.
+**BamBuddy's control routes do not check the printer's state** (only skipping objects and clearing the plate do). `async_run_command` (`entity.py`) refuses what the printer cannot take now: offline, a job under way (`idle_only`, `paused_ok`), a filament change, or the entity's own `allowed` and `check` (the chamber's heating and ventilation locks, for one).
 
-**Serial numbers are the identity, not BamBuddy's printer numbers**, which a new BamBuddy or a restored database changes: device identifiers `<entry>_printer_<serial>`, unique IDs `<entry>_p<serial>_<key>`, AMS units by their own serials. A new entity's ID is set from the model, the serial number and the English translation key (`suggest_entity_id`, `entity.py`); an AMS unit's from its own model and serial, or the printer's serial and the place's letter while BamBuddy reports none (`models.ams_object_id`). A unit known by its place that then reports its serial is held by the running entry and moved to it in the next setup, before the platforms load (`rekey.py`); the renamed IDs wait in the integration's own store for the user's confirmation (`renames.py`). **Smart plugs are known by what they switch, not by BamBuddy's numbers**, which every BamBuddy hands out from 1 and SQLite gives again: a plug's entities by an HMAC of its source and its rank among the entry's plugs with that source (`<entry>_plugsrc_<16 hex>_<rank>_<key>`, entity IDs `bambuddy_smart_plug_<6 hex>`), its device by BamBuddy's number and `created_at` (`<entry>_plug_<number>_<epoch>`); the source never leaves Home Assistant in plain text (`plug_identity.py`). A changed key leaves the users' entities and their history behind; a changed translation key changes the entity's name and a new installation's entity ID, and breaks the card, which finds entities by it.
+**Serial numbers are the identity, not BamBuddy's printer numbers**, which a new BamBuddy or a restored database changes: device identifiers `<entry>_printer_<serial>`, unique IDs `<entry>_p<serial>_<key>`, AMS units by their own serials. A new entity's ID is set from the model, the serial number and the English translation key (`suggest_entity_id`, `entity.py`); an AMS unit's from its own model and serial, or the printer's serial and the place's letter while BamBuddy reports none (`models.ams_object_id`). A unit known by its place that then reports its serial is held by the running entry and moved to it in the next setup, before the platforms load (`rekey.py`); the renamed IDs wait in the integration's own store for the user's confirmation (`renames.py`). **Smart plugs are known by what they switch, not by BamBuddy's numbers**, which every BamBuddy hands out from 1 and SQLite gives again: a plug's entities by an HMAC of its source and its rank among the entry's plugs with that source (`<entry>_plugsrc_<16 hex>_<rank>_<key>`; entity IDs `bambuddy_smart_plug_<6 hex>` for its switch or state, `…_<key>` for the rest), its device by BamBuddy's number and `created_at` (`<entry>_plug_<number>_<epoch>`); the source never leaves Home Assistant in plain text (`plug_identity.py`). A changed key leaves the users' entities and their history behind; a changed translation key changes the entity's name and a new installation's entity ID, and breaks the card, which finds entities by it.
 
 **Never set `model_id` on a device:** Home Assistant then shows the model twice. A printer's model is BamBuddy's model string, its manufacturer Bambu Lab.
 
-**The key needs three permissions.** The integration asks `/auth/me` at every setup, in the flows and every ten minutes, whatever BamBuddy's authentication setting: a key lacking Read Status, Control Printer or Manage Maintenance is refused (`const.REQUIRED_SCOPES`; `tests/test_key_scopes_table.py` ties every client call to one of them). BamBuddy itself enforces them only with its authentication on, so a route's refusal shows only then. Before BamBuddy 1.2.5.7, `/auth/me` claims every permission for any key — hence that minimum.
+**The key needs three permissions.** The integration asks `/auth/me` at every setup, in the flows and every ten minutes, whatever BamBuddy's authentication setting: a key lacking Read Status, Control Printer or Manage Maintenance is refused (`const.REQUIRED_SCOPES`; `tests/test_key_scopes_table.py` ties every client call that sends the key to one of them, but the live connection's token, which the integration does without when BamBuddy refuses it). BamBuddy itself enforces them only with its authentication on, so a route's refusal shows only then. Before BamBuddy 1.2.5.7, `/auth/me` claims every permission for any key — hence that minimum.
 
 **Home Assistant 2025.5 is the floor** (`homeassistant` in `hacs.json`), and only APIs that exist there may be used. Home Assistant 2025.5 runs on Python 3.13, so the integration must run on 3.13 too, although the tests and mypy run on 3.14: use no syntax and no standard-library API newer than 3.13 (such as `except A, B:` without parentheses), and keep `from __future__ import annotations` at the top of every module. 3.13 evaluates annotations as it defines a class or function, so without that line a name defined further down the module fails the import there, while 3.14 evaluates them only when asked. CI compiles the integration with Python 3.13, checks that every module keeps `from __future__ import annotations`, and runs the suite on 2025.5; what the tests do not reach is for review.
 
@@ -182,12 +185,14 @@ The integration ships two languages under `translations/`: English (`en`) and Ge
 
 `strings.json` is the source of truth, and `translations/en.json` mirrors it exactly. **Changing a text means changing it in every translation file**: edit `strings.json`, copy it to `translations/en.json`, and change the same key in `translations/de.json` in the same pull request. A new key goes into every file.
 
+A new language is a new file: `translations/<code>.json` with every key of `strings.json`, and the language added to `test_the_shipped_languages` in `tests/test_strings.py`. For the card, copy `cards/src/translations/en.ts` to `<code>.ts`, translate it, name it in `LANGUAGES` (`cards/src/i18n.ts`) and commit the rebuilt bundle (see [Dashboard card](#dashboard-card)).
+
 Every entity takes its name — and an enum sensor's or a select's states — from its translation key under `entity`. The dashboard card's own texts live in `cards/src/translations/` (see [Dashboard card](#dashboard-card)).
 
 Which language a text is shown in depends on who writes it out:
 
-- **Home Assistant's frontend**, in each user's profile language: the setup, options and repair dialogs, entity states, the actions' descriptions — and the card's texts.
-- **Home Assistant's backend**, in its system language: entity names, and the integration's error messages (`exceptions`), such as the refusal to delete the BamBuddy instance's device. The card shows an error its own commands get in the viewer's language.
+- **Home Assistant's frontend**, in each user's profile language: the setup, options and repair dialogs, entity states, the actions' descriptions, an action's error (by its key under `exceptions`) — and the card's texts.
+- **Home Assistant's backend**: entity names in its system language; the integration's error messages (`exceptions`) in English, as the log and an automation's trace show them. The card shows an error its own commands get in the viewer's language.
 
 Write the files as UTF-8 without a BOM, formatted like the others (`json.dumps(..., indent=2, ensure_ascii=False)`).
 
@@ -223,7 +228,7 @@ When Validate runs:
 - **A pull request to `main` or `dev`** — all eight checks.
 - **By hand** — all eight checks as well: Actions → Validate → Run workflow, on any branch.
 
-Validate does not run on `main` itself: changes reach it only through a validated pull request, or as a release's version commit, validated just before. A newer push to the same branch, or a new commit in the same pull request, cancels the run it makes obsolete. A run started by hand and a push's run on the same branch cancel each other as well, whichever starts later cancelling the other: start one by hand only after the push's run has finished, or that run is cancelled and its Validation summary turns red.
+A push to `main` starts no run: changes reach it only through a validated pull request, or as a release's version commit, validated just before. A newer push to the same branch, or a new commit in the same pull request, cancels the run it makes obsolete. A run started by hand and a push's run on the same branch cancel each other as well, whichever starts later cancelling the other: start one by hand only after the push's run has finished, or that run is cancelled and its Validation summary turns red.
 
 One last check sums up each run: green when every check passed, red when one failed or the run was cancelled. A pull request to `main` calls it **Validation result**, the check `main` requires: a pull request to `main` merges only when it is green. Every other run — a pull request to `dev`, a push, a run by hand — calls it **Validation summary**: GitHub counts a required check by its name on a commit, so only the run that validates the merge into `main` may answer for it. A pull request to `dev` is merged once its Validation summary is green.
 

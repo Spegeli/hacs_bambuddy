@@ -24,6 +24,7 @@ body:
       options:
         - Setup (address, API key)
         - Printers (add, remove)
+        - Live updates
         - Printer sensors and binary sensors
         - AMS units and filament
         - Camera or cover image

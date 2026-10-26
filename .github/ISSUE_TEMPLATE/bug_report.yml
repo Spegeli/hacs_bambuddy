@@ -30,6 +30,7 @@ body:
       options:
         - Setup (address, API key)
         - Printers (add, remove)
+        - Live updates
         - Printer sensors and binary sensors
         - AMS units and filament
         - Camera or cover image
@@ -49,7 +50,7 @@ body:
     attributes:
       label: Integration version
       description: HACS → BamBuddy, or the `version` field in `manifest.json`.
-      placeholder: e.g. 2.0.0-beta.1
+      placeholder: e.g. 2.0.0
     validations:
       required: true
 
@@ -68,7 +69,7 @@ body:
     attributes:
       label: Home Assistant version
       description: Settings → About.
-      placeholder: e.g. 2026.9.4
+      placeholder: e.g. 2026.10.2
     validations:
       required: true
 
@@ -76,7 +77,7 @@ body:
     id: bambuddy_version
     attributes:
       label: BamBuddy version
-      description: Settings → Devices & services → BamBuddy → the BamBuddy device (its software version), or BamBuddy's own interface.
+      description: Settings → Devices & services → BamBuddy → the BamBuddy device (*Version …*), or the foot of BamBuddy's own menu.
       placeholder: e.g. 1.2.5.7
     validations:
       required: true
@@ -130,6 +131,15 @@ body:
       required: false
 
   - type: textarea
+    id: card_config
+    attributes:
+      label: Card configuration
+      description: For a card problem. Edit the card, choose **Show code editor** and paste the card's YAML here. Say which browser, or the companion app, you use.
+      render: yaml
+    validations:
+      required: false
+
+  - type: textarea
     id: logs
     attributes:
       label: Relevant log output
@@ -143,6 +153,8 @@ body:
           logs:
             custom_components.bambuddy: debug
         ```
+
+        For a card problem, also the browser's console: open its developer tools (F12), reload the page and copy what **Console** shows.
       render: text
     validations:
       required: false
@@ -151,8 +163,16 @@ body:
     id: diagnostics
     attributes:
       label: Diagnostics
-      description: Settings → Devices & services → BamBuddy → ⋮ on your BamBuddy entry (**BamBuddy (<host>)**) → Download diagnostics. The API key, addresses and serial numbers are left out automatically; the names of printers, plugs and print jobs stay in. Use the entry's, not a device's (a device's file is named after the device, serial number included).
+      description: Settings → Devices & services → BamBuddy → ⋮ on your BamBuddy entry (named `BamBuddy (<host>)` unless you renamed it) → Download diagnostics. The API key, addresses and serial numbers are left out automatically; the names of printers, plugs and print jobs stay in. Use the entry's, not a device's (a device's file is named after the device, serial number included). If the field refuses it as too long, leave it empty and attach the file, zipped, to a comment once the issue is open.
       render: json
+    validations:
+      required: false
+
+  - type: textarea
+    id: screenshots
+    attributes:
+      label: Screenshots
+      description: For a card problem, drop a screenshot of the card here. Stop the live view first — it shows what your camera sees.
     validations:
       required: false
 
@@ -160,5 +180,5 @@ body:
     attributes:
       value: |
         > [!WARNING]
-        > **Never paste your BamBuddy API key**, and remove the camera's stream token from logs before you paste them. Diagnostics leave both out for you; raw logs and screenshots may not.
+        > **Never paste your BamBuddy API key.** The integration keeps it, the camera's stream token and the printers' access codes out of its log and its diagnostics; a screenshot or another integration's log may not. Its log names your printers and plugs, and may name an AMS unit's serial number.
         > If you posted a key by accident, delete it in BamBuddy (**Settings → API Keys**) at once and create a new one.

@@ -69,7 +69,7 @@ def _add_filament_backup(coordinator: BamBuddyPrinterCoordinator, async_add_enti
 class BamBuddyFilamentBackup(BamBuddyToggle, SwitchEntity):
     """BamBuddy 1.2.5.7 reads the setting only where the printer reports it
     in `cfg`: not on the A1, the A1 mini and the P1 series (they report it elsewhere; read
-    from BamBuddy 1.2.6 on). Unknown there -- and it still switches."""
+    from BamBuddy 1.3.0 on). Unknown there -- and it still switches."""
 
     _attr_translation_key = "ams_filament_backup"
     _attr_entity_category = EntityCategory.CONFIG

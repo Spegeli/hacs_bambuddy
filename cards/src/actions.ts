@@ -21,7 +21,7 @@ export async function errorText(hass: Hass, error: unknown): Promise<string> {
       const text = localize(`component.${domain}.exceptions.${key}.message`, failure.translation_placeholders ?? {});
       if (text) return text;
     } catch {
-      // The message below says the same, in the server's language.
+      // The message below says the same, in English: Home Assistant's backend builds it so.
     }
   }
   return typeof failure.message === "string" && failure.message ? failure.message : t(hass, "error_generic");

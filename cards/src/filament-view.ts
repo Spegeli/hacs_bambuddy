@@ -291,7 +291,7 @@ function pausedNote(ctx: CardContext): TemplateResult | typeof nothing {
 
 /** The AMS filament backup, after the AMS units -- the external spool
  * takes no part, so it goes with the last unit unplugged. A switch; while
- * BamBuddy cannot read it (the A1 and P1 series before BamBuddy 1.2.6), Off
+ * BamBuddy cannot read it (the A1 and P1 series before BamBuddy 1.3.0), Off
  * and On with neither chosen, each still switching; with Hide controls, the
  * state in words. */
 function backupRow(ctx: CardContext): TemplateResult | typeof nothing {
