@@ -236,5 +236,5 @@ def test_the_readme_names_get_filaments() -> None:
 
 
 def test_the_readme_names_the_camera_modes_as_the_editor_does() -> None:
-    """On a tap, always, never: the editor's three words."""
-    assert "| `camera` | `tap`, `always`, `off` | `tap` | The live view: on a tap, always while the dashboard is open, or never (the job's picture then) |" in _README
+    """On a tap of its camera button, always, never: the editor's three words."""
+    assert "| `camera` | `tap`, `always`, `off` | `tap` | The live view: on a tap of its camera button, always while the dashboard is open, or never (the job's picture then) |" in _README
