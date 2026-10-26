@@ -1024,7 +1024,7 @@
     },
     "names_from_bambuddy": {
       "title": "Namen kommen aus BamBuddy: {name}",
-      "description": "Du hast Geräte dieses Druckers in Home Assistant umbenannt:\n\n- {given}\n\nIhre Namen kommen aus BamBuddy und sind wieder die von BamBuddy.\n\nBenenne den Drucker stattdessen in BamBuddy um: Home Assistant übernimmt den Namen nach wenigen Sekunden (eine AMS-Einheit heißt nach ihrem Drucker)."
+      "description": "Du hast Geräte dieses Druckers in Home Assistant umbenannt:\n\n- {given}\n\nIhre Namen kommen aus BamBuddy und sind wieder die von BamBuddy.\n\nBenenne den Drucker oder seine AMS-Einheiten stattdessen in BamBuddy um: Home Assistant übernimmt die Namen innerhalb einer Minute (eine AMS-Einheit ohne eigenen Namen in BamBuddy heißt nach ihrem Drucker und ihrem Platz)."
     },
     "ams_ids_renamed": {
       "title": "AMS-Entitäts-IDs umbenannt: {name}",

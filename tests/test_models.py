@@ -492,22 +492,26 @@ def test_the_names_trim_bambuddys_blanks() -> None:
 
 
 @pytest.mark.parametrize(
-    ("unit_id", "model", "serial", "name"),
+    ("unit_id", "model", "serial", "label", "name"),
     [
-        (0, "AMS 2 Pro", "19C06A000000001", "Studio AMS A (AMS 2 Pro / 19C06A000000001)"),
-        (1, "AMS 2 Pro", "19C06A000000003", "Studio AMS B (AMS 2 Pro / 19C06A000000003)"),
-        (128, "AMS HT", "19F06A000000002", "Studio AMS HT A (AMS HT / 19F06A000000002)"),
-        (129, "AMS HT", "", "Studio AMS HT B (AMS HT)"),
+        (0, "AMS 2 Pro", "19C06A000000001", None, "Studio AMS A (AMS 2 Pro / 19C06A000000001)"),
+        (1, "AMS 2 Pro", "19C06A000000003", None, "Studio AMS B (AMS 2 Pro / 19C06A000000003)"),
+        (128, "AMS HT", "19F06A000000002", None, "Studio AMS HT A (AMS HT / 19F06A000000002)"),
+        (129, "AMS HT", "", None, "Studio AMS HT B (AMS HT)"),
         # An A2L's AMS Lite: BamBuddy's unit 6, "AMS Lite" without a letter (amsHelpers.ts) -- an AMS
         # at place 0 is AMS A beside it.
-        (6, "AMS Lite", "", "Studio AMS Lite"),
+        (6, "AMS Lite", "", None, "Studio AMS Lite"),
         # An A1's AMS Lite is the A1's AMS A.
-        (0, "AMS Lite", "", "Studio AMS A (AMS Lite)"),
+        (0, "AMS Lite", "", None, "Studio AMS A (AMS Lite)"),
+        # Named in BamBuddy: its name in place of the place.
+        (1, "AMS", "00600A3B0000012", "Silk", "Studio Silk (AMS / 00600A3B0000012)"),
+        (6, "AMS Lite", "", "Silk", "Studio Silk (AMS Lite)"),
     ],
 )
-def test_ams_names(unit_id: int, model: str, serial: str, name: str) -> None:
-    """After the printer, lettered as Bambu Lab and BamBuddy do."""
-    assert ams_name({"id": 4, "name": "Studio", "model": "H2D"}, unit_id, model, serial) == name
+def test_ams_names(unit_id: int, model: str, serial: str, label: str | None, name: str) -> None:
+    """After the printer, lettered as Bambu Lab and BamBuddy do -- or by
+    the unit's name in BamBuddy."""
+    assert ams_name({"id": 4, "name": "Studio", "model": "H2D"}, unit_id, model, serial, label) == name
 
 
 @pytest.mark.parametrize(

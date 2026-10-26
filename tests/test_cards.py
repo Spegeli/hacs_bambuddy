@@ -93,7 +93,7 @@ def test_the_readme_documents_what_the_bundle_takes() -> None:
     declared = re.search(r"const OPTIONS: Record<string, Validator> = \{(.*?)\n\};", forms, flags=re.DOTALL)
     assert declared
     assert options == re.findall(r"^  (\w+):", declared.group(1), flags=re.MULTILINE)
-    assert len(options) == 11
+    assert len(options) == 12
     for option in options:
         assert option in bundle, option
     assert "bambuddy-printer-card" in bundle

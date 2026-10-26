@@ -81,6 +81,7 @@ describe("the settings", () => {
       readOnly: false,
       filamentTab: true,
       amsFolding: "auto",
+      externalSpool: true,
       showAutoOff: true,
     });
     expect(DEFAULTS.blocks).toEqual(["controls", "power", "temperatures", "ams", "fans", "speed"]);
@@ -111,6 +112,7 @@ describe("what the editor shows and writes", () => {
       read_only: false,
       show_filament_tab: true,
       ams_folding: "auto",
+      show_external_spool: true,
       show_auto_off: true,
     });
     // A copy each time: a saved card never shares the defaults' lists.
@@ -204,7 +206,7 @@ describe("the visual editor", () => {
     expect(names(1)).toEqual(["start_view", "camera", "header_chips", "read_only"]);
     expect(names(2)).toEqual(["status_blocks", "show_auto_off"]);
     expect(names(3)).toEqual(["show_control_tab", "control_sections"]);
-    expect(names(4)).toEqual(["show_filament_tab", "ams_folding"]);
+    expect(names(4)).toEqual(["show_filament_tab", "ams_folding", "show_external_spool"]);
   });
 
   it("lets the blocks, the chips and the control sections be ordered by dragging", () => {
@@ -399,5 +401,31 @@ describe("every field of the editor", () => {
     document.body.append(root);
     const form = configForm();
     for (const [name, [label]] of Object.entries(FIELDS)) expect(form.computeLabel({ name }), name).toBe(de[label]);
+  });
+});
+
+
+describe("the external spool's switch", () => {
+  it("accepts show_external_spool and writes it only when off", () => {
+    expect(settingsOf(validateConfig({ type: TYPE, printer: "dev-x1c" })).externalSpool).toBe(true);
+    expect(settingsOf(validateConfig({ type: TYPE, printer: "dev-x1c", show_external_spool: false })).externalSpool).toBe(false);
+    expect(() => validateConfig({ type: TYPE, printer: "dev-x1c", show_external_spool: "no" })).toThrow();
+    const shown = editorData({ type: TYPE, printer: "dev-x1c" });
+    expect(shown["show_external_spool"]).toBe(true);
+    expect(changedConfig({ type: TYPE }, shown, { ...shown, show_external_spool: false })).toEqual({ type: TYPE, show_external_spool: false });
+    expect(changedConfig({ type: TYPE, show_external_spool: false }, { ...shown, show_external_spool: false }, shown)).toEqual({ type: TYPE });
+  });
+
+  it("names the switch and says what it does, in both languages", () => {
+    const de = configForm(makeHass({ language: "de" }));
+    expect(de.computeLabel({ name: "show_external_spool" })).toBe("Externe Spule anzeigen");
+    expect(de.computeHelper({ name: "show_external_spool" })).toBe(
+      "Blendet die externe Spule in den Tabs „Status“ und „Filament“ ein oder aus. Das Ausblenden wirkt nur bei einem Drucker mit AMS; solange der Drucker von der externen Spule druckt, zeigt die Karte sie trotzdem.",
+    );
+    const en = configForm(makeHass({ language: "en" }));
+    expect(en.computeLabel({ name: "show_external_spool" })).toBe("Show external spool");
+    expect(en.computeHelper({ name: "show_external_spool" })).toBe(
+      "Shows or hides the external spool in the Status and Filament tabs. Hiding it takes effect only on a printer with an AMS; while the printer feeds from the external spool, the card shows it all the same.",
+    );
   });
 });

@@ -1038,6 +1038,97 @@ async def test_the_device_name_follows_bambuddy(
     assert devices[ams_device(entry, X1C, 0)].name == "Lab AMS A (AMS / 00600A3B0000001)"
 
 
+async def test_an_ams_unit_is_named_after_its_bambuddy_label_from_the_setup_on(
+    hass: HomeAssistant, bambuddy_api: SimpleNamespace
+) -> None:
+    """A unit named in BamBuddy: its name in place of its place, at once."""
+    bambuddy_api.get_ams_labels.return_value = {0: "Silk"}
+
+    entry = await set_up(hass, X1C)
+
+    assert _devices(hass, entry)[ams_device(entry, X1C, 0)].name == "Workshop Silk (AMS / 00600A3B0000001)"
+    bambuddy_api.get_ams_labels.assert_awaited_with(X1C)
+
+
+async def test_an_ams_name_follows_a_label_changed_or_removed_in_bambuddy(
+    hass: HomeAssistant, bambuddy_api: SimpleNamespace, freezer: FrozenDateTimeFactory
+) -> None:
+    """Read once a minute with the printer's name: a new name follows, a
+    removed one gives the place back."""
+    bambuddy_api.get_ams_labels.return_value = {0: "Silk"}
+    entry = await set_up(hass, X1C)
+
+    bambuddy_api.get_ams_labels.return_value = {0: "Matte"}
+    for _ in range(6):
+        await next_refresh(hass, freezer)
+    assert _devices(hass, entry)[ams_device(entry, X1C, 0)].name == "Workshop Matte (AMS / 00600A3B0000001)"
+
+    bambuddy_api.get_ams_labels.return_value = {}
+    for _ in range(6):
+        await next_refresh(hass, freezer)
+    assert _devices(hass, entry)[ams_device(entry, X1C, 0)].name == "Workshop AMS A (AMS / 00600A3B0000001)"
+
+
+async def test_an_ams_unit_keeps_its_name_while_its_labels_are_not_read(
+    hass: HomeAssistant, bambuddy_api: SimpleNamespace, freezer: FrozenDateTimeFactory
+) -> None:
+    """Until a read of the labels succeeds, a known unit keeps the name it
+    has -- a restart while BamBuddy does not answer them renames nothing.
+    A new unit is named by its place."""
+    bambuddy_api.get_ams_labels.side_effect = BamBuddyConnectionError("down")
+    entry = await set_up(hass, X1C)
+    assert _devices(hass, entry)[ams_device(entry, X1C, 0)].name == "Workshop AMS A (AMS / 00600A3B0000001)"
+
+    bambuddy_api.get_ams_labels.side_effect = None
+    bambuddy_api.get_ams_labels.return_value = {0: "Silk"}
+    for _ in range(6):
+        await next_refresh(hass, freezer)
+    assert _devices(hass, entry)[ams_device(entry, X1C, 0)].name == "Workshop Silk (AMS / 00600A3B0000001)"
+
+    bambuddy_api.get_ams_labels.side_effect = BamBuddyConnectionError("down")
+    assert await hass.config_entries.async_reload(entry.entry_id)
+    await hass.async_block_till_done(wait_background_tasks=True)
+    assert _devices(hass, entry)[ams_device(entry, X1C, 0)].name == "Workshop Silk (AMS / 00600A3B0000001)"
+    for _ in range(6):
+        await next_refresh(hass, freezer)
+    assert _devices(hass, entry)[ams_device(entry, X1C, 0)].name == "Workshop Silk (AMS / 00600A3B0000001)"
+
+
+async def test_the_ams_names_stay_when_a_later_labels_read_fails(
+    hass: HomeAssistant, bambuddy_api: SimpleNamespace, freezer: FrozenDateTimeFactory
+) -> None:
+    """A failed read keeps the labels read last."""
+    bambuddy_api.get_ams_labels.return_value = {0: "Silk"}
+    entry = await set_up(hass, X1C)
+    bambuddy_api.get_ams_labels.side_effect = BamBuddyApiError(500, "Internal error")
+
+    for _ in range(6):
+        await next_refresh(hass, freezer)
+
+    assert bambuddy_api.get_ams_labels.await_count >= 2
+    assert _devices(hass, entry)[ams_device(entry, X1C, 0)].name == "Workshop Silk (AMS / 00600A3B0000001)"
+
+
+async def test_a_name_given_to_a_labelled_ams_unit_goes_back(
+    hass: HomeAssistant, bambuddy_api: SimpleNamespace, freezer: FrozenDateTimeFactory
+) -> None:
+    """Named in BamBuddy or not, the unit's name comes from there: a name
+    given in Home Assistant goes back, and Repairs says why."""
+    bambuddy_api.get_ams_labels.return_value = {0: "Silk"}
+    entry = await set_up(hass, X1C)
+    unit = _devices(hass, entry)[ams_device(entry, X1C, 0)]
+    dr.async_get(hass).async_update_device(unit.id, name_by_user="Spool box")
+
+    for _ in range(6):
+        await next_refresh(hass, freezer)
+
+    unit = _devices(hass, entry)[ams_device(entry, X1C, 0)]
+    assert (unit.name, unit.name_by_user) == ("Workshop Silk (AMS / 00600A3B0000001)", None)
+    issue = ir.async_get(hass).async_get_issue(DOMAIN, names_issue(entry.entry_id, printer_key(X1C)))
+    assert issue is not None
+    assert issue.translation_placeholders["given"] == "Spool box"
+
+
 async def test_a_name_changed_in_bambuddy_follows_at_the_next_refresh(
     hass: HomeAssistant, bambuddy_api: SimpleNamespace, freezer: FrozenDateTimeFactory
 ) -> None:

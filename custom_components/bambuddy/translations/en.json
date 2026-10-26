@@ -1024,7 +1024,7 @@
     },
     "names_from_bambuddy": {
       "title": "Names come from BamBuddy: {name}",
-      "description": "You renamed devices of this printer in Home Assistant:\n\n- {given}\n\nTheir names come from BamBuddy and went back to BamBuddy's.\n\nRename the printer in BamBuddy instead: Home Assistant follows within seconds (an AMS unit is named after its printer)."
+      "description": "You renamed devices of this printer in Home Assistant:\n\n- {given}\n\nTheir names come from BamBuddy and went back to BamBuddy's.\n\nRename the printer or its AMS units in BamBuddy instead: Home Assistant follows within a minute (an AMS unit without a name of its own in BamBuddy is named after its printer and its place)."
     },
     "ams_ids_renamed": {
       "title": "AMS entity IDs renamed: {name}",

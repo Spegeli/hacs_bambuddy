@@ -265,19 +265,24 @@ class BamBuddyAmsEntity(BamBuddyPrinterEntity):
 
     @property
     def device_info(self) -> DeviceInfo:
-        """Read when the entity is added: the unit as BamBuddy reports it then."""
+        """Read when the entity is added: the unit as BamBuddy reports it
+        then. A known unit keeps its name until its name in BamBuddy is read
+        (a new one is named by its place till then)."""
         coordinator = self.coordinator
         entry_id = coordinator.config_entry.entry_id
         unit = self.unit or {"id": self.ams_id}
         model = ams_model(unit, self.data)
+        identifier = coordinator.ams_identifier(self.ams_key)
         device = DeviceInfo(
-            identifiers={coordinator.ams_identifier(self.ams_key)},
-            name=ams_name(coordinator.info, self.ams_id, model, unit.get("serial_number")),
+            identifiers={identifier},
             manufacturer="Bambu Lab",
             model=model,
             serial_number=unit.get("serial_number") or None,
             sw_version=unit.get("sw_ver") or None,
         )
+        labels = coordinator.ams_labels
+        if labels is not None or find_device(self.hass, entry_id, identifier) is None:
+            device["name"] = ams_name(coordinator.info, self.ams_id, model, unit.get("serial_number"), (labels or {}).get(self.ams_id))
         return _with_parent(self.hass, entry_id, device, coordinator.identifier)
 
 

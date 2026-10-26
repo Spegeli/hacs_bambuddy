@@ -119,6 +119,7 @@ export interface CardConfig {
   read_only?: boolean;
   show_filament_tab?: boolean;
   ams_folding?: AmsFolding;
+  show_external_spool?: boolean;
   /** The row of the switch-off after the print under the printer's plug. */
   show_auto_off?: boolean;
 }

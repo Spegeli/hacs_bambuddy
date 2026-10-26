@@ -299,6 +299,17 @@ class BamBuddyClient:
         (`total_hours`, with the offset set in BamBuddy)."""
         return await self._object(f"/printers/{printer_id}/runtime-debug")
 
+    async def get_ams_labels(self, printer_id: int) -> dict[int, str]:
+        """The names the user gave the printer's AMS units in BamBuddy, by
+        place (BamBuddy keeps them by the unit's serial and answers by its
+        place now). Blank names and keys that are no place are left out."""
+        answer = await self._object(f"/printers/{printer_id}/ams-labels")
+        return {
+            int(place): label.strip()
+            for place, label in answer.items()
+            if isinstance(label, str) and label.strip() and str(place).isdigit()
+        }
+
     async def get_maintenance(self, printer_id: int) -> dict[str, Any]:
         """The printer's maintenance tasks as BamBuddy keeps them. A read can
         write to BamBuddy's database: it adds missing default tasks."""

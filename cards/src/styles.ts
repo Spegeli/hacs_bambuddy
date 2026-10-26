@@ -885,8 +885,45 @@ export const cardStyles = css`
     background: var(--bb-tint);
     color: var(--bb-muted);
   }
-  button.picture {
+  /* The job's picture: the whole tile shows it large, the camera has a
+     button of its own in its corner. */
+  .picture-open {
+    width: 100%;
+    height: 100%;
+    border: 0;
+    padding: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: none;
+    color: inherit;
     cursor: pointer;
+  }
+  .picture-open:focus-visible,
+  button.live-hint:focus-visible {
+    outline: 2px solid var(--bb-ring);
+    outline-offset: -2px;
+  }
+  /* The job's picture large, where the live view opens. */
+  .big-cover {
+    position: relative;
+    margin: 6px 16px 0;
+    border-radius: 12px;
+    overflow: hidden;
+    background: var(--bb-tint);
+    aspect-ratio: 16 / 9;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+  .big-cover img {
+    width: 100%;
+    height: 100%;
+    object-fit: contain;
+  }
+  .big-cover .icon-btn {
+    background: var(--bb-on-picture);
+    color: #fff;
   }
   .picture .cover {
     width: 100%;
@@ -901,8 +938,11 @@ export const cardStyles = css`
     position: absolute;
     right: 6px;
     bottom: 6px;
-    width: 26px;
-    height: 26px;
+    /* Large enough for a finger on a phone. */
+    width: 30px;
+    height: 30px;
+    border: 0;
+    padding: 0;
     border-radius: 50%;
     display: flex;
     align-items: center;
@@ -911,8 +951,8 @@ export const cardStyles = css`
     color: #fff;
   }
   .live-hint .icon {
-    width: 16px;
-    height: 16px;
+    width: 18px;
+    height: 18px;
   }
   .drawing .d-body {
     fill: none;
@@ -1404,6 +1444,19 @@ export const cardStyles = css`
     font-size: 13px;
     font-weight: 500;
     color: var(--bb-text);
+    line-height: 15px;
+    white-space: normal;
+    overflow-wrap: anywhere;
+  }
+  /* A name the user gave the unit in BamBuddy can be long: it wraps word
+     by word rather than push the card wider -- a single long word where it
+     must --, and its line grows for it; one line stays 15 px, level with
+     the units beside it. */
+  .ams-line {
+    height: auto;
+    min-height: 15px;
+    flex-wrap: wrap;
+    row-gap: 2px;
   }
   /* Room for "99 %" and "88 °C" (the icon, 1px, the figure): a unit keeps
      its width when they change, so it never jumps below the column at 10 %. */
@@ -2072,6 +2125,8 @@ export const cardStyles = css`
   .unit-name {
     font-weight: 500;
     font-size: 15px;
+    /* A name from BamBuddy in one long word breaks rather than leave the card. */
+    overflow-wrap: anywhere;
   }
   /* A unit's model, and on a two-nozzle printer the nozzle it feeds. */
   .unit-model,

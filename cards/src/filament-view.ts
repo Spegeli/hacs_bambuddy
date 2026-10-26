@@ -20,6 +20,7 @@ import {
   emptyText,
   note,
   resumeButton,
+  shownExternalSpools,
   sideName,
   slotOf,
   slotPlace,
@@ -362,6 +363,8 @@ export function filamentView(ctx: CardContext): TemplateResult {
           : undefined;
   const canAct = ctx.canControl && ctx.online && !ctx.running && !ctx.changing;
   const dual = refs.externalSpools.length > 1;
+  // The sides from all spools, what shows from those shown.
+  const spools = shownExternalSpools(ctx);
   const activity = amsActivity(ctx);
   return html`${developerHint(ctx)}${reason ? note(t(hass, reason[0]), reason[1]) : nothing}${pausedNote(ctx)}
     ${activity
@@ -371,12 +374,13 @@ export function filamentView(ctx: CardContext): TemplateResult {
       : nothing}
     ${ctx.ams.map((unit) => unitSection(ctx, unit, canAct))}
     ${backupRow(ctx)}
-    ${refs.externalSpools.length
+    ${spools.length
       ? html`<section class="unit">
-          <div class="unit-head"><span class="unit-name">${t(hass, dual ? "externals" : "external")}</span></div>
+          <div class="unit-head"><span class="unit-name">${t(hass, spools.length > 1 ? "externals" : "external")}</span></div>
           <div class="slots">
-            ${refs.externalSpools.map((entityId, index) =>
-              slotRow(ctx, slotOf(hass, entityId), {
+            ${spools.map((entityId) => {
+              const index = refs.externalSpools.indexOf(entityId);
+              return slotRow(ctx, slotOf(hass, entityId), {
                 canAct,
                 canLoad: true,
                 title: t(hass, (dual ? EXTERNAL_TITLES[index] : "filament_title_external") as TextKey),
@@ -386,8 +390,8 @@ export function filamentView(ctx: CardContext): TemplateResult {
                 editLabel: t(hass, (dual ? EXTERNAL_EDITS[index] : "edit_external") as TextKey),
                 ...(dual ? { nozzle: index === 0 ? ("left" as const) : ("right" as const) } : {}),
                 ...(dual ? { side: sideName(hass, index) } : {}),
-              }),
-            )}
+              });
+            })}
           </div>
         </section>`
       : nothing}`;

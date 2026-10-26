@@ -596,7 +596,7 @@ describe("the status view", () => {
     expect(find(card, ".fans")).toBeNull();
     expect(find(card, ".ams-strip")).toBeNull();
     expect(find(card, ".controls")).toBeNull();
-    expect(find(card, "button.picture")).toBeNull();
+    expect(find(card, "button.live-hint")).toBeNull();
     expect(find(card, ".picture.offline-pic")).not.toBeNull();
     expect(button(card, "Chamber light").disabled).toBe(true);
   });
@@ -1148,7 +1148,7 @@ describe("the live view", () => {
     const { card } = await cardFor("x1c", { camera: "always" });
     expect(find(card, "img.stream")).not.toBeNull();
     expect(hasButton(card, "Close the live view")).toBe(false);
-    expect(find(card, "button.picture")).toBeNull();
+    expect(find(card, "button.live-hint")).toBeNull();
     visibility("hidden");
     await card.updateComplete;
     expect(find(card, "img.stream")).toBeNull();
@@ -1186,7 +1186,7 @@ describe("the live view", () => {
 
   it("never runs with camera: off, in a preview, or without a camera that can stream", async () => {
     const { card } = await cardFor("x1c", { camera: "off" });
-    expect(find(card, "button.picture")).toBeNull();
+    expect(find(card, "button.live-hint")).toBeNull();
     expect(find(card, "img.stream")).toBeNull();
     const hass = makeHass({ devices: x1c() });
     const preview = document.createElement("bambuddy-printer-card") as FakeCard;
@@ -1196,7 +1196,7 @@ describe("the live view", () => {
     document.body.append(preview);
     await preview.updateComplete;
     expect(find(preview, "img.stream")).toBeNull();
-    expect(find(preview, "button.picture")).toBeNull();
+    expect(find(preview, "button.live-hint")).toBeNull();
     const { card: noToken, hass: plain } = await cardFor("x1c", { camera: "always" });
     await update(noToken, plain.withState("camera.x1c_camera", "idle", { access_token: "" }));
     expect(find(noToken, "img.stream")).toBeNull();
@@ -1204,7 +1204,7 @@ describe("the live view", () => {
     expect(find(noCamera, "img.stream")).toBeNull();
     const { card: unavailable, hass: other } = await cardFor("x1c");
     await update(unavailable, other.withState("camera.x1c_camera", "unavailable"));
-    expect(find(unavailable, "button.picture")).toBeNull();
+    expect(find(unavailable, "button.live-hint")).toBeNull();
   });
 
   it("names its frame rate, and offers to change it where the camera gives more", async () => {
@@ -1368,7 +1368,7 @@ describe("the live view", () => {
     button(card, "Close the live view").click();
     await settle(card);
     expect(root(card).activeElement).toBe(button(card, "Live view"));
-    expect(root(card).activeElement?.classList.contains("picture")).toBe(true);
+    expect(root(card).activeElement?.classList.contains("live-hint")).toBe(true);
     await showView(card, "Control");
     button(card, "Live view").click();
     await settle(card);
@@ -2385,6 +2385,36 @@ describe("the filament view", () => {
       ["AMS HT A", ""],
       ["External spools", ""],
     ]);
+  });
+
+  it("names a labelled unit as BamBuddy does, with its model chip", async () => {
+    // Named in BamBuddy: the integration names the device "<printer> <name> (<model> / <serial>)".
+    const named: Record<string, string> = {
+      "dev-h2d-ams-0": "Studio Silk (AMS 2 Pro / 19C06A000000001)",
+      "dev-h2d-ams-128": "Studio Dryer (AMS HT / 19F06A000000002)",
+    };
+    const devices = h2d().map((device) => (named[device.id] ? { ...device, name: named[device.id] as string } : device));
+    const { card } = await cardFor("h2d", {}, { devices });
+    const heads = (selector: string): string[][] =>
+      findAll(card, selector).map((head) => [text(head.querySelector(".ams-name, .unit-name")), text(head.querySelector(".unit-model"))]);
+    // Still by place, not by name: AMS A's place before the AMS HT's.
+    expect(findAll(card, ".ams-name").map(text)).toEqual(["Silk", "Dryer", "Ext"]);
+    await showView(card, "Filament");
+    expect(heads(".unit-head")).toEqual([
+      ["Silk", "AMS 2 Pro"],
+      ["Dryer", "AMS HT"],
+      ["External spools", ""],
+    ]);
+  });
+
+  it("lets a long name from BamBuddy wrap in the Status strip, not push the card wider", () => {
+    // The line grows for it; one line stays 15 px, as the humidity's below.
+    const css = styleText();
+    expect(css).toMatch(/\.ams-line\s*\{[^}]*height: auto;[^}]*min-height: 15px;[^}]*flex-wrap: wrap;/);
+    // A single long word ("Filamenttrocknungsstation") breaks where it must: it
+    // never holds the column wider than the card, in either tab.
+    expect(css).toMatch(/\.ams-name\s*\{[^}]*line-height: 15px;[^}]*white-space: normal;[^}]*overflow-wrap: anywhere;/);
+    expect(css).toMatch(/\.unit-name\s*\{[^}]*overflow-wrap: anywhere;/);
   });
 
   it("loads from an external spool, named by its side on a dual-nozzle printer", async () => {
@@ -4639,6 +4669,208 @@ describe("a switch that is off", () => {
   });
 });
 
+describe("the job's picture large", () => {
+  const COVER = "/api/image_proxy/image.x1c_cover?token=cover-x1c";
+  const big = (card: FakeCard): HTMLImageElement | null => find<HTMLImageElement>(card, ".big-cover img");
+  const openCover = async (card: FakeCard): Promise<void> => {
+    (find(card, "button.picture-open") as HTMLButtonElement).click();
+    await settle(card);
+  };
+  const closeCover = async (card: FakeCard): Promise<void> => {
+    button(card, "Close the job's picture").click();
+    await settle(card);
+  };
+
+  it("shows the cover large on a tap, beside the small one, and closes it again", async () => {
+    const { card } = await cardFor("x1c");
+    await openCover(card);
+    expect(big(card)?.getAttribute("src")).toBe(COVER);
+    expect(find(card, "button.picture-open")).not.toBeNull();
+    expect(find(card, "img.stream")).toBeNull();
+    // Full screen is the live view's only.
+    expect(find(card, ".big-cover .live-full")).toBeNull();
+    await closeCover(card);
+    expect(find(card, ".big-cover")).toBeNull();
+    expect(find(card, ".live")).toBeNull();
+  });
+
+  it("goes back to the live view that ran before (On tap)", async () => {
+    const { card } = await cardFor("x1c");
+    button(card, "Live view").click();
+    await settle(card);
+    expect(find(card, "img.stream")).not.toBeNull();
+    await openCover(card);
+    expect(big(card)).not.toBeNull();
+    expect(find(card, "img.stream")).toBeNull();
+    expect(find(card, "button.live-hint")).not.toBeNull();
+    await closeCover(card);
+    expect(find(card, "img.stream")).not.toBeNull();
+    expect(find(card, ".big-cover")).toBeNull();
+  });
+
+  it("closes everything with the live view's ✕, the cover does not come back (On tap)", async () => {
+    const { card } = await cardFor("x1c");
+    await openCover(card);
+    button(card, "Live view").click();
+    await settle(card);
+    expect(find(card, "img.stream")).not.toBeNull();
+    expect(find(card, ".big-cover")).toBeNull();
+    button(card, "Close the live view").click();
+    await settle(card);
+    expect(find(card, ".live")).toBeNull();
+    expect(find(card, ".big-cover")).toBeNull();
+  });
+
+  it("streams again after the cover in Always, by ✕, by the camera button or by a second tap", async () => {
+    for (const back of ["close", "camera", "again"] as const) {
+      const { card } = await cardFor("x1c", { camera: "always" });
+      expect(find(card, "img.stream")).not.toBeNull();
+      expect(find(card, "button.live-hint")).toBeNull();
+      await openCover(card);
+      expect(find(card, "img.stream")).toBeNull();
+      expect(find(card, "button.live-hint")).not.toBeNull();
+      if (back === "close") await closeCover(card);
+      else if (back === "camera") {
+        button(card, "Live view").click();
+        await settle(card);
+      } else await openCover(card);
+      expect(find(card, "img.stream")).not.toBeNull();
+      expect(find(card, ".big-cover")).toBeNull();
+      expect(find(card, "button.live-hint")).toBeNull();
+      card.remove();
+    }
+  });
+
+  it("enlarges the cover without a camera in Never", async () => {
+    const { card } = await cardFor("x1c", { camera: "off" });
+    expect(find(card, "button.picture-open")).not.toBeNull();
+    expect(find(card, "button.live-hint")).toBeNull();
+    await openCover(card);
+    expect(big(card)).not.toBeNull();
+    expect(find(card, "button.live-hint")).toBeNull();
+    await openCover(card);
+    expect(find(card, ".big-cover")).toBeNull();
+  });
+
+  it("starts the live view only by the camera's button, also on the printer drawing", async () => {
+    const { card } = await cardFor("x1c", {}, { devices: x1c({ cover: false }) });
+    expect(find(card, "button.picture-open")).toBeNull();
+    // A tap on the drawing does nothing.
+    (find(card, ".picture") as HTMLElement).click();
+    await settle(card);
+    expect(find(card, "img.stream")).toBeNull();
+    expect(find(card, "button.picture")).toBeNull();
+    (find(card, ".picture button.live-hint") as HTMLButtonElement).click();
+    await settle(card);
+    expect(find(card, "img.stream")).not.toBeNull();
+    for (const camera of ["always", "off"]) {
+      const { card: other } = await cardFor("x1c", { camera }, { devices: x1c({ cover: false }) });
+      expect(find(other, "button.live-hint")).toBeNull();
+      expect(find(other, "button.picture-open")).toBeNull();
+      expect(find(other, "div.picture")).not.toBeNull();
+    }
+  });
+
+  it("closes the large cover when the job goes", async () => {
+    // Another print, On tap after the live view: the mode's default -- nothing.
+    const { card, hass } = await cardFor("x1c");
+    button(card, "Live view").click();
+    await settle(card);
+    await openCover(card);
+    await update(card, hass.withState("sensor.x1c_current_print", "Another_plate.gcode.3mf"));
+    expect(find(card, ".big-cover")).toBeNull();
+    expect(find(card, ".live")).toBeNull();
+    // Always, the picture breaks: the stream comes back.
+    const { card: always } = await cardFor("x1c", { camera: "always" });
+    await openCover(always);
+    big(always)?.dispatchEvent(new Event("error"));
+    await settle(always);
+    expect(find(always, ".big-cover")).toBeNull();
+    expect(find(always, "img.stream")).not.toBeNull();
+    // Offline.
+    const { card: off, hass: offHass } = await cardFor("x1c", { camera: "off" });
+    await openCover(off);
+    await update(off, offHass.withState("binary_sensor.x1c_online", "off"));
+    expect(find(off, ".big-cover")).toBeNull();
+  });
+
+  it("keeps the camera's failure behind the large cover", async () => {
+    const { card } = await cardFor("x1c", { camera: "always" });
+    find(card, "img.stream")?.dispatchEvent(new Event("error"));
+    await settle(card);
+    expect(find(card, ".live.failed")).not.toBeNull();
+    await openCover(card);
+    expect(big(card)).not.toBeNull();
+    expect(find(card, ".live.failed")).toBeNull();
+    await closeCover(card);
+    expect(find(card, ".live.failed")).not.toBeNull();
+  });
+
+  it("moves the keyboard to the large cover's ✕ and back to the small cover", async () => {
+    const { card } = await cardFor("x1c");
+    (find(card, "button.picture-open") as HTMLButtonElement).focus();
+    await openCover(card);
+    expect(root(card).activeElement).toBe(button(card, "Close the job's picture"));
+    await closeCover(card);
+    expect(root(card).activeElement).toBe(find(card, "button.picture-open"));
+  });
+
+  it("says in the small cover's tooltip what a click does", async () => {
+    const { card } = await cardFor("x1c", {}, { language: "de" });
+    const small = (): Element | null => find(card, "button.picture-open");
+    expect(small()?.getAttribute("title")).toBe("Vorschaubild groß anzeigen");
+    await openCover(card);
+    expect(small()?.getAttribute("title")).toBe("Vorschaubild schließen");
+    // A screen reader keeps its name and hears the state.
+    expect(small()?.getAttribute("aria-label")).toBe("Vorschaubild groß anzeigen");
+    expect(small()?.getAttribute("aria-pressed")).toBe("true");
+    await openCover(card);
+    expect(small()?.getAttribute("title")).toBe("Vorschaubild groß anzeigen");
+  });
+
+  it("names the cover's buttons", async () => {
+    const { card } = await cardFor("x1c", {}, { language: "de" });
+    expect(find(card, "button.picture-open")?.getAttribute("aria-label")).toBe("Vorschaubild groß anzeigen");
+    expect(find(card, "button.live-hint")?.getAttribute("aria-label")).toBe("Livebild");
+    await openCover(card);
+    expect(find(card, ".cover-close")?.getAttribute("aria-label")).toBe("Vorschaubild schließen");
+    expect(big(card)?.getAttribute("alt")).toBe("");
+    const { card: en } = await cardFor("x1c");
+    expect(find(en, "button.picture-open")?.getAttribute("aria-label")).toBe("Show the job's picture large");
+  });
+
+  it("is a plain picture in a preview", async () => {
+    const hass = makeHass({ devices: x1c() });
+    const preview = document.createElement("bambuddy-printer-card") as FakeCard;
+    preview.preview = true;
+    preview.setConfig({ type: "custom:bambuddy-printer-card", printer: "dev-x1c" });
+    preview.hass = hass;
+    document.body.append(preview);
+    await preview.updateComplete;
+    expect(find(preview, "button.picture-open")).toBeNull();
+    expect(find(preview, "button.live-hint")).toBeNull();
+    expect(find(preview, ".picture img.cover")).not.toBeNull();
+  });
+
+  it("starts the live view from the Control tab while the cover is large", async () => {
+    const { card } = await cardFor("x1c");
+    await openCover(card);
+    await showView(card, "Control");
+    (find(card, ".btn.live-btn") as HTMLButtonElement).click();
+    await settle(card);
+    expect(find(card, "img.stream")).not.toBeNull();
+    expect(find(card, ".big-cover")).toBeNull();
+  });
+
+  it("forgets the large cover with a new configuration", async () => {
+    const { card } = await cardFor("x1c", { camera: "off" });
+    await openCover(card);
+    card.setConfig({ type: "custom:bambuddy-printer-card", printer: "dev-x1c", camera: "off" });
+    await settle(card);
+    expect(find(card, ".big-cover")).toBeNull();
+  });
+});
+
 describe("the live view in full screen", () => {
   it("shows the full-screen icon on a running stream", async () => {
     const { card } = await cardFor("x1c");
@@ -5507,5 +5739,73 @@ describe("full screen ending by itself, and a card moved on the dashboard", () =
     await settle(card);
     expect(find(card, "img.stream")).toBeNull();
     expect(inFullscreen(card)).toBe(false);
+  });
+});
+
+
+describe("the external spool's switch", () => {
+  const SPOOL = { name: "PLA Basic", type: "PLA", color: "#FFFFFF", remaining: null, trayId: 254 };
+  const stripNames = (card: FakeCard): string[] => findAll(card, ".ams-group .ams-name").map(text);
+  const unitNames = (card: FakeCard): string[] => findAll(card, ".unit .unit-name").map(text);
+
+  it("hides the external spool on a printer with an AMS", async () => {
+    const { card } = await cardFor("x1c", { show_external_spool: false }, { devices: x1c({ externalSpools: [SPOOL] }) });
+    expect(stripNames(card)).not.toContain("Ext");
+    await showView(card, "Filament");
+    expect(unitNames(card)).not.toContain("External spool");
+    // On by default.
+    const { card: shown } = await cardFor("x1c", {}, { devices: x1c({ externalSpools: [SPOOL] }) });
+    expect(stripNames(shown)).toContain("Ext");
+  });
+
+  it("shows the spool the printer feeds from all the same", async () => {
+    const { card } = await cardFor("x1c", { show_external_spool: false }, { devices: x1c({ externalSpools: [{ ...SPOOL, active: true }] }) });
+    expect(stripNames(card)).toContain("Ext");
+    await showView(card, "Filament");
+    expect(unitNames(card)).toContain("External spool");
+    const external = findAll(card, "section.unit").find((unit) => text(unit.querySelector(".unit-name")) === "External spool");
+    expect([...(external?.querySelectorAll("button") ?? [])].map(text)).toContain("Unload");
+  });
+
+  it("keeps a spool the job fed from till the job ends", async () => {
+    // A two-nozzle print takes the external spool in turns with an AMS, a
+    // run-out unloads it in the pause: the job still prints from it.
+    const left = { ...SPOOL, name: "Matte Left", trayId: 254 };
+    const right = { ...SPOOL, name: "PETG HF", type: "PETG", trayId: 255, active: true };
+    const { card, hass } = await cardFor("h2d", { show_external_spool: false }, { devices: h2d({ status: "paused", externalSpools: [left, right] }) });
+    const sides = (): string[] => findAll(card, ".ams-strip .slot-side").map(text);
+    expect(sides()).toEqual(["R"]);
+    const spool = "sensor.h2d_right_external_spool";
+    const resting = hass.withState(spool, "PETG HF", { ...hass.states[spool]?.attributes, active: false });
+    await update(card, resting);
+    expect(sides()).toEqual(["R"]);
+    await update(card, resting.withState("sensor.h2d_print_status", "printing"));
+    expect(sides()).toEqual(["R"]);
+    // The job over: hidden again.
+    await update(card, resting.withState("sensor.h2d_print_status", "finished"));
+    expect(sides()).toEqual([]);
+  });
+
+  it("keeps the external spool on a printer without an AMS", async () => {
+    const devices = x1c({ externalSpools: [SPOOL] }).filter((device) => device.id === "dev-x1c");
+    const { card } = await cardFor("x1c", { show_external_spool: false }, { devices });
+    expect(stripNames(card)).toContain("Ext");
+  });
+
+  it("keeps the side of the one external spool it shows", async () => {
+    const left = { ...SPOOL, name: "Matte Left", trayId: 254 };
+    const right = { ...SPOOL, name: "PETG HF", type: "PETG", trayId: 255, active: true };
+    const { card } = await cardFor("h2d", { show_external_spool: false }, { devices: h2d({ externalSpools: [left, right] }) });
+    expect(cardText(card)).not.toContain("Matte Left");
+    // The Status strip's side too: R, from both spools, not "the first shown".
+    expect(findAll(card, ".ams-strip .slot-side").map(text)).toEqual(["R"]);
+    await showView(card, "Filament");
+    // One spool shown: no plural over it, its side kept.
+    const external = findAll(card, "section.unit").find((unit) => text(unit.querySelector(".unit-name")) === "External spool");
+    const slots = [...(external?.querySelectorAll(".slot") ?? [])].map(text);
+    expect(slots).toHaveLength(1);
+    expect(slots[0]).toContain("PETG HF");
+    expect(slots[0]).toContain("Right");
+    expect(cardText(card)).not.toContain("Matte Left");
   });
 });

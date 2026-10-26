@@ -212,3 +212,16 @@ def test_the_switch_to_another_server_names_the_plugs() -> None:
         description = _load(name)["config"]["step"]["confirm_other"]["description"]
         assert f"{before}\n\n{paragraph}\n\n{after}" in description, name
         assert paragraph not in _load(name)["config"]["step"]["confirm_same"]["description"], name
+
+
+_NAMES_LAST = {
+    "en": "Rename the printer or its AMS units in BamBuddy instead: Home Assistant follows within a minute (an AMS unit without a name of its own in BamBuddy is named after its printer and its place).",
+    "de": "Benenne den Drucker oder seine AMS-Einheiten stattdessen in BamBuddy um: Home Assistant übernimmt die Namen innerhalb einer Minute (eine AMS-Einheit ohne eigenen Namen in BamBuddy heißt nach ihrem Drucker und ihrem Platz).",
+}
+
+
+def test_the_names_notice_names_the_ams_units_too() -> None:
+    """An AMS unit is named in BamBuddy too: the notice says where."""
+    for name, language in (("strings.json", "en"), ("translations/en.json", "en"), ("translations/de.json", "de")):
+        description = _load(name)["issues"]["names_from_bambuddy"]["description"]
+        assert description.endswith("\n\n" + _NAMES_LAST[language]), name

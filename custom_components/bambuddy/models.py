@@ -641,13 +641,14 @@ def ams_object_id(model: str, printer_key: str, unit_id: int, serial: str | None
     return slugify(" ".join([model, printer_key, *([letter] if letter else []), key]))
 
 
-def ams_name(printer: dict[str, Any], unit_id: int, model: str, serial: str | None) -> str:
+def ams_name(printer: dict[str, Any], unit_id: int, model: str, serial: str | None, label: str | None = None) -> str:
     """An AMS unit's device name: after its printer's BamBuddy name, so it
-    sorts right under the printer, then its place, model and serial."""
-    label = ams_label(unit_id)
-    # A label that is the model already says it once.
-    details = " / ".join(part for part in (model, serial) if part and part != label)
-    base = f"{short_name(printer)} {label}"
+    sorts right under the printer, then its name in BamBuddy (`label`) or
+    else its place, then model and serial."""
+    name = label or ams_label(unit_id)
+    # A name that is the model already says it once.
+    details = " / ".join(part for part in (model, serial) if part and part != name)
+    base = f"{short_name(printer)} {name}"
     return f"{base} ({details})" if details else base
 
 

@@ -115,6 +115,7 @@ export class BamBuddyPrinterCard extends LitElement {
     config: { state: true },
     view: { state: true },
     liveWanted: { state: true },
+    coverLarge: { state: true },
     fullscreen: { state: true },
     pageVisible: { state: true },
     streamFailed: { state: true },
@@ -139,6 +140,14 @@ export class BamBuddyPrinterCard extends LitElement {
   protected config?: CardConfig;
   protected view: View = "status";
   protected liveWanted = false;
+  /** The job's picture shows large where the live view opens. */
+  protected coverLarge = false;
+  /** The job the large picture belongs to: another one closes it. */
+  private coverJob?: string;
+  /** The job the external spools below fed, and those spools: they stay
+   * shown till it ends, wherever the card hides the external spool. */
+  private spoolJob?: string;
+  private jobSpools: ReadonlySet<string> = new Set();
   /** Off, or the live view full screen: the browser's own, or the window
    * where the browser has none. */
   protected fullscreen: "off" | "native" | "window" = "off";
@@ -255,6 +264,8 @@ export class BamBuddyPrinterCard extends LitElement {
     this.view = this.settings.startView;
     this.amsOpen = new Map();
     this.liveWanted = false;
+    this.coverLarge = false;
+    this.coverJob = undefined;
     this.refs = undefined;
     // The stream too: it may be another printer's now (the first config
     // comes before the card is drawn).
@@ -408,6 +419,18 @@ export class BamBuddyPrinterCard extends LitElement {
       this.seenDevices = hass.devices;
       this.refs = findPrinter(hass, this.config.printer);
     }
+    this.followJobSpools(hass);
+    // The large picture goes with its job, and offline: the mode's own
+    // then -- nothing on tap, the live view always.
+    if (this.coverLarge) {
+      const refs = this.refs;
+      const gone = !refs || this.preview || !printerOnline(hass, refs) || this.coverUrl(hass, refs) === undefined || this.jobOf(hass, refs) !== this.coverJob;
+      if (gone) {
+        this.coverLarge = false;
+        this.coverJob = undefined;
+        this.liveWanted = false;
+      }
+    }
     // Full screen ends with the stream (a new frame rate only restarts it):
     // the camera gone, the live view closed, the page hidden, a broken stream.
     if ((this.fullscreen !== "off" || this.fullscreenAsking) && !this.streaming()) this.leaveFullscreen();
@@ -547,7 +570,7 @@ export class BamBuddyPrinterCard extends LitElement {
   /** Whether the live stream runs now. Not after it broke: "Try again"
    * starts it anew, with the token of that moment. */
   private streaming(): boolean {
-    if (this.settings.camera === "off" || this.preview || !this.attached || !this.pageVisible || this.streamFailed) return false;
+    if (this.settings.camera === "off" || this.coverLarge || this.preview || !this.attached || !this.pageVisible || this.streamFailed) return false;
     if (!this.refs || !this.cameraToken()) return false;
     return this.settings.camera === "always" || this.liveWanted;
   }
@@ -575,9 +598,42 @@ export class BamBuddyPrinterCard extends LitElement {
     this.streamSrc = undefined;
   }
 
-  /** Whether a tap can start the live view now. */
-  private canStartLive(online: boolean): boolean {
-    return this.settings.camera === "tap" && online && !this.preview && !this.liveWanted && this.cameraToken() !== undefined;
+  /** Whether a tap can start the live view now: where it does not show --
+   * on tap until it is opened, always while the large picture stands in
+   * its place. */
+  private liveOffered(online: boolean): boolean {
+    const camera = this.settings.camera;
+    if (camera === "off" || !online || this.preview || this.cameraToken() === undefined) return false;
+    return this.coverLarge || (camera === "tap" && !this.liveWanted);
+  }
+
+  /** The job's picture while a job runs or has just ended, as it loaded;
+   * none: the printer's drawing. */
+  private coverUrl(hass: Hass, refs: PrinterRefs): string | undefined {
+    const cover = stateOf(hass, refs.cover);
+    const url = cover && hasValue(hass, refs.cover) ? cover.attributes["entity_picture"] : undefined;
+    const status = printerOnline(hass, refs) ? (stateOf(hass, refs.status)?.state ?? "unknown") : "offline";
+    return typeof url === "string" && url !== this.brokenCover && WITH_JOB.has(status) ? url : undefined;
+  }
+
+  /** Remembers the external spools the job on the printer fed from: a
+   * two-nozzle print takes one in turns with an AMS, a run-out unloads it
+   * in the pause -- the job still prints from it. Forgotten when it ends. */
+  private followJobSpools(hass: Hass): void {
+    const refs = this.refs;
+    const job = refs && printerOnline(hass, refs) && BUSY.has(stateOf(hass, refs.status)?.state ?? "") ? (this.jobOf(hass, refs) ?? "") : undefined;
+    if (job !== this.spoolJob) {
+      this.spoolJob = job;
+      this.jobSpools = new Set();
+    }
+    if (!refs || job === undefined) return;
+    const fed = refs.externalSpools.filter((entityId) => !this.jobSpools.has(entityId) && slotOf(hass, entityId).active);
+    if (fed.length) this.jobSpools = new Set([...this.jobSpools, ...fed]);
+  }
+
+  /** The job's name as the printer reports it: another one is another job. */
+  private jobOf(hass: Hass, refs: PrinterRefs): string | undefined {
+    return stateOf(hass, refs.job)?.state;
   }
 
   /** Focuses an element of the card once it is drawn: the first of the
@@ -594,8 +650,24 @@ export class BamBuddyPrinterCard extends LitElement {
   /** The keyboard's place goes with the live view: to its close button. */
   private readonly startLive = (): void => {
     this.streamFailed = false;
-    this.liveWanted = true;
-    this.focusAfterUpdate(".live .live-close");
+    this.coverLarge = false;
+    this.coverJob = undefined;
+    if (this.settings.camera === "tap") this.liveWanted = true;
+    this.focusAfterUpdate(".live .live-close", ".live .live-full");
+  };
+
+  /** The job's picture large, or small again: the area then shows what it
+   * showed before. */
+  private readonly toggleCover = (): void => {
+    if (this.coverLarge) {
+      this.coverLarge = false;
+      this.coverJob = undefined;
+      this.focusAfterUpdate("button.picture-open");
+      return;
+    }
+    this.coverLarge = true;
+    this.coverJob = this.hass && this.refs ? this.jobOf(this.hass, this.refs) : undefined;
+    this.focusAfterUpdate(".big-cover .cover-close");
   };
 
   /** Closed, the place goes back to the button that opens it: the picture,
@@ -605,7 +677,7 @@ export class BamBuddyPrinterCard extends LitElement {
     this.stopStream();
     this.liveWanted = false;
     this.streamFailed = false;
-    this.focusAfterUpdate("button.picture", ".btn.live-btn", '.tabs [aria-selected="true"]');
+    this.focusAfterUpdate("button.live-hint", ".btn.live-btn", '.tabs [aria-selected="true"]');
   };
 
   private liveElement(): HTMLElement | null {
@@ -753,7 +825,7 @@ export class BamBuddyPrinterCard extends LitElement {
     // The focus goes back to the card's icon only from inside the picture:
     // one elsewhere is not the card's to take.
     if (this.liveElement()?.matches(":focus-within")) {
-      this.focusAfterUpdate(".live .live-full", ".live.failed .btn", "button.picture", '.tabs [aria-selected="true"]');
+      this.focusAfterUpdate(".live .live-full", ".live.failed .btn", "button.live-hint", '.tabs [aria-selected="true"]');
     }
   }
 
@@ -1446,7 +1518,8 @@ export class BamBuddyPrinterCard extends LitElement {
       examples: this.preview && this.inEditor,
       controlTab: settings.controlTab && permitted && settings.sections.some((section) => sectionShown(refs, section, settings.readOnly)),
       filamentTab: settings.filamentTab && (units > 0 || refs.externalSpools.length > 0),
-      ...(this.canStartLive(online) ? { startLive: this.startLive } : {}),
+      jobSpools: this.jobSpools,
+      ...(this.liveOffered(online) ? { startLive: this.startLive } : {}),
       isPending: (key) => this.pending.has(key),
       run: (key, domain, service, data) => void this.run(key, domain, service, data),
       confirm: (confirmation) => {
@@ -1576,32 +1649,64 @@ export class BamBuddyPrinterCard extends LitElement {
   }
 
   /** The picture beside the job: its cover while there is a job, else the
-   * drawing; a tap starts the live view where the camera can stream. */
+   * drawing. A tap on the cover shows it large; the live view starts only
+   * by the camera's own button in its corner, on the cover and the drawing
+   * alike, where the camera can stream. */
   private picture(ctx: CardContext): TemplateResult {
-    const { hass, refs, status } = ctx;
-    const cover = stateOf(hass, refs.cover);
-    const url = cover && hasValue(hass, refs.cover) ? cover.attributes["entity_picture"] : undefined;
-    const showCover = typeof url === "string" && url !== this.brokenCover && WITH_JOB.has(status);
-    const content = showCover
-      ? html`<img
-          class="cover"
-          src=${url}
-          alt=""
-          @error=${() => {
-            this.brokenCover = url;
-          }}
-        />`
-      : printerDrawing();
-    if (ctx.startLive) {
-      return html`<button class="picture" aria-label=${t(hass, "live")} title=${t(hass, "live")} @click=${this.startLive}>
-        ${content}<span class="live-hint">${icon("video")}</span>
-      </button>`;
-    }
-    return html`<div class="picture ${ctx.online ? "" : "offline-pic"}">${content}</div>`;
+    const { hass, refs } = ctx;
+    const url = this.coverUrl(hass, refs);
+    const content =
+      url !== undefined
+        ? html`<img
+            class="cover"
+            src=${url}
+            alt=""
+            @error=${() => {
+              this.brokenCover = url;
+            }}
+          />`
+        : printerDrawing();
+    const enlarge = url !== undefined && !this.preview;
+    if (!enlarge && !ctx.startLive) return html`<div class="picture ${ctx.online ? "" : "offline-pic"}">${content}</div>`;
+    // The tooltip says what a click does; a screen reader keeps the name and hears the state.
+    const opened = this.coverLarge;
+    return html`<div class="picture">
+      ${enlarge
+        ? html`<button
+            class="picture-open"
+            aria-label=${t(hass, "cover_open")}
+            title=${t(hass, opened ? "cover_close" : "cover_open")}
+            aria-pressed=${opened ? "true" : "false"}
+            @click=${this.toggleCover}
+          >
+            ${content}
+          </button>`
+        : content}
+      ${ctx.startLive
+        ? html`<button class="live-hint" aria-label=${t(hass, "live")} title=${t(hass, "live")} @click=${ctx.startLive}>${icon("video")}</button>`
+        : nothing}
+    </div>`;
   }
 
   private livePanel(): TemplateResult | typeof nothing {
     const hass = this.hass as Hass;
+    const coverUrl = this.coverLarge && this.refs ? this.coverUrl(hass, this.refs) : undefined;
+    if (coverUrl !== undefined) {
+      return html`<div class="big-cover">
+        <img
+          src=${coverUrl}
+          alt=""
+          @error=${() => {
+            this.brokenCover = coverUrl;
+          }}
+        />
+        <div class="live-tools">
+          <button class="icon-btn cover-close" aria-label=${t(hass, "cover_close")} title=${t(hass, "cover_close")} @click=${this.toggleCover}>
+            ${icon("close")}
+          </button>
+        </div>
+      </div>`;
+    }
     const closable = this.settings.camera === "tap";
     const close = closable
       ? html`<button class="icon-btn live-close" aria-label=${t(hass, "live_stop")} title=${t(hass, "live_stop")} @click=${this.closeLive}>

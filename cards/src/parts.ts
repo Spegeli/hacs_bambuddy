@@ -77,6 +77,9 @@ export interface CardContext {
   filamentTab: boolean;
   /** Starts the live view; undefined while the camera cannot stream on a tap. */
   startLive?: () => void;
+  /** The external spools the job on the printer fed from: shown till it
+   * ends, wherever the card hides the external spool. */
+  jobSpools?: ReadonlySet<string>;
   isPending: (key: string) => boolean;
   run: (key: string, domain: string, service: string, data: Record<string, unknown>) => void;
   confirm: (confirmation: Confirmation) => void;
@@ -439,3 +442,12 @@ export function slotTitle(hass: Hass, slot: Slot): string {
   return `${slot.name || slot.type}${left}`;
 }
 
+
+/** The external spools the card shows: all, unless the card hides them on a
+ * printer with an AMS -- then the one the printer feeds from, and those the
+ * job on it fed from. */
+export function shownExternalSpools(ctx: CardContext): string[] {
+  const { hass, refs } = ctx;
+  if (ctx.settings.externalSpool || ctx.ams.length === 0) return refs.externalSpools;
+  return refs.externalSpools.filter((entityId) => slotOf(hass, entityId).active || ctx.jobSpools?.has(entityId) === true);
+}

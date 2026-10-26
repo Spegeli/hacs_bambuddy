@@ -273,6 +273,8 @@ class BamBuddyPrinterCoordinator(DataUpdateCoordinator[PrinterData]):
         # The fan kits BamBuddy reported at setup (`PrinterData.fan_kits`).
         self._kits_at_setup: frozenset[str] = frozenset()
         self._hours_read = -RUNTIME_INTERVAL
+        # The AMS units' names in BamBuddy by place; None until read in this run.
+        self.ams_labels: dict[int, str] | None = None
         self._maintenance: dict[str, Any] | None = None
         self._maintenance_read = -MAINTENANCE_INTERVAL
         # A print ended: its hours count -- read the tasks again.
@@ -475,18 +477,14 @@ class BamBuddyPrinterCoordinator(DataUpdateCoordinator[PrinterData]):
         return await fetch(self.client.get_status(self.printer_id), entry=self.config_entry)
 
     async def _read_hours(self) -> bool:
-        """The print hours and the printer's name in BamBuddy, once a
-        minute -- True then; without them the status goes on and both keep
-        their last value."""
+        """The print hours, the printer's name and its AMS units' names in
+        BamBuddy, once a minute -- True then; without them the status goes
+        on and each keeps its last value."""
         now = self.hass.loop.time()
         if now - self._hours_read < RUNTIME_INTERVAL:
             return False
         self._hours_read = now
-        try:
-            runtime = await self.client.get_runtime(self.printer_id)
-        except BamBuddyError as err:
-            _LOGGER.debug("No runtime counter for %s: %s", self.printer_name, err)
-            runtime = {}
+        runtime, _ = await asyncio.gather(self._read_runtime(), self._read_ams_labels())
         hours = runtime.get("total_hours")
         if isinstance(hours, int | float):
             self._hours = float(hours)
@@ -498,6 +496,22 @@ class BamBuddyPrinterCoordinator(DataUpdateCoordinator[PrinterData]):
         if not self.replaced and isinstance(name, str) and name.strip() and name != self.info.get("name"):
             self.info = {**self.info, "name": name}
         return True
+
+    async def _read_runtime(self) -> dict[str, Any]:
+        try:
+            return await self.client.get_runtime(self.printer_id)
+        except BamBuddyError as err:
+            _LOGGER.debug("No runtime counter for %s: %s", self.printer_name, err)
+            return {}
+
+    async def _read_ams_labels(self) -> None:
+        """The names the user gave the AMS units in BamBuddy. A failed read
+        keeps the last; until one succeeds in this run, `ams_labels` stays
+        None and the units' devices keep the names they have."""
+        try:
+            self.ams_labels = await self.client.get_ams_labels(self.printer_id)
+        except BamBuddyError as err:
+            _LOGGER.debug("No AMS names for %s: %s", self.printer_name, err)
 
     async def _read_maintenance(self) -> None:
         """The printer's maintenance tasks, every ten minutes and after a
@@ -629,8 +643,11 @@ class BamBuddyPrinterCoordinator(DataUpdateCoordinator[PrinterData]):
                     details["model"] = model
                     details["serial_number"] = unit.get("serial_number") or None
                     details["sw_version"] = unit.get("sw_ver") or None
-                    # The letter follows the place it is plugged in now.
-                    details["name"] = ams_name(self.info, int(unit.get("id", 0)), model, details["serial_number"])
+                    # Its name in BamBuddy, else the letter of the place it is
+                    # plugged in now -- once the names are read in this run.
+                    if self.ams_labels is not None:
+                        place = int(unit.get("id", 0))
+                        details["name"] = ams_name(self.info, place, model, details["serial_number"], self.ams_labels.get(place))
             changed = {key: value for key, value in details.items() if getattr(device, key) != value}
             if device.name_by_user is not None:
                 self._tell_names_come_from_bambuddy(device.name_by_user)

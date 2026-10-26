@@ -430,6 +430,22 @@ async def test_the_print_hours(hass: HomeAssistant, aioclient_mock: AiohttpClien
     assert await _client(hass).get_runtime(1) == {"total_hours": 559.5}
 
 
+async def test_ams_labels(hass: HomeAssistant, aioclient_mock: AiohttpClientMocker) -> None:
+    """BamBuddy's names of the AMS units, by place: blank names and keys
+    that are no place left out."""
+    aioclient_mock.get(f"{API}/printers/1/ams-labels", json={"0": "Silk", "1": "  ", "x": "y", "2": None, "128": "Dryer "})
+
+    assert await _client(hass).get_ams_labels(1) == {0: "Silk", 128: "Dryer"}
+
+
+async def test_ams_labels_that_are_no_object(hass: HomeAssistant, aioclient_mock: AiohttpClientMocker) -> None:
+    """Another answer is none: the coordinator keeps the labels it read last."""
+    aioclient_mock.get(f"{API}/printers/1/ams-labels", json=[])
+
+    with pytest.raises(BamBuddyApiError):
+        await _client(hass).get_ams_labels(1)
+
+
 async def test_the_system_information_may_take_long(hass: HomeAssistant) -> None:
     """BamBuddy walks through its whole archive for it."""
     client = _client(hass)

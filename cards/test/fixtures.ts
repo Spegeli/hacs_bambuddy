@@ -716,6 +716,8 @@ export interface AmsSpec {
   online?: boolean;
   /** On a two-nozzle printer: the nozzle the unit feeds (its slots say it). */
   nozzle?: "left" | "right";
+  /** Its name in BamBuddy: the integration names the unit by it, not by its place. */
+  label?: string;
 }
 
 export function amsDevice(spec: AmsSpec): FakeDevice {
@@ -751,7 +753,7 @@ export function amsDevice(spec: AmsSpec): FakeDevice {
   // of the device name before " (model / serial)".
   const cut = spec.printer.name.lastIndexOf(" (");
   const short = cut > 0 ? spec.printer.name.slice(0, cut) : spec.printer.name;
-  return { id: `${spec.printer.id}-ams-${spec.amsId}`, name: `${short} ${label} (${spec.model})`, model: spec.model, via: spec.printer.id, entities };
+  return { id: `${spec.printer.id}-ams-${spec.amsId}`, name: `${short} ${spec.label ?? label} (${spec.model})`, model: spec.model, via: spec.printer.id, entities };
 }
 
 // --- The printers the tests and the screenshots use ---------------------------

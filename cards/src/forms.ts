@@ -51,6 +51,7 @@ const OPTIONS: Record<string, Validator> = {
   read_only: flag,
   show_filament_tab: flag,
   ams_folding: oneOf(AMS_FOLDING),
+  show_external_spool: flag,
   show_auto_off: flag,
 };
 
@@ -90,6 +91,7 @@ export interface Settings {
   readOnly: boolean;
   filamentTab: boolean;
   amsFolding: AmsFolding;
+  externalSpool: boolean;
   showAutoOff: boolean;
 }
 
@@ -103,6 +105,7 @@ export const DEFAULTS: Settings = {
   readOnly: false,
   filamentTab: true,
   amsFolding: "auto",
+  externalSpool: true,
   showAutoOff: true,
 };
 
@@ -116,6 +119,7 @@ export const settingsOf = (config: CardConfig): Settings => ({
   readOnly: config.read_only ?? DEFAULTS.readOnly,
   filamentTab: config.show_filament_tab ?? DEFAULTS.filamentTab,
   amsFolding: config.ams_folding ?? DEFAULTS.amsFolding,
+  externalSpool: config.show_external_spool ?? DEFAULTS.externalSpool,
   showAutoOff: config.show_auto_off ?? DEFAULTS.showAutoOff,
 });
 
@@ -140,6 +144,7 @@ const DEFAULT_DATA: Readonly<Record<string, unknown>> = {
   read_only: DEFAULTS.readOnly,
   show_filament_tab: DEFAULTS.filamentTab,
   ams_folding: DEFAULTS.amsFolding,
+  show_external_spool: DEFAULTS.externalSpool,
   show_auto_off: DEFAULTS.showAutoOff,
 };
 
@@ -174,6 +179,7 @@ const LABELS: Record<string, TextKey> = {
   read_only: "editor_read_only",
   show_filament_tab: "editor_filament_tab",
   ams_folding: "editor_ams_folding",
+  show_external_spool: "editor_external_spool",
   show_auto_off: "editor_show_auto_off",
 };
 
@@ -187,6 +193,7 @@ const HELPERS: Record<string, TextKey> = {
   read_only: "editor_read_only_help",
   show_filament_tab: "editor_filament_tab_help",
   ams_folding: "editor_ams_folding_help",
+  show_external_spool: "editor_external_spool_help",
   show_auto_off: "editor_show_auto_off_help",
 };
 
@@ -263,7 +270,7 @@ export function configForm(hass?: Hass): ConfigForm {
       ]),
       group(hass, "editor_group_status", "mdi:printer-3d", [list(hass, "status_blocks", "block", STATUS_BLOCKS), toggle("show_auto_off")]),
       group(hass, "editor_group_control", "mdi:gamepad-round-outline", [toggle("show_control_tab"), list(hass, "control_sections", "section", CONTROL_SECTIONS)]),
-      group(hass, "editor_group_filament", "mdi:printer-3d-nozzle", [toggle("show_filament_tab"), dropdown(hass, "ams_folding", "folding", AMS_FOLDING)]),
+      group(hass, "editor_group_filament", "mdi:printer-3d-nozzle", [toggle("show_filament_tab"), dropdown(hass, "ams_folding", "folding", AMS_FOLDING), toggle("show_external_spool")]),
     ],
     computeLabel: (field) => (field.name in LABELS ? t(hass, LABELS[field.name] as TextKey) : undefined),
     computeHelper: (field) => (field.name in HELPERS ? t(hass, HELPERS[field.name] as TextKey) : undefined),

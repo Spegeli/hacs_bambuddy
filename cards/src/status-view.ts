@@ -43,6 +43,7 @@ import {
   resumeButton,
   sample,
   sampleKey,
+  shownExternalSpools,
   sideName,
   slotOf,
   slotTitle,
@@ -275,6 +276,8 @@ const slotType = (slot: Slot, external: boolean): string =>
 function amsStrip(ctx: CardContext): TemplateResult | typeof nothing {
   const { hass, refs } = ctx;
   const dual = refs.externalSpools.length === 2;
+  // The sides from all spools, what shows from those shown.
+  const spools = shownExternalSpools(ctx);
   const groups = [
     ...ctx.ams.map((unit) => {
       const model = unitModel(ctx.ams, unit);
@@ -294,16 +297,16 @@ function amsStrip(ctx: CardContext): TemplateResult | typeof nothing {
         sides: false,
       };
     }),
-    ...(refs.externalSpools.length
+    ...(spools.length
       ? [
           {
             name: t(hass, "external_short"),
-            spoken: t(hass, dual ? "externals" : "external"),
+            spoken: t(hass, spools.length > 1 ? "externals" : "external"),
             model: undefined,
             nozzle: undefined,
             humidity: undefined,
             temperature: undefined,
-            slots: refs.externalSpools,
+            slots: spools,
             fill: true,
             ht: false,
             sides: dual,

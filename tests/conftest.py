@@ -199,6 +199,8 @@ def bambuddy_api() -> Iterator[SimpleNamespace]:
         "get_cover": AsyncMock(return_value=b"png"),
         "get_print_objects": AsyncMock(return_value=load_fixture("print_objects.json")),
         "get_runtime": AsyncMock(return_value={"runtime_hours": 547.5, "print_hours_offset": 12.0, "total_hours": 559.5}),
+        # No AMS unit named in BamBuddy.
+        "get_ams_labels": AsyncMock(return_value={}),
         "get_maintenance": AsyncMock(
             side_effect=lambda printer_id: copy.deepcopy(
                 maintenance.setdefault(printer_id, {**load_fixture("maintenance_x1c.json"), "printer_id": printer_id})
