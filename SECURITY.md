@@ -26,9 +26,10 @@ Vulnerabilities in BamBuddy itself, in Bambu Lab's printers, firmware or cloud, 
 
 ## Supported versions
 
-Only the latest release receives security fixes. Update through HACS.
+Only the latest stable release receives security fixes; a beta gets them with the next beta. Update through HACS.
 
 | Version | Security fixes |
 |---|---|
-| Latest release | ✅ |
+| Latest stable release | ✅ |
+| Betas of the next version | with the next beta |
 | Older releases, including the date versions (2026.05.17 or older) | ❌ |
