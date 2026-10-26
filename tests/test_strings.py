@@ -190,7 +190,7 @@ _PLUGS_ON_ANOTHER_SERVER = {
     "en": (
         "The printers under “Kept” keep theirs.",
         "**Smart plugs** of the printers under “Kept” come from the new server, each as a new device: an area or name you gave a "
-        "plug device starts afresh. A plug that uses the same Tasmota, Home Assistant entity or MQTT topic as before keeps its entity "
+        "plug device starts afresh. A plug that uses the same Tasmota, Home Assistant entity or MQTT topic and path as before keeps its entity "
         "IDs and history; the others get new ones. Plugs the new server does not have for them are removed.",
         "**Kept:**",
     ),
@@ -198,7 +198,7 @@ _PLUGS_ON_ANOTHER_SERVER = {
         "Der Verlauf der Drucker unter „Behalten“ bleibt.",
         "**Steckdosen** der Drucker unter „Behalten“ kommen vom neuen Server, jede als neues Gerät: Bereich und Name, die du "
         "einem Steckdosen-Gerät gegeben hast, beginnen neu. Eine Steckdose, die dieselbe Tasmota, Home-Assistant-Entität oder "
-        "dasselbe MQTT-Topic nutzt wie bisher, behält ihre Entitäts-IDs und ihren Verlauf; die anderen bekommen neue. "
+        "dasselbe MQTT-Topic mit demselben Pfad nutzt wie bisher, behält ihre Entitäts-IDs und ihren Verlauf; die anderen bekommen neue. "
         "Steckdosen, die der neue Server für sie nicht hat, werden entfernt.",
         "**Behalten:**",
     ),
