@@ -993,13 +993,7 @@ export const cardStyles = css`
     flex-direction: column;
     gap: 6px;
   }
-  .job-top {
-    display: flex;
-    align-items: baseline;
-    gap: 8px;
-  }
   .job-name {
-    flex: 1;
     min-width: 0;
     font-size: 15px;
     font-weight: 500;
@@ -1040,6 +1034,17 @@ export const cardStyles = css`
     width: 16px;
     height: 16px;
     color: var(--tone);
+  }
+  /* The percentage beside the bar: the same place whatever the name's
+     length, and no line above it wraps for it. */
+  .bar-row {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+  }
+  .bar-row .bar {
+    flex: 1;
+    min-width: 0;
   }
   .bar {
     height: 8px;

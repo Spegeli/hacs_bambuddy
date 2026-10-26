@@ -150,29 +150,37 @@ function jobBlock(ctx: CardContext, picture: TemplateResult): TemplateResult {
   return html`<div class="job">
     ${picture}
     <div class="job-info">
-      <div class="job-top">
-        <span class="job-name" title=${job ?? ""}>${job ?? t(hass, "no_job")}</span>
-        ${showBar ? html`<span class="pct tone-${tone}">${formatPercent(hass, progress)}</span>` : nothing}
-      </div>
+      <span class="job-name" title=${job ?? ""}>${job === undefined ? t(hass, "no_job") : breakable(job)}</span>
       ${stateLine(ctx, withJob)}
       ${activity
         ? html`<div class="ams-activity" role="status">${icon("sync")}<span class="sr-only">${printerTitle(ctx)}: </span><span>${activity}</span></div>`
         : nothing}
       ${showBar
-        ? html`<div
-            class="bar tone-${tone}"
-            role="progressbar"
-            aria-label=${t(hass, "progress")}
-            aria-valuemin="0"
-            aria-valuemax="100"
-            aria-valuenow=${progress}
-          >
-            <span style="width: ${Math.max(0, Math.min(100, progress))}%"></span>
+        ? html`<div class="bar-row">
+            <div
+              class="bar tone-${tone}"
+              role="progressbar"
+              aria-label=${t(hass, "progress")}
+              aria-valuemin="0"
+              aria-valuemax="100"
+              aria-valuenow=${progress}
+              aria-valuetext=${formatPercent(hass, progress)}
+            >
+              <span style="width: ${Math.max(0, Math.min(100, progress))}%"></span>
+            </div>
+            <span class="pct tone-${tone}" aria-hidden="true">${formatPercent(hass, progress)}</span>
           </div>`
         : nothing}
       ${meta.length ? html`<div class="meta">${meta.map(([name, text]) => html`<span>${icon(name)}${text}</span>`)}</div>` : nothing}
     </div>
   </div>`;
+}
+
+/** A file name that may break after "_" and "-" -- names without spaces
+ * otherwise break mid-word; never after ".", which would split "0.2mm". */
+function breakable(name: string): TemplateResult {
+  const parts = name.split(/(?<=[_-])/);
+  return html`${parts.map((part, index) => (index ? html`<wbr />${part}` : part))}`;
 }
 
 /** A temperature: the active one of two nozzles says so during a job. */

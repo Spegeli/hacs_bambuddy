@@ -167,6 +167,33 @@ describe("the status view", () => {
     expect(findAll(card, ".meta span").map(text)).toEqual(["Layer 123 / 250", "1 h 23 min left", "Ends 14:35"]);
   });
 
+  it("puts the percentage beside the progress bar, the name across the whole width", async () => {
+    const { card } = await cardFor("x1c");
+    // The name stands alone on its line.
+    expect(find(card, ".job-info > .job-name")).not.toBeNull();
+    expect(find(card, ".job-top")).toBeNull();
+    const row = find(card, ".bar-row");
+    expect([...(row?.children ?? [])].map((child) => child.className.split(" ")[0])).toEqual(["bar", "pct"]);
+    expect(text(row?.querySelector(".pct"))).toBe(`62${NBSP}%`);
+    // A screen reader hears the progress once: the bar says it, the figure beside it is for the eye.
+    expect(row?.querySelector(".pct")?.getAttribute("aria-hidden")).toBe("true");
+    expect(row?.querySelector(".bar")?.getAttribute("aria-valuetext")).toBe(`62${NBSP}%`);
+    const css = styleText();
+    expect(css).toMatch(/\.bar-row\s*\{[^}]*display: flex;[^}]*align-items: center;/);
+    expect(css).toMatch(/\.bar-row \.bar\s*\{[^}]*flex: 1;/);
+  });
+
+  it("breaks a file name after an underscore or a hyphen, never after a period", async () => {
+    const { card } = await cardFor("x1c", {}, { devices: x1c({ job: "Gear-set_v2_0.4mm" }) });
+    const name = find(card, ".job-name");
+    expect(text(name)).toBe("Gear-set_v2_0.4mm");
+    expect(name?.getAttribute("title")).toBe("Gear-set_v2_0.4mm");
+    // A break opportunity after each "-" and "_", none after the ".".
+    const parts = [...(name?.childNodes ?? [])].filter((node) => node.nodeType === Node.TEXT_NODE && node.textContent).map((node) => node.textContent);
+    expect(parts).toEqual(["Gear-", "set_", "v2_", "0.4mm"]);
+    expect(name?.querySelectorAll("wbr")).toHaveLength(3);
+  });
+
   it("shows the temperatures with their targets and the fans", async () => {
     const { card } = await cardFor("x1c");
     expect(findAll(card, ".temp").map(text)).toEqual([
