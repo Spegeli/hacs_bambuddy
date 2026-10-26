@@ -153,12 +153,14 @@ function motionSection(ctx: CardContext, step: Step, setStep: (step: Step) => vo
     <div class="control">
       <div class="step-row">
         <span class="step-label">${t(hass, "step")}</span>
-        <div class="seg" role="radiogroup" aria-label=${t(hass, "step")} @keydown=${radioKeys} @focusout=${radioLeave}>
+        <div class="seg" role="radiogroup" aria-label=${t(hass, "step")} aria-disabled=${disabled ? "true" : "false"} @keydown=${radioKeys} @focusout=${radioLeave}>
           ${STEPS.map(
+            // Locked with the arrows: what it sets waits with them.
             (value) => html`<button
               role="radio"
               aria-checked=${value === step ? "true" : "false"}
               tabindex=${value === step ? 0 : -1}
+              ?disabled=${disabled}
               @click=${() => setStep(value)}
             >
               ${formatNumber(hass, value, 1)} mm

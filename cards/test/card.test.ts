@@ -1591,6 +1591,43 @@ describe("the control view", () => {
     expect(hass.calls.at(-1)?.data).toEqual({ device_id: "dev-a1mini", axis: "z", distance: -10 });
   });
 
+  it("locks the step choice while a print runs or is paused, not the camera", async () => {
+    const { card, hass } = await cardFor("a1mini");
+    await showView(card, "Control");
+    await press(card, "10 mm");
+    const steps = (): HTMLButtonElement[] => findAll<HTMLButtonElement>(card, ".step-row [role=radio]");
+    expect(steps().map((item) => item.disabled)).toEqual([false, false, false]);
+    for (const status of ["printing", "paused"]) {
+      await update(card, hass.withState("sensor.a1_mini_print_status", status));
+      expect(steps().map((item) => item.disabled), status).toEqual([true, true, true]);
+      // The chosen step stays marked.
+      expect(steps().map((item) => item.getAttribute("aria-checked")), status).toEqual(["false", "false", "true"]);
+      const camera = find<HTMLButtonElement>(card, ".btn.live-btn");
+      expect(camera, status).not.toBeNull();
+      expect(camera?.disabled, status).toBe(false);
+    }
+    await update(card, hass.withState("sensor.a1_mini_print_status", "idle"));
+    expect(steps().map((item) => item.disabled)).toEqual([false, false, false]);
+    // Drawn as the arrows are while locked.
+    expect(styleText()).toMatch(/\.step-row \.seg button:disabled\s*\{[^}]*opacity: 0\.4;/);
+    // It applies again afterwards.
+    await press(card, "Move X by +10 mm");
+    expect(hass.calls.at(-1)?.data).toEqual({ device_id: "dev-a1mini", axis: "x", distance: 10 });
+  });
+
+  it("keeps the step chosen as the tab stop after a lock the focus left", async () => {
+    const { card, hass } = await cardFor("a1mini");
+    await showView(card, "Control");
+    await press(card, "10 mm");
+    const steps = (): HTMLButtonElement[] => findAll<HTMLButtonElement>(card, ".step-row [role=radio]");
+    steps()[2]?.focus();
+    await update(card, hass.withState("sensor.a1_mini_print_status", "printing"));
+    // The focus leaves the locked group, then the print ends.
+    find(card, ".step-row .seg")?.dispatchEvent(new FocusEvent("focusout", { relatedTarget: null }));
+    await update(card, hass.withState("sensor.a1_mini_print_status", "idle"));
+    expect(steps().map((item) => item.tabIndex)).toEqual([-1, -1, 0]);
+  });
+
   it("asks before it homes the axes", async () => {
     const { card, hass } = await cardFor("a1mini");
     await showView(card, "Control");
@@ -4995,11 +5032,31 @@ describe("the live view in the browser's full screen", () => {
       expect(full).toContain(rule);
     }
     expect(sheet).toMatch(/\.live\.full \.live-tools\s*\{[^}]*display: none;/);
-    expect(sheet).toMatch(/\.live\.full \.live-tags\s*\{[^}]*top: max\(8px, env\(safe-area-inset-top\)\);/);
+    expect(sheet).toMatch(/\.live\.full \.live-tags\s*\{[^}]*top: max\(12px, env\(safe-area-inset-top\)\);/);
     expect(sheet).toMatch(/\.live\.full \.live-full\s*\{[^}]*bottom: max\(6px, env\(safe-area-inset-bottom\)\);[^}]*right: max\(6px, env\(safe-area-inset-right\)\);/);
-    // Large enough to find on a phone, and a light disc that shows on black.
-    expect(sheet).toMatch(/\.live\.full \.live-full\s*\{[^}]*width: 52px;[^}]*height: 52px;[^}]*background: rgba\(255, 255, 255, 0\.18\);/);
+    // Large enough to find on a phone, on the grey disc that shows on black and on a bright picture.
+    expect(sheet).toMatch(/\.live\.full \.live-full\s*\{[^}]*width: 52px;[^}]*height: 52px;/);
     expect(sheet).toMatch(/\.live\.full \.live-full \.icon\s*\{[^}]*width: 30px;[^}]*height: 30px;/);
+  });
+});
+
+describe("the live view's overlay", () => {
+  it("puts every button on the picture and the fps chip on one grey disc", () => {
+    const sheet = styleText();
+    // Dark enough for the fps chip's text on a bright picture (about 4.9 : 1 on white).
+    expect(sheet).toMatch(/--bb-on-picture:\s*rgba\(72, 72, 72, 0\.78\);/);
+    expect(sheet).toMatch(/\.live \.icon-btn\s*\{[^}]*background: var\(--bb-on-picture\)/);
+    expect(sheet).toMatch(/\.live-fps\s*\{[^}]*background: var\(--bb-on-picture\)/);
+    // Full screen keeps the same disc: no light one of its own.
+    expect(sheet).not.toMatch(/rgba\(255, 255, 255, 0\.18\)/);
+    // Live stays red.
+    expect(sheet).toMatch(/\.live-badge\s*\{[^}]*background: rgba\(219, 68, 55, 0\.92\)/);
+  });
+
+  it("grows Live and fps in full screen as it grows its button", () => {
+    const sheet = styleText();
+    expect(sheet).toMatch(/\.live\.full \.live-badge\s*\{[^}]*font-size: 16px/);
+    expect(sheet).toMatch(/\.live\.full \.live-tags\s*\{[^}]*gap: 9px/);
   });
 });
 

@@ -301,7 +301,7 @@ While the printer is offline, or BamBuddy gives no data, every tab says so with 
 | Option | Values | Default | Meaning |
 |---|---|---|---|
 | `printer` | a device ID | — | The printer (the editor lists them). The ID is the last part of the address of the printer's device page (`…/config/devices/device/<ID>`) |
-| `camera` | `tap`, `always`, `off` | `tap` | The live view: on a tap, automatically while the dashboard is open, or never (the job's picture then) |
+| `camera` | `tap`, `always`, `off` | `tap` | The live view: on a tap, always while the dashboard is open, or never (the job's picture then) |
 | `status_blocks` | a list of `controls`, `power`, `temperatures`, `ams`, `fans`, `speed` | all six, in this order | The Status tab's sections below the job, in the list's order; a section left out is hidden. The job always stays on top. Print controls and print speed show only while a print runs or is paused; power only for a printer with a smart plug |
 | `header_chips` | a list of `network`, `hms`, `firmware`, `maintenance`, `door`, `storage`, `drying`, `power` | `network`, `hms`, `firmware` | The chips below the name, in the list's order; a chip left out is hidden. Door, storage and drying show only while the door is open, the storage is missing or an AMS unit dries — one chip for all units, with the longest time left; power only for a printer with a smart plug, a tap shows its plugs. An HMS error shows whatever you choose. Chips never cut their text: more chips take more rows |
 | `start_view` | `status`, `control`, `filament` | `status` | The tab the card opens on; Status where that tab is hidden (the editor warns when its options hide it) |

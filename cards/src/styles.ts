@@ -18,6 +18,10 @@ export const cardStyles = css`
     --bb-warn: var(--warning-color, #ffa600);
     --bb-err: var(--error-color, #db4437);
     --bb-info: var(--info-color, #039be5);
+    /* The disc of what sits on the camera's picture: a medium grey that
+       reads apart from black and keeps a white glyph clear on a bright
+       picture -- the same in the card and in full screen. */
+    --bb-on-picture: rgba(72, 72, 72, 0.78);
     --bb-divider: var(--divider-color, rgba(0, 0, 0, 0.12));
     /* From the text colour itself: Home Assistant computes its rgb triple
        only from a theme's own hex value, not from one it names by a variable. */
@@ -1062,7 +1066,7 @@ export const cardStyles = css`
     background: rgba(219, 68, 55, 0.92);
   }
   .live-fps {
-    background: rgba(0, 0, 0, 0.55);
+    background: var(--bb-on-picture);
   }
   .live-tools {
     position: absolute;
@@ -1072,7 +1076,7 @@ export const cardStyles = css`
     gap: 6px;
   }
   .live .icon-btn {
-    background: rgba(0, 0, 0, 0.55);
+    background: var(--bb-on-picture);
     color: #fff;
   }
   .live-full {
@@ -1100,19 +1104,24 @@ export const cardStyles = css`
     display: none;
   }
   .live.full .live-tags {
-    top: max(8px, env(safe-area-inset-top));
-    left: max(8px, env(safe-area-inset-left));
+    top: max(12px, env(safe-area-inset-top));
+    left: max(12px, env(safe-area-inset-left));
     right: auto;
     bottom: auto;
+    gap: 9px;
+  }
+  /* Grown as the button grows (36 to 52 px). */
+  .live.full .live-badge {
+    padding: 3px 12px;
+    border-radius: 14px;
+    font-size: 16px;
   }
   .live.full .live-full {
     bottom: max(6px, env(safe-area-inset-bottom));
     right: max(6px, env(safe-area-inset-right));
-    /* Large enough to find on a phone, a light disc that shows on the
-       black around the picture. */
+    /* Large enough to find on a phone; the picture's grey disc. */
     width: 52px;
     height: 52px;
-    background: rgba(255, 255, 255, 0.18);
   }
   .live.full .live-full .icon {
     width: 30px;
@@ -1570,6 +1579,10 @@ export const cardStyles = css`
   .seg button:disabled {
     cursor: default;
     opacity: 0.6;
+  }
+  /* The jog pad's step, locked with the arrows: drawn like them. */
+  .step-row .seg button:disabled {
+    opacity: 0.4;
   }
   /* A choice on its way: as disabled, and still where the keyboard is. */
   .seg button[aria-disabled="true"] {

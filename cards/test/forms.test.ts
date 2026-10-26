@@ -279,7 +279,7 @@ describe("the visual editor", () => {
         mode: "dropdown",
         options: [
           { value: "tap", label: "On tap" },
-          { value: "always", label: "Automatically" },
+          { value: "always", label: "Always" },
           { value: "off", label: "Never" },
         ],
       },
@@ -354,15 +354,16 @@ describe("the visual editor", () => {
     expect(form.schema[1]?.["title"]).toBe("Allgemein");
     expect(form.schema[3]?.["title"]).toBe("Steuerung");
     expect(JSON.stringify(form.schema)).toContain("Nach Antippen");
+    expect(JSON.stringify(form.schema)).toContain('{"value":"always","label":"Immer"}');
     expect(form.computeLabel({ name: "camera" })).toBe("Livebild");
     expect(form.computeHelper({ name: "camera" })).toBe(
-      "Nach Antippen: Ein Tipp aufs Bild startet es. Automatisch: Es läuft, solange das Dashboard offen ist, und braucht dauernd Bandbreite. Nie: nur das Bild des Druckauftrags.",
+      "Nach Antippen: Ein Tipp aufs Kamera-Symbol am Bild startet es. Immer: Es läuft, solange das Dashboard offen ist, und braucht dauernd Bandbreite. Nie: nur das Bild des Druckauftrags.",
     );
     expect(JSON.stringify(form.schema)).toContain("Drucksteuerung");
     // Given a hass, its language.
     expect(configForm(makeHass({ language: "en" })).computeLabel({ name: "camera" })).toBe("Live view");
     expect(configForm(makeHass({ language: "en" })).computeHelper({ name: "camera" })).toBe(
-      "On tap: a tap on the picture starts it. Automatically: it runs while the dashboard is open, using bandwidth all the time. Never: only the job's picture.",
+      "On tap: a tap on the camera symbol on the picture starts it. Always: it runs while the dashboard is open, using bandwidth all the time. Never: only the job's picture.",
     );
   });
 });

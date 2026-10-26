@@ -160,13 +160,15 @@ export function radioKeys(event: KeyboardEvent): void {
 
 /** A group of radios the focus leaves: Tab comes back in on the chosen
  * option, else the first (the stop `radioKeys` moved goes back) -- one
- * that can be chosen. */
+ * that can be chosen; in a group locked as a whole, the chosen one, for
+ * when the lock lifts. */
 export function radioLeave(event: FocusEvent): void {
   const group = event.currentTarget as HTMLElement;
   if (event.relatedTarget instanceof Node && group.contains(event.relatedTarget)) return;
   const radios = [...group.querySelectorAll<HTMLElement>("[role=radio]")];
   const open = radios.filter((radio) => !(radio as HTMLButtonElement).disabled);
-  const chosen = open.find((radio) => radio.getAttribute("aria-checked") === "true") ?? open[0] ?? radios[0];
+  const checked = (radio: HTMLElement): boolean => radio.getAttribute("aria-checked") === "true";
+  const chosen = open.find(checked) ?? open[0] ?? radios.find(checked) ?? radios[0];
   for (const radio of radios) radio.tabIndex = radio === chosen ? 0 : -1;
 }
 

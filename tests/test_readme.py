@@ -233,3 +233,8 @@ def test_the_readme_names_get_filaments() -> None:
     row = next((line for line in _README.splitlines() if line.startswith("| `bambuddy.get_filaments` |")), None)
     assert row is not None
     assert row.count(" | ") == 2 and "`entity_id`" in row and "response only" in row
+
+
+def test_the_readme_names_the_camera_modes_as_the_editor_does() -> None:
+    """On a tap, always, never: the editor's three words."""
+    assert "| `camera` | `tap`, `always`, `off` | `tap` | The live view: on a tap, always while the dashboard is open, or never (the job's picture then) |" in _README
