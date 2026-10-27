@@ -53,6 +53,10 @@ function detectionRow(ctx: CardContext, key: DetectorKey, entityId: string): Tem
 }
 
 /** The section, where the printer has a detection switch. */
+/** The detections the printer runs at a sensitivity -- its camera's; the
+ * build plate and the first layer are on or off only. */
+const SENSITIVE: ReadonlySet<string> = new Set(["ai_monitoring", "spaghetti_detection", "pileup_detection", "clumping_detection", "air_printing_detection"]);
+
 export function detectionSection(ctx: CardContext): TemplateResult | typeof nothing {
   const { hass, refs } = ctx;
   if (!refs.detectors.length) return nothing;
@@ -80,7 +84,7 @@ export function detectionSection(ctx: CardContext): TemplateResult | typeof noth
     ${open
       ? html`<div class="det-body" id="det-body" role="region" aria-labelledby="det-title">
           <div class="det-rows">${refs.detectors.map(({ key, entityId }) => detectionRow(ctx, key, entityId))}</div>
-          <p class="hint">${t(hass, "detection_hint")}</p>
+          <p class="hint">${t(hass, refs.detectors.some(({ key }) => SENSITIVE.has(key)) ? "detection_hint" : "detection_hint_plain")}</p>
         </div>`
       : nothing}
   </section>`;

@@ -300,7 +300,7 @@ export const en = {
   cold_nozzle_plain: "To extrude, the nozzle must be at least {temperature}.",
   cold_nozzle_left_plain: "To extrude, the left nozzle (active) must be at least {temperature}.",
   cold_nozzle_right_plain: "To extrude, the right nozzle (active) must be at least {temperature}.",
-  jog_note: "Tap the house first so the printer knows where it is. It does not stop at the edges – move in small steps.",
+  jog_note: "Tap the house first so the printer knows where it is. When you move it with the arrows, it does not stop at the edges of its build space: a large step can hit the end. Near an edge, choose a small step.",
   busy_reason: "Moving and extruding are possible once the print is done.",
   changing_reason: "Wait until the filament change is done.",
   changing_paused: "Wait until the filament change is done, then resume.",
@@ -310,6 +310,7 @@ export const en = {
   detection_all_off: "All off",
   detection_hint:
     "On: the printer pauses the print when the detection triggers. Sensitivity as set on the printer. A detection switched off stays off for later prints too.",
+  detection_hint_plain: "On: the printer pauses the print when the detection triggers. A detection switched off stays off for later prints too.",
   detection_ai_monitoring: "AI print monitoring",
   detection_ai_monitoring_x1: "Spaghetti and purge chute pile-ups",
   detection_first_layer_inspection: "First layer inspection",

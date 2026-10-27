@@ -1534,18 +1534,19 @@ describe("the groups of choices: speed, active nozzle, step", () => {
     const sides = (): HTMLButtonElement[] => findAll<HTMLButtonElement>(card, ".nozzle-row [role=radio]");
     const steps = (): HTMLButtonElement[] => findAll<HTMLButtonElement>(card, ".step-row [role=radio]");
     expect(sides().map((item) => item.getAttribute("tabindex"))).toEqual(["0", "-1"]);
-    expect(steps().map((item) => item.getAttribute("tabindex"))).toEqual(["-1", "0", "-1"]);
+    // 1 mm, the first step, is the chosen one.
+    expect(steps().map((item) => item.getAttribute("tabindex"))).toEqual(["0", "-1", "-1"]);
     sides()[0]?.focus();
     key(card, "ArrowRight");
     expect(root(card).activeElement).toBe(sides()[1]);
-    steps()[1]?.focus();
+    steps()[0]?.focus();
     key(card, "End");
     await card.updateComplete;
     expect(root(card).activeElement).toBe(steps()[2]);
-    expect(steps().map((item) => item.getAttribute("aria-checked"))).toEqual(["false", "true", "false"]);
+    expect(steps().map((item) => item.getAttribute("aria-checked"))).toEqual(["true", "false", "false"]);
     expect(steps().map((item) => item.getAttribute("tabindex"))).toEqual(["-1", "-1", "0"]);
     steps()[2]?.dispatchEvent(new FocusEvent("focusout", { bubbles: true, composed: true, relatedTarget: null }));
-    expect(steps().map((item) => item.getAttribute("tabindex"))).toEqual(["-1", "0", "-1"]);
+    expect(steps().map((item) => item.getAttribute("tabindex"))).toEqual(["0", "-1", "-1"]);
     expect(hass.calls).toEqual([]);
     await update(card, hass.withState("select.h2d_active_nozzle", "standby", { options: ["left", "right"] }));
     expect(sides().map((item) => item.getAttribute("tabindex"))).toEqual(["0", "-1"]);
@@ -1558,10 +1559,12 @@ describe("the control view", () => {
   it("says how to move safely, in words a beginner knows", async () => {
     const { card } = await cardFor("a1mini", { start_view: "control" });
     expect(text(find(card, ".control + .hint, .hint:last-child"))).toBe(
-      "Tap the house first so the printer knows where it is. It does not stop at the edges – move in small steps.",
+      "Tap the house first so the printer knows where it is. When you move it with the arrows, it does not stop at the edges of its build space: a large step can hit the end. Near an edge, choose a small step.",
     );
     const { card: german } = await cardFor("a1mini", { start_view: "control" }, { language: "de" });
-    expect(findAll(german, ".hint").map(text)).toContain("Tippe zuerst auf das Haus, damit der Drucker seine Position kennt. Er stoppt nicht am Rand – fahre in kleinen Schritten.");
+    expect(findAll(german, ".hint").map(text)).toContain(
+      "Tippe zuerst auf das Haus, damit der Drucker seine Position kennt. Beim Bewegen mit den Pfeilen stoppt er nicht am Rand des Bauraums: Ein großer Schritt kann anschlagen. Wähle in der Nähe des Rands einen kleinen Schritt.",
+    );
   });
 
   it("names Z by what moves: the nozzle on the A series, the bed elsewhere", async () => {
@@ -1584,14 +1587,14 @@ describe("the control view", () => {
     ]);
   });
 
-  it("moves the axes by 1 mm unless 0.1 or 10 mm is chosen", async () => {
+  it("moves the axes by 1 mm unless 10 or 50 mm is chosen", async () => {
     const { card, hass } = await cardFor("a1mini");
     await showView(card, "Control");
-    // 0.1 mm too, for the bed's fine steps.
+    // As BamBuddy's own: 50 mm to get the head or the bed out of the way.
     expect(findAll(card, ".step-row [role=radio]").map((item) => `${text(item)}: ${item.getAttribute("aria-checked")}`)).toEqual([
-      "0.1 mm: false",
       "1 mm: true",
       "10 mm: false",
+      "50 mm: false",
     ]);
     const moves: [string, Record<string, unknown>][] = [
       ["Move Y by +1 mm", { axis: "y", distance: 1 }],
@@ -1605,13 +1608,13 @@ describe("the control view", () => {
       await press(card, name);
       expect(hass.calls.at(-1), name).toEqual({ domain: "bambuddy", service: "move_axis", data: { device_id: "dev-a1mini", ...data }, notifyOnError: false });
     }
-    await press(card, "0.1 mm");
-    await press(card, "Move the nozzle 0.1 mm closer to the bed");
-    expect(hass.calls.at(-1)?.data).toEqual({ device_id: "dev-a1mini", axis: "z", distance: -0.1 });
-    await press(card, "Move Y by +0.1 mm");
-    expect(hass.calls.at(-1)?.data).toEqual({ device_id: "dev-a1mini", axis: "y", distance: 0.1 });
+    await press(card, "50 mm");
+    await press(card, "Move the nozzle 50 mm away from the bed");
+    expect(hass.calls.at(-1)?.data).toEqual({ device_id: "dev-a1mini", axis: "z", distance: 50 });
+    await press(card, "Move Y by +50 mm");
+    expect(hass.calls.at(-1)?.data).toEqual({ device_id: "dev-a1mini", axis: "y", distance: 50 });
     await press(card, "10 mm");
-    expect(findAll(card, ".step-row [role=radio]").map((item) => item.getAttribute("aria-checked"))).toEqual(["false", "false", "true"]);
+    expect(findAll(card, ".step-row [role=radio]").map((item) => item.getAttribute("aria-checked"))).toEqual(["false", "true", "false"]);
     await press(card, "Move X by +10 mm");
     expect(hass.calls.at(-1)?.data).toEqual({ device_id: "dev-a1mini", axis: "x", distance: 10 });
     await press(card, "Move the nozzle 10 mm closer to the bed");
@@ -1621,7 +1624,7 @@ describe("the control view", () => {
   it("locks the step choice while a print runs or is paused, not the camera", async () => {
     const { card, hass } = await cardFor("a1mini");
     await showView(card, "Control");
-    await press(card, "10 mm");
+    await press(card, "50 mm");
     const steps = (): HTMLButtonElement[] => findAll<HTMLButtonElement>(card, ".step-row [role=radio]");
     expect(steps().map((item) => item.disabled)).toEqual([false, false, false]);
     for (const status of ["printing", "paused"]) {
@@ -1638,14 +1641,14 @@ describe("the control view", () => {
     // Drawn as the arrows are while locked.
     expect(styleText()).toMatch(/\.step-row \.seg button:disabled\s*\{[^}]*opacity: 0\.4;/);
     // It applies again afterwards.
-    await press(card, "Move X by +10 mm");
-    expect(hass.calls.at(-1)?.data).toEqual({ device_id: "dev-a1mini", axis: "x", distance: 10 });
+    await press(card, "Move X by +50 mm");
+    expect(hass.calls.at(-1)?.data).toEqual({ device_id: "dev-a1mini", axis: "x", distance: 50 });
   });
 
   it("keeps the step chosen as the tab stop after a lock the focus left", async () => {
     const { card, hass } = await cardFor("a1mini");
     await showView(card, "Control");
-    await press(card, "10 mm");
+    await press(card, "50 mm");
     const steps = (): HTMLButtonElement[] => findAll<HTMLButtonElement>(card, ".step-row [role=radio]");
     steps()[2]?.focus();
     await update(card, hass.withState("sensor.a1_mini_print_status", "printing"));
@@ -2036,6 +2039,29 @@ describe("the print options", () => {
     if (head(card)?.getAttribute("aria-expanded") !== "true") head(card)?.click();
     await card.updateComplete;
   };
+
+  it("names the sensitivity only where a detection has one", async () => {
+    // The A series: the build plate's position alone, on or off.
+    const { card } = await cardFor("a1mini");
+    await showView(card, "Control");
+    await unfold(card);
+    expect(text(find(card, ".detection .hint"))).toBe(
+      "On: the printer pauses the print when the detection triggers. A detection switched off stays off for later prints too.",
+    );
+    const { card: german } = await cardFor("a1mini", {}, { language: "de" });
+    await showView(german, "Steuerung");
+    await unfold(german);
+    expect(text(find(german, ".detection .hint"))).toBe(
+      "An: Der Drucker pausiert den Druck, wenn die Erkennung anschlägt. Eine ausgeschaltete Erkennung bleibt aus, auch bei den nächsten Drucken.",
+    );
+    // The first layer's inspection has none either.
+    const { card: plain } = await cardFor("x1c", {}, {
+      devices: x1c({ detectors: [{ key: "first_layer_inspection", on: true }, { key: "build_plate_position_detection", on: true }] }),
+    });
+    await showView(plain, "Control");
+    await unfold(plain);
+    expect(text(find(plain, ".detection .hint"))).not.toContain("Sensitivity");
+  });
 
   it("lists the printer's detections and switches them during a print", async () => {
     const { card, hass } = await cardFor("x1c");

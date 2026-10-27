@@ -14,8 +14,8 @@ import { t, type TextKey } from "./i18n";
 import { actionButton, activeNozzleIndex, developerHint, hottestNozzle, note, NOZZLE_SIDES, radioKeys, radioLeave, radioStop, type CardContext } from "./parts";
 import type { ControlSection, Heater, PrinterRefs } from "./types";
 
-// 0.1 mm too, for fine steps of Z.
-const STEPS = [0.1, 1, 10] as const;
+// As BamBuddy's own: 50 mm to get the head or the bed out of the way.
+const STEPS = [1, 10, 50] as const;
 export type Step = (typeof STEPS)[number];
 
 /** The filament length one tap extrudes or retracts. */

@@ -297,7 +297,7 @@ export const de: Texts = {
   cold_nozzle_plain: "Zum Extrudieren muss die Düse mindestens {temperature} heiß sein.",
   cold_nozzle_left_plain: "Zum Extrudieren muss die linke Düse (aktiv) mindestens {temperature} heiß sein.",
   cold_nozzle_right_plain: "Zum Extrudieren muss die rechte Düse (aktiv) mindestens {temperature} heiß sein.",
-  jog_note: "Tippe zuerst auf das Haus, damit der Drucker seine Position kennt. Er stoppt nicht am Rand – fahre in kleinen Schritten.",
+  jog_note: "Tippe zuerst auf das Haus, damit der Drucker seine Position kennt. Beim Bewegen mit den Pfeilen stoppt er nicht am Rand des Bauraums: Ein großer Schritt kann anschlagen. Wähle in der Nähe des Rands einen kleinen Schritt.",
   busy_reason: "Bewegen und Extrudieren sind möglich, sobald der Druck fertig ist.",
   changing_reason: "Warte, bis der Filamentwechsel fertig ist.",
   changing_paused: "Warte, bis der Filamentwechsel fertig ist, dann setze den Druck fort.",
@@ -307,6 +307,7 @@ export const de: Texts = {
   detection_all_off: "Alle aus",
   detection_hint:
     "An: Der Drucker pausiert den Druck, wenn die Erkennung anschlägt. Empfindlichkeit wie am Drucker eingestellt. Eine ausgeschaltete Erkennung bleibt aus, auch bei den nächsten Drucken.",
+  detection_hint_plain: "An: Der Drucker pausiert den Druck, wenn die Erkennung anschlägt. Eine ausgeschaltete Erkennung bleibt aus, auch bei den nächsten Drucken.",
   detection_ai_monitoring: "KI-Drucküberwachung",
   detection_ai_monitoring_x1: "Spaghetti und Stau im Auswurfschacht",
   detection_first_layer_inspection: "Inspektion der ersten Schicht",
