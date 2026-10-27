@@ -8,6 +8,7 @@ from __future__ import annotations
 from collections.abc import Callable, Coroutine, Iterator
 from functools import partial
 import re
+import time
 from typing import Any
 
 import voluptuous as vol
@@ -20,7 +21,7 @@ from homeassistant.helpers import entity_registry as er
 
 from . import filaments
 from .api import BamBuddyApiError
-from .const import CONF_PRINTER_NAME, CONF_PRINTERS, DOMAIN, K_PROFILES_KEEP
+from .const import CONF_PRINTER_NAME, CONF_PRINTERS, DOMAIN, K_PROFILES_KEEP, K_PROFILES_NO_ANSWER
 from .coordinator import BamBuddyConfigEntry, BamBuddyPrinterCoordinator, printer_identifier
 from .entity import async_run_command, refuse as _refuse
 from .models import (
@@ -360,8 +361,9 @@ async def _set_filament(hass: HomeAssistant, call: ServiceCall) -> None:
         cali_idx = chosen
         if chosen >= 0:
             # The printer's own calibration: BamBuddy files the slot under its filament.
-            profiles = (await _k_profiles(coordinator, ams, slot, listed_lately=True))[1]
-            if not profiles:
+            _, profiles, answered = await _k_profiles(coordinator, ams, slot, listed_lately=True)
+            # None listed: it has none (unknown), or it did not answer (ask again).
+            if not profiles and not answered:
                 raise _refuse("k_profiles_no_answer", printer=short_name(coordinator.info))
             found_profile = next((item for item in profiles if item["index"] == chosen), None)
             if found_profile is None:
@@ -392,24 +394,33 @@ async def _set_filament(hass: HomeAssistant, call: ServiceCall) -> None:
     )
 
 
+# The clock the time an answer took is read by (tests set it).
+_monotonic = time.monotonic
+
+
 async def _k_profiles(
     coordinator: BamBuddyPrinterCoordinator, ams: int, slot: int, *, listed_lately: bool = False
-) -> tuple[str, list[dict[str, Any]]]:
+) -> tuple[str, list[dict[str, Any]], bool]:
     """The printer's K calibrations for the nozzle that feeds the slot --
     on a two-nozzle printer that nozzle's, where the printer files them per
-    nozzle -- as BamBuddy's own Configure dialog offers them. `listed_lately`:
-    the list read for the card a moment ago will do (a printer may not
-    answer the same question twice in a row)."""
+    nozzle -- as BamBuddy's own Configure dialog offers them, and whether
+    the printer answered: BamBuddy gives an empty list also when it did not,
+    only after its retries (`K_PROFILES_NO_ANSWER`). `listed_lately`: the
+    list read for the card a moment ago will do (a printer may not answer
+    the same question twice in a row)."""
     data = coordinator.data
     diameter = _nozzle_diameter(data, ams, slot)
     now = coordinator.hass.loop.time()
     kept = coordinator.kprofiles.get(diameter)
+    answered = True
     if listed_lately and kept is not None and now - kept[0] < K_PROFILES_KEEP:
         listed = kept[1]
     else:
+        asked = _monotonic()
         listed = await async_run_command(
             coordinator, partial(coordinator.client.get_kprofiles, coordinator.printer_id, diameter), refresh=False
         )
+        answered = bool(listed) or _monotonic() - asked < K_PROFILES_NO_ANSWER
         if listed:
             coordinator.kprofiles[diameter] = (now, listed)
     nozzle = _extruder(data, ams, slot)
@@ -434,13 +445,13 @@ async def _k_profiles(
                 "nozzle": ("right", "left")[nozzle] if data.is_dual_nozzle and nozzle in (0, 1) else None,
             }
         )
-    return diameter, profiles
+    return diameter, profiles, answered
 
 
 async def _get_k_profiles(hass: HomeAssistant, call: ServiceCall) -> ServiceResponse:
     """A read: Read Status is enough."""
     coordinator, ams, slot, tray = _place(hass, call.data[ATTR_ENTITY_ID])
-    diameter, profiles = await _k_profiles(coordinator, ams, slot)
+    diameter, profiles, answered = await _k_profiles(coordinator, ams, slot)
     found = find_tray(coordinator.data, tray)
     current = found[0].get("cali_idx") if found else None
     return {
@@ -448,6 +459,8 @@ async def _get_k_profiles(hass: HomeAssistant, call: ServiceCall) -> ServiceResp
         "nozzle_diameter": float(diameter) if diameter.replace(".", "", 1).isdigit() else diameter,
         "current": current if isinstance(current, int) else -1,
         "profiles": [{key: value for key, value in item.items() if key != "setting_id"} for item in profiles],
+        # An empty list: the printer has none of its own (True) or did not answer (False).
+        "answered": answered,
     }
 
 

@@ -105,6 +105,11 @@ MISSING_INTERVAL = timedelta(seconds=60)
 # The printer's K profiles, once listed: what Set filament picks from for so
 # long -- a printer may not answer the same question twice in a row.
 K_PROFILES_KEEP = 600.0
+# An empty list of K profiles that took this long is no answer: BamBuddy
+# asks the printer three times, 5 s each, and then gives an empty list
+# (about 16 s); an answer, also one without profiles, comes within about
+# 11 s -- most at once.
+K_PROFILES_NO_ANSWER = 14.0
 
 # BamBuddy's print speed modes.
 PRINT_SPEEDS = {1: "silent", 2: "standard", 3: "sport", 4: "ludicrous"}

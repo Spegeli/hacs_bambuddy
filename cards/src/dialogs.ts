@@ -10,9 +10,9 @@ import { Directive, directive, type ChildPart } from "lit/directive.js";
 import { keyed } from "lit/directives/keyed.js";
 
 import type { FilamentOffer, KProfile, KProfiles, OfferedFilament, PrintObject } from "./actions";
-import { formatFixed, formatTemperature, needsOutline, rgbOf } from "./format";
+import { formatFixed, formatNumber, formatTemperature, needsOutline, rgbOf } from "./format";
 import { checkContent, type CheckDialog } from "./check";
-import { canClearHms, firmwareContent, hmsAnswered, hmsContent, infoContent, storageContent } from "./header";
+import { canClearHms, firmwareContent, hmsAnswered, hmsContent, infoContent, slotNozzleLines, storageContent } from "./header";
 import { autoOffContent, powerContent } from "./power";
 import { maintenanceContent, type MaintenanceDialog } from "./maintenance";
 import { icon } from "./icons";
@@ -126,6 +126,10 @@ export interface FilamentDialog {
   /** The printer's K profiles for the slot, while asked "loading", or
    * "failed" when it did not list them. */
   kprofiles?: KProfiles | "loading" | "failed";
+  /** The printer has not answered for 5 s: BamBuddy asks again. */
+  kSlow?: boolean;
+  /** This open of the dialog: answers to an earlier one go elsewhere. */
+  ask?: number;
   /** The K profile chosen: K_KEEP, "-1" the default, or a profile's index. */
   kprofile?: string;
 }
@@ -409,30 +413,38 @@ function kField(hass: Hass, dialog: FilamentDialog, actions: DialogActions): Tem
       ? t(hass, "k_keep", { profile: label(listed) })
       : current >= 0
         ? t(hass, "k_keep_number", { index: current })
-        : state === "failed"
+        : state === "failed" || state === "loading"
           ? t(hass, dialog.ams ? "k_keep_plain" : "k_keep_plain_spool")
           : undefined;
-  const value = dialog.kprofile ?? (keepText ? K_KEEP : "-1");
+  // The slot's own chosen while asked, gone with the answer (it has none): the default it is.
+  const value = dialog.kprofile === K_KEEP && !keepText ? "-1" : (dialog.kprofile ?? (keepText ? K_KEEP : "-1"));
   // The kept profile stands at the top: not again in the group.
   const grouped = listed ? matching.filter((profile) => profile.index !== listed.index) : matching;
-  // What the field says below itself: the first that holds.
-  const hint: TextKey =
-    state === "failed" ? (dialog.ams ? "k_failed" : "k_failed_spool") : typeof state === "object" && !profiles.length ? "k_none" : "k_unsure";
+  // What the field says below itself: while asked, that it is asked; with
+  // no profiles, whether the printer has none of its own or did not answer.
+  const none = typeof state === "object" && !profiles.length ? state : undefined;
+  const hint =
+    state === "loading"
+      ? html`<div class="k-wait ${dialog.kSlow ? "slow" : ""}"><span class="check-spinner" aria-hidden="true"></span><span>${t(hass, dialog.kSlow ? "k_slow" : "k_loading")}</span></div>`
+      : none && !none.answered
+        ? dialogNote(t(hass, "k_no_answer"), "warning")
+        : none?.diameter !== undefined
+          ? dialogNote(t(hass, "k_none_saved", { diameter: `${formatNumber(hass, none.diameter, 2)} mm` }))
+          : html`<span class="k-hint">${t(hass, state === "failed" ? (dialog.ams ? "k_failed" : "k_failed_spool") : "k_unsure")}</span>`;
   const option = (profile: KProfile): TemplateResult =>
     html`<option value=${String(profile.index)} .selected=${value === String(profile.index)}>${label(profile)}</option>`;
   return html`<div class="field kfield">
       <label for="fil-k">${t(hass, "k_profile")}</label>
       <span class="select">
-        <select id="fil-k" aria-describedby="k-hint" ?disabled=${state === "loading"} @change=${(event: Event) => actions.setKProfile((event.target as HTMLSelectElement).value)}>
-          ${state === "loading"
-            ? html`<option selected>${t(hass, "k_loading")}</option>`
-            : html`${keepText ? html`<option value=${K_KEEP} .selected=${value === K_KEEP}>${keepText}</option>` : nothing}
-                <option value="-1" .selected=${value === "-1"}>${t(hass, "k_default", { k: formatFixed(hass, DEFAULT_K, 3) })}</option>
-                ${grouped.length ? html`<optgroup label=${t(hass, "k_matching", { material: name })}>${grouped.map(option)}</optgroup>` : nothing}`}
+        <select id="fil-k" aria-describedby="k-hint" @change=${(event: Event) => actions.setKProfile((event.target as HTMLSelectElement).value)}>
+          ${keepText ? html`<option value=${K_KEEP} .selected=${value === K_KEEP}>${keepText}</option>` : nothing}
+          <option value="-1" .selected=${value === "-1"}>${t(hass, "k_default", { k: formatFixed(hass, DEFAULT_K, 3) })}</option>
+          ${grouped.length ? html`<optgroup label=${t(hass, "k_matching", { material: name })}>${grouped.map(option)}</optgroup>` : nothing}
+          ${selectValue(value)}
         </select>
         ${icon("chevronDown")}
       </span>
-      <span class="k-hint" id="k-hint" aria-live="polite">${t(hass, hint)}</span>
+      <div class="k-hint-box" id="k-hint" aria-live="polite">${hint}</div>
     </div>`;
 }
 
@@ -531,10 +543,19 @@ function slotTools(ctx: CardContext, dialog: FilamentDialog, actions: DialogActi
         : nothing}`;
 }
 
+/** The nozzle that feeds the slot, under the dialog's title: its side on a
+ * printer with two, its diameter and type -- what the offer and the K
+ * profiles go by. */
+function nozzleLine(ctx: CardContext, dialog: FilamentDialog): TemplateResult | typeof nothing {
+  const lines = slotNozzleLines(ctx, dialog.entityId);
+  return lines.length ? html`<div class="nozzle-line">${lines.map((line) => html`<span>${icon("nozzle")}${line}</span>`)}</div>` : nothing;
+}
+
 function filamentContent(ctx: CardContext, dialog: FilamentDialog, actions: DialogActions): TemplateResult {
   const { hass } = ctx;
   if (dialog.rfid) {
     return html`<h2 id="dlg-title">${dialog.title}</h2>
+      ${nozzleLine(ctx, dialog)}
       <p>${t(hass, "filament_rfid")}</p>
       ${dialog.spool ? html`<p class="rfid-spool">${dialog.spool}</p>` : nothing}
       ${slotTools(ctx, dialog, actions)}`;
@@ -542,6 +563,7 @@ function filamentContent(ctx: CardContext, dialog: FilamentDialog, actions: Dial
   // Nothing to set: why (nothing offered, or no list) and the slot's tools.
   if (nothingToSet(dialog)) {
     return html`<h2 id="dlg-title">${dialog.title}</h2>
+      ${nozzleLine(ctx, dialog)}
       ${dialogNote(t(hass, dialog.offer === "failed" ? "offer_failed" : "offer_empty"))}
       ${slotTools(ctx, dialog, actions)}`;
   }
@@ -551,6 +573,7 @@ function filamentContent(ctx: CardContext, dialog: FilamentDialog, actions: Dial
   const stop = Math.max(0, [...options, ...(custom ? [custom] : [])].findIndex((item) => item.color === dialog.color));
   const picked = (event: Event): void => actions.pickColor((event.target as HTMLInputElement).value);
   return html`<h2 id="dlg-title">${dialog.title}</h2>
+    ${nozzleLine(ctx, dialog)}
     ${filamentFields(hass, dialog, actions)}
     <div class="colors">
       <span class="field-label">${t(hass, "color")}</span>

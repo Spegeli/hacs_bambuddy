@@ -486,17 +486,43 @@ export function firmwareContent(ctx: CardContext, close: () => void): TemplateRe
 /** Whether the browser lets the card copy text. */
 const canCopy = (): boolean => typeof navigator.clipboard?.writeText === "function";
 
-/** Each nozzle's diameter and type: "0.4 mm · Hardened steel". */
+/** A nozzle's diameter and type: "0.4 mm · Hardened steel"; "" where neither is known. */
+function nozzleOf(ctx: CardContext, index: number): string {
+  const { hass, refs } = ctx;
+  const size = diameter(ctx, refs.nozzleDiameters[index]);
+  const type = refs.nozzleTypes[index];
+  return [size === undefined ? undefined : `${size} mm`, hasValue(hass, type) ? formatState(hass, type) : undefined].filter(Boolean).join(" · ");
+}
+
+/** Each nozzle's diameter and type, by its side on a printer with two. */
 function nozzleLines(ctx: CardContext): string[] {
   const { hass, refs } = ctx;
   return refs.nozzles
     .map((_, index) => {
-      const size = diameter(ctx, refs.nozzleDiameters[index]);
-      const type = refs.nozzleTypes[index];
-      const parts = [size === undefined ? undefined : `${size} mm`, hasValue(hass, type) ? formatState(hass, type) : undefined].filter(Boolean).join(" · ");
+      const parts = nozzleOf(ctx, index);
       return parts && refs.dual ? t(hass, "nozzle_side", { side: sideName(hass, index), nozzle: parts }) : parts;
     })
     .filter(Boolean);
+}
+
+/** The nozzle that feeds a slot, for its dialog: "Nozzle: 0.4 mm ·
+ * Hardened steel"; on a printer with two the unit's side ("Left nozzle:
+ * …") or an external spool's, and both where a unit may feed either (a
+ * filament track switch). */
+export function slotNozzleLines(ctx: CardContext, entityId: string): string[] {
+  const { hass, refs } = ctx;
+  if (!refs.dual) {
+    const parts = nozzleOf(ctx, 0);
+    return parts ? [t(hass, "nozzle_side", { side: t(hass, "nozzle"), nozzle: parts })] : [];
+  }
+  // An external spool's side by its place -- known only while both are.
+  const spool = refs.externalSpools.length === 2 ? refs.externalSpools.indexOf(entityId) : refs.externalSpools.includes(entityId) ? -2 : -1;
+  if (spool === -2) return nozzleLines(ctx);
+  const attribute = stateOf(hass, entityId)?.attributes["nozzle"];
+  const side = spool >= 0 ? spool : attribute === "left" ? 0 : attribute === "right" ? 1 : undefined;
+  if (side === undefined) return nozzleLines(ctx);
+  const parts = nozzleOf(ctx, side);
+  return parts ? [t(hass, "nozzle_side", { side: t(hass, side === 0 ? "nozzle_left" : "nozzle_right"), nozzle: parts })] : [];
 }
 
 const chip = (tone: string, text: string): TemplateResult => html`<span class="chip tone-${tone}">${text}</span>`;

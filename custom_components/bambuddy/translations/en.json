@@ -1226,7 +1226,7 @@
     },
     "get_k_profiles": {
       "name": "Get K profiles",
-      "description": "Lists the printer's own K (pressure advance) calibrations for the nozzle that feeds a slot, as Set filament takes them, and the slot's current one. The printer is asked live (up to about 16 seconds); an empty list means it listed none or did not answer.",
+      "description": "Lists the printer's own K (pressure advance) calibrations for the nozzle that feeds a slot, as Set filament takes them, and the slot's current one. The printer is asked live (up to about 16 seconds). With an empty list, “answered” says whether the printer has none of its own (true) or did not answer (false).",
       "fields": {
         "entity_id": {
           "name": "Slot",

@@ -383,7 +383,43 @@ async def test_a_slots_k_profiles(hass: HomeAssistant, bambuddy_api: SimpleNames
             {"index": 2, "name": "Generic PETG", "k_value": 0.035, "filament_id": "GFG99", "nozzle": None},
             {"index": 3, "name": "Grey PLA matte", "k_value": 0.018, "filament_id": "GFL99", "nozzle": None},
         ],
+        "answered": True,
     }
+
+
+async def test_an_empty_answer_at_once_is_the_printers_answer(hass: HomeAssistant, bambuddy_api: SimpleNamespace) -> None:
+    """The printer answers in a moment, also with no profiles of its own:
+    that is its answer, no failure."""
+    bambuddy_api.get_kprofiles.return_value = []
+    entry = await set_up(hass, A1_MINI)
+
+    response = await hass.services.async_call(
+        DOMAIN, "get_k_profiles", {"entity_id": entity_id(hass, "sensor", ams_uid(entry, 0, "slot_2", A1_MINI))}, blocking=True, return_response=True
+    )
+
+    assert response is not None
+    assert (response["profiles"], response["answered"]) == ([], True)
+
+
+async def test_an_empty_list_after_bambuddys_retries_is_no_answer(
+    hass: HomeAssistant, bambuddy_api: SimpleNamespace, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """BamBuddy asks three times, 5 s each, then gives an empty list
+    (16 s): the printer did not answer. A first or a later answer comes
+    within about 11 s."""
+    from custom_components.bambuddy import services
+
+    bambuddy_api.get_kprofiles.return_value = []
+    entry = await set_up(hass, A1_MINI)
+    slot = entity_id(hass, "sensor", ams_uid(entry, 0, "slot_2", A1_MINI))
+    clock = iter([100.0, 116.2, 200.0, 213.9])
+    monkeypatch.setattr(services, "_monotonic", lambda: next(clock))
+
+    late = await hass.services.async_call(DOMAIN, "get_k_profiles", {"entity_id": slot}, blocking=True, return_response=True)
+    third = await hass.services.async_call(DOMAIN, "get_k_profiles", {"entity_id": slot}, blocking=True, return_response=True)
+
+    assert late is not None and third is not None
+    assert (late["answered"], third["answered"]) == (False, True)
 
 
 async def test_a_two_nozzle_printers_k_profiles_are_its_nozzles(hass: HomeAssistant, bambuddy_api: SimpleNamespace) -> None:
@@ -533,14 +569,41 @@ async def test_a_k_profile_just_listed_is_set_without_asking_again(hass: HomeAss
     assert bambuddy_api.configure_slot.await_args.kwargs["cali_idx"] == 3
 
 
-async def test_a_printer_that_lists_no_k_profiles_says_so(hass: HomeAssistant, bambuddy_api: SimpleNamespace) -> None:
+async def test_a_printer_that_lists_no_k_profiles_says_so(
+    hass: HomeAssistant, bambuddy_api: SimpleNamespace, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An empty list at once: the printer has no such profile. After
+    BamBuddy's retries: it did not answer -- ask again."""
+    from custom_components.bambuddy import services
+
     bambuddy_api.get_kprofiles.return_value = []
     entry = await set_up(hass, A1_MINI)
 
-    with pytest.raises(ServiceValidationError) as raised:
+    with pytest.raises(ServiceValidationError) as none:
+        await _set_filament(hass, ams_uid(entry, 0, "slot_2", A1_MINI), k_profile=3)
+    clock = iter([100.0, 116.2])
+    monkeypatch.setattr(services, "_monotonic", lambda: next(clock))
+    with pytest.raises(ServiceValidationError) as silent:
         await _set_filament(hass, ams_uid(entry, 0, "slot_2", A1_MINI), k_profile=3)
 
-    assert raised.value.translation_key == "k_profiles_no_answer"
+    assert (none.value.translation_key, silent.value.translation_key) == ("k_profile_unknown", "k_profiles_no_answer")
+
+
+async def test_profiles_that_came_late_are_an_answer(
+    hass: HomeAssistant, bambuddy_api: SimpleNamespace, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The printer answered BamBuddy's third ask: its list counts, however long it took."""
+    from custom_components.bambuddy import services
+
+    entry = await set_up(hass, A1_MINI)
+    clock = iter([100.0, 117.0])
+    monkeypatch.setattr(services, "_monotonic", lambda: next(clock))
+
+    response = await hass.services.async_call(
+        DOMAIN, "get_k_profiles", {"entity_id": entity_id(hass, "sensor", ams_uid(entry, 0, "slot_2", A1_MINI))}, blocking=True, return_response=True
+    )
+
+    assert response is not None and response["profiles"] and response["answered"] is True
 
 
 async def test_a_chip_is_read_in_a_pause_with_nothing_loaded(hass: HomeAssistant, bambuddy_api: SimpleNamespace) -> None:

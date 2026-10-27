@@ -327,7 +327,8 @@ class BamBuddyClient:
 
     async def get_kprofiles(self, printer_id: int, nozzle_diameter: str) -> list[dict[str, Any]]:
         """The printer's own K (pressure advance) calibrations for a nozzle
-        diameter; empty where the printer did not answer."""
+        diameter; empty where it has none -- and where it did not answer:
+        BamBuddy then gives an empty list too, after its retries."""
         answer = await self._request(
             "GET", f"/printers/{printer_id}/kprofiles/", params={"nozzle_diameter": nozzle_diameter}, timeout=_KPROFILES_TIMEOUT
         )

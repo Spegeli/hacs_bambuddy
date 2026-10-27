@@ -2467,6 +2467,8 @@ export const cardStyles = css`
     font-size: 18px;
     font-weight: 500;
     line-height: 24px;
+    /* A name of one long word (an AMS label) breaks rather than leave the dialog. */
+    overflow-wrap: anywhere;
   }
   .dlg-body p {
     margin: 0;
@@ -2659,6 +2661,49 @@ export const cardStyles = css`
     font-size: 12px;
     line-height: 16px;
     color: var(--bb-muted);
+  }
+  /* While the printer is asked: a spinner beside what happens; orange once
+     it takes long. A note after the answer, as the dialog's others. */
+  .k-wait {
+    display: flex;
+    gap: 8px;
+    align-items: flex-start;
+    /* Two lines from the start: the slower note takes them without moving the dialog. */
+    min-height: 36px;
+    margin-top: 6px;
+    font-size: 13px;
+    line-height: 18px;
+    color: var(--bb-text);
+  }
+  .k-wait.slow {
+    color: color-mix(in srgb, var(--bb-warn) 55%, var(--bb-text));
+  }
+  .k-wait .check-spinner {
+    margin-top: 1px;
+  }
+  .k-hint-box > .dlg-note {
+    margin-top: 6px;
+  }
+  /* The nozzle that feeds the slot, quiet under the dialog's title. */
+  .nozzle-line {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    margin-top: -6px;
+    font-size: 13px;
+    line-height: 18px;
+    color: var(--bb-muted);
+  }
+  .nozzle-line > span {
+    display: flex;
+    gap: 6px;
+    align-items: flex-start;
+  }
+  .nozzle-line .icon {
+    flex: none;
+    width: 16px;
+    height: 16px;
+    margin-top: 1px;
   }
   /* A message's answers, as on the printer's screen; long ones wrap. */
   .hms-answers {

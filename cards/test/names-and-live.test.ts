@@ -85,7 +85,7 @@ describe("dialogs, said whole", () => {
     await settle(card);
     const select = find(card, "dialog select#fil-k") as HTMLSelectElement;
     const hint = find(card, `#${select.getAttribute("aria-describedby")}`) as HTMLElement;
-    expect(hint.classList.contains("k-hint")).toBe(true);
+    expect(hint.classList.contains("k-hint-box")).toBe(true);
     expect(hint.getAttribute("aria-live")).toBe("polite");
   });
 

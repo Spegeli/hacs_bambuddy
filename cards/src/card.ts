@@ -105,6 +105,10 @@ const FULLSCREEN_PAGE = Date.now().toString(36);
  * card once it has measured it). */
 const LIVE_GRACE_MS = 2000;
 
+/** The slot dialog's K field says the printer is slow after this long:
+ * BamBuddy asks it again then (its 5 s per try). */
+const K_SLOW_MS = 5000;
+
 /** A key pressed in an open dialog: the dialog's, not full screen's. */
 const inOpenDialog = (event: Event): boolean => event.composedPath().some((node) => node instanceof HTMLDialogElement && node.open);
 
@@ -204,6 +208,9 @@ export class BamBuddyPrinterCard extends LitElement {
   private errorTimer?: ReturnType<typeof setTimeout>;
   private sentTimer?: ReturnType<typeof setTimeout>;
   private copiedTimer?: ReturnType<typeof setTimeout>;
+  private kSlowTimer?: ReturnType<typeof setTimeout>;
+  /** The slot dialog's opens, counted: each its own answers. */
+  private asks = 0;
   private readonly draftTimers = new Map<string, ReturnType<typeof setTimeout>>();
   private attached = false;
   /** Draws the seconds of a connection check while it runs. */
@@ -1079,17 +1086,36 @@ export class BamBuddyPrinterCard extends LitElement {
       active: slot.active,
       ...(slot.rfid ? { spool: [slot.name, slot.remaining === undefined ? "" : formatPercent(hass, slot.remaining)].filter(Boolean).join(" · ") } : {}),
       ...(slot.rfid ? {} : { kprofiles: "loading" as const, offer: "loading" as const }),
+      ask: ++this.asks,
     };
     this.dialog = opened;
+    clearTimeout(this.kSlowTimer);
     if (!slot.rfid) {
-      void this.loadOffer(slot.entityId);
-      void this.loadKProfiles(slot.entityId);
+      const ask = opened.ask as number;
+      void this.loadOffer(slot.entityId, ask);
+      void this.loadKProfiles(slot.entityId, ask);
+      this.kSlowTimer = setTimeout(() => this.markKSlow(slot.entityId, ask), K_SLOW_MS);
     }
+  }
+
+  /** The printer has not answered for a while: the K field says BamBuddy
+   * asks again -- also in a dialog a question parked meanwhile. */
+  private markKSlow(entityId: string, ask: number): void {
+    const slow = (open: FilamentDialog): FilamentDialog => (open.kprofiles === "loading" ? { ...open, kSlow: true } : open);
+    const dialog = this.dialog;
+    if (this.isAsk(dialog, entityId, ask)) this.dialog = slow(dialog);
+    const back = this.dialogBack;
+    if (this.isAsk(back, entityId, ask)) this.dialogBack = slow(back);
+  }
+
+  /** The slot dialog of this open: a late answer to an earlier one stays out. */
+  private isAsk(dialog: Dialog | undefined, entityId: string, ask: number): dialog is FilamentDialog {
+    return dialog?.kind === "filament" && dialog.entityId === entityId && dialog.ask === ask;
   }
 
   /** What Bambu Studio offers the open filament dialog's slot: the slot's
    * own profile placed under its vendor once it comes. */
-  private async loadOffer(entityId: string): Promise<void> {
+  private async loadOffer(entityId: string, ask: number): Promise<void> {
     let found: FilamentDialog["offer"];
     try {
       found = (await filamentOffer(this.hass as Hass, entityId)) ?? "failed";
@@ -1103,14 +1129,14 @@ export class BamBuddyPrinterCard extends LitElement {
     };
     // Also into the dialog a question parked meanwhile (reset, then Cancel).
     const dialog = this.dialog;
-    if (dialog?.kind === "filament" && dialog.entityId === entityId) this.dialog = placed(dialog);
+    if (this.isAsk(dialog, entityId, ask)) this.dialog = placed(dialog);
     const back = this.dialogBack;
-    if (back?.kind === "filament" && back.entityId === entityId) this.dialogBack = placed(back);
+    if (this.isAsk(back, entityId, ask)) this.dialogBack = placed(back);
   }
 
   /** The printer's K profiles for the open filament dialog's slot: none
    * where the printer gives none, or the call fails. */
-  private async loadKProfiles(entityId: string): Promise<void> {
+  private async loadKProfiles(entityId: string, ask: number): Promise<void> {
     let found: FilamentDialog["kprofiles"];
     try {
       found = await kProfiles(this.hass as Hass, entityId);
@@ -1125,9 +1151,9 @@ export class BamBuddyPrinterCard extends LitElement {
     };
     // Also into the dialog a question parked meanwhile (reset, then Cancel).
     const dialog = this.dialog;
-    if (dialog?.kind === "filament" && dialog.entityId === entityId) this.dialog = listed(dialog);
+    if (this.isAsk(dialog, entityId, ask)) this.dialog = listed(dialog);
     const back = this.dialogBack;
-    if (back?.kind === "filament" && back.entityId === entityId) this.dialogBack = listed(back);
+    if (this.isAsk(back, entityId, ask)) this.dialogBack = listed(back);
   }
 
   /** The filament dialog's slot cleared, after a question that comes back

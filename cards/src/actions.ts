@@ -53,14 +53,22 @@ export interface KProfile {
 export interface KProfiles {
   current: number;
   profiles: KProfile[];
+  /** With no profiles: the printer has none of its own (true) or did not
+   * answer (false) -- the integration tells them apart by BamBuddy's time. */
+  answered: boolean;
+  /** The nozzle diameter the printer was asked for: 0.4. */
+  diameter?: number;
 }
 
 /** The integration's get_k_profiles action, called for its response; an
  * answer without profiles is none. */
 export async function kProfiles(hass: Hass, entityId: string): Promise<KProfiles> {
   const response = await responseOf(hass, "get_k_profiles", { entity_id: entityId });
+  const diameter = Number(response["nozzle_diameter"]);
   return {
     current: typeof response["current"] === "number" ? response["current"] : -1,
+    answered: response["answered"] !== false,
+    ...(Number.isFinite(diameter) && diameter > 0 ? { diameter } : {}),
     profiles: entriesOf(response["profiles"], "index", "number").map((item) => ({
       index: item["index"] as number,
       name: typeof item["name"] === "string" ? item["name"] : "",

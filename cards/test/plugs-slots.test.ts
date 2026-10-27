@@ -186,8 +186,8 @@ describe("a slot's tools", () => {
     const card = await mount(idle(), "dev-x1c", {}, { callService: none });
     await showView(card, "Filament");
     await editRow(card, 2);
-    expect(text(find(card, "dialog .k-hint"))).toBe(
-      "The printer lists no K profile for this nozzle, or did not answer in time. To ask again, close the dialog and open it once more.",
+    expect(text(find(card, "dialog #k-hint"))).toBe(
+      `No K profiles of your own are saved on the printer for the 0.4${NBSP}mm nozzle diameter. Profiles of your own, for example from the flow dynamics calibration in Bambu Studio or from BamBuddy, show here. Until then the printer uses its default.`,
     );
   });
 

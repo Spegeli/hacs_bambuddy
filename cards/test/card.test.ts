@@ -3426,14 +3426,21 @@ describe("a slot's tools: K profile, chip, reset", () => {
     expect(hass.calls.at(-1)).toMatchObject({ domain: "bambuddy", service: "set_filament", data: { entity_id: SLOT_3, k_profile: 3 } });
   });
 
-  it("says when the printer reports no K profile", async () => {
-    const { card } = await cardFor("x1c", {}, { devices: idle() });
+  it("says when the printer has no K profile of its own, and leaves the advice out without a diameter", async () => {
+    const none = async (call: { service: string }): Promise<unknown> =>
+      call.service === "get_k_profiles" ? { response: { nozzle_diameter: 0.4, current: -1, profiles: [], answered: true } } : undefined;
+    const { card } = await cardFor("x1c", {}, { devices: idle(), callService: none });
     await showView(card, "Filament");
     await editRow(card, 2);
     expect([...kSelect(card).options].map((option) => option.text)).toEqual(["Printer's default (K 0.020)"]);
-    expect(text(find(card, "dialog .k-hint"))).toBe(
-      "The printer lists no K profile for this nozzle, or did not answer in time. To ask again, close the dialog and open it once more.",
+    expect(text(find(card, "dialog #k-hint"))).toBe(
+      `No K profiles of your own are saved on the printer for the 0.4${NBSP}mm nozzle diameter. Profiles of your own, for example from the flow dynamics calibration in Bambu Studio or from BamBuddy, show here. Until then the printer uses its default.`,
     );
+    // An answer that names no diameter: nothing to say about it.
+    const { card: bare } = await cardFor("x1c", {}, { devices: idle() });
+    await showView(bare, "Filament");
+    await editRow(bare, 2);
+    expect(text(find(bare, "dialog #k-hint"))).toBe("If unsure, leave this as it is.");
   });
 
   it("lets the AMS read a Bambu spool's chip again, once no filament is loaded", async () => {

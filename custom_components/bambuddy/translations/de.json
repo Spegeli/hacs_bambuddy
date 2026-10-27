@@ -1226,7 +1226,7 @@
     },
     "get_k_profiles": {
       "name": "K-Profile abrufen",
-      "description": "Nennt die eigenen K-Kalibrierungen (Pressure Advance) des Druckers für die Düse, die ein Fach versorgt, so wie „Filament festlegen“ sie nimmt, und das aktuelle des Fachs. Der Drucker wird live gefragt (bis etwa 16 Sekunden); eine leere Liste heißt, dass er keine genannt oder nicht geantwortet hat.",
+      "description": "Nennt die eigenen K-Kalibrierungen (Pressure Advance) des Druckers für die Düse, die ein Fach versorgt, so wie „Filament festlegen“ sie nimmt, und das aktuelle des Fachs. Der Drucker wird live gefragt (bis etwa 16 Sekunden). Bei einer leeren Liste sagt „answered“, ob der Drucker keine eigenen hat (true) oder nicht geantwortet hat (false).",
       "fields": {
         "entity_id": {
           "name": "Fach",
