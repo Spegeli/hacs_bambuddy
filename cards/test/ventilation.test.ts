@@ -378,3 +378,9 @@ describe("the chamber tile in the Status tab says what the chamber does", () => 
     expect(item?.classList.contains("venting")).toBe(false);
   });
 });
+
+describe("the ventilation's explanation", () => {
+  it("keeps half a line from what stands above it, as under the extruder", () => {
+    expect(styleText()).toMatch(/\.heating > \.hint\s*\{[^}]*margin-top: 8px;/);
+  });
+});

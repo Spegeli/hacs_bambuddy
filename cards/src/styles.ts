@@ -1685,6 +1685,11 @@ export const cardStyles = css`
     border-radius: 10px;
     background: var(--bb-tint);
   }
+  /* The explanation under „Lüften“: half a line from what stands above it,
+     as the jog pad's under the extruder. */
+  .heating > .hint {
+    margin-top: 8px;
+  }
   .heat-head {
     display: flex;
     align-items: center;
