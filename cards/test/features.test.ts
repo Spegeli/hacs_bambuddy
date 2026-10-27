@@ -120,12 +120,12 @@ describe("the new chips", () => {
 
   it("show maintenance always: OK, or what is due -- red with an overdue task", async () => {
     const { card, hass } = await withX1c(all, { header_chips: ["maintenance"] });
-    const due = chip(card, "3 due");
-    expect([due.classList.contains("tone-err"), due.getAttribute("aria-label")]).toEqual([true, "3 due – maintenance: 2 overdue, 1 due soon"]);
+    const due = chip(card, "Maintenance: 3 due");
+    expect([due.classList.contains("tone-err"), due.getAttribute("aria-label")]).toEqual([true, "Maintenance: 3 due – 2 overdue, 1 due soon"]);
     expect(due.getAttribute("aria-haspopup")).toBe("dialog");
     const soon = MAINTENANCE_TASKS.map((task) => ({ ...task, due: false }));
     await update(card, hass.withState("sensor.x1c_maintenance", "due_soon", { tasks: soon, due_count: 0, due_soon_count: 1, can_mark_done: true }));
-    expect(chip(card, "1 due").classList.contains("tone-warn")).toBe(true);
+    expect(chip(card, "Maintenance: 1 due soon").classList.contains("tone-warn")).toBe(true);
     await update(card, hass.withState("sensor.x1c_maintenance", "ok", { tasks: [], due_count: 0, due_soon_count: 0, can_mark_done: true }));
     expect(chip(card, "Maintenance OK").classList.contains("tone-ok")).toBe(true);
     // No data: no chip.
@@ -135,7 +135,7 @@ describe("the new chips", () => {
 
   it("show maintenance also with the printer offline, not while BamBuddy gives no data", async () => {
     const offline = await withX1c({ ...all, online: false }, { header_chips: ["maintenance"] });
-    expect(chips(offline.card)).toEqual(["3 due"]);
+    expect(chips(offline.card)).toEqual(["Maintenance: 3 due"]);
     const silent = await mount(unreachable(x1c(all)), "dev-x1c", { header_chips: ["maintenance"] });
     expect(chips(silent.card)).toEqual([]);
   });

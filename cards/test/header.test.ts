@@ -214,7 +214,7 @@ describe("the head's chips", () => {
     expect(toneOf(pill(card, "hms"))).toBe("tone-ok");
     expect(iconOf(pill(card, "hms"))).toBe(ICONS.shieldCheck);
     const { card: garage } = await cardFor("p1s");
-    expect(text(pill(garage, "hms"))).toBe("3 HMS");
+    expect(text(pill(garage, "hms"))).toBe("3 HMS messages");
     expect(pill(garage, "hms")?.getAttribute("aria-label")).toBe("3 HMS messages");
     expect(toneOf(pill(garage, "hms"))).toBe("tone-err");
     expect(iconOf(pill(garage, "hms"))).toBe(ICONS.shieldAlert);

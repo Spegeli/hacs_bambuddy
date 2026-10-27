@@ -83,6 +83,7 @@ describe("the settings", () => {
       amsFolding: "auto",
       externalSpool: true,
       showAutoOff: true,
+      compactChips: false,
     });
     expect(DEFAULTS.blocks).toEqual(["controls", "power", "temperatures", "ams", "fans", "speed"]);
   });
@@ -114,6 +115,7 @@ describe("what the editor shows and writes", () => {
       ams_folding: "auto",
       show_external_spool: true,
       show_auto_off: true,
+      compact_chips: false,
     });
     // A copy each time: a saved card never shares the defaults' lists.
     expect(editorData({ type: TYPE })["status_blocks"]).not.toBe(DEFAULTS.blocks);
@@ -203,7 +205,7 @@ describe("the visual editor", () => {
     });
     const names = (index: number): unknown[] => (form.schema[index]?.["schema"] as { name: string }[]).map((field) => field.name);
     // General: what works in every tab.
-    expect(names(1)).toEqual(["start_view", "camera", "header_chips", "read_only"]);
+    expect(names(1)).toEqual(["start_view", "camera", "header_chips", "compact_chips", "read_only"]);
     expect(names(2)).toEqual(["status_blocks", "show_auto_off"]);
     expect(names(3)).toEqual(["show_control_tab", "control_sections"]);
     expect(names(4)).toEqual(["show_filament_tab", "ams_folding", "show_external_spool"]);

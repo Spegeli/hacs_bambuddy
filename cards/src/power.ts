@@ -434,27 +434,29 @@ export function powerPill(ctx: CardContext, open: () => void): TemplateResult | 
   const state = plugState(ctx, plug);
   const watts = numericState(hass, plug.watts);
   const power = watts !== undefined ? formatPower(hass, watts) : undefined;
-  const [tone, iconName, label] = ctx.unreachable
+  // Each state in full and, for compact chips, in a word.
+  const [tone, iconName, label, short] = ctx.unreachable
     ? // No answer from BamBuddy: nothing known of the plug either.
-      (["neutral", "plug", t(hass, "chip_power_unknown")] as const)
+      (["neutral", "plug", t(hass, "chip_power_unknown"), t(hass, "chip_power_unknown_short")] as const)
     : state === "unavailable"
-      ? (["warn", "plugOff", t(hass, "chip_power_unreachable")] as const)
+      ? (["warn", "plugOff", t(hass, "chip_power_unreachable"), t(hass, "chip_power_unreachable_short")] as const)
       : state === "off"
-        ? (["neutral", "plugOff", t(hass, "chip_power_off")] as const)
+        ? (["neutral", "plugOff", t(hass, "chip_power_off"), t(hass, "off")] as const)
         : state !== "on"
-          ? (["neutral", "plug", t(hass, "chip_power_unknown")] as const)
+          ? (["neutral", "plug", t(hass, "chip_power_unknown"), t(hass, "chip_power_unknown_short")] as const)
           : waiting(ctx, plug)
-            ? (["info", "timer", t(hass, "auto_off_waiting_title")] as const)
-            : ([ctx.online ? "ok" : "neutral", "bolt", power ?? t(hass, "chip_power_on")] as const);
+            ? (["info", "timer", t(hass, "auto_off_waiting_title"), t(hass, "auto_off_waiting_short")] as const)
+            : ([ctx.online ? "ok" : "neutral", "bolt", power ?? t(hass, "chip_power_on"), power ?? t(hass, "on")] as const);
   // A plug that does not power the printer: its name says whose draw it is.
   const accessory = !ctx.unreachable && !powersPrinter(ctx, plug) && (state === "on" || state === "off") && !waiting(ctx, plug);
-  const shown = !accessory
+  const full = !accessory
     ? label
     : state === "on" && power
       ? t(hass, "chip_power_plug", { plug: plug.name, power })
       : t(hass, "chip_power_plug_state", { plug: plug.name, state: t(hass, state === "on" ? "on" : "off") });
-  // The name starts with what the chip shows (voice control): then whose plug.
-  const aria = accessory ? shown : ctx.unreachable ? `${shown} – ${t(hass, noData(ctx))}` : t(hass, "chip_power_aria", { shown, plug: plug.name });
+  // The name starts with what the full chip shows (voice control): then whose plug.
+  const aria = accessory ? full : ctx.unreachable ? `${full} – ${t(hass, noData(ctx))}` : t(hass, "chip_power_aria", { shown: full, plug: plug.name });
+  const shown = ctx.settings.compactChips ? short : full;
   // Its watts change with every read: not read out each time (as the drying chip's countdown).
   return html`<button class="pill power-chip tone-${tone}" aria-label=${aria} title=${aria} aria-haspopup="dialog" aria-live="off" @click=${open}>${icon(iconName)}<span>${shown}</span></button>`;
 }

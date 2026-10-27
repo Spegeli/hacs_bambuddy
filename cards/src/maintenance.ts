@@ -9,7 +9,7 @@ import { repeat } from "lit/directives/repeat.js";
 import { formatDuration, formatNumber, formatState, hasValue, stateOf } from "./format";
 import { icon } from "./icons";
 import { t, type TextKey } from "./i18n";
-import { dialogNote, noData, type CardContext } from "./parts";
+import { compactWords, dialogNote, noData, type CardContext } from "./parts";
 
 /** A task as the integration's maintenance sensor lists it. */
 export interface MaintenanceTask {
@@ -101,9 +101,13 @@ export function maintenancePill(ctx: CardContext, open: () => void): TemplateRes
   const { due, soon } = maintenance;
   const count = due + soon;
   const tone = due > 0 ? "err" : soon > 0 ? "warn" : "ok";
-  const label = count ? t(hass, "maint_due_aria", { n: count, overdue: due, soon }) : t(hass, "maint_ok_aria");
+  const words = count ? t(hass, due > 0 ? "maint_due" : "maint_due_soon", { n: count }) : t(hass, "maint_ok");
+  // With an overdue task the tooltip splits the count; a part of none goes.
+  const parts = due > 0 ? [t(hass, "maint_part_overdue", { n: due }), ...(soon > 0 ? [t(hass, "maint_part_soon", { n: soon })] : [])] : [];
+  const label = !count ? t(hass, "maint_ok_aria") : parts.length ? t(hass, "maint_due_aria", { shown: words, parts: parts.join(", ") }) : words;
+  const shown = ctx.settings.compactChips ? compactWords(count ? String(count) : t(hass, "chip_ok"), label) : html`<span>${words}</span>`;
   return html`<button class="pill maintenance tone-${tone}" aria-label=${label} title=${label} aria-haspopup="dialog" @click=${open}>
-    ${icon("wrench")}<span>${count ? t(hass, "maint_due", { n: count }) : t(hass, "maint_ok")}</span>
+    ${icon("wrench")}${shown}
   </button>`;
 }
 

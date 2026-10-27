@@ -156,6 +156,10 @@ export const cardStyles = css`
     background: color-mix(in srgb, var(--tone) 13%, transparent);
     font-variant-numeric: tabular-nums;
   }
+  /* A compact chip of its icon alone: the icon in the middle. */
+  .pill.icon-only {
+    padding: 0 9px;
+  }
   button.pill {
     cursor: pointer;
   }

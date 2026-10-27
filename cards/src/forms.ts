@@ -45,6 +45,7 @@ const OPTIONS: Record<string, Validator> = {
   camera: oneOf(CAMERA_MODES),
   status_blocks: listOf(STATUS_BLOCKS),
   header_chips: listOf(HEADER_CHIPS),
+  compact_chips: flag,
   start_view: oneOf(VIEWS),
   show_control_tab: flag,
   control_sections: listOf(CONTROL_SECTIONS),
@@ -93,6 +94,7 @@ export interface Settings {
   amsFolding: AmsFolding;
   externalSpool: boolean;
   showAutoOff: boolean;
+  compactChips: boolean;
 }
 
 export const DEFAULTS: Settings = {
@@ -107,6 +109,7 @@ export const DEFAULTS: Settings = {
   amsFolding: "auto",
   externalSpool: true,
   showAutoOff: true,
+  compactChips: false,
 };
 
 export const settingsOf = (config: CardConfig): Settings => ({
@@ -121,6 +124,7 @@ export const settingsOf = (config: CardConfig): Settings => ({
   amsFolding: config.ams_folding ?? DEFAULTS.amsFolding,
   externalSpool: config.show_external_spool ?? DEFAULTS.externalSpool,
   showAutoOff: config.show_auto_off ?? DEFAULTS.showAutoOff,
+  compactChips: config.compact_chips ?? DEFAULTS.compactChips,
 });
 
 // --- Editor -----------------------------------------------------------------
@@ -146,6 +150,7 @@ const DEFAULT_DATA: Readonly<Record<string, unknown>> = {
   ams_folding: DEFAULTS.amsFolding,
   show_external_spool: DEFAULTS.externalSpool,
   show_auto_off: DEFAULTS.showAutoOff,
+  compact_chips: DEFAULTS.compactChips,
 };
 
 /** The configuration after a change in the editor: an option whose value
@@ -181,6 +186,7 @@ const LABELS: Record<string, TextKey> = {
   ams_folding: "editor_ams_folding",
   show_external_spool: "editor_external_spool",
   show_auto_off: "editor_show_auto_off",
+  compact_chips: "editor_compact_chips",
 };
 
 const HELPERS: Record<string, TextKey> = {
@@ -195,6 +201,7 @@ const HELPERS: Record<string, TextKey> = {
   ams_folding: "editor_ams_folding_help",
   show_external_spool: "editor_external_spool_help",
   show_auto_off: "editor_show_auto_off_help",
+  compact_chips: "editor_compact_chips_help",
 };
 
 /** The start tab's help while the editor's options hide the chosen tab:
@@ -266,6 +273,7 @@ export function configForm(hass?: Hass): ConfigForm {
         dropdown(hass, "start_view", "tab", VIEWS),
         dropdown(hass, "camera", "camera", CAMERA_MODES),
         list(hass, "header_chips", "chip", HEADER_CHIPS),
+        toggle("compact_chips"),
         toggle("read_only"),
       ]),
       group(hass, "editor_group_status", "mdi:printer-3d", [list(hass, "status_blocks", "block", STATUS_BLOCKS), toggle("show_auto_off")]),

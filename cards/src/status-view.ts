@@ -359,9 +359,9 @@ function amsStrip(ctx: CardContext): TemplateResult | typeof nothing {
           ${group.sides
             ? nothing
             : html`<span class="ams-env">
-                ${group.humidity !== undefined ? html`<span class="ams-hum">${icon("humidity")}${formatPercent(hass, group.humidity)}</span>` : nothing}
+                ${group.humidity !== undefined ? html`<span class="ams-hum" title=${t(hass, "humidity")}>${icon("humidity")}${formatPercent(hass, group.humidity)}</span>` : nothing}
                 ${group.temperature !== undefined
-                  ? html`<span class="ams-temp">${icon("chamber")}${formatTemperature(hass, group.temperature, group.temperatureUnit)}</span>`
+                  ? html`<span class="ams-temp" title=${t(hass, "temperature")}>${icon("chamber")}${formatTemperature(hass, group.temperature, group.temperatureUnit)}</span>`
                   : nothing}
               </span>`}
         </span>

@@ -120,6 +120,8 @@ export interface CardConfig {
   show_filament_tab?: boolean;
   ams_folding?: AmsFolding;
   show_external_spool?: boolean;
+  /** The chips under the name with icon and value only. */
+  compact_chips?: boolean;
   /** The row of the switch-off after the print under the printer's plug. */
   show_auto_off?: boolean;
 }

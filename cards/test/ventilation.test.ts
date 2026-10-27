@@ -380,7 +380,11 @@ describe("the chamber tile in the Status tab says what the chamber does", () => 
 });
 
 describe("the ventilation's explanation", () => {
-  it("keeps half a line from what stands above it, as under the extruder", () => {
+  it("keeps half a line from what stands above it, as under the extruder", async () => {
     expect(styleText()).toMatch(/\.heating > \.hint\s*\{[^}]*margin-top: 8px;/);
+    // The rule reaches it: the explanation stands right in the section.
+    const hass = makeHass({ devices: h2d({ status: "idle", stage: "idle", hms: [], airduct: "cooling", chamber: [33, 0], ventilation: { percent: 0, fans: ["exhaust"] } }) });
+    const card = await mountCard(hass, { printer: "dev-h2d", start_view: "control" });
+    expect(find(card, ".heating > .hint")?.textContent).toMatch(/^Heating keeps the warmth/);
   });
 });

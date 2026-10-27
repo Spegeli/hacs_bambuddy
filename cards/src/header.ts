@@ -12,7 +12,7 @@ import { icon, type IconName } from "./icons";
 import { t, type TextKey } from "./i18n";
 import { maintenancePill } from "./maintenance";
 import { powerPill } from "./power";
-import { actionButton, connection, dialogNote, noData, sideName, snack, stopQuestion, type CardContext } from "./parts";
+import { actionButton, compactWords, connection, dialogNote, noData, sideName, snack, stopQuestion, type CardContext } from "./parts";
 import type { HassEntityState, HeaderChip } from "./types";
 
 // --- Title ------------------------------------------------------------------
@@ -228,6 +228,7 @@ function networkPill(ctx: CardContext): TemplateResult | typeof nothing {
   return html`<button
     class="pill network tone-${network.tone}"
     aria-label=${network.aria ?? network.text}
+    title=${network.aria ?? network.text}
     aria-live="off"
     @click=${() => ctx.moreInfo(network.entityId)}
   >
@@ -242,8 +243,9 @@ function hmsPill(ctx: CardContext, open: (pill: Pill) => void): TemplateResult |
   const worst = worstFirst(errors)[0];
   const tone = count > 0 ? (CHIP_TONES[worst ? severityOf(worst) : "unknown"] as string) : "ok";
   const label = count > 1 ? t(hass, "hms_pill_aria", { count }) : count === 1 ? t(hass, "hms_pill_aria_one") : t(hass, "hms_pill_none");
+  const words = ctx.settings.compactChips ? compactWords(count > 0 ? String(count) : t(hass, "chip_ok"), label) : html`<span>${count > 0 ? label : t(hass, "hms_ok")}</span>`;
   return html`<button class="pill hms tone-${tone}" aria-label=${label} title=${label} aria-haspopup="dialog" @click=${() => open("hms")}>
-    ${icon(count > 0 ? "shieldAlert" : "shieldCheck")}<span>${count > 0 ? t(hass, "hms_pill", { count }) : t(hass, "hms_ok")}</span>
+    ${icon(count > 0 ? "shieldAlert" : "shieldCheck")}${words}
   </button>`;
 }
 
@@ -275,16 +277,24 @@ function firmwarePill(ctx: CardContext, open: (pill: Pill) => void): TemplateRes
         ? ["ok", "check", "firmware_current"]
         : ["neutral", "memory", "firmware_version"];
   // An update says so on the chip, with the version it brings.
-  const text = firmware.update && firmware.latest ? t(hass, "firmware_update_chip", { version: firmware.latest }) : (firmware.installed ?? t(hass, "firmware"));
-  // The name starts with what the chip shows (voice control, screen readers).
+  const text =
+    firmware.update && firmware.latest
+      ? ctx.settings.compactChips
+        ? firmware.latest
+        : t(hass, "firmware_update_chip", { version: firmware.latest })
+      : (firmware.installed ?? t(hass, "firmware"));
+  // The name starts with what the full chip shows (voice control, screen
+  // readers); a compact chip's version is in it too.
   const label =
     firmware.update && firmware.latest && firmware.installed
       ? t(hass, "firmware_update_label", { latest: firmware.latest, version: firmware.installed })
       : firmware.installed
         ? t(hass, key, { version: firmware.installed })
-        : text;
+        : firmware.update && firmware.latest
+          ? t(hass, "firmware_update_chip", { version: firmware.latest })
+          : text;
   return html`<button class="pill firmware tone-${tone}" aria-label=${label} title=${label} aria-haspopup="dialog" @click=${() => open("firmware")}>
-    ${icon(iconName)}<span>${text}</span>
+    ${icon(iconName)}${ctx.settings.compactChips ? compactWords(text, label) : html`<span>${text}</span>`}
   </button>`;
 }
 
@@ -318,7 +328,11 @@ function hmsLine(ctx: CardContext, open: (pill: Pill) => void): TemplateResult |
 function doorPill(ctx: CardContext): TemplateResult | typeof nothing {
   const { hass, refs } = ctx;
   if (!ctx.online || stateOf(hass, refs.door)?.state !== "on") return nothing;
-  return html`<button class="pill door tone-info" @click=${() => ctx.moreInfo(refs.door)}>${icon("doorOpen")}<span>${t(hass, "door_open")}</span></button>`;
+  const label = t(hass, "door_open");
+  const compact = ctx.settings.compactChips;
+  return html`<button class="pill door tone-info ${compact ? "icon-only" : ""}" aria-label=${label} title=${label} @click=${() => ctx.moreInfo(refs.door)}>
+    ${icon("doorOpen")}${compact ? compactWords(undefined, label) : html`<span>${label}</span>`}
+  </button>`;
 }
 
 /** The storage, only while it is missing: without it BamBuddy sends no
@@ -326,8 +340,10 @@ function doorPill(ctx: CardContext): TemplateResult | typeof nothing {
 function storagePill(ctx: CardContext, open: (pill: Pill) => void): TemplateResult | typeof nothing {
   const { hass, refs } = ctx;
   if (!ctx.online || stateOf(hass, refs.storage)?.state !== "off") return nothing;
-  return html`<button class="pill storage tone-warn" aria-haspopup="dialog" @click=${() => open("storage")}>
-    ${icon(refs.storageUsb ? "usb" : "sd")}<span>${t(hass, refs.storageUsb ? "storage_usb" : "storage_sd")}</span>
+  const label = t(hass, refs.storageUsb ? "storage_usb_chip_title" : "storage_sd_chip_title");
+  const compact = ctx.settings.compactChips;
+  return html`<button class="pill storage tone-warn ${compact ? "icon-only" : ""}" aria-label=${label} title=${label} aria-haspopup="dialog" @click=${() => open("storage")}>
+    ${icon(refs.storageUsb ? "usb" : "sd")}${compact ? compactWords(undefined, label) : html`<span>${t(hass, refs.storageUsb ? "storage_usb" : "storage_sd")}</span>`}
   </button>`;
 }
 
@@ -345,12 +361,21 @@ function dryingPill(ctx: CardContext): TemplateResult | typeof nothing {
   const time = times.length ? formatDuration(hass, Math.max(...times)).replace(/ /g, "\u00a0") : undefined;
   const n = drying.length;
   const what = n === 1 ? t(hass, "dry_chip_one_bare") : t(hass, "dry_chip_many_bare", { n });
-  const detail = n > 1 && time ? t(hass, "dry_chip_aria", { n, time }) : undefined;
+  const detail = time
+    ? n > 1
+      ? t(hass, "dry_chip_aria", { n, time })
+      : t(hass, "dry_chip_unit_aria", { unit: first.name, time })
+    : n > 1
+      ? what
+      : t(hass, "dry_chip_unit", { unit: first.name });
+  // Compact: the time, how many units before it; without a time, what dries.
+  const compact = ctx.settings.compactChips && time !== undefined;
+  const label = compact ? (n > 1 ? t(hass, "dry_chip_many_short", { n }) : undefined) : what;
   const tap = (): void => (ctx.filamentTab ? ctx.show("filament") : ctx.moreInfo(first.dryingRemaining ?? first.drying));
   // What dries and its time, bold as a fan's value: on a narrow card the
   // time takes a line of its own, with no separator left hanging.
-  return html`<button class="pill dry-chip tone-info" title=${detail ?? (time ? `${what} ${time}` : what)} aria-live="off" @click=${tap}>
-    ${icon("heat")}<span class="dry-text"><span>${what}</span> ${time ? html`<span class="dry-time">${time}</span>` : nothing}</span>
+  return html`<button class="pill dry-chip tone-info" aria-label=${compact ? detail : nothing} title=${detail} aria-live="off" @click=${tap}>
+    ${icon("heat")}<span class="dry-text">${label ? html`<span>${label}</span> ` : nothing}${time ? html`<span class="dry-time">${time}</span>` : nothing}</span>
   </button>`;
 }
 

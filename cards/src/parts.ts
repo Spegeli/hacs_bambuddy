@@ -326,6 +326,12 @@ export const AMS_HT = "AMS HT";
 /** The model a unit's chip names: where its name does not say it, and on
  * every AMS where the printer has AMS units of two models -- "AMS A" beside
  * "AMS B" (AMS 2 Pro) says it is the first AMS. "AMS HT A" says its own. */
+/** A compact chip's words: the short ones on screen, the full ones for a
+ * screen reader -- the chip row announces a change by its text, which may
+ * pass over the button's name. An icon-only chip has no short words. */
+export const compactWords = (short: string | undefined, full: string): TemplateResult =>
+  html`${short === undefined ? nothing : html`<span aria-hidden="true">${short}</span>`}<span class="sr-only">${full}</span>`;
+
 export function unitModel(ams: AmsRefs[], unit: AmsRefs): string | undefined {
   // An A2L's AMS Lite is named so: its name says it.
   if (!unit.model || unit.name === unit.model) return undefined;

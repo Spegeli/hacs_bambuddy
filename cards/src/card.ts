@@ -1758,7 +1758,9 @@ export class BamBuddyPrinterCard extends LitElement {
         <span class="live-badge">${t(hass, "live_badge")}</span>
         ${fps === undefined
           ? nothing
-          : html`<span class="live-badge live-fps" role="img" aria-label=${t(hass, "fps_aria", { fps })}>${t(hass, "fps_value", { fps })}</span>`}
+          : html`<span class="live-badge live-fps" role="img" aria-label=${t(hass, "fps_aria", { fps })} title=${t(hass, "fps_aria", { fps })}
+              >${t(hass, "fps_value", { fps })}</span
+            >`}
       </div>
       <div class="live-tools">${settings}${close}</div>
       <button class="icon-btn live-full" aria-label=${fullLabel} title=${fullLabel} @click=${this.toggleFullscreen}>
