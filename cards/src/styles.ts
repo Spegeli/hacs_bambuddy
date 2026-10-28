@@ -2766,6 +2766,16 @@ export const cardStyles = css`
     flex-direction: column;
     align-items: flex-end;
   }
+  /* A nozzle's side: its symbol and L or R, kept together. */
+  .spec-side {
+    white-space: nowrap;
+    color: var(--bb-muted);
+  }
+  .spec-side .icon {
+    width: 16px;
+    height: 16px;
+    vertical-align: -3px;
+  }
   .spec-sub {
     font-size: 12px;
     line-height: 16px;

@@ -494,13 +494,13 @@ function nozzleOf(ctx: CardContext, index: number): string {
   return [size === undefined ? undefined : `${size} mm`, hasValue(hass, type) ? formatState(hass, type) : undefined].filter(Boolean).join(" · ");
 }
 
-/** Each nozzle's diameter and type, by its side on a printer with two. */
+/** Each nozzle's diameter and type by its side, on a printer with two. */
 function nozzleLines(ctx: CardContext): string[] {
   const { hass, refs } = ctx;
   return refs.nozzles
     .map((_, index) => {
       const parts = nozzleOf(ctx, index);
-      return parts && refs.dual ? t(hass, "nozzle_side", { side: sideName(hass, index), nozzle: parts }) : parts;
+      return parts ? t(hass, "nozzle_side", { side: sideName(hass, index), nozzle: parts }) : parts;
     })
     .filter(Boolean);
 }
@@ -527,18 +527,27 @@ export function slotNozzleLines(ctx: CardContext, entityId: string): string[] {
 
 const chip = (tone: string, text: string): TemplateResult => html`<span class="chip tone-${tone}">${text}</span>`;
 
-/** "1 nozzle · 0.4 mm · Hardened steel"; two nozzles: "2 nozzles" with a
- * line for each side. */
-function nozzleRow(ctx: CardContext, lines: string[]): TemplateResult | typeof nothing {
+/** "Nozzle: 0.4 mm · Hardened steel"; two nozzles: a line for each, its
+ * side as the nozzle symbol with L or R (in full for a screen reader and
+ * as the tooltip) -- the lines say how many. */
+function nozzleRow(ctx: CardContext): TemplateResult | typeof nothing {
   const { hass, refs } = ctx;
+  if (!refs.dual) {
+    const parts = nozzleOf(ctx, 0);
+    return parts ? specRow(t(hass, "info_nozzle"), parts) : nothing;
+  }
+  const lines = refs.nozzles.map((_, index) => [index, nozzleOf(ctx, index)] as const).filter(([, parts]) => parts);
   if (!lines.length) return nothing;
-  const count = refs.nozzles.length;
-  const counted = count === 1 ? t(hass, "nozzle_count_one") : t(hass, "nozzle_count", { count });
-  if (!refs.dual) return specRow(t(hass, "info_nozzles"), [counted, ...lines].join(" · "));
   return specRow(
     t(hass, "info_nozzles"),
-    html`<span>${counted}</span>
-      ${lines.map((line) => html`<span class="spec-sub">${line}</span> `)}`,
+    html`${lines.map(([index, parts]) => {
+      const name = t(hass, index === 0 ? "nozzle_left" : "nozzle_right");
+      const short = t(hass, index === 0 ? "side_left_short" : "side_right_short");
+      return html`<span
+        ><span class="spec-side" title=${name}>${icon("nozzle")}<span aria-hidden="true">${short}:</span><span class="sr-only">${name}:</span></span>
+        ${parts}</span
+      > `;
+    })}`,
     nothing,
     "lines",
   );
@@ -558,7 +567,6 @@ export function infoContent(ctx: CardContext, copied: boolean, copy: (text: stri
   const server = device?.via_device_id ? hass.devices[device.via_device_id] : undefined;
   const network = networkOf(ctx);
   const developer = hasValue(hass, refs.developerMode) ? stateOf(hass, refs.developerMode)?.state === "on" : undefined;
-  const nozzles = nozzleLines(ctx);
   const hours = hoursText(ctx);
   const installed = firmwareOf(ctx)?.installed;
   // Which printer, what it has, what it does now, how it reaches Home Assistant.
@@ -568,7 +576,7 @@ export function infoContent(ctx: CardContext, copied: boolean, copy: (text: stri
       ${refs.model ? specRow(t(hass, "info_model"), refs.model) : nothing}
       ${serial ? specRow(t(hass, "info_serial"), serial, copyButton("copy_serial", serial)) : nothing}
       ${installed ? specRow(t(hass, "firmware"), installed) : nothing}
-      ${nozzleRow(ctx, nozzles)}
+      ${nozzleRow(ctx)}
       ${hours ? specRow(t(hass, "info_hours"), hours) : nothing}
       ${specRow(t(hass, "info_status"), chip(ctx.online ? "ok" : ctx.unreachable ? "warn" : "off", t(hass, connection(ctx))))}
       ${ctx.online ? specRow(t(hass, "info_print_status"), formatState(hass, refs.status, ctx.status) ?? ctx.status) : nothing}

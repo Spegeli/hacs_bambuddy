@@ -23,7 +23,7 @@ import {
   type FakeHassOptions,
   type PrinterSpec,
 } from "./fixtures";
-import { button, find, findAll, hasButton, NBSP, press, root, settle, styleText, text, update } from "./helpers";
+import { button, find, findAll, hasButton, NBSP, press, root, settle, shownText, styleText, text, update } from "./helpers";
 
 const PRINTERS = {
   x1c: [x1c, "dev-x1c"],
@@ -68,6 +68,12 @@ const iconOf = (element: Element | null): string | null | undefined => element?.
 const rows = (card: FakeCard): [string, string][] => findAll(card, "dialog .spec-row").map((row) => [text(row.querySelector(".spec-label")), text(row.querySelector(".spec-value"))]);
 
 const MINUS = "−";
+
+/** The lines of a two-nozzle printer's nozzle row in the printer information. */
+const nozzleLinesOf = (card: FakeCard, label: string): Element[] => {
+  const row = findAll(card, "dialog .spec-row").find((item) => text(item.querySelector(".spec-label")) === label);
+  return [...(row?.querySelectorAll(".spec-value > span") ?? [])];
+};
 
 const css = styleText;
 
@@ -869,7 +875,7 @@ describe("the printer information", () => {
       ["Model", "X1C"],
       ["Serial number", "00M09A350100123"],
       ["Firmware", "01.08.02.00"],
-      ["Nozzles", `1 nozzle · 0.4${NBSP}mm · Hardened steel`],
+      ["Nozzle", `0.4${NBSP}mm · Hardened steel`],
       ["Print hours", "559 h"],
       ["Status", "Online"],
       ["Print status", "Printing"],
@@ -894,18 +900,40 @@ describe("the printer information", () => {
     expect(Object.fromEntries(rows(renamed))["BamBuddy server"]).toBe("Garage");
   });
 
+  it("leaves out a nozzle it knows nothing of, and the row where it knows neither", async () => {
+    const { card, hass } = await cardFor("h2d");
+    const blank = ["left_nozzle_diameter", "left_nozzle_type"].reduce((state, key) => state.withState(`sensor.h2d_${key}`, "unknown"), hass);
+    await update(card, blank);
+    await openInfo(card);
+    expect(nozzleLinesOf(card, "Nozzles").map(shownText)).toEqual([`R: 0.4${NBSP}mm · Stainless steel, high flow`]);
+    const { card: none, hass: other } = await cardFor("h2d");
+    const nothingKnown = ["left_nozzle_diameter", "left_nozzle_type", "right_nozzle_diameter", "right_nozzle_type"].reduce(
+      (state, key) => state.withState(`sensor.h2d_${key}`, "unknown"),
+      other,
+    );
+    await update(none, nothingKnown);
+    await openInfo(none);
+    expect(Object.fromEntries(rows(none))["Nozzles"]).toBeUndefined();
+  });
+
   it("names both nozzles of a dual-nozzle printer and a printer on Ethernet", async () => {
     const { card } = await cardFor("h2d");
     await openInfo(card);
     const shown = Object.fromEntries(rows(card));
     expect(shown["Network"]).toBe("LAN (wired)");
-    expect(shown["Nozzles"]).toBe(`2 nozzles Left: 0.4${NBSP}mm · Hardened steel Right: 0.4${NBSP}mm · Stainless steel, high flow`);
+    // Each line names its side by the nozzle symbol and L or R; a screen
+    // reader and the tooltip say it in full.
+    const nozzles = nozzleLinesOf(card, "Nozzles");
+    expect(nozzles.map(shownText)).toEqual([`L: 0.4${NBSP}mm · Hardened steel`, `R: 0.4${NBSP}mm · Stainless steel, high flow`]);
+    expect(nozzles.map((line) => line.querySelector(".spec-side")?.getAttribute("title"))).toEqual(["Left nozzle", "Right nozzle"]);
+    expect(nozzles.map((line) => text(line.querySelector(".spec-side .sr-only")))).toEqual(["Left nozzle:", "Right nozzle:"]);
+    expect(nozzles.map((line) => line.querySelectorAll(".spec-side svg.icon").length)).toEqual([1, 1]);
     // Its IP address sensor is off, as Home Assistant creates it.
     expect(shown["IP address"]).toBeUndefined();
     const { card: plain } = await cardFor("a1mini", { devices: a1mini({ nozzleTypes: [], developerMode: "off" }) });
     await openInfo(plain);
     const other = Object.fromEntries(rows(plain));
-    expect(other["Nozzles"]).toBe(`1 nozzle · 0.4${NBSP}mm`);
+    expect(other["Nozzle"]).toBe(`0.4${NBSP}mm`);
     // Off, with why it matters.
     expect(other["Developer mode"]).toBe("Off The printer takes no commands.");
     expect(text(find(plain, "dialog .spec-value .spec-sub"))).toBe("The printer takes no commands.");
@@ -986,7 +1014,8 @@ describe("the printer information", () => {
     ]);
     const shown = Object.fromEntries(rows(card));
     expect(shown["Entwicklermodus"]).toBe("An");
-    expect(shown["Düsen"]).toBe(`2 Düsen Links: 0,4${NBSP}mm · Gehärteter Stahl Rechts: 0,4${NBSP}mm · Edelstahl, High Flow`);
+    expect(nozzleLinesOf(card, "Düsen").map(shownText)).toEqual([`L: 0,4${NBSP}mm · Gehärteter Stahl`, `R: 0,4${NBSP}mm · Edelstahl, High Flow`]);
+    expect(nozzleLinesOf(card, "Düsen").map((line) => text(line.querySelector(".spec-side .sr-only")))).toEqual(["Linke Düse:", "Rechte Düse:"]);
     expect(shown["Druckstunden"]).toBe("1.203 h");
     expect(findAll(card, "dialog .copy").map((item) => item.getAttribute("aria-label"))).toEqual(["Seriennummer kopieren"]);
     await press(card, "Seriennummer kopieren");
@@ -996,7 +1025,7 @@ describe("the printer information", () => {
     await settle(wifi);
     await press(wifi, "Druckerinformationen");
     expect(Object.fromEntries(rows(wifi))["Netzwerk"]).toBe(`WLAN · ${MINUS}52${NBSP}dBm`);
-    expect(Object.fromEntries(rows(wifi))["Düsen"]).toBe(`1 Düse · 0,4${NBSP}mm · Gehärteter Stahl`);
+    expect(Object.fromEntries(rows(wifi))["Düse"]).toBe(`0,4${NBSP}mm · Gehärteter Stahl`);
     const { card: off } = await cardFor("a1mini", { language: "de", devices: a1mini({ developerMode: "off" }) });
     (find(off, ".menu-btn") as HTMLButtonElement).click();
     await settle(off);
