@@ -228,7 +228,7 @@ describe("the status view", () => {
     expect(findAll(card, ".fan .fan-label.full").map(text)).toEqual(["Part cooling fan", "Hotend fan"]);
     expect(findAll(card, ".fan").map((fan) => fan.getAttribute("aria-label"))).toEqual(["Part cooling fan: Off", "Hotend fan: Off"]);
     const { card: german } = await cardFor("a1mini", {}, { language: "de" });
-    expect(findAll(german, ".fan .fan-label.full").map(text)).toEqual(["Teilekühlungslüfter", "Hotend-Lüfter"]);
+    expect(findAll(german, ".fan .fan-label.full").map(text)).toEqual(["Bauteillüfter", "Hotend-Lüfter"]);
     // A name the user gave in Home Assistant stays, without the printer's
     // name in front, whatever the viewer's language.
     const { card: renamed } = await cardFor("a1mini", {}, { language: "de", devices: a1mini({ renamed: { part_cooling_fan: "Blower" } }) });
@@ -247,8 +247,9 @@ describe("the status view", () => {
       { key: "right_auxiliary_fan", percent: 30 },
     ];
     const { card } = await cardFor("x1c", {}, { language: "de", devices: x1c({ fans }) });
-    // "Bauteil" alone read as "component off".
-    expect(findAll(card, ".fan .fan-label.short").map(text)).toEqual(["Teilekühlung", "Abluft", "Linker Zusatz", "Rechter Zusatz", "Hotend"]);
+    // "Bauteil" alone read as "component off": the part cooling fan keeps
+    // its whole name, no longer than "Linker Zusatz".
+    expect(findAll(card, ".fan .fan-label.short").map(text)).toEqual(["Bauteillüfter", "Abluft", "Linker Zusatz", "Rechter Zusatz", "Hotend"]);
     expect(findAll(card, ".fan .fan-label.full").map(text)).toEqual(expect.arrayContaining(["Linker Zusatzlüfter", "Rechter Zusatzlüfter"]));
   });
 

@@ -344,7 +344,7 @@
     },
     "fan": {
       "part_cooling_fan": {
-        "name": "Teilekühlungslüfter"
+        "name": "Bauteillüfter"
       },
       "auxiliary_fan": {
         "name": "Zusatzlüfter"
