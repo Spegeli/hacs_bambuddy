@@ -112,7 +112,7 @@ describe("every chip's tooltip", () => {
 describe("tooltips beside the chips", () => {
   it("names the live view's frame rate", async () => {
     const { card } = await mount(x1c(), "dev-x1c", { camera: "always" });
-    expect(find(card, ".live-fps")?.getAttribute("title")).toBe("30 frames a second");
+    expect(find(card, ".live-fps")?.getAttribute("title")).toBe("Measuring the frame rate");
   });
 
   it("names humidity and temperature in the Status tab's AMS heads", async () => {

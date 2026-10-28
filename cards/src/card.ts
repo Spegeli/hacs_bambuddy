@@ -1768,10 +1768,11 @@ export class BamBuddyPrinterCard extends LitElement {
             ${icon("cog")}
           </button>`
         : nothing;
-    // What arrives once the integration has counted it, else what was asked.
-    const rate = this.frameRate(true) ?? this.streamFps;
+    // What arrives, once the integration has counted it; a dash until then.
+    const rate = this.frameRate(true);
     // Tenths below 1 (a slow chamber image), in the user's language.
     const fps = rate === undefined ? undefined : formatNumber(hass, rate, 1);
+    const fpsLabel = fps === undefined ? t(hass, "fps_measuring") : t(hass, "fps_aria", { fps });
     const full = this.fullscreen !== "off";
     const fullLabel = t(hass, full ? "fullscreen_close" : "fullscreen_open");
     // Full screen takes the picture out of the card: the holder keeps its
@@ -1782,11 +1783,7 @@ export class BamBuddyPrinterCard extends LitElement {
       <img class="stream" src=${this.streamSrc} alt=${t(hass, "live")} @error=${this.streamBroke} />
       <div class="live-tags">
         <span class="live-badge">${t(hass, "live_badge")}</span>
-        ${fps === undefined
-          ? nothing
-          : html`<span class="live-badge live-fps" role="img" aria-label=${t(hass, "fps_aria", { fps })} title=${t(hass, "fps_aria", { fps })}
-              >${t(hass, "fps_value", { fps })}</span
-            >`}
+        <span class="live-badge live-fps" role="img" aria-label=${fpsLabel} title=${fpsLabel}>${t(hass, "fps_value", { fps: fps ?? "–" })}</span>
       </div>
       <div class="live-tools">${settings}${close}</div>
       <button class="icon-btn live-full" aria-label=${fullLabel} title=${fullLabel} @click=${this.toggleFullscreen}>

@@ -1234,19 +1234,36 @@ describe("the live view", () => {
     expect(find(unavailable, "button.live-hint")).toBeNull();
   });
 
-  it("names its frame rate, and offers to change it where the camera gives more", async () => {
+  it("measures its frame rate, and offers to change it where the camera gives more", async () => {
     const { card } = await cardFor("x1c", { camera: "always" });
-    expect(text(find(card, ".live-fps"))).toBe("30 fps");
-    expect(find(card, ".live-fps")?.getAttribute("aria-label")).toBe("30 frames a second");
+    expect(text(find(card, ".live-fps"))).toBe("– fps");
     expect(hasButton(card, "Set the frame rate")).toBe(true);
-    // A camera that gives only 5: its rate, nothing to set.
+    // A camera that gives only 5: nothing to set.
     const a1 = await cardFor("a1mini", { camera: "always" });
-    expect(text(find(a1.card, ".live-fps"))).toBe("5 fps");
+    expect(text(find(a1.card, ".live-fps"))).toBe("– fps");
     expect(hasButton(a1.card, "Set the frame rate")).toBe(false);
     // A view-only card sets nothing.
     const viewOnly = await cardFor("x1c", { camera: "always", read_only: true });
-    expect(text(find(viewOnly.card, ".live-fps"))).toBe("30 fps");
+    expect(text(find(viewOnly.card, ".live-fps"))).toBe("– fps");
     expect(hasButton(viewOnly.card, "Set the frame rate")).toBe(false);
+  });
+
+  it("shows a dash until the integration has counted what arrives, never the rate asked for", async () => {
+    const { card, hass } = await cardFor("x1c", { camera: "always" });
+    const chip = (): Element | null => find(card, ".live-fps");
+    expect(text(chip())).toBe("– fps");
+    expect(chip()?.getAttribute("aria-label")).toBe("Measuring the frame rate");
+    expect(chip()?.getAttribute("title")).toBe("Measuring the frame rate");
+    const camera = hass.states["camera.x1c_camera"]?.attributes ?? {};
+    await update(card, hass.withState("camera.x1c_camera", "idle", { ...camera, streamed_frame_rate: 13 }));
+    expect(text(chip())).toBe("13 fps");
+    expect(chip()?.getAttribute("title")).toBe("13 frames a second");
+    // The stream over: the next one is measured anew.
+    await update(card, hass.withState("camera.x1c_camera", "idle", camera));
+    expect(text(chip())).toBe("– fps");
+    const { card: german } = await cardFor("a1mini", { camera: "always" }, { language: "de" });
+    expect(text(find(german, ".live-fps"))).toBe("– fps");
+    expect(find(german, ".live-fps")?.getAttribute("aria-label")).toBe("Bildrate wird gemessen");
   });
 
   it("sets the frame rate in steps of 5 between 5 and the camera's most", async () => {
@@ -1306,7 +1323,7 @@ describe("the live view", () => {
     button(card, "Live view").click();
     await card.updateComplete;
     expect(find(card, "img.stream")?.getAttribute("src")).toBe("/api/camera_proxy_stream/camera.x1c_camera?token=token-x1c");
-    expect(find(card, ".live-fps")).toBeNull();
+    expect(text(find(card, ".live-fps"))).toBe("– fps");
   });
 
   it("keeps the keyboard in the stepper at its ends", async () => {
@@ -1370,7 +1387,8 @@ describe("the live view", () => {
     const camera = hass.states["camera.x1c_camera"]?.attributes ?? {};
     await update(card, hass.withState("camera.x1c_camera", "idle", { ...camera, frame_rate: 15 }));
     expect(find(card, "img.stream")?.getAttribute("src")).toBe("/api/camera_proxy_stream/camera.x1c_camera?token=token-x1c&fps=15");
-    expect(text(find(card, ".live-fps"))).toBe("15 fps");
+    // Measured anew, not the rate asked for.
+    expect(text(find(card, ".live-fps"))).toBe("– fps");
     // Anything else leaves the running stream alone.
     const now = hass.withState("camera.x1c_camera", "idle", { ...camera, frame_rate: 15, access_token: "rotated" });
     await update(card, now);

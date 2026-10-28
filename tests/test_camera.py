@@ -441,7 +441,7 @@ def test_a_slow_camera_is_measured_in_tenths() -> None:
     from a slow rate counts from half of it."""
     meter = camera_module._RateMeter()
     assert meter.count(1, 0.0) is None
-    assert meter.count(1, 2.1) is None
+    assert meter.count(1, 2.1) == 0.5  # rough, from the second frame
     assert meter.count(1, 4.2) is None  # 3 s, but only two frames
     assert meter.count(1, 6.3) is None
     assert meter.count(1, 8.4) == 0.5  # 4 frames in 8.4 s
@@ -455,6 +455,33 @@ def test_a_slow_camera_is_measured_in_tenths() -> None:
     meter = camera_module._RateMeter()
     meter.count(1, 0.0)
     assert meter.count(4, 100.0) == 0.1
+
+
+def test_a_slow_camera_says_a_rough_rate_first() -> None:
+    """Slower than a frame a second: the second frame's gap gives a first,
+    rough rate at once. The first full measurement replaces it, however
+    little it differs; the window runs on from the first frame."""
+    meter = camera_module._RateMeter()
+    assert meter.count(1, 0.0) is None
+    assert meter.count(1, 1.3) == 0.8
+    assert meter.rough
+    assert meter.count(1, 3.4) is None
+    assert meter.count(1, 5.5) is None
+    # 4 frames in 7.6 s: 0.5, less than half of 0.8 away.
+    assert meter.count(1, 7.6) == 0.5
+    assert not meter.rough
+
+
+def test_a_camera_of_a_frame_a_second_or_more_waits_for_the_window() -> None:
+    """No rough rate where frames come once a second or faster: a stream that
+    has just begun says nothing for its first seconds."""
+    meter = camera_module._RateMeter()
+    assert meter.count(1, 0.0) is None
+    assert meter.count(1, 1.0) is None  # a frame a second
+    meter = camera_module._RateMeter()
+    meter.count(1, 0.0)
+    assert meter.count(2, 1.5) is None
+    assert meter.count(2, 3.0) == 1
 
 
 class _Upstream:
@@ -554,6 +581,31 @@ async def test_a_chamber_image_slower_than_asked_asks_nothing(
     clock = [100.0]
     monkeypatch.setattr(camera_module, "_clock", lambda: clock[0])
     with patch.object(BamBuddyClient, "open_stream", AsyncMock(return_value=_Upstream(1, 5, clock, lambda: None))):
+        await _watch(hass_client, camera)
+    bambuddy_api.stop_camera.assert_not_awaited()
+
+
+async def test_a_rough_rate_asks_nothing_of_bambuddy(
+    hass: HomeAssistant,
+    bambuddy_api: SimpleNamespace,
+    hass_client: ClientSessionGenerator,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A stream that begins slowly says its rough first rate, but only a full
+    measurement decides whether the next stream asks BamBuddy to begin anew."""
+    clock = [0.0]
+    monkeypatch.setattr(camera_module, "_clock", lambda: clock[0])
+    entry = await set_up(hass, X1C)
+    camera = entity_id(hass, "camera", printer_uid(entry, "camera"))
+    seen: list[object] = []
+
+    def on_read() -> None:
+        seen.append(state_at(hass, camera).attributes.get("streamed_frame_rate"))
+
+    with patch.object(BamBuddyClient, "open_stream", AsyncMock(return_value=_Upstream(2, 0.5, clock, on_read))):
+        await _watch(hass_client, camera)
+    assert 0.5 in seen
+    with patch.object(BamBuddyClient, "open_stream", AsyncMock(return_value=_Upstream(1, 30, clock, lambda: None))):
         await _watch(hass_client, camera)
     bambuddy_api.stop_camera.assert_not_awaited()
 

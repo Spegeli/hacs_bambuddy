@@ -41,6 +41,7 @@ _STOP_PAUSE = 0.5
 # What arrives: frames a second over this many seconds and at least this
 # many frames (the A1's chamber image sends one every two seconds or so); a
 # change smaller than the other -- or than half a rate below 4 -- is none.
+# Slower than a frame a second, the second frame gives a rough first rate.
 _RATE_WINDOW = 3.0
 _RATE_FRAMES = 4
 _RATE_CHANGE = 2
@@ -69,12 +70,14 @@ class _FrameCounter:
 
 
 class _RateMeter:
-    """Frames a second, over a few seconds of one stream."""
+    """Frames a second, over a few seconds of one stream. `rough`: the rate
+    said last is the rough first one."""
 
     def __init__(self) -> None:
         self._start: float | None = None
         self._frames = 0
         self._rate: float | None = None
+        self.rough = False
 
     def count(self, frames: int, now: float) -> float | None:
         """A new rate, once one is measured and when it changed: whole frames
@@ -86,15 +89,24 @@ class _RateMeter:
         self._frames += frames
         elapsed = now - self._start
         if elapsed < _RATE_WINDOW or self._frames < _RATE_FRAMES:
+            # The second frame, slower than one a second: a rough first rate.
+            if self._rate is None and self._frames == frames and self._frames < elapsed:
+                self._rate, self.rough = _said(self._frames / elapsed), True
+                return self._rate
             return None
-        measured = self._frames / elapsed
+        rate = _said(self._frames / elapsed)
         self._start, self._frames = now, 0
-        rate: float = round(measured, 1)
-        rate = round(measured) if rate >= 1 else max(rate, 0.1)
-        if self._rate is not None and abs(rate - self._rate) < min(_RATE_CHANGE, self._rate / 2):
+        # The first full measurement replaces a rough rate, however close.
+        if not self.rough and self._rate is not None and abs(rate - self._rate) < min(_RATE_CHANGE, self._rate / 2):
             return None
-        self._rate = rate
+        self._rate, self.rough = rate, False
         return rate
+
+
+def _said(measured: float) -> float:
+    """Whole frames a second from 1 on, tenths below, never 0."""
+    rate: float = round(measured, 1)
+    return round(measured) if rate >= 1 else max(rate, 0.1)
 
 
 def _boundary(content_type: str) -> bytes:
@@ -208,8 +220,8 @@ class BamBuddyCamera(BamBuddyPrinterEntity, Camera):
             return
         # Not what was asked: the next stream asks BamBuddy to begin anew. A
         # chamber image comes as fast as the printer sends it, whatever is
-        # asked.
-        if abs(rate - fps) > _RATE_CHANGE and camera_max_fps(self.coordinator.info) > CAMERA_MIN_FPS:
+        # asked; a rough rate is too early to tell.
+        if not meter.rough and abs(rate - fps) > _RATE_CHANGE and camera_max_fps(self.coordinator.info) > CAMERA_MIN_FPS:
             self._rate_unsure = True
         if rate != self._arriving:
             self._arriving = rate

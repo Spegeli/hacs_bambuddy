@@ -164,6 +164,7 @@ export const en = {
   camera_failed: "The camera is not available.",
   fps_value: "{fps} fps",
   fps_aria: "{fps} frames a second",
+  fps_measuring: "Measuring the frame rate",
   fps_open: "Set the frame rate",
   fps_title: "Camera frame rate",
   fps_lower: "{step} fewer frames a second",

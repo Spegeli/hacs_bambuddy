@@ -161,6 +161,7 @@ export const de: Texts = {
   camera_failed: "Die Kamera ist nicht verfügbar.",
   fps_value: "{fps} fps",
   fps_aria: "{fps} Bilder pro Sekunde",
+  fps_measuring: "Bildrate wird gemessen",
   fps_open: "Bildrate einstellen",
   fps_title: "Bildrate der Kamera",
   fps_lower: "{step} Bilder pro Sekunde weniger",
