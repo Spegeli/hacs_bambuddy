@@ -1,0 +1,9 @@
+{
+    "type": "machine",
+    "name": "fdm_bbl_3dp_002_common",
+    "instantiation": "false",
+    "physical_extruder_map": [
+        "1",
+        "0"
+    ]
+}

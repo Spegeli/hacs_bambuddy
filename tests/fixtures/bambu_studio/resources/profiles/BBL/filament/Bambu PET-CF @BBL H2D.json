@@ -1,0 +1,25 @@
+{
+    "type": "filament",
+    "name": "Bambu PET-CF @BBL H2D",
+    "instantiation": "true",
+    "filament_id": "GFT01",
+    "filament_vendor": [
+        "Bambu Lab"
+    ],
+    "filament_type": [
+        "PET-CF"
+    ],
+    "nozzle_temperature_range_low": [
+        "260"
+    ],
+    "nozzle_temperature_range_high": [
+        "290"
+    ],
+    "setting_id": "GFST01_00",
+    "filament_printable": [
+        "1"
+    ],
+    "compatible_printers": [
+        "Bambu Lab H2D 0.4 nozzle"
+    ]
+}

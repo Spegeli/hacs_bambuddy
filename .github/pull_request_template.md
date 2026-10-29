@@ -1,0 +1,46 @@
+## Description
+
+<!-- What does this PR change, and why? -->
+
+## Related issue
+
+<!-- e.g. Fixes #7 — or "none" -->
+
+## Type of change
+
+- [ ] Bug fix
+- [ ] New feature
+- [ ] Improvement (performance)
+- [ ] Security
+- [ ] Documentation (the README)
+- [ ] Refactor / code quality
+- [ ] CI, tests, contributor documentation or repository
+- [ ] Breaking change — existing installations must act after updating
+
+## How was this tested?
+
+<!--
+Which Home Assistant and BamBuddy version, which printer model?
+Never try the print controls on a printer that is printing.
+-->
+
+## Checklist
+
+- [ ] Tested on a real Home Assistant instance, if the change affects the running integration
+- [ ] Tests and `mypy --strict` pass locally, unless the change is documentation only (see CONTRIBUTING → Tests and typing)
+- [ ] Uses only Home Assistant APIs that exist in 2025.5, the supported floor (CONTRIBUTING → Things that are easy to get wrong)
+- [ ] Commit messages follow Conventional Commits — the release notes are built from them
+- [ ] Translations updated and in sync, if UI strings changed: `strings.json` and both `translations/*.json` (`en`, `de`), and the card's `cards/src/translations/en.ts` and `de.ts`
+- [ ] No API key, camera token, access code or other secret is logged, put into the diagnostics or committed
+- [ ] README updated, if user-facing behavior changed
+- [ ] Card changed: its tests and typecheck pass, and the rebuilt bundle `custom_components/bambuddy/frontend/bambuddy-card.js` is committed (`npm --prefix cards run build`)
+
+<!--
+A pull request to dev or main is validated by CI: hassfest, HACS validation,
+the tests (≥ 95 % coverage, and on the minimum Home Assistant), mypy --strict,
+the Python 3.13 checks, the release script on Python 3.12 and the card (its
+tests, typecheck and a rebuilt bundle that matches the committed one). A pull request
+to dev merges once that run is green; one to main merges only with a green
+"Validation result".
+Do NOT bump the version in manifest.json — the release workflow sets it.
+-->

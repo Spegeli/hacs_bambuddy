@@ -1,0 +1,16 @@
+{
+  "updates": [
+    {
+      "printer_id": 1,
+      "printer_name": "Workshop",
+      "model": "X1C",
+      "current_version": "01.09.01.00",
+      "latest_version": "01.09.02.00",
+      "update_available": true,
+      "download_url": null,
+      "release_notes": "Improved first layer inspection.",
+      "available_versions": []
+    }
+  ],
+  "updates_available": 1
+}

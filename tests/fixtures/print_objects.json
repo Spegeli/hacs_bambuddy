@@ -1,0 +1,34 @@
+{
+  "objects": [
+    {
+      "id": 87,
+      "name": "Bracket left",
+      "x": 72.4,
+      "y": 128.0,
+      "skipped": false
+    },
+    {
+      "id": 104,
+      "name": "Bracket right",
+      "x": 183.6,
+      "y": 128.0,
+      "skipped": true
+    },
+    {
+      "id": 121,
+      "name": "Spacer",
+      "x": null,
+      "y": null,
+      "skipped": false
+    }
+  ],
+  "total": 3,
+  "skipped_count": 1,
+  "is_printing": true,
+  "bbox_all": [
+    31.0,
+    40.2,
+    225.0,
+    171.8
+  ]
+}

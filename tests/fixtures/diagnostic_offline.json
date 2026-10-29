@@ -1,0 +1,16 @@
+{
+  "printer_id": 1,
+  "ip_address": "192.168.1.50",
+  "overall": "problems",
+  "checks": [
+    {"id": "port_mqtt", "status": "fail", "params": {}},
+    {"id": "port_ftps", "status": "warn", "params": {}},
+    {"id": "port_rtsps", "status": "warn", "params": {"port": 322, "protocol": "RTSPS"}},
+    {"id": "network_mode", "status": "pass", "params": {"mode": "host", "runtime": "docker"}},
+    {"id": "subnet", "status": "pass", "params": {"printer_ip": "192.168.1.50", "host_ip": "192.168.1.10"}},
+    {"id": "external_storage", "status": "skip", "params": {}},
+    {"id": "mqtt_auth", "status": "skip", "params": {}},
+    {"id": "developer_mode", "status": "skip", "params": {}},
+    {"id": "printer_publishing", "status": "skip", "params": {}}
+  ]
+}

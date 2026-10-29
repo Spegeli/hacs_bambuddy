@@ -1,0 +1,507 @@
+move_axis:
+  fields:
+    device_id:
+      required: true
+      selector:
+        device:
+          filter:
+            integration: bambuddy
+          # Printers only: AMS units and BamBuddy itself have no enum sensor.
+          entity:
+            integration: bambuddy
+            domain: sensor
+            device_class: enum
+    axis:
+      required: true
+      selector:
+        select:
+          options:
+            - value: "x"
+              label: "X"
+            - value: "y"
+              label: "Y"
+            - value: "z"
+              label: "Z"
+    distance:
+      required: true
+      default: 1
+      selector:
+        number:
+          min: -200
+          max: 200
+          step: 0.1
+          unit_of_measurement: mm
+          mode: box
+home_axes:
+  fields:
+    device_id:
+      required: true
+      selector:
+        device:
+          filter:
+            integration: bambuddy
+          # Printers only: AMS units and BamBuddy itself have no enum sensor.
+          entity:
+            integration: bambuddy
+            domain: sensor
+            device_class: enum
+extrude:
+  fields:
+    device_id:
+      required: true
+      selector:
+        device:
+          filter:
+            integration: bambuddy
+          # Printers only: AMS units and BamBuddy itself have no enum sensor.
+          entity:
+            integration: bambuddy
+            domain: sensor
+            device_class: enum
+    distance:
+      required: true
+      default: 10
+      selector:
+        number:
+          min: -100
+          max: 100
+          step: 1
+          unit_of_measurement: mm
+          mode: box
+load_filament:
+  fields:
+    entity_id:
+      required: true
+      selector:
+        entity:
+          filter:
+            integration: bambuddy
+            domain: sensor
+unload_filament:
+  fields:
+    device_id:
+      required: true
+      selector:
+        device:
+          filter:
+            integration: bambuddy
+          # Printers only: AMS units and BamBuddy itself have no enum sensor.
+          entity:
+            integration: bambuddy
+            domain: sensor
+            device_class: enum
+start_drying:
+  fields:
+    device_id:
+      required: true
+      selector:
+        device:
+          filter:
+            - integration: bambuddy
+              model: AMS 2 Pro
+            - integration: bambuddy
+              model: AMS HT
+    temperature:
+      required: true
+      default: 55
+      selector:
+        number:
+          min: 45
+          max: 85
+          step: 1
+          unit_of_measurement: °C
+    duration:
+      required: true
+      default: 8
+      selector:
+        number:
+          min: 1
+          max: 24
+          step: 1
+          unit_of_measurement: h
+stop_drying:
+  fields:
+    device_id:
+      required: true
+      selector:
+        device:
+          filter:
+            - integration: bambuddy
+              model: AMS 2 Pro
+            - integration: bambuddy
+              model: AMS HT
+get_print_objects:
+  fields:
+    device_id:
+      required: true
+      selector:
+        device:
+          filter:
+            integration: bambuddy
+          # Printers only: AMS units and BamBuddy itself have no enum sensor.
+          entity:
+            integration: bambuddy
+            domain: sensor
+            device_class: enum
+get_k_profiles:
+  fields:
+    entity_id:
+      required: true
+      selector:
+        entity:
+          filter:
+            integration: bambuddy
+            domain: sensor
+get_filaments:
+  fields:
+    entity_id:
+      required: true
+      selector:
+        entity:
+          filter:
+            integration: bambuddy
+            domain: sensor
+reset_slot:
+  fields:
+    entity_id:
+      required: true
+      selector:
+        entity:
+          filter:
+            integration: bambuddy
+            domain: sensor
+refresh_rfid:
+  fields:
+    entity_id:
+      required: true
+      selector:
+        entity:
+          filter:
+            integration: bambuddy
+            domain: sensor
+answer_hms:
+  fields:
+    device_id:
+      required: true
+      selector:
+        device:
+          filter:
+            integration: bambuddy
+          # Printers only: AMS units and BamBuddy itself have no enum sensor.
+          entity:
+            integration: bambuddy
+            domain: sensor
+            device_class: enum
+    code:
+      required: true
+      example: "0700_2000_0002_0012"
+      selector:
+        text:
+    action:
+      required: true
+      example: "RESUME_PRINTING_PROBELM_SOLVED"
+      selector:
+        select:
+          custom_value: true
+          mode: dropdown
+          options:
+            - "RESUME_PRINTING"
+            - "RESUME_PRINTING_DEFECTS"
+            - "RESUME_PRINTING_PROBELM_SOLVED"
+            - "PROBLEM_SOLVED_RESUME"
+            - "FILAMENT_LOAD_RESUME"
+            - "PROCEED"
+            - "DBL_CHECK_RESUME"
+            - "STOP_PRINTING"
+            - "IGNORE_RESUME"
+            - "IGNORE_NO_REMINDER_NEXT_TIME"
+            - "DONT_REMIND_NEXT_TIME"
+            - "NO_REMINDER_NEXT_TIME"
+            - "FILAMENT_EXTRUDED"
+            - "DBL_CHECK_DONE"
+            - "RETRY_FILAMENT_EXTRUDED"
+            - "CONTINUE"
+            - "RETRY_PROBLEM_SOLVED"
+            - "DBL_CHECK_RETRY"
+            - "ABORT"
+            - "OK_BUTTON"
+            - "DBL_CHECK_OK"
+            - "REFRESH_NOZZLE"
+            - "TURN_OFF_FIRE_ALARM"
+            - "STOP_DRYING"
+            - "DISABLE_PURIFICATION"
+skip_objects:
+  fields:
+    device_id:
+      required: true
+      selector:
+        device:
+          filter:
+            integration: bambuddy
+          # Printers only: AMS units and BamBuddy itself have no enum sensor.
+          entity:
+            integration: bambuddy
+            domain: sensor
+            device_class: enum
+    objects:
+      required: true
+      example: "[87, 121]"
+      selector:
+        object:
+set_filament:
+  fields:
+    entity_id:
+      required: true
+      selector:
+        entity:
+          filter:
+            integration: bambuddy
+            domain: sensor
+    filament:
+      selector:
+        select:
+          mode: dropdown
+          options:
+            - label: "Bambu PLA Basic"
+              value: "GFA00"
+            - label: "Bambu PLA Dynamic"
+              value: "GFA13"
+            - label: "Bambu PLA Galaxy"
+              value: "GFA15"
+            - label: "Bambu PLA Glow"
+              value: "GFA12"
+            - label: "Bambu PLA Lite"
+              value: "GFA18"
+            - label: "Bambu PLA Marble"
+              value: "GFA07"
+            - label: "Bambu PLA Matte"
+              value: "GFA01"
+            - label: "Bambu PLA Metal"
+              value: "GFA02"
+            - label: "Bambu PLA Pure"
+              value: "GFA19"
+            - label: "Bambu PLA Silk"
+              value: "GFA05"
+            - label: "Bambu PLA Silk+"
+              value: "GFA06"
+            - label: "Bambu PLA Sparkle"
+              value: "GFA08"
+            - label: "Bambu PLA Tough"
+              value: "GFA09"
+            - label: "Bambu PLA Tough+"
+              value: "GFA10"
+            - label: "Bambu PLA Translucent"
+              value: "GFA17"
+            - label: "Bambu PLA Wood"
+              value: "GFA16"
+            - label: "Bambu PETG Basic"
+              value: "GFG00"
+            - label: "Bambu PETG HF"
+              value: "GFG02"
+            - label: "Bambu PETG Matte"
+              value: "GFG03"
+            - label: "Bambu PETG Translucent"
+              value: "GFG01"
+            - label: "Bambu ABS"
+              value: "GFB00"
+            - label: "Bambu Support for ABS"
+              value: "GFS06"
+            - label: "Bambu TPU 85A"
+              value: "GFU04"
+            - label: "Bambu TPU 90A"
+              value: "GFU03"
+            - label: "Bambu TPU 95A"
+              value: "GFU01"
+            - label: "Bambu TPU 95A HF"
+              value: "GFU00"
+            - label: "Bambu ABS-GF"
+              value: "GFB50"
+            - label: "Bambu ASA"
+              value: "GFB01"
+            - label: "Bambu ASA-Aero"
+              value: "GFB02"
+            - label: "Bambu ASA-CF"
+              value: "GFB51"
+            - label: "Bambu PA-CF"
+              value: "GFN03"
+            - label: "Bambu PA6-CF"
+              value: "GFN05"
+            - label: "Bambu PA6-GF"
+              value: "GFN08"
+            - label: "Bambu PAHT-CF"
+              value: "GFN04"
+            - label: "Bambu PC"
+              value: "GFC00"
+            - label: "Bambu PC FR"
+              value: "GFC01"
+            - label: "Bambu PET-CF"
+              value: "GFT01"
+            - label: "Bambu PETG-CF"
+              value: "GFG50"
+            - label: "Bambu PLA Aero"
+              value: "GFA11"
+            - label: "Bambu PLA-CF"
+              value: "GFA50"
+            - label: "Bambu PPA-CF"
+              value: "GFN06"
+            - label: "Bambu PPS-CF"
+              value: "GFT02"
+            - label: "Bambu PVA"
+              value: "GFS04"
+            - label: "Bambu Support For PA/PET"
+              value: "GFS03"
+            - label: "Bambu Support For PLA"
+              value: "GFS02"
+            - label: "Bambu Support For PLA/PETG"
+              value: "GFS05"
+            - label: "Bambu Support G"
+              value: "GFS01"
+            - label: "Bambu Support W"
+              value: "GFS00"
+            - label: "Bambu TPU for AMS"
+              value: "GFU02"
+            - label: "Generic PLA"
+              value: "GFL99"
+            - label: "Generic PLA High Speed"
+              value: "GFL95"
+            - label: "Generic PLA Silk"
+              value: "GFL96"
+            - label: "Generic PETG"
+              value: "GFG99"
+            - label: "Generic PETG HF"
+              value: "GFG96"
+            - label: "Generic ABS"
+              value: "GFB99"
+            - label: "Generic TPU"
+              value: "GFU99"
+            - label: "Generic ASA"
+              value: "GFB98"
+            - label: "Generic BVOH"
+              value: "GFS97"
+            - label: "Generic EVA"
+              value: "GFR99"
+            - label: "Generic HIPS"
+              value: "GFS98"
+            - label: "Generic PA"
+              value: "GFN99"
+            - label: "Generic PA-CF"
+              value: "GFN98"
+            - label: "Generic PC"
+              value: "GFC99"
+            - label: "Generic PCTG"
+              value: "GFG97"
+            - label: "Generic PE"
+              value: "GFP99"
+            - label: "Generic PE-CF"
+              value: "GFP98"
+            - label: "Generic PETG-CF"
+              value: "GFG98"
+            - label: "Generic PHA"
+              value: "GFR98"
+            - label: "Generic PLA-CF"
+              value: "GFL98"
+            - label: "Generic PP"
+              value: "GFP97"
+            - label: "Generic PP-CF"
+              value: "GFP96"
+            - label: "Generic PP-GF"
+              value: "GFP95"
+            - label: "Generic PPA-CF"
+              value: "GFN97"
+            - label: "Generic PPA-GF"
+              value: "GFN96"
+            - label: "Generic PPS"
+              value: "GFT97"
+            - label: "Generic PPS-CF"
+              value: "GFT98"
+            - label: "Generic PVA"
+              value: "GFS99"
+            - label: "Generic TPU for AMS"
+              value: "GFU98"
+            - label: "PolyLite PLA"
+              value: "GFL00"
+            - label: "PolyTerra PLA"
+              value: "GFL01"
+            - label: "Fiberon PETG-ESD"
+              value: "GFL06"
+            - label: "PolyLite PETG"
+              value: "GFG60"
+            - label: "PolyLite ABS"
+              value: "GFB60"
+            - label: "Fiberon PA12-CF"
+              value: "GFL52"
+            - label: "Fiberon PA6-CF"
+              value: "GFL50"
+            - label: "Fiberon PA6-GF"
+              value: "GFL51"
+            - label: "Fiberon PA612-CF"
+              value: "GFL53"
+            - label: "Fiberon PET-CF"
+              value: "GFL54"
+            - label: "Fiberon PETG-rCF"
+              value: "GFL55"
+            - label: "PolyLite ASA"
+              value: "GFB61"
+            - label: "Overture Matte PLA"
+              value: "GFL05"
+            - label: "Overture PLA"
+              value: "GFL04"
+            - label: "SUNLU PLA Marble"
+              value: "GFSNL06"
+            - label: "SUNLU PLA Matte"
+              value: "GFSNL02"
+            - label: "SUNLU PLA+"
+              value: "GFSNL03"
+            - label: "SUNLU PLA+ 2.0"
+              value: "GFSNL04"
+            - label: "SUNLU Silk PLA+"
+              value: "GFSNL05"
+            - label: "SUNLU Wood PLA"
+              value: "GFSNL07"
+            - label: "SUNLU PETG"
+              value: "GFSNL08"
+            - label: "eSUN PLA+"
+              value: "GFL03"
+    color:
+      selector:
+        color_rgb:
+    k_profile:
+      selector:
+        number:
+          min: -1
+          max: 999
+          mode: box
+run_diagnostic:
+  fields:
+    device_id:
+      required: true
+      selector:
+        device:
+          filter:
+            integration: bambuddy
+          # Printers only: AMS units and BamBuddy itself have no enum sensor.
+          entity:
+            integration: bambuddy
+            domain: sensor
+            device_class: enum
+mark_maintenance_done:
+  fields:
+    device_id:
+      required: true
+      selector:
+        device:
+          filter:
+            integration: bambuddy
+          # Printers only: AMS units and BamBuddy itself have no enum sensor.
+          entity:
+            integration: bambuddy
+            domain: sensor
+            device_class: enum
+    task_id:
+      required: true
+      example: 17
+      selector:
+        number:
+          min: 1
+          max: 1000000
+          mode: box

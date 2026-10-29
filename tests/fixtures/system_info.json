@@ -1,0 +1,79 @@
+{
+  "app": {
+    "version": "1.2.5.7",
+    "base_dir": "/app",
+    "archive_dir": "/app/data/archive"
+  },
+  "database": {
+    "engine": "SQLite",
+    "version": "SQLite 3.46.1",
+    "archives": 812,
+    "archives_completed": 741,
+    "archives_failed": 52,
+    "archives_printing": 1,
+    "printers": 3,
+    "filaments": 27,
+    "projects": 4,
+    "smart_plugs": 2,
+    "total_print_time_seconds": 3456789,
+    "total_print_time_formatted": "40d 13m",
+    "total_filament_grams": 51234.7,
+    "total_filament_kg": 51.23
+  },
+  "printers": {
+    "total": 3,
+    "connected": 2,
+    "connected_list": [
+      {
+        "id": 1,
+        "name": "X1C",
+        "state": "RUNNING",
+        "model": "X1C"
+      },
+      {
+        "id": 2,
+        "name": "A1 mini",
+        "state": "IDLE",
+        "model": "A1 Mini"
+      }
+    ]
+  },
+  "storage": {
+    "archive_size_bytes": 9876543210,
+    "archive_size_formatted": "9.2 GB",
+    "database_size_bytes": 52428800,
+    "database_size_formatted": "50.0 MB",
+    "disk_total_bytes": 250000000000,
+    "disk_total_formatted": "232.8 GB",
+    "disk_used_bytes": 90000000000,
+    "disk_used_formatted": "83.8 GB",
+    "disk_free_bytes": 160000000000,
+    "disk_free_formatted": "149.0 GB",
+    "disk_percent_used": 36.0
+  },
+  "system": {
+    "platform": "Linux",
+    "platform_release": "6.8.0",
+    "platform_version": "#1 SMP",
+    "architecture": "x86_64",
+    "hostname": "bambuddy",
+    "python_version": "3.13.1",
+    "uptime_seconds": 86400.5,
+    "uptime_formatted": "1d",
+    "boot_time": "2026-10-15T08:00:00+00:00"
+  },
+  "memory": {
+    "total_bytes": 8000000000,
+    "total_formatted": "7.5 GB",
+    "available_bytes": 5000000000,
+    "available_formatted": "4.7 GB",
+    "used_bytes": 3000000000,
+    "used_formatted": "2.8 GB",
+    "percent_used": 37.5
+  },
+  "cpu": {
+    "count": 4,
+    "count_logical": 4,
+    "percent": 7.5
+  }
+}

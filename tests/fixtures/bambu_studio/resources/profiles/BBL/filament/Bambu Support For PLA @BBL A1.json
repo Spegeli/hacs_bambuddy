@@ -1,0 +1,10 @@
+{
+    "type": "filament",
+    "name": "Bambu Support For PLA @BBL A1",
+    "inherits": "Bambu Support For PLA @base",
+    "instantiation": "true",
+    "setting_id": "GFSS02_01",
+    "compatible_printers": [
+        "Bambu Lab A1 0.4 nozzle"
+    ]
+}

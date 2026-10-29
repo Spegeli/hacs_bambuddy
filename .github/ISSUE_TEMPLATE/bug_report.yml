@@ -1,0 +1,184 @@
+name: Bug Report
+description: Report a bug or unexpected behavior
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to report a bug.
+
+        The more precise the versions and logs you give, the faster this gets fixed.
+
+  - type: checkboxes
+    id: preflight
+    attributes:
+      label: Before you start
+      options:
+        - label: I read the [Troubleshooting](https://github.com/Spegeli/hacs_bambuddy#-troubleshooting) section.
+          required: true
+        - label: I searched [existing issues](https://github.com/Spegeli/hacs_bambuddy/issues?q=is%3Aissue) and this is not a duplicate.
+          required: true
+        - label: I am running the [latest release](https://github.com/Spegeli/hacs_bambuddy/releases) of this integration.
+          required: true
+        - label: The problem lies in this integration, not in BamBuddy itself — those go to [BamBuddy's issue tracker](https://github.com/maziggy/bambuddy/issues).
+          required: true
+
+  - type: dropdown
+    id: area
+    attributes:
+      label: Affected area
+      options:
+        - Setup (address, API key)
+        - Printers (add, remove)
+        - Live updates
+        - Printer sensors and binary sensors
+        - AMS units and filament
+        - Camera or cover image
+        - Print controls (buttons, print speed, chamber light, temperatures, fans)
+        - Actions
+        - Smart plugs
+        - Maintenance
+        - Dashboard card
+        - BamBuddy instance sensors and updates
+        - Documentation
+        - Other
+    validations:
+      required: true
+
+  - type: input
+    id: integration_version
+    attributes:
+      label: Integration version
+      description: HACS → BamBuddy, or the `version` field in `manifest.json`.
+      placeholder: e.g. 2.0.0
+    validations:
+      required: true
+
+  - type: dropdown
+    id: install_method
+    attributes:
+      label: Installation method
+      options:
+        - HACS
+        - Manual
+    validations:
+      required: true
+
+  - type: input
+    id: ha_version
+    attributes:
+      label: Home Assistant version
+      description: Settings → About.
+      placeholder: e.g. 2026.10.2
+    validations:
+      required: true
+
+  - type: input
+    id: bambuddy_version
+    attributes:
+      label: BamBuddy version
+      description: Settings → Devices & services → BamBuddy → the BamBuddy device (*Version …*), or the foot of BamBuddy's own menu.
+      placeholder: e.g. 1.2.5.7
+    validations:
+      required: true
+
+  - type: input
+    id: printer_model
+    attributes:
+      label: Printer model
+      description: Which printer shows the problem? Leave empty if it does not concern a printer.
+      placeholder: e.g. A1 Mini, P1S, X1C
+    validations:
+      required: false
+
+  - type: dropdown
+    id: bambuddy_auth
+    attributes:
+      label: Authentication in BamBuddy
+      description: Is authentication on in BamBuddy (Settings → Authentication)? The integration needs an API key with Read Status, Control Printer and Manage Maintenance either way — see the README's [Create an API key](https://github.com/Spegeli/hacs_bambuddy#create-an-api-key).
+      options:
+        - "On"
+        - "Off"
+        - Not sure
+    validations:
+      required: false
+
+  - type: textarea
+    id: description
+    attributes:
+      label: What happened?
+      description: Describe the actual behavior. Include the exact value an entity shows, if a value is wrong.
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: What did you expect instead?
+      description: If a value is wrong, give the correct one and where you read it — BamBuddy's interface or the printer's display.
+    validations:
+      required: true
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. Go to...
+        2. Click on...
+        3. See error
+    validations:
+      required: false
+
+  - type: textarea
+    id: card_config
+    attributes:
+      label: Card configuration
+      description: For a card problem. Edit the card, choose **Show code editor** and paste the card's YAML here. Say which browser, or the companion app, you use.
+      render: yaml
+    validations:
+      required: false
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant log output
+      description: |
+        Settings → System → Logs → filter for `bambuddy`.
+        For more detail: on the BamBuddy integration page, ⋮ → **Enable debug logging**, reproduce the problem, then disable it — the log downloads.
+        Or add this to `configuration.yaml`, restart, and reproduce:
+
+        ```yaml
+        logger:
+          logs:
+            custom_components.bambuddy: debug
+        ```
+
+        For a card problem, also the browser's console: open its developer tools (F12), reload the page and copy what **Console** shows.
+      render: text
+    validations:
+      required: false
+
+  - type: textarea
+    id: diagnostics
+    attributes:
+      label: Diagnostics
+      description: Settings → Devices & services → BamBuddy → ⋮ on your BamBuddy entry (named `BamBuddy (<host>)` unless you renamed it) → Download diagnostics. The API key, addresses and serial numbers are left out automatically; the names of printers, plugs and print jobs stay in. Use the entry's, not a device's (a device's file is named after the device, serial number included). If the field refuses it as too long, leave it empty and attach the file, zipped, to a comment once the issue is open.
+      render: json
+    validations:
+      required: false
+
+  - type: textarea
+    id: screenshots
+    attributes:
+      label: Screenshots
+      description: For a card problem, drop a screenshot of the card here. Stop the live view first — it shows what your camera sees.
+    validations:
+      required: false
+
+  - type: markdown
+    attributes:
+      value: |
+        > [!WARNING]
+        > **Never paste your BamBuddy API key.** The integration keeps it, the camera's stream token and the printers' access codes out of its log and its diagnostics; a screenshot or another integration's log may not. Its log names your printers and plugs, and may name an AMS unit's serial number.
+        > If you posted a key by accident, delete it in BamBuddy (**Settings → API Keys**) at once and create a new one.

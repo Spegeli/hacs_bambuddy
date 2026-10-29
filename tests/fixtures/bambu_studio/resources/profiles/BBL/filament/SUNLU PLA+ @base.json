@@ -1,0 +1,10 @@
+{
+    "type": "filament",
+    "name": "SUNLU PLA+ @base",
+    "inherits": "fdm_filament_pla",
+    "instantiation": "false",
+    "filament_id": "GFSNL03",
+    "filament_vendor": [
+        "SUNLU"
+    ]
+}

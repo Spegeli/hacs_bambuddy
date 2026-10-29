@@ -1,0 +1,72 @@
+{
+    "name": "Bambulab",
+    "version": "01.00.00.01",
+    "filament_list": [
+        {
+            "name": "fdm_filament_pla",
+            "sub_path": "filament/fdm_filament_pla.json"
+        },
+        {
+            "name": "Bambu PLA Basic @base",
+            "sub_path": "filament/Bambu PLA Basic @base.json"
+        },
+        {
+            "name": "Bambu PLA Basic @BBL A1",
+            "sub_path": "filament/Bambu PLA Basic @BBL A1.json"
+        },
+        {
+            "name": "Bambu PLA Basic @BBL X1C",
+            "sub_path": "filament/Bambu PLA Basic @BBL X1C.json"
+        },
+        {
+            "name": "Generic PLA",
+            "sub_path": "filament/Generic PLA.json"
+        },
+        {
+            "name": "Bambu Support For PLA @base",
+            "sub_path": "filament/Bambu Support For PLA @base.json"
+        },
+        {
+            "name": "Bambu Support For PLA @BBL A1",
+            "sub_path": "filament/Bambu Support For PLA @BBL A1.json"
+        },
+        {
+            "name": "SUNLU PLA+ @base",
+            "sub_path": "filament/SUNLU PLA+ @base.json"
+        },
+        {
+            "name": "SUNLU PLA+ @BBL A1",
+            "sub_path": "filament/SUNLU PLA+ @BBL A1.json"
+        },
+        {
+            "name": "Bambu PET-CF @BBL H2D",
+            "sub_path": "filament/Bambu PET-CF @BBL H2D.json"
+        },
+        {
+            "name": "Bambu ABS @BBL H2D",
+            "sub_path": "filament/Bambu ABS @BBL H2D.json"
+        }
+    ],
+    "machine_list": [
+        {
+            "name": "fdm_bbl_3dp_002_common",
+            "sub_path": "machine/fdm_bbl_3dp_002_common.json"
+        },
+        {
+            "name": "Bambu Lab H2D 0.4 nozzle",
+            "sub_path": "machine/Bambu Lab H2D 0.4 nozzle.json"
+        },
+        {
+            "name": "Bambu Lab A1 0.4 nozzle",
+            "sub_path": "machine/Bambu Lab A1 0.4 nozzle.json"
+        },
+        {
+            "name": "Bambu Lab A1 mini 0.4 nozzle",
+            "sub_path": "machine/Bambu Lab A1 mini 0.4 nozzle.json"
+        },
+        {
+            "name": "Bambu Lab X1 Carbon 0.4 nozzle",
+            "sub_path": "machine/Bambu Lab X1 Carbon 0.4 nozzle.json"
+        }
+    ]
+}

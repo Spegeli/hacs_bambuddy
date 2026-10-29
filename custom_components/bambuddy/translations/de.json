@@ -2,55 +2,1288 @@
   "config": {
     "step": {
       "user": {
-        "title": "BamBuddy Instanz hinzufügen",
+        "title": "BamBuddy verbinden",
+        "description": "Home Assistant liest deine Drucker über deinen BamBuddy-Server aus und schickt deine Befehle an ihn.",
         "data": {
-          "host": "Host / IP-Adresse",
-          "port": "Port",
+          "url": "BamBuddy-Adresse",
+          "api_key": "API-Schlüssel",
+          "verify_ssl": "SSL-Zertifikat prüfen"
+        },
+        "data_description": {
+          "url": "Die Adresse, mit der du BamBuddy im Browser öffnest, zum Beispiel `192.168.1.20:8000` oder `{example_url}`.",
+          "api_key": "Erstelle ihn in BamBuddy unter Einstellungen → API-Schlüssel, mit allen drei Berechtigungen: „Status lesen“, „Drucker steuern“ und „Wartung verwalten“.",
+          "verify_ssl": "Nur für https-Adressen wichtig. Schalte es aus, wenn BamBuddy ein selbst signiertes Zertifikat nutzt."
+        }
+      },
+      "printers": {
+        "title": "Drucker auswählen",
+        "description": "Diese Drucker sind in BamBuddy eingerichtet. Jeder ausgewählte Drucker wird ein Gerät in Home Assistant. Über „Konfigurieren“ kannst du später Drucker hinzufügen oder entfernen. Die Namen kommen aus BamBuddy – benenne Drucker dort um.",
+        "data": {
+          "printers": "Drucker"
+        }
+      },
+      "printers_some_elsewhere": {
+        "title": "Drucker auswählen",
+        "description": "Diese Drucker sind in BamBuddy eingerichtet. Jeder ausgewählte Drucker wird ein Gerät in Home Assistant. Über „Konfigurieren“ kannst du später Drucker hinzufügen oder entfernen. Die Namen kommen aus BamBuddy – benenne Drucker dort um. Nicht aufgeführt sind die Drucker dieses BamBuddy-Servers, die schon ein anderer BamBuddy-Eintrag hat. Schon eingerichtet über: {entries}.",
+        "data": {
+          "printers": "Drucker"
+        }
+      },
+      "reauth_confirm": {
+        "title": "Neuer BamBuddy-API-Schlüssel nötig",
+        "description": "BamBuddy unter {url} akzeptiert den gespeicherten API-Schlüssel nicht mehr: Er wurde gelöscht, ist abgelaufen oder ausgeschaltet. Deine Geräte, Entitäten und ihr Verlauf bleiben erhalten.\n\nSo erstellst du einen neuen API-Schlüssel:\n\n1. Öffne in BamBuddy Einstellungen → API-Schlüssel und wähle „Schlüssel erstellen“.\n2. Gib ihm einen Namen, zum Beispiel „Home Assistant“, und hake „Status lesen“, „Drucker steuern“ und „Wartung verwalten“ an.\n3. Kopiere den Schlüssel und füge ihn unten ein. BamBuddy zeigt ihn nur einmal an.",
+        "data": {
           "api_key": "API-Schlüssel"
+        },
+        "data_description": {
+          "api_key": "Lass das Feld leer, um den gespeicherten Schlüssel erneut zu prüfen – nach einer Änderung in BamBuddy, etwa wenn du seinem Besitzer ein Recht gegeben hast."
+        }
+      },
+      "reauth_scopes": {
+        "title": "Neuer BamBuddy-API-Schlüssel nötig",
+        "description": "BamBuddy unter {url} kennt den gespeicherten API-Schlüssel, aber ihm fehlen Berechtigungen, die diese Integration braucht:\n\n- „Status lesen“ {stored_read_status}\n- „Drucker steuern“ {stored_control_printer}\n- „Wartung verwalten“ {stored_manage_maintenance}\n\nEinem bestehenden Schlüssel kann BamBuddy keine Berechtigungen hinzufügen. Hast du eine mit ✗ in BamBuddy angehakt, darf der Besitzer des Schlüssels das nicht: Gib ihm das Recht, oder erstelle den Schlüssel als Benutzer, der es hat. Deine Geräte, Entitäten und ihr Verlauf bleiben erhalten.\n\nSo erstellst du einen neuen API-Schlüssel:\n\n1. Öffne in BamBuddy Einstellungen → API-Schlüssel und wähle „Schlüssel erstellen“.\n2. Gib ihm einen Namen, zum Beispiel „Home Assistant“, und hake „Status lesen“, „Drucker steuern“ und „Wartung verwalten“ an.\n3. Kopiere den Schlüssel und füge ihn unten ein. BamBuddy zeigt ihn nur einmal an.",
+        "data": {
+          "api_key": "API-Schlüssel"
+        },
+        "data_description": {
+          "api_key": "Lass das Feld leer, um den gespeicherten Schlüssel erneut zu prüfen – nach einer Änderung in BamBuddy, etwa wenn du seinem Besitzer ein Recht gegeben hast."
+        }
+      },
+      "reauth_owner": {
+        "title": "Neuer BamBuddy-API-Schlüssel nötig",
+        "description": "BamBuddy unter {url} kennt den gespeicherten API-Schlüssel, aber sein Besitzer ist in BamBuddy deaktiviert oder gelöscht. Deine Geräte, Entitäten und ihr Verlauf bleiben erhalten.\n\nSo erstellst du einen neuen API-Schlüssel:\n\n1. Melde dich in BamBuddy als aktiver Benutzer an, öffne Einstellungen → API-Schlüssel und wähle „Schlüssel erstellen“.\n2. Gib ihm einen Namen, zum Beispiel „Home Assistant“, und hake „Status lesen“, „Drucker steuern“ und „Wartung verwalten“ an.\n3. Kopiere den Schlüssel und füge ihn unten ein. BamBuddy zeigt ihn nur einmal an.",
+        "data": {
+          "api_key": "API-Schlüssel"
+        },
+        "data_description": {
+          "api_key": "Lass das Feld leer, um den gespeicherten Schlüssel erneut zu prüfen – nach einer Änderung in BamBuddy, etwa wenn du seinem Besitzer ein Recht gegeben hast."
+        }
+      },
+      "reconfigure": {
+        "title": "Verbindung ändern",
+        "description": "Ändere die Adresse oder den API-Schlüssel deines BamBuddy-Servers. Bei einer neuen Adresse siehst du danach, welche Drucker bleiben und welche gehen, und bestätigst den Wechsel.",
+        "data": {
+          "url": "BamBuddy-Adresse",
+          "api_key": "Neuer API-Schlüssel",
+          "verify_ssl": "SSL-Zertifikat prüfen"
+        },
+        "data_description": {
+          "url": "Die Adresse, mit der du BamBuddy im Browser öffnest, zum Beispiel `192.168.1.20:8000` oder `{example_url}`.",
+          "api_key": "Lass das Feld leer, um den aktuellen API-Schlüssel zu behalten. Ein neuer braucht alle drei Berechtigungen: „Status lesen“, „Drucker steuern“ und „Wartung verwalten“.",
+          "verify_ssl": "Nur für https-Adressen wichtig. Schalte es aus, wenn BamBuddy ein selbst signiertes Zertifikat nutzt."
+        }
+      },
+      "new_address": {
+        "title": "Neue Adresse",
+        "description": "Unter {url} antwortet ein BamBuddy-Server.\n\n**Gefunden** – bleiben mit ihren AMS-Einheiten, Entitäten und ihrem Verlauf:\n{kept}\n\n**Nicht gefunden** – werden mit ihren AMS-Einheiten und Steckdosen aus Home Assistant entfernt:\n{missing}",
+        "data": {
+          "bambuddy": "Welcher BamBuddy-Server ist das?",
+          "add_printers": "Drucker von diesem BamBuddy-Server hinzufügen"
+        },
+        "data_description": {
+          "add_printers": "Jeder wird ein Gerät in Home Assistant."
+        }
+      },
+      "new_address_all": {
+        "title": "Neue Adresse",
+        "description": "Unter {url} antwortet ein BamBuddy-Server. Jeder Drucker dieses Eintrags wurde dort über seine Seriennummer gefunden und behält Gerät und Verlauf.",
+        "data": {
+          "bambuddy": "Welcher BamBuddy-Server ist das?",
+          "add_printers": "Drucker von diesem BamBuddy-Server hinzufügen"
+        },
+        "data_description": {
+          "add_printers": "Jeder wird ein Gerät in Home Assistant."
+        }
+      },
+      "other_bambuddy": {
+        "title": "Ein anderer BamBuddy-Server?",
+        "description": "Unter {url} antwortet ein BamBuddy-Server, auf dem keiner deiner bisherigen Drucker eingerichtet ist – meist ist das ein anderer Server. Diese Drucker werden mit ihren AMS-Einheiten und Steckdosen aus Home Assistant entfernt:\n{missing}",
+        "data": {
+          "bambuddy": "Welcher BamBuddy-Server ist das?",
+          "add_printers": "Drucker von diesem BamBuddy-Server hinzufügen"
+        },
+        "data_description": {
+          "add_printers": "Jeder wird ein Gerät in Home Assistant."
+        }
+      },
+      "confirm_same": {
+        "title": "Wechsel bestätigen",
+        "description": "Neue Adresse: {url}\n\n**Behalten:**\n{kept}\n\n**Entfernt** (mit AMS-Einheiten und Steckdosen):\n{removed}\n\n**Hinzugefügt:**\n{added}\n\nMit „Wechseln“ übernimmst du das; schließt du den Dialog, bleibt alles, wie es ist.",
+        "submit": "Wechseln"
+      },
+      "confirm_other": {
+        "title": "Wechsel bestätigen",
+        "description": "Neue Adresse: {url}\n\nEin anderer BamBuddy-Server: Der Verlauf der Server-Werte (Druckstatistik, Speicherplatz …) wird gelöscht. Der Verlauf der Drucker unter „Behalten“ bleibt.\n\n**Steckdosen** der Drucker unter „Behalten“ kommen vom neuen Server, jede als neues Gerät: Bereich und Name, die du einem Steckdosen-Gerät gegeben hast, beginnen neu. Eine Steckdose, die dieselbe Tasmota, Home-Assistant-Entität oder dasselbe MQTT-Topic mit demselben Pfad nutzt wie bisher, behält ihre Entitäts-IDs und ihren Verlauf; die anderen bekommen neue. Steckdosen, die der neue Server für sie nicht hat, werden entfernt.\n\n**Behalten:**\n{kept}\n\n**Entfernt** (mit AMS-Einheiten und Steckdosen):\n{removed}\n\n**Hinzugefügt:**\n{added}\n\nMit „Wechseln“ übernimmst du das; schließt du den Dialog, bleibt alles, wie es ist.",
+        "submit": "Wechseln"
+      },
+      "new_address_no_printers": {
+        "title": "Neue Adresse",
+        "description": "Unter {url} antwortet ein BamBuddy-Server. Dieser Eintrag hat noch keine Drucker.",
+        "data": {
+          "bambuddy": "Welcher BamBuddy-Server ist das?",
+          "add_printers": "Drucker von diesem BamBuddy-Server hinzufügen"
+        },
+        "data_description": {
+          "add_printers": "Jeder wird ein Gerät in Home Assistant."
         }
       }
     },
     "error": {
-      "cannot_connect": "Verbindung zu BamBuddy fehlgeschlagen. Host und Port prüfen.",
-      "invalid_auth": "Ungültiger API-Schlüssel."
+      "cannot_connect": "BamBuddy antwortet unter dieser Adresse nicht, oder es ist nicht die Adresse von BamBuddy. Prüfe die Adresse samt Port (meist 8000) und ob BamBuddy läuft.",
+      "invalid_auth": "BamBuddy nimmt diesen API-Schlüssel nicht an. Prüfe, ob du ihn vollständig eingefügt hast. BamBuddy zeigt einen Schlüssel nur einmal: Hast du ihn nicht mehr, erstelle einen neuen.",
+      "missing_scopes": "Dem eingegebenen API-Schlüssel fehlen Berechtigungen: „Status lesen“ {read_status}, „Drucker steuern“ {control_printer}, „Wartung verwalten“ {manage_maintenance}. Einem bestehenden Schlüssel kann BamBuddy keine Berechtigungen hinzufügen: Erstelle einen neuen mit allen dreien. Hast du eine mit ✗ in BamBuddy angehakt, darf der Besitzer des Schlüssels das nicht: Gib ihm das Recht, oder erstelle den Schlüssel als Benutzer, der es hat.",
+      "key_owner_inactive": "BamBuddy kennt diesen API-Schlüssel, aber sein Besitzer ist deaktiviert oder gelöscht. Melde dich in BamBuddy als aktiver Benutzer an und erstelle einen neuen Schlüssel mit „Status lesen“, „Drucker steuern“ und „Wartung verwalten“.",
+      "bambuddy_refused": "BamBuddy hat eine Abfrage abgelehnt, obwohl der API-Schlüssel jede Berechtigung hat, die die Integration braucht: {error}",
+      "stored_key_refused": "BamBuddy akzeptiert den gespeicherten API-Schlüssel nicht mehr. Gib einen neuen ein.",
+      "stored_key_refused_at_address": "Der BamBuddy-Server unter dieser Adresse nimmt den gespeicherten API-Schlüssel nicht an. Gib einen Schlüssel dieses BamBuddy-Servers ein.",
+      "stored_key_scopes": "Dem gespeicherten API-Schlüssel fehlen Berechtigungen: „Status lesen“ {read_status}, „Drucker steuern“ {control_printer}, „Wartung verwalten“ {manage_maintenance}. Gib einen neuen mit allen dreien ein.",
+      "stored_key_owner": "Der Besitzer des gespeicherten API-Schlüssels ist in BamBuddy deaktiviert oder gelöscht. Gib einen neuen ein, erstellt als aktiver Benutzer.",
+      "invalid_url": "Das ist keine gültige Adresse. Gib sie zum Beispiel so ein: 192.168.1.20:8000 oder {example_url}.",
+      "not_bambuddy": "Unter dieser Adresse antwortet kein BamBuddy, oder er ist älter als Version {minimum}.",
+      "too_old": "BamBuddy {version} ist zu alt. Aktualisiere BamBuddy auf Version {minimum} oder neuer.",
+      "ssl_error": "Das Zertifikat von BamBuddy ließ sich nicht prüfen. Nutzt BamBuddy ein selbst signiertes Zertifikat, schalte „SSL-Zertifikat prüfen“ aus.",
+      "url_with_login": "Lass Benutzername und Passwort aus der Adresse weg: Die Integration meldet sich mit dem API-Schlüssel an.",
+      "address_in_use": "Diese Adresse gehört schon zum Eintrag „{entry}“.",
+      "printers_changed": "Die Drucker dieses Eintrags wurden inzwischen geändert (über „Konfigurieren“). Prüfe die Übersicht und wähle noch einmal „Wechseln“.",
+      "not_https": "BamBuddy nutzt unter dieser Adresse kein https. Gib sie mit http:// ein, etwa http://192.168.1.20:8000.",
+      "bad_answer": "BamBuddy hat mit einem Fehler geantwortet: {error}",
+      "error_not_bambuddy": "Unter dieser Adresse kam eine Fehlermeldung ({error}). Ist das die Adresse von BamBuddy?"
     },
     "abort": {
-      "already_configured": "Bereits konfiguriert."
-    }
-  },
-  "exceptions": {
-    "cannot_delete_instance": {
-      "message": "Die BamBuddy-Instanz kann hier nicht gelöscht werden. Um sie zu entfernen, lösche den gesamten Integrationseintrag über das Drei-Punkte-Menü der Integrationskarte."
+      "already_configured": "Dieser BamBuddy-Server ist bereits eingerichtet.\n\nDrucker hinzufügen und entfernen kannst du beim Eintrag über „Konfigurieren“.",
+      "address_in_use": "Diese Adresse gehört schon zum Eintrag „{entry}“. Es wurde nichts geändert.",
+      "reconfigure_entry_gone": "Dieser Eintrag wurde inzwischen gelöscht. Es wurde nichts geändert.",
+      "reauth_successful": "Der API-Schlüssel funktioniert. BamBuddy ist wieder verbunden.",
+      "reconfigure_successful": "Die Verbindung wurde gespeichert.",
+      "reconfigure_successful_moved": "Die Verbindung wurde geändert.",
+      "reconfigure_successful_other": "Die Verbindung wurde geändert. Die Werte des BamBuddy-Servers beginnen neu.",
+      "printers_in_use": "Jeder Drucker dieses BamBuddy-Servers ist schon eingerichtet, über {entries}. Um den BamBuddy-Server unter einer anderen Adresse zu erreichen, nutze bei diesem Eintrag ⋮ → Neu konfigurieren; Drucker fügst du dort über „Konfigurieren“ hinzu oder entfernst sie."
+    },
+    "create_entry": {
+      "no_printers": "In BamBuddy ist noch kein Drucker eingerichtet: Die Integration beginnt mit den Zahlen von BamBuddy selbst. Sobald in BamBuddy ein Drucker eingerichtet ist, ergänze ihn hier über „Konfigurieren“ → „Drucker verwalten“ → „Drucker hinzufügen“."
     }
   },
   "options": {
     "step": {
       "init": {
+        "title": "Konfigurieren",
+        "description": "Was möchtest du für „{name}“ ändern?",
+        "menu_options": {
+          "printers": "Drucker verwalten",
+          "settings": "Einstellungen"
+        }
+      },
+      "printers": {
+        "title": "Drucker verwalten",
+        "description": "Drucker von „{name}“ zu Home Assistant hinzufügen oder entfernen.",
         "menu_options": {
           "add_printer": "Drucker hinzufügen",
           "remove_printer": "Drucker entfernen"
         }
       },
+      "settings": {
+        "title": "Einstellungen",
+        "description": "Wie Home Assistant mit „{name}“ arbeitet.",
+        "menu_options": {
+          "live_updates": "Live-Updates"
+        }
+      },
       "add_printer": {
         "title": "Drucker hinzufügen",
-        "description": "Wähle einen Drucker aus, der über die ausgewählte BamBuddy Instanz hinzugefügt werden soll.",
+        "description": "Diese Drucker sind in „{name}“ eingerichtet, aber noch nicht in Home Assistant.",
         "data": {
-          "printer_id": "Drucker"
+          "printers": "Drucker"
+        }
+      },
+      "add_printer_some_elsewhere": {
+        "title": "Drucker hinzufügen",
+        "description": "Diese Drucker sind in „{name}“ eingerichtet, aber noch nicht in Home Assistant. Nicht aufgeführt sind die Drucker, die schon ein anderer BamBuddy-Eintrag hat. Schon eingerichtet über: {entries}.",
+        "data": {
+          "printers": "Drucker"
         }
       },
       "remove_printer": {
         "title": "Drucker entfernen",
+        "description": "Die ausgewählten Drucker von „{name}“ verschwinden mit ihren AMS-Einheiten, Steckdosen und Entitäten aus Home Assistant. In BamBuddy ändert sich nichts. Über „Drucker hinzufügen“ holst du sie später zurück.",
         "data": {
-          "printer_id": "Drucker"
+          "printers": "Drucker"
         }
+      },
+      "live_updates": {
+        "title": "Live-Updates",
+        "description": "BamBuddy meldet über seine Live-Verbindung (WebSocket) die meisten Änderungen eines Druckers sofort, etwa Status, Fortschritt, Temperaturen und Licht, und die Integration liest den Drucker dann gleich. Den Rest bringt die Abfrage alle 10 Sekunden; nach einem Befehl aus Home Assistant fragt die Integration zusätzlich nach 1,5 und 4 Sekunden nach.\n\n✓ Die Live-Verbindung steht.",
+        "data": {
+          "live_updates": "Live-Updates verwenden",
+          "push_gap": "Abfragen nach Live-Meldungen, pro Drucker höchstens"
+        },
+        "data_description": {
+          "live_updates": "Aus: keine Live-Verbindung und keine Verbindungsversuche – es bleiben die Abfrage alle 10 Sekunden und die Nachfragen nach einem Befehl.",
+          "push_gap": "Seltener schont BamBuddy und den Verlauf in Home Assistant, etwa bei vielen Druckern oder einem kleinen Rechner. Wirkt nur mit Live-Updates."
+        },
+        "submit": "Speichern"
+      },
+      "live_updates_tested": {
+        "title": "Live-Updates",
+        "description": "BamBuddy meldet über seine Live-Verbindung (WebSocket) die meisten Änderungen eines Druckers sofort, etwa Status, Fortschritt, Temperaturen und Licht, und die Integration liest den Drucker dann gleich. Den Rest bringt die Abfrage alle 10 Sekunden; nach einem Befehl aus Home Assistant fragt die Integration zusätzlich nach 1,5 und 4 Sekunden nach.\n\n✓ Ein Test eben hat die Live-Verbindung aufgebaut.",
+        "data": {
+          "live_updates": "Live-Updates verwenden",
+          "push_gap": "Abfragen nach Live-Meldungen, pro Drucker höchstens"
+        },
+        "data_description": {
+          "live_updates": "Aus: keine Live-Verbindung und keine Verbindungsversuche – es bleiben die Abfrage alle 10 Sekunden und die Nachfragen nach einem Befehl.",
+          "push_gap": "Seltener schont BamBuddy und den Verlauf in Home Assistant, etwa bei vielen Druckern oder einem kleinen Rechner. Wirkt nur mit Live-Updates."
+        },
+        "submit": "Speichern"
+      },
+      "live_updates_failed": {
+        "title": "Live-Updates",
+        "description": "BamBuddy meldet über seine Live-Verbindung (WebSocket) die meisten Änderungen eines Druckers sofort, etwa Status, Fortschritt, Temperaturen und Licht, und die Integration liest den Drucker dann gleich. Den Rest bringt die Abfrage alle 10 Sekunden; nach einem Befehl aus Home Assistant fragt die Integration zusätzlich nach 1,5 und 4 Sekunden nach.",
+        "data": {
+          "live_updates": "Live-Updates verwenden",
+          "push_gap": "Abfragen nach Live-Meldungen, pro Drucker höchstens"
+        },
+        "data_description": {
+          "live_updates": "Aus: keine Live-Verbindung und keine Verbindungsversuche – es bleiben die Abfrage alle 10 Sekunden und die Nachfragen nach einem Befehl.",
+          "push_gap": "Seltener schont BamBuddy und den Verlauf in Home Assistant, etwa bei vielen Druckern oder einem kleinen Rechner. Wirkt nur mit Live-Updates."
+        },
+        "submit": "Speichern"
       }
     },
     "error": {
-      "cannot_connect": "Verbindung zu BamBuddy nicht möglich."
+      "live_timeout": "Die Live-Verbindung kommt nicht zustande: keine Antwort innerhalb von 10 Sekunden.",
+      "live_failed": "Die Live-Verbindung kommt nicht zustande ({error})."
     },
     "abort": {
-      "cannot_connect": "Verbindung zu BamBuddy nicht möglich.",
-      "all_printers_added": "Alle verfügbaren Drucker wurden bereits hinzugefügt."
+      "cannot_connect": "„{name}“ ist nicht erreichbar. Versuche es später noch einmal.",
+      "no_printers": "In „{name}“ ist noch kein Drucker eingerichtet. Richte dort zuerst einen ein und füge ihn dann hier hinzu.",
+      "all_printers_added": "Jeder Drucker von „{name}“ ist schon hinzugefügt.",
+      "nothing_chosen": "Kein Drucker ausgewählt: Es wurde nichts geändert.",
+      "key_refused": "„{name}“ akzeptiert den API-Schlüssel nicht mehr. Gib einen neuen dort ein, wo Home Assistant danach fragt, unter Einstellungen → Geräte & Dienste.",
+      "printers_in_use": "Die Drucker von BamBuddy, die diesem Eintrag fehlen, sind schon über {entries} eingerichtet."
+    }
+  },
+  "entity": {
+    "binary_sensor": {
+      "bambuddy_online": {
+        "name": "Verbindung",
+        "state_attributes": {
+          "missing_printers": {
+            "name": "Drucker, die BamBuddy nicht führt"
+          }
+        }
+      },
+      "online": {
+        "name": "Online"
+      },
+      "door": {
+        "name": "Tür"
+      },
+      "plate_clear_needed": {
+        "name": "Druckplatte",
+        "state": {
+          "on": "Muss geräumt werden",
+          "off": "Bereit"
+        }
+      },
+      "sd_card": {
+        "name": "SD-Karte"
+      },
+      "usb_drive": {
+        "name": "USB-Stick"
+      },
+      "developer_mode": {
+        "name": "Entwicklermodus"
+      },
+      "wired_network": {
+        "name": "Kabelnetzwerk"
+      },
+      "timelapse": {
+        "name": "Zeitraffer"
+      },
+      "drying": {
+        "name": "Trocknung",
+        "state": {
+          "on": "Trocknet",
+          "off": "Trocknet nicht"
+        }
+      },
+      "plug": {
+        "name": "Strom"
+      }
+    },
+    "button": {
+      "pause": {
+        "name": "Druck pausieren"
+      },
+      "resume": {
+        "name": "Druck fortsetzen"
+      },
+      "stop": {
+        "name": "Druck stoppen"
+      },
+      "plate_cleared": {
+        "name": "Druckplatte geräumt"
+      },
+      "clear_hms_errors": {
+        "name": "HMS-Fehler löschen"
+      },
+      "refresh_status": {
+        "name": "Status aktualisieren"
+      },
+      "plug_run": {
+        "name": "Ausführen"
+      },
+      "auto_off_skip": {
+        "name": "Diesmal nicht ausschalten"
+      }
+    },
+    "camera": {
+      "camera": {
+        "name": "Kamera"
+      }
+    },
+    "fan": {
+      "part_cooling_fan": {
+        "name": "Bauteillüfter"
+      },
+      "auxiliary_fan": {
+        "name": "Zusatzlüfter"
+      },
+      "chamber_fan": {
+        "name": "Kammerlüfter"
+      },
+      "exhaust_fan": {
+        "name": "Abluftlüfter"
+      },
+      "left_auxiliary_fan": {
+        "name": "Linker Zusatzlüfter"
+      },
+      "right_auxiliary_fan": {
+        "name": "Rechter Zusatzlüfter"
+      },
+      "ventilation": {
+        "name": "Lüftung"
+      }
+    },
+    "image": {
+      "cover": {
+        "name": "Vorschaubild"
+      }
+    },
+    "light": {
+      "chamber_light": {
+        "name": "Kammerbeleuchtung"
+      },
+      "light": {
+        "name": "Licht"
+      }
+    },
+    "number": {
+      "nozzle_target_temperature": {
+        "name": "Düsen-Zieltemperatur"
+      },
+      "left_nozzle_target_temperature": {
+        "name": "Linke Düse: Zieltemperatur"
+      },
+      "right_nozzle_target_temperature": {
+        "name": "Rechte Düse: Zieltemperatur"
+      },
+      "bed_target_temperature": {
+        "name": "Bett-Zieltemperatur"
+      },
+      "chamber_target_temperature": {
+        "name": "Kammer-Zieltemperatur"
+      },
+      "camera_frame_rate": {
+        "name": "Kamera-Bildrate"
+      },
+      "auto_off_temperature": {
+        "name": "Ausschalten, wenn Düse unter"
+      }
+    },
+    "select": {
+      "print_speed": {
+        "name": "Druckgeschwindigkeit",
+        "state": {
+          "silent": "Leise (50 %)",
+          "standard": "Standard (100 %)",
+          "sport": "Sport (124 %)",
+          "ludicrous": "Ludicrous (166 %)"
+        }
+      },
+      "airduct_mode": {
+        "name": "Luftführung",
+        "state": {
+          "cooling": "Kühlen",
+          "heating": "Heizen",
+          "laser": "Lasermodus"
+        }
+      },
+      "active_nozzle": {
+        "name": "Aktive Düse",
+        "state": {
+          "left": "Links",
+          "right": "Rechts"
+        }
+      }
+    },
+    "sensor": {
+      "total_prints": {
+        "name": "Drucke gesamt"
+      },
+      "successful_prints": {
+        "name": "Erfolgreiche Drucke"
+      },
+      "failed_prints": {
+        "name": "Fehlgeschlagene Drucke"
+      },
+      "cancelled_prints": {
+        "name": "Abgebrochene Drucke"
+      },
+      "total_print_time": {
+        "name": "Druckzeit gesamt"
+      },
+      "total_filament_used": {
+        "name": "Filamentverbrauch gesamt"
+      },
+      "printers_online": {
+        "name": "Drucker online"
+      },
+      "printers_total": {
+        "name": "Drucker gesamt"
+      },
+      "disk_free": {
+        "name": "Freier Speicherplatz"
+      },
+      "disk_usage": {
+        "name": "Speicherbelegung"
+      },
+      "print_status": {
+        "name": "Druckstatus",
+        "state": {
+          "idle": "Bereit",
+          "preparing": "Vorbereitung",
+          "slicing": "Slicing",
+          "printing": "Druckt",
+          "paused": "Pausiert",
+          "finished": "Fertig",
+          "failed": "Fehlgeschlagen",
+          "offline": "Offline",
+          "unknown": "Unbekannt"
+        }
+      },
+      "print_stage": {
+        "name": "Druckphase",
+        "state": {
+          "idle": "Bereit",
+          "printing": "Druckt",
+          "auto_bed_leveling": "Automatische Bettnivellierung",
+          "heatbed_preheating": "Heizbett wird vorgeheizt",
+          "heating_heatbed": "Heizbett wird aufgeheizt",
+          "vibration_compensation": "Vibrationskompensation",
+          "changing_filament": "Filamentwechsel",
+          "m400_pause": "Pausiert durch M400",
+          "paused_filament_runout": "Pausiert: Filament ist aufgebraucht",
+          "heating_nozzle": "Düse wird aufgeheizt",
+          "calibrating_dynamic_flow": "Dynamischer Fluss wird kalibriert",
+          "scanning_bed_surface": "Bettoberfläche wird abgetastet",
+          "inspecting_first_layer": "Erste Schicht wird geprüft",
+          "identifying_build_plate": "Druckplattentyp wird erkannt",
+          "calibrating_micro_lidar": "Micro Lidar wird kalibriert",
+          "homing_toolhead": "Druckkopf fährt in die Ausgangsposition",
+          "cleaning_nozzle_tip": "Düsenspitze wird gereinigt",
+          "checking_extruder_temperature": "Extrudertemperatur wird geprüft",
+          "paused_by_user": "Vom Benutzer pausiert",
+          "paused_front_cover": "Pausiert: Frontabdeckung abgefallen",
+          "calibrating_lidar": "Lidar wird kalibriert",
+          "calibrating_flow_ratio": "Flussrate wird kalibriert",
+          "paused_nozzle_temperature": "Pausiert: Störung der Düsentemperatur",
+          "paused_bed_temperature": "Pausiert: Störung der Heizbetttemperatur",
+          "unloading_filament": "Filament wird entladen",
+          "paused_step_loss": "Pausiert: Schrittverlust",
+          "loading_filament": "Filament wird geladen",
+          "motor_noise_cancellation": "Motorgeräuschunterdrückung",
+          "paused_ams_offline": "Pausiert: AMS nicht erreichbar",
+          "paused_hotend_fan": "Pausiert: Hotend-Lüfter zu langsam",
+          "paused_chamber_temperature": "Pausiert: Problem mit der Kammertemperatur",
+          "cooling_chamber": "Kammer wird gekühlt",
+          "paused_by_gcode": "Durch G-Code pausiert",
+          "motor_noise_showoff": "Motorgeräusch-Vorführung",
+          "paused_nozzle_clumping": "Pausiert: Verklumpung an der Düse",
+          "paused_cutter": "Pausiert: Fehler am Schneidwerk",
+          "paused_first_layer": "Pausiert: Fehler in der ersten Schicht",
+          "paused_nozzle_clog": "Pausiert: Düse verstopft",
+          "measuring_motion_precision": "Bewegungspräzision wird gemessen",
+          "enhancing_motion_precision": "Bewegungspräzision wird verbessert",
+          "measuring_motion_accuracy": "Bewegungsgenauigkeit wird gemessen",
+          "calibrating_nozzle_offset": "Düsenversatz wird kalibriert",
+          "high_temperature_bed_leveling": "Bettnivellierung bei hoher Temperatur",
+          "checking_quick_release_lever": "Schnellspannhebel wird geprüft",
+          "checking_door_and_cover": "Tür und obere Abdeckung werden geprüft",
+          "calibrating_laser": "Laser wird kalibriert",
+          "checking_platform": "Plattform wird geprüft",
+          "confirming_birdseye_camera": "Position der BirdsEye-Kamera wird bestätigt",
+          "calibrating_birdseye_camera": "BirdsEye-Kamera wird kalibriert",
+          "bed_leveling_phase_1": "Bettnivellierung, Phase 1",
+          "bed_leveling_phase_2": "Bettnivellierung, Phase 2",
+          "heating_chamber": "Kammer wird geheizt",
+          "cooling_heatbed": "Heizbett wird gekühlt",
+          "printing_calibration_lines": "Kalibrierlinien werden gedruckt",
+          "checking_material": "Material wird geprüft",
+          "calibrating_live_view_camera": "Liveansicht-Kamera wird kalibriert",
+          "waiting_for_heatbed": "Warten auf die Heizbetttemperatur",
+          "checking_material_position": "Materialposition wird geprüft",
+          "calibrating_cutting_module": "Versatz des Schneidmoduls wird kalibriert",
+          "measuring_surface": "Oberfläche wird vermessen",
+          "thermal_preconditioning": "Thermische Vorkonditionierung",
+          "homing_blade_holder": "Messerhalter fährt in die Ausgangsposition",
+          "calibrating_camera_offset": "Kameraversatz wird kalibriert",
+          "calibrating_blade_holder": "Position des Messerhalters wird kalibriert",
+          "testing_hotend_change": "Hotend-Wechsel wird getestet",
+          "waiting_for_chamber": "Warten auf die Kammertemperatur",
+          "preparing_hotend": "Hotend wird vorbereitet",
+          "calibrating_clumping_detection": "Verklumpungserkennung wird kalibriert",
+          "purifying_chamber_air": "Kammerluft wird gereinigt",
+          "preparing": "Vorbereitung",
+          "preparing_ams": "AMS wird vorbereitet"
+        }
+      },
+      "progress": {
+        "name": "Fortschritt"
+      },
+      "remaining_time": {
+        "name": "Restzeit"
+      },
+      "end_time": {
+        "name": "Voraussichtliches Ende"
+      },
+      "current_layer": {
+        "name": "Aktuelle Schicht"
+      },
+      "total_layers": {
+        "name": "Schichten gesamt"
+      },
+      "current_print": {
+        "name": "Aktueller Druck"
+      },
+      "nozzle_temperature": {
+        "name": "Düsentemperatur"
+      },
+      "left_nozzle_temperature": {
+        "name": "Linke Düse: Temperatur"
+      },
+      "right_nozzle_temperature": {
+        "name": "Rechte Düse: Temperatur"
+      },
+      "bed_temperature": {
+        "name": "Betttemperatur"
+      },
+      "chamber_temperature": {
+        "name": "Kammertemperatur"
+      },
+      "hotend_fan": {
+        "name": "Hotend-Lüfter"
+      },
+      "hms_errors": {
+        "name": "HMS-Fehler",
+        "state_attributes": {
+          "errors": {
+            "name": "Fehler"
+          }
+        }
+      },
+      "active_filament": {
+        "name": "Aktives Filament",
+        "state": {
+          "none": "Keins"
+        }
+      },
+      "external_spool": {
+        "name": "Externe Spule",
+        "state": {
+          "empty": "Leer"
+        }
+      },
+      "left_external_spool": {
+        "name": "Linke externe Spule",
+        "state": {
+          "empty": "Leer"
+        }
+      },
+      "right_external_spool": {
+        "name": "Rechte externe Spule",
+        "state": {
+          "empty": "Leer"
+        }
+      },
+      "nozzle_type": {
+        "name": "Düsentyp",
+        "state": {
+          "stainless_steel": "Edelstahl",
+          "hardened_steel": "Gehärteter Stahl",
+          "tungsten_carbide": "Wolframcarbid",
+          "stainless_steel_high_flow": "Edelstahl, High Flow",
+          "hardened_steel_high_flow": "Gehärteter Stahl, High Flow",
+          "tungsten_carbide_high_flow": "Wolframcarbid, High Flow",
+          "tpu_high_flow": "TPU-High-Flow"
+        }
+      },
+      "left_nozzle_type": {
+        "name": "Linke Düse: Typ",
+        "state": {
+          "stainless_steel": "Edelstahl",
+          "hardened_steel": "Gehärteter Stahl",
+          "tungsten_carbide": "Wolframcarbid",
+          "stainless_steel_high_flow": "Edelstahl, High Flow",
+          "hardened_steel_high_flow": "Gehärteter Stahl, High Flow",
+          "tungsten_carbide_high_flow": "Wolframcarbid, High Flow",
+          "tpu_high_flow": "TPU-High-Flow"
+        }
+      },
+      "right_nozzle_type": {
+        "name": "Rechte Düse: Typ",
+        "state": {
+          "stainless_steel": "Edelstahl",
+          "hardened_steel": "Gehärteter Stahl",
+          "tungsten_carbide": "Wolframcarbid",
+          "stainless_steel_high_flow": "Edelstahl, High Flow",
+          "hardened_steel_high_flow": "Gehärteter Stahl, High Flow",
+          "tungsten_carbide_high_flow": "Wolframcarbid, High Flow",
+          "tpu_high_flow": "TPU-High-Flow"
+        }
+      },
+      "nozzle_diameter": {
+        "name": "Düsendurchmesser"
+      },
+      "left_nozzle_diameter": {
+        "name": "Linke Düse: Durchmesser"
+      },
+      "right_nozzle_diameter": {
+        "name": "Rechte Düse: Durchmesser"
+      },
+      "wifi_signal": {
+        "name": "WLAN-Signal"
+      },
+      "ip_address": {
+        "name": "IP-Adresse"
+      },
+      "printable_objects": {
+        "name": "Druckbare Objekte"
+      },
+      "ams_humidity": {
+        "name": "Luftfeuchtigkeit"
+      },
+      "ams_temperature": {
+        "name": "Temperatur"
+      },
+      "ams_slot": {
+        "name": "Fach {slot}",
+        "state": {
+          "empty": "Leer"
+        }
+      },
+      "drying_remaining_time": {
+        "name": "Restliche Trocknungszeit"
+      },
+      "ams_status": {
+        "name": "AMS-Status",
+        "state": {
+          "idle": "Bereit",
+          "heating": "Düse wird aufgeheizt",
+          "feeding": "Filament wird zugeführt",
+          "retracting": "Filament wird zurückgezogen",
+          "verifying": "Filament wird geprüft",
+          "purging": "Altes Filament wird ausgespült",
+          "changing_filament": "Filamentwechsel",
+          "reading_rfid": "RFID der Spule wird gelesen",
+          "assist": "Unterstützt den Druck",
+          "calibrating": "Kalibrierung"
+        }
+      },
+      "print_hours": {
+        "name": "Druckstunden"
+      },
+      "maintenance": {
+        "name": "Wartung",
+        "state": {
+          "ok": "OK",
+          "due_soon": "Bald fällig",
+          "overdue": "Überfällig"
+        },
+        "state_attributes": {
+          "tasks": {
+            "name": "Aufgaben"
+          },
+          "due_count": {
+            "name": "Überfällige Aufgaben"
+          },
+          "due_soon_count": {
+            "name": "Bald fällige Aufgaben"
+          },
+          "can_mark_done": {
+            "name": "Darf als erledigt markieren"
+          }
+        }
+      },
+      "plug_power": {
+        "name": "Leistung"
+      },
+      "plug_energy_today": {
+        "name": "Energie heute"
+      },
+      "plug_energy_total": {
+        "name": "Energie gesamt"
+      }
+    },
+    "switch": {
+      "ams_filament_backup": {
+        "name": "AMS-Filament-Backup"
+      },
+      "ai_monitoring": {
+        "name": "KI-Drucküberwachung"
+      },
+      "first_layer_inspection": {
+        "name": "Inspektion der ersten Schicht"
+      },
+      "build_plate_detection": {
+        "name": "Druckplattenerkennung"
+      },
+      "build_plate_position_detection": {
+        "name": "Positionserkennung der Druckplatte"
+      },
+      "spaghetti_detection": {
+        "name": "Spaghetti-Erkennung"
+      },
+      "pileup_detection": {
+        "name": "Auswurfschacht-Überwachung"
+      },
+      "clumping_detection": {
+        "name": "Erkennung von Düsenklumpen"
+      },
+      "air_printing_detection": {
+        "name": "Druck-ins-Leere-Erkennung"
+      },
+      "plug": {
+        "name": "Strom"
+      },
+      "auto_off": {
+        "name": "Nach dem Druck ausschalten"
+      },
+      "auto_off_every_print": {
+        "name": "Nach jedem Druck wiederholen"
+      }
+    },
+    "update": {
+      "bambuddy_update": {
+        "name": "Update"
+      },
+      "firmware": {
+        "name": "Firmware"
+      }
+    }
+  },
+  "exceptions": {
+    "bambuddy_too_old": {
+      "message": "BamBuddy {version} ist zu alt für diese Integration. Aktualisiere BamBuddy auf Version {minimum} oder neuer."
+    },
+    "auth_failed": {
+      "message": "BamBuddy akzeptiert den API-Schlüssel nicht mehr. Gib unter Einstellungen → Reparaturen einen neuen ein."
+    },
+    "key_doubted": {
+      "message": "BamBuddy hat den API-Schlüssel abgelehnt; er wird innerhalb einer Minute erneut geprüft."
+    },
+    "key_scopes_missing": {
+      "message": "Dem API-Schlüssel fehlen Berechtigungen, die die Integration braucht („Status lesen“ {read_status}, „Drucker steuern“ {control_printer}, „Wartung verwalten“ {manage_maintenance}). Gib unter Einstellungen → Reparaturen einen neuen Schlüssel ein."
+    },
+    "key_owner_inactive": {
+      "message": "Der Besitzer des API-Schlüssels ist in BamBuddy deaktiviert oder gelöscht. Melde dich in BamBuddy als aktiver Benutzer an, erstelle einen Schlüssel mit „Status lesen“, „Drucker steuern“ und „Wartung verwalten“ und gib ihn unter Einstellungen → Reparaturen ein."
+    },
+    "key_check_unreadable": {
+      "message": "BamBuddys Antwort zum API-Schlüssel nennt keine Berechtigungen. Aktualisiere die Integration oder melde es."
+    },
+    "bambuddy_refused": {
+      "message": "BamBuddy hat das abgelehnt: {error}"
+    },
+    "update_failed": {
+      "message": "BamBuddy ist nicht erreichbar. Läuft der BamBuddy-Server, und stimmt die Adresse? ({error})"
+    },
+    "bad_answer": {
+      "message": "BamBuddy hat mit einem Fehler geantwortet: {error}"
+    },
+    "cannot_connect": {
+      "message": "BamBuddy ist nicht erreichbar. Prüfe, ob er läuft."
+    },
+    "cannot_delete_instance": {
+      "message": "Der BamBuddy-Server selbst lässt sich hier nicht löschen. Lösche dafür den Eintrag der BamBuddy-Integration."
+    },
+    "cannot_delete_ams": {
+      "message": "Ihr Drucker meldet diese AMS-Einheit noch. Steck sie zuerst ab; dann lässt sich ihr Gerät löschen."
+    },
+    "command_failed": {
+      "message": "BamBuddy hat den Befehl abgelehnt: {error}"
+    },
+    "printer_offline": {
+      "message": "{printer} ist offline."
+    },
+    "printer_replaced": {
+      "message": "BamBuddy führt unter der Nummer von {printer} jetzt einen anderen Drucker. Die Integration lädt neu, um {printer} über die Seriennummer wiederzufinden."
+    },
+    "job_running": {
+      "message": "{printer} druckt oder ist pausiert: Das geht erst, wenn der Druck fertig oder gestoppt ist."
+    },
+    "chamber_heating": {
+      "message": "Die Kammer heizt: schalte zuerst die Kammerheizung aus."
+    },
+    "ventilation_heating_print": {
+      "message": "{printer} druckt im Heizmodus: Lüften geht erst nach dem Druck."
+    },
+    "keep_warm_on": {
+      "message": "Die Kammer wird warm gehalten: schalte zuerst „Wärme halten“ aus."
+    },
+    "ventilation_on": {
+      "message": "Die Kammer wird gelüftet: schalte zuerst die Lüftung aus."
+    },
+    "chamber_cooling_print": {
+      "message": "{printer} druckt im Kühlmodus: Die Kammer lässt sich erst nach dem Druck heizen."
+    },
+    "not_now": {
+      "message": "{printer} kann das gerade nicht."
+    },
+    "not_printing": {
+      "message": "{printer} druckt gerade nicht."
+    },
+    "not_paused": {
+      "message": "{printer} ist nicht pausiert."
+    },
+    "no_print": {
+      "message": "{printer} hat keinen Druck, der sich abbrechen ließe."
+    },
+    "plate_not_waiting": {
+      "message": "{printer} wartet nicht darauf, dass die Druckplatte geräumt wird."
+    },
+    "not_a_printer": {
+      "message": "Wähle einen Drucker einer geladenen BamBuddy-Integration (keine AMS-Einheit, keine Steckdose und nicht BamBuddy selbst)."
+    },
+    "not_an_ams": {
+      "message": "Wähle eine AMS-Einheit einer geladenen BamBuddy-Integration (keinen Drucker, keine Steckdose und nicht BamBuddy selbst)."
+    },
+    "not_a_slot": {
+      "message": "Wähle ein AMS-Fach oder eine externe Spule einer geladenen BamBuddy-Integration."
+    },
+    "slot_empty": {
+      "message": "Dieses Fach ist leer."
+    },
+    "ams_ht_load": {
+      "message": "BamBuddy kann kein Filament aus einem AMS HT laden. Lade es direkt am Drucker."
+    },
+    "load_track_switch": {
+      "message": "{printer} versorgt seine Düsen über den Filament Track Switch: Zum Laden muss feststehen, welche Düse versorgt wird. Lade das Filament am Drucker oder in BamBuddy."
+    },
+    "nozzle_too_cold": {
+      "message": "Die Düse hat {temperature} °C. Heize sie vor dem Extrudieren auf mindestens {minimum} °C."
+    },
+    "filament_change": {
+      "message": "{printer} wechselt gerade das Filament. Warte, bis das fertig ist."
+    },
+    "pause_first": {
+      "message": "{printer} druckt gerade. Pausiere den Druck, um das Filament zu wechseln."
+    },
+    "rfid_spool": {
+      "message": "Der Chip dieser Spule nennt dem Drucker ihr Filament; es lässt sich nicht von Hand festlegen. Hat die Spule keinen Chip? Dann kennt der Drucker vielleicht noch den letzten: Nimm die Spule heraus, bis das Fach leer ist, und lege sie wieder ein."
+    },
+    "slot_in_use": {
+      "message": "{printer} druckt gerade aus diesem Fach. Pausiere den Druck, um sein Filament zu ändern."
+    },
+    "material_needed": {
+      "message": "Für dieses Fach kennt der Drucker noch kein Filament: Wähle eines aus."
+    },
+    "filament_not_offered": {
+      "message": "Bambu Studio bietet {filament} für {printer} mit dieser Düse nicht an."
+    },
+    "filament_not_for_ams": {
+      "message": "Bambu Studio lässt {filament} nicht im AMS zu: Lege es auf eine externe Spule."
+    },
+    "filament_not_for_nozzle": {
+      "message": "Bambu Studio lässt {filament} mit der Düse dieses Druckers nicht zu."
+    },
+    "filament_not_left": {
+      "message": "Bambu Studio lässt {filament} an der linken Düse nicht zu."
+    },
+    "filament_not_right": {
+      "message": "Bambu Studio lässt {filament} an der rechten Düse nicht zu."
+    },
+    "nothing_to_set": {
+      "message": "Wähle mindestens eines von Filament, Farbe und K-Profil."
+    },
+    "no_answer": {
+      "message": "BamBuddy hat nicht rechtzeitig geantwortet, der Befehl kann den Drucker trotzdem noch erreichen. Prüfe, ob BamBuddy läuft und nicht überlastet ist."
+    },
+    "zero_distance": {
+      "message": "Die Strecke darf nicht 0 sein."
+    },
+    "cannot_dry": {
+      "message": "Diese AMS-Einheit kann nicht trocknen. Trocknen können das AMS 2 Pro und das AMS HT."
+    },
+    "drying_too_hot": {
+      "message": "Das {model} trocknet mit höchstens {maximum} °C."
+    },
+    "already_drying": {
+      "message": "Diese AMS-Einheit trocknet bereits: Stoppe das Trocknen zuerst, um ein neues zu starten."
+    },
+    "not_drying": {
+      "message": "Diese AMS-Einheit trocknet gerade nicht."
+    },
+    "drying_parked": {
+      "message": "Der Drucker führt diese AMS-Einheit noch als trocknend, aber ihr Countdown steht still. Stoppe das Trocknen am Drucker oder in BamBuddy und starte es dann neu."
+    },
+    "dry_while_printing": {
+      "message": "{printer} kann während des Drucks nicht trocknen. Starte das Trocknen, wenn der Druck fertig ist."
+    },
+    "already_paused": {
+      "message": "{printer} ist bereits pausiert."
+    },
+    "dry_on_screen": {
+      "message": "{printer} startet das Trocknen nur am eigenen Display."
+    },
+    "dry_firmware": {
+      "message": "Die Firmware von {printer} kann das Trocknen nicht aus der Ferne starten. Aktualisiere den Drucker."
+    },
+    "update_timeout": {
+      "message": "BamBuddy hat nicht rechtzeitig geantwortet. Prüfe, ob BamBuddy läuft und nicht überlastet ist. ({error})"
+    },
+    "printer_not_listed": {
+      "message": "BamBuddy führt {printer} gerade nicht. Was zu tun ist, steht unter Einstellungen → Reparaturen."
+    },
+    "ams_not_reported": {
+      "message": "{printer} meldet diese AMS-Einheit gerade nicht. Ist sie eingesteckt?"
+    },
+    "dry_stop_on_screen": {
+      "message": "{printer} beendet das Trocknen nur am eigenen Display."
+    },
+    "maintenance_task_unknown": {
+      "message": "{printer} hat diese Wartungsaufgabe nicht."
+    },
+    "read_failed": {
+      "message": "BamBuddy meldete einen Fehler ({error})."
+    },
+    "plug_not_answering": {
+      "message": "Die Steckdose {plug} antwortet BamBuddy nicht. Prüfe, ob sie eingesteckt und im Netzwerk ist."
+    },
+    "plug_command_failed": {
+      "message": "BamBuddy konnte die Steckdose {plug} nicht schalten: {error}"
+    },
+    "auto_off_bambuddy": {
+      "message": "BamBuddy schaltet die Steckdose {plug} nach dem Druck schon selbst aus (Auto Aus). Schalte das in BamBuddy aus, um es hier zu nutzen."
+    },
+    "cannot_delete_plug": {
+      "message": "BamBuddy verbindet diese Steckdose noch mit dem Drucker, ihr Gerät käme also wieder. Trenne oder lösche die Steckdose in BamBuddy: Ihr Gerät verschwindet dann innerhalb einer Minute von selbst."
+    },
+    "hms_not_current": {
+      "message": "Der Drucker meldet die HMS-Meldung {code} gerade nicht."
+    },
+    "hms_answer_not_offered": {
+      "message": "Der Drucker bietet diese Antwort für die HMS-Meldung {code} nicht an."
+    },
+    "hms_answer_screen_only": {
+      "message": "Diese Antwort gibt es nur am Display des Druckers; Home Assistant kann sie nicht senden."
+    },
+    "k_profile_unknown": {
+      "message": "{printer} hat für die Düse, die das Fach versorgt, kein K-Profil mit dieser Nummer."
+    },
+    "rfid_not_external": {
+      "message": "Die externen Spulen haben kein Chip-Lesegerät."
+    },
+    "rfid_unload_first": {
+      "message": "Entlade erst das Filament: Das AMS von {printer} liest einen Chip nur, solange kein Filament geladen ist."
+    },
+    "k_profiles_no_answer": {
+      "message": "{printer} hat seine K-Profile nicht genannt. Frage gleich noch einmal: Ein Drucker antwortet manchmal nicht zweimal hintereinander."
+    },
+    "slot_pause_first": {
+      "message": "{printer} druckt gerade. Pausiere den Druck erst."
+    },
+    "hms_answer_not_taken": {
+      "message": "{printer} hat die Antwort nicht angenommen. Ist er noch mit BamBuddy verbunden?"
+    }
+  },
+  "issues": {
+    "printer_missing": {
+      "title": "Nicht mehr in BamBuddy: {printer}",
+      "fix_flow": {
+        "step": {
+          "confirm": {
+            "title": "Drucker entfernen?",
+            "description": "Der BamBuddy-Server des Eintrags „{entry}“ führt den Drucker {printer} nicht mehr – meist wurde er dort entfernt. Brauchst du ihn hier nicht mehr, wähle „Drucker entfernen“: Der Drucker, seine AMS-Einheiten und Steckdosen und deren Entitäten verschwinden aus Home Assistant, in BamBuddy ändert sich nichts. Führt BamBuddy ihn wieder, schließe dies: Er kommt hier innerhalb einer Minute von selbst zurück.",
+            "submit": "Drucker entfernen"
+          }
+        },
+        "abort": {
+          "already_removed": "Der Drucker wurde bereits entfernt."
+        }
+      }
+    },
+    "names_from_bambuddy": {
+      "title": "Namen kommen aus BamBuddy: {name}",
+      "description": "Du hast Geräte dieses Druckers in Home Assistant umbenannt:\n\n- {given}\n\nIhre Namen kommen aus BamBuddy und sind wieder die von BamBuddy.\n\nBenenne den Drucker oder seine AMS-Einheiten stattdessen in BamBuddy um: Home Assistant übernimmt die Namen innerhalb einer Minute (eine AMS-Einheit ohne eigenen Namen in BamBuddy heißt nach ihrem Drucker und ihrem Platz)."
+    },
+    "ams_ids_renamed": {
+      "title": "AMS-Entitäts-IDs umbenannt: {name}",
+      "fix_flow": {
+        "step": {
+          "confirm": {
+            "title": "AMS-Entitäts-IDs umbenannt",
+            "description": "BamBuddy meldet jetzt Seriennummern von AMS-Einheiten an {name}, die es vorher nicht meldete. Ab jetzt wird jede dieser Einheiten an ihrer Seriennummer erkannt – Gerät, Entitäten und Verlauf bleiben –, und ihre Entitäts-IDs tragen sie statt der Seriennummer des Druckers:\n\n- {renamed}\n\nHome Assistant passt Automationen, Skripte und Dashboards nicht von selbst an; die BamBuddy-Karte findet die Einheiten von selbst. Passe die an, die die alten IDs verwenden. Entitäts-IDs, die du selbst geändert hattest, bleiben, wie sie waren. Sobald alles die neuen IDs verwendet, wähle „Erledigt“, um diesen Hinweis zu schließen.",
+            "submit": "Erledigt"
+          }
+        },
+        "abort": {
+          "already_confirmed": "Dieser Hinweis wurde bereits bestätigt."
+        },
+        "create_entry": {
+          "default": "Der Hinweis ist geschlossen. Die Geräteseite jeder Einheit zeigt ihre Entitäts-IDs."
+        }
+      }
+    }
+  },
+  "services": {
+    "move_axis": {
+      "name": "Achse bewegen",
+      "description": "Bewegt den Druckkopf oder das Bett um eine Strecke. Nicht möglich, solange ein Druck läuft oder pausiert ist.",
+      "fields": {
+        "device_id": {
+          "name": "Drucker",
+          "description": "Der Drucker, der sich bewegen soll."
+        },
+        "axis": {
+          "name": "Achse",
+          "description": "X und Y bewegen den Druckkopf (beim A1, A1 mini und A2L bewegt Y das Bett); Z ändert den Abstand zwischen Düse und Bett."
+        },
+        "distance": {
+          "name": "Strecke",
+          "description": "In Millimetern; negative Werte bewegen in die andere Richtung. Bei Z bringt eine positive Strecke Düse und Bett weiter auseinander."
+        }
+      }
+    },
+    "home_axes": {
+      "name": "Achsen referenzieren",
+      "description": "Fährt alle Achsen in ihre Ausgangsposition. Räume vorher alles von der Druckplatte. Nicht möglich, solange ein Druck läuft oder pausiert ist.",
+      "fields": {
+        "device_id": {
+          "name": "Drucker",
+          "description": "Der Drucker, der referenzieren soll."
+        }
+      }
+    },
+    "extrude": {
+      "name": "Extrudieren",
+      "description": "Schiebt Filament durch die Düse oder zieht es zurück. Die Düse muss heiß sein. Nicht möglich, solange ein Druck läuft oder pausiert ist.",
+      "fields": {
+        "device_id": {
+          "name": "Drucker",
+          "description": "Der Drucker, der extrudieren soll."
+        },
+        "distance": {
+          "name": "Länge",
+          "description": "In Millimetern; eine negative Länge zieht das Filament zurück."
+        }
+      }
+    },
+    "load_filament": {
+      "name": "Filament laden",
+      "description": "Lädt das Filament eines AMS-Fachs oder der externen Spule in die Düse (nicht aus einem AMS HT: Das kann BamBuddy nicht; und nicht aus einem AMS-Fach an einem Drucker mit Filament Track Switch: Dort muss feststehen, welche Düse versorgt wird – lade es am Drucker oder in BamBuddy). Läuft ein Druck, pausiere ihn vorher.",
+      "fields": {
+        "entity_id": {
+          "name": "Fach",
+          "description": "Der Sensor des AMS-Fachs oder der externen Spule."
+        }
+      }
+    },
+    "unload_filament": {
+      "name": "Filament entladen",
+      "description": "Zieht das geladene Filament aus der Düse – bei zwei Düsen aus der aktiven. Läuft ein Druck, pausiere ihn vorher.",
+      "fields": {
+        "device_id": {
+          "name": "Drucker",
+          "description": "Der Drucker, der entladen soll."
+        }
+      }
+    },
+    "start_drying": {
+      "name": "Trocknung starten",
+      "description": "Trocknet das Filament in einer AMS-Einheit, die trocknen kann, etwa dem AMS 2 Pro oder dem AMS HT.",
+      "fields": {
+        "device_id": {
+          "name": "AMS-Einheit",
+          "description": "Die AMS-Einheit, die trocknen soll."
+        },
+        "temperature": {
+          "name": "Temperatur",
+          "description": "Trocknungstemperatur; das AMS 2 Pro erreicht höchstens 65 °C."
+        },
+        "duration": {
+          "name": "Dauer",
+          "description": "Trocknungsdauer in Stunden."
+        }
+      }
+    },
+    "stop_drying": {
+      "name": "Trocknung beenden",
+      "description": "Beendet das Trocknen in einer AMS-Einheit.",
+      "fields": {
+        "device_id": {
+          "name": "AMS-Einheit",
+          "description": "Die AMS-Einheit, die das Trocknen beenden soll."
+        }
+      }
+    },
+    "get_print_objects": {
+      "name": "Druckobjekte abrufen",
+      "description": "Listet die Objekte des laufenden Drucks mit ihren IDs auf und welche bereits übersprungen werden.",
+      "fields": {
+        "device_id": {
+          "name": "Drucker",
+          "description": "Der Drucker, der druckt."
+        }
+      }
+    },
+    "skip_objects": {
+      "name": "Objekte überspringen",
+      "description": "Lässt Objekte im Rest des laufenden Drucks weg, etwa eines, das sich von der Platte gelöst hat. Das lässt sich nicht rückgängig machen.",
+      "fields": {
+        "device_id": {
+          "name": "Drucker",
+          "description": "Der Drucker, der druckt."
+        },
+        "objects": {
+          "name": "Objekte",
+          "description": "Die IDs der Objekte, wie „Druckobjekte abrufen“ sie auflistet."
+        }
+      }
+    },
+    "set_filament": {
+      "name": "Filament festlegen",
+      "description": "Legt Filament und Farbe eines AMS-Fachs oder der externen Spule fest – wie der Drucker es nach dem Einlegen einer Spule ohne Chip abfragt. Eine neue Farbe behält das Profil des Fachs; ein neues Filament nutzt sein Profil aus Bambu Studio, mit dem Standard-K-Wert (Flussdynamik). Nicht für Bambu-Spulen mit Chip: Die liest der Drucker selbst.",
+      "fields": {
+        "entity_id": {
+          "name": "Fach",
+          "description": "Der Sensor des AMS-Fachs oder der externen Spule, zum Beispiel „… Fach 2“ oder „… Externe Spule“."
+        },
+        "filament": {
+          "name": "Filament",
+          "description": "Ein Profil, das Bambu Studio für diesen Drucker, seine Düse und dieses Fach anbietet. Leer lassen, um das Filament des Fachs zu behalten."
+        },
+        "color": {
+          "name": "Farbe",
+          "description": "Leer lassen, um die Farbe des Fachs zu behalten."
+        },
+        "k_profile": {
+          "name": "K-Profil",
+          "description": "Eine K-Kalibrierung des Druckers nach ihrer Nummer, wie „K-Profile abrufen“ sie nennt; -1 ist der Standard-K-Wert des Druckers."
+        }
+      }
+    },
+    "run_diagnostic": {
+      "name": "Verbindung prüfen",
+      "description": "Lässt BamBuddy seine Verbindung zum Drucker prüfen: Ports, Zugangscode, Entwicklermodus und ob er Statusberichte sendet. Schickt dem Drucker keinen Befehl; dauert ein paar Sekunden, höchstens eine halbe Minute.",
+      "fields": {
+        "device_id": {
+          "name": "Drucker",
+          "description": "Der Drucker, der geprüft wird."
+        }
+      }
+    },
+    "mark_maintenance_done": {
+      "name": "Wartung als erledigt markieren",
+      "description": "Markiert eine Wartungsaufgabe des Druckers in BamBuddy als erledigt: Ihre Zählung beginnt neu.",
+      "fields": {
+        "device_id": {
+          "name": "Drucker",
+          "description": "Der Drucker, zu dem die Aufgabe gehört."
+        },
+        "task_id": {
+          "name": "Aufgabe",
+          "description": "Die ID der Aufgabe: das Feld id der Aufgabe im Attribut „Aufgaben“ des Sensors „Wartung“ des Druckers."
+        }
+      }
+    },
+    "answer_hms": {
+      "name": "HMS-Meldung beantworten",
+      "description": "Beantwortet eine HMS-Meldung des Druckers wie sein Display, zum Beispiel Fortsetzen, sobald das Filament geladen ist. Nur mit einer Antwort, die der Drucker für die Meldung gerade anbietet; ihr Attribut actions nennt sie.",
+      "fields": {
+        "device_id": {
+          "name": "Drucker",
+          "description": "Der Drucker mit der Meldung."
+        },
+        "code": {
+          "name": "Code",
+          "description": "Der Code der Meldung, wie ihn das Attribut errors des HMS-Sensors nennt, zum Beispiel 0700_2000_0002_0012."
+        },
+        "action": {
+          "name": "Antwort",
+          "description": "Eine der Aktionen der Meldung, zum Beispiel RESUME_PRINTING_PROBELM_SOLVED (so schreibt Bambu es)."
+        }
+      }
+    },
+    "get_k_profiles": {
+      "name": "K-Profile abrufen",
+      "description": "Nennt die eigenen K-Kalibrierungen (Pressure Advance) des Druckers für die Düse, die ein Fach versorgt, so wie „Filament festlegen“ sie nimmt, und das aktuelle des Fachs. Der Drucker wird live gefragt (bis etwa 16 Sekunden). Bei einer leeren Liste sagt „answered“, ob der Drucker keine eigenen hat (true) oder nicht geantwortet hat (false).",
+      "fields": {
+        "entity_id": {
+          "name": "Fach",
+          "description": "Der Sensor des Fachs (oder der externen Spule)."
+        }
+      }
+    },
+    "get_filaments": {
+      "name": "Filamente abrufen",
+      "description": "Nennt die Filamente, die Bambu Studio für ein Fach anbietet, nach Hersteller geordnet, und das aktuelle Filament des Fachs. Liest nur.",
+      "fields": {
+        "entity_id": {
+          "name": "Fach",
+          "description": "Der Sensor des AMS-Fachs oder der externen Spule, zum Beispiel „… Fach 2“ oder „… Externe Spule“."
+        }
+      }
+    },
+    "reset_slot": {
+      "name": "Fach zurücksetzen",
+      "description": "Löscht Material und Farbe eines Fachs wie „Zurücksetzen“ am Display des Druckers; eine Spule mit Chip erscheint wieder, sobald das AMS ihn liest. Nicht während eines laufenden Drucks; in einem pausierten geht es.",
+      "fields": {
+        "entity_id": {
+          "name": "Fach",
+          "description": "Der Sensor des Fachs (oder der externen Spule)."
+        }
+      }
+    },
+    "refresh_rfid": {
+      "name": "Chip neu lesen",
+      "description": "Lässt das AMS den Chip der Spule in einem Fach neu lesen, für eine Bambu-Lab-Spule, die es nicht erkannt hat. BamBuddy erlaubt das nur, solange kein Filament geladen ist; die externen Spulen haben kein Lesegerät. Nicht während eines laufenden Drucks; in einem pausierten geht es.",
+      "fields": {
+        "entity_id": {
+          "name": "Fach",
+          "description": "Der Sensor des Fachs (oder der externen Spule)."
+        }
+      }
+    }
+  },
+  "selector": {
+    "bambuddy": {
+      "options": {
+        "same": "Derselbe BamBuddy-Server unter neuer Adresse (die Werte des Servers wie Druckstatistik und Speicherplatz laufen weiter)",
+        "other": "Ein anderer BamBuddy-Server (die Werte des Servers wie Druckstatistik und Speicherplatz beginnen neu, ihr bisheriger Verlauf wird gelöscht; die Drucker behalten ihren)"
+      }
+    },
+    "bambuddy_alone": {
+      "options": {
+        "same": "Derselbe BamBuddy-Server unter neuer Adresse (die Werte des Servers wie Druckstatistik und Speicherplatz laufen weiter)",
+        "other": "Ein anderer BamBuddy-Server (die Werte des Servers wie Druckstatistik und Speicherplatz beginnen neu, ihr bisheriger Verlauf wird gelöscht)"
+      }
+    },
+    "push_gap": {
+      "options": {
+        "1": "jede Sekunde",
+        "2": "alle 2 Sekunden",
+        "5": "alle 5 Sekunden"
+      }
     }
   }
 }

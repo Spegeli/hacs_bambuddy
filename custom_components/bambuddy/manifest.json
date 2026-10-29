@@ -1,18 +1,19 @@
 {
   "domain": "bambuddy",
   "name": "BamBuddy",
+  "after_dependencies": [
+    "frontend"
+  ],
   "codeowners": [
     "@Spegeli"
   ],
   "config_flow": true,
   "dependencies": [
-    "network"
+    "http"
   ],
   "documentation": "https://github.com/Spegeli/hacs_bambuddy",
-  "iot_class": "local_polling",
+  "iot_class": "local_push",
   "issue_tracker": "https://github.com/Spegeli/hacs_bambuddy/issues",
-  "requirements": [
-    "aiohttp>=3.8.0"
-  ],
+  "requirements": [],
   "version": "2026.05.17"
 }

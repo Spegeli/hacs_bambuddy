@@ -1,0 +1,27 @@
+{
+  "id": 0,
+  "username": "api-key:bb_othr...",
+  "email": null,
+  "role": "user",
+  "is_active": true,
+  "is_admin": false,
+  "auth_source": "local",
+  "groups": [],
+  "permissions": [
+    "archives:reprint_all",
+    "archives:reprint_own",
+    "library:delete_all",
+    "library:delete_own",
+    "library:update_all",
+    "library:update_own",
+    "library:upload",
+    "makerworld:import",
+    "queue:create",
+    "queue:delete_all",
+    "queue:delete_own",
+    "queue:reorder",
+    "queue:update_all",
+    "queue:update_own"
+  ],
+  "created_at": "2026-10-16T08:00:00"
+}

@@ -1,0 +1,49 @@
+# Claude Code
+.claude/
+CLAUDE.md
+
+# Secrets — never commit
+.secrets/
+*.key
+.env
+
+# Local research, notes and probe scripts
+umbau/
+
+# Bambu Studio's profiles, fetched by .github/scripts/bambu_filaments.py --fetch
+/.bambu-studio/
+
+# Local test environment — Home Assistant's configuration with the test API
+# key, its database and snapshots, the Docker files and the test scripts
+testenv/
+
+# Local planning documents
+docs/
+
+# Agent workspace — plan ledgers, briefs, reports, review packages
+.superpowers/
+
+# Dashboard card (cards/): installed packages and coverage reports
+cards/node_modules/
+cards/coverage/
+
+# Python
+__pycache__/
+.pytest_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+
+# Editors
+.vscode/
+.idea/
+*.swp
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini

@@ -1,0 +1,80 @@
+{
+  "3": {
+    "state": "ON",
+    "reachable": true,
+    "device_name": null,
+    "energy": {
+      "power": 182.4,
+      "voltage": 231.0,
+      "current": 0.82,
+      "today": 1.27,
+      "yesterday": 2.05,
+      "total": 315.8,
+      "factor": 0.95,
+      "apparent_power": null,
+      "reactive_power": null
+    }
+  },
+  "4": {
+    "state": "ON",
+    "reachable": true,
+    "device_name": null,
+    "energy": {
+      "power": 12.0,
+      "voltage": null,
+      "current": null,
+      "today": null,
+      "yesterday": null,
+      "total": null,
+      "factor": null,
+      "apparent_power": null,
+      "reactive_power": null
+    }
+  },
+  "5": {
+    "state": "OFF",
+    "reachable": true,
+    "device_name": "Garage printer",
+    "energy": null
+  },
+  "6": {
+    "state": "OFF",
+    "reachable": true,
+    "device_name": "Printer light",
+    "energy": null
+  },
+  "7": {
+    "state": "ON",
+    "reachable": true,
+    "device_name": null,
+    "energy": {
+      "power": 150.0,
+      "voltage": null,
+      "current": null,
+      "today": 2.5,
+      "yesterday": null,
+      "total": null,
+      "factor": null,
+      "apparent_power": null,
+      "reactive_power": null
+    }
+  },
+  "8": {
+    "state": null,
+    "reachable": false,
+    "device_name": null,
+    "energy": null
+  },
+  "9": {
+    "state": "OFF",
+    "reachable": true,
+    "device_name": null,
+    "energy": null
+  },
+  "10": {
+    "state": "OFF",
+    "reachable": true,
+    "device_name": null,
+    "energy": null
+  }
+}

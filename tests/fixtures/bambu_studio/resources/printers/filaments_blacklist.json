@@ -1,0 +1,71 @@
+{
+    "whitelist": [],
+    "blacklist": [
+        {
+            "type": "TPU",
+            "action": "prohibition",
+            "slot": "ams",
+            "description": "TPU is not supported by AMS."
+        },
+        {
+            "vendor": "Bambu Lab",
+            "type": "PET-CF",
+            "action": "prohibition",
+            "slot": "ams",
+            "description": "AMS does not support 'Bambu Lab PET-CF'."
+        },
+        {
+            "type": "PVA",
+            "action": "warning",
+            "slot": "ams",
+            "description": "Damp PVA will become flexible."
+        },
+        {
+            "white_fila_ids": [
+                "GFU04",
+                "GFU03",
+                "GFU01",
+                "GFU00",
+                "GFU99"
+            ],
+            "nozzle_flows": [
+                "TPU High Flow"
+            ],
+            "model_id": [
+                "O1D",
+                "O1E"
+            ],
+            "action": "prohibition",
+            "description": "The current filament doesn't support the TPU high-flow nozzle and can't be used."
+        },
+        {
+            "name_suffix": "Bambu TPU 85A",
+            "nozzle_flows": [
+                "Standard",
+                "High Flow"
+            ],
+            "nozzle_diameters": [
+                0.4
+            ],
+            "model_id": [
+                "O1D",
+                "O1E"
+            ],
+            "action": "prohibition",
+            "description": "Bambu TPU 85A is not supported for printing with 0.4 mm Standard or High Flow nozzles."
+        },
+        {
+            "name_suffix": "PA6-GF",
+            "nozzle_flows": [
+                "High Flow"
+            ],
+            "model_id": [
+                "C11",
+                "C12",
+                "BL-P001"
+            ],
+            "action": "prohibition",
+            "description": "PA6-GF is not supported with high-flow nozzles."
+        }
+    ]
+}

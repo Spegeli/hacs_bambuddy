@@ -1,0 +1,14 @@
+{
+  "update_available": true,
+  "current_version": "1.2.5.7",
+  "latest_version": "1.2.6",
+  "release_name": "v1.2.6",
+  "release_notes": "Printer access per group.",
+  "release_url": "https://github.com/maziggy/bambuddy/releases/tag/v1.2.6",
+  "published_at": "2026-10-20T10:00:00Z",
+  "is_docker": true,
+  "is_ha_addon": false,
+  "is_windows_installer": false,
+  "update_method": "docker",
+  "installer_download_url": null
+}

@@ -1,87 +1,108 @@
-"""BamBuddy image entities."""
+"""BamBuddy's image: the cover of each printer's current job."""
 from __future__ import annotations
 
+from datetime import datetime, timedelta
 import logging
-from datetime import datetime
-
-import aiohttp
 
 from homeassistant.components.image import ImageEntity
-from homeassistant.config_entries import ConfigEntry
-from homeassistant.core import HomeAssistant
-from homeassistant.helpers.aiohttp_client import async_get_clientsession
-from homeassistant.helpers.entity_platform import AddEntitiesCallback
-from homeassistant.helpers.update_coordinator import CoordinatorEntity
+from homeassistant.core import HomeAssistant, callback
+from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
+from homeassistant.util import dt as dt_util
 
-from .const import CONF_API_KEY, DOMAIN
-from .entity import BamBuddyPrinterEntityMixin
+from .api import BamBuddyApiError, BamBuddyError
+from .coordinator import BamBuddyConfigEntry, BamBuddyPrinterCoordinator
+from .entity import BamBuddyPrinterEntity
+from .models import ENDED_STATES
 
 _LOGGER = logging.getLogger(__name__)
 
+PARALLEL_UPDATES = 0
+
+# After a failed fetch -- a timeout while BamBuddy downloads the job from a
+# busy printer, a 503 -- the cover is asked for again this much later,
+# twice as late each time, at most MAX_RETRY.
+FIRST_RETRY = timedelta(minutes=1)
+MAX_RETRY = timedelta(minutes=10)
+
 
 async def async_setup_entry(
-    hass: HomeAssistant, entry: ConfigEntry, async_add_entities: AddEntitiesCallback
+    hass: HomeAssistant, entry: BamBuddyConfigEntry, async_add_entities: AddConfigEntryEntitiesCallback
 ) -> None:
-    """Set up BamBuddy image entities."""
-    data = hass.data[DOMAIN][entry.entry_id]
-    session = async_get_clientsession(hass)
-    entities = []
-    for printer_data in data["printers"].values():
-        entities.append(
-            BamBuddyCoverImage(hass, printer_data["coordinator"], entry, printer_data, session)
-        )
-    async_add_entities(entities)
+    async_add_entities(BamBuddyCover(hass, coordinator) for coordinator in entry.runtime_data.printers.values())
 
 
-class BamBuddyCoverImage(BamBuddyPrinterEntityMixin, CoordinatorEntity, ImageEntity):
-    """Cover image of the current print job."""
+class BamBuddyCover(BamBuddyPrinterEntity, ImageEntity):
+    """The job's plate picture, while a job runs or is paused and after it
+    finished or failed. Fetched once per job: BamBuddy may have to download
+    the job from the printer first.
+    A job without a cover is not asked for again; a failed fetch is, later."""
 
-    _attr_name = "Cover"
-    _attr_content_type = "image/jpeg"
+    _attr_translation_key = "cover"
+    _attr_content_type = "image/png"
 
-    def __init__(
-        self,
-        hass: HomeAssistant,
-        coordinator,
-        entry: ConfigEntry,
-        printer_data: dict,
-        session: aiohttp.ClientSession,
-    ) -> None:
-        CoordinatorEntity.__init__(self, coordinator)
+    @property
+    def entity_picture(self) -> str | None:
+        """None while unavailable: the frontend would ask for a picture and
+        get an error; it shows the icon instead."""
+        return super().entity_picture if self.available else None
+
+    def __init__(self, hass: HomeAssistant, coordinator: BamBuddyPrinterCoordinator) -> None:
+        BamBuddyPrinterEntity.__init__(self, coordinator, "cover")
         ImageEntity.__init__(self, hass)
-        self._printer_data = printer_data
-        self._entry_id = entry.entry_id
-        self._instance_url = f"http://{entry.data.get('host')}:{entry.data.get('port', 8000)}"
-        self._api_key = entry.data.get(CONF_API_KEY, "")
-        self._session = session
-        self._last_job: str | None = None
-        self._attr_unique_id = f"{entry.entry_id}_p{printer_data['printer_id']}_cover"
+        self._job: str | None = None
+        self._image: bytes | None = None
+        # The job BamBuddy found no cover for.
+        self._missing: str | None = None
+        # When to ask again after a failed fetch, and how long to wait then.
+        self._retry_at: datetime | None = None
+        self._retry_in = FIRST_RETRY
+        # The last job ended: the next may carry its name (plate 2 of a project).
+        self._ended = False
+        self._follow_job()
 
-    def _get_current_job(self) -> str | None:
-        status = (self.coordinator.data or {}).get("status", {})
-        return status.get("current_print") or status.get("subtask_name")
+    def _current_job(self) -> str | None:
+        """BamBuddy names a cover only for a running or paused job; its
+        cover route serves the job after it ended too, until the next."""
+        status = self.data.status
+        if not status.get("cover_url") and status.get("state") not in ENDED_STATES:
+            return None
+        return str(status.get("subtask_name") or status.get("gcode_file") or "") or None
 
+    def _follow_job(self) -> None:
+        state = self.data.status.get("state")
+        if self._ended and state not in ENDED_STATES:
+            self._job = self._missing = None
+        self._ended = state in ENDED_STATES
+        job = self._current_job()
+        if job != self._job:
+            self._job = job
+            self._image = None
+            self._retry_at = None
+            self._retry_in = FIRST_RETRY
+            self._attr_image_last_updated = dt_util.utcnow()
+        elif self._retry_at is not None and dt_util.utcnow() >= self._retry_at:
+            # A new picture to the frontend: it asks for it again.
+            self._retry_at = None
+            self._attr_image_last_updated = dt_util.utcnow()
+
+    @callback
     def _handle_coordinator_update(self) -> None:
-        """Refresh image timestamp when a new print job starts."""
-        job = self._get_current_job()
-        if job and job != self._last_job:
-            self._last_job = job
-            self._attr_image_last_updated = datetime.now()
+        self._follow_job()
         super()._handle_coordinator_update()
 
+    @property
+    def available(self) -> bool:
+        return super().available and self._job is not None
+
     async def async_image(self) -> bytes | None:
-        """Fetch the cover image from the dedicated cover endpoint."""
-        printer_id = self._printer_data["printer_id"]
-        url = f"{self._instance_url}/api/v1/printers/{printer_id}/cover"
-        try:
-            async with self._session.get(
-                url,
-                headers={"X-API-Key": self._api_key},
-                timeout=aiohttp.ClientTimeout(total=10),
-            ) as resp:
-                if resp.status == 200:
-                    return await resp.read()
-                _LOGGER.warning("Cover image request returned HTTP %s", resp.status)
-        except Exception as err:
-            _LOGGER.error("Error fetching cover image: %s", err)
-        return None
+        if self._image is None and self._job is not None and self._job != self._missing and self._retry_at is None:
+            try:
+                self._image = await self.coordinator.client.get_cover(self.coordinator.printer_id)
+            except BamBuddyError as err:
+                if isinstance(err, BamBuddyApiError) and err.status == 404:
+                    self._missing = self._job
+                else:
+                    self._retry_at = dt_util.utcnow() + self._retry_in
+                    self._retry_in = min(self._retry_in * 2, MAX_RETRY)
+                _LOGGER.debug("No cover for %s: %s", self.coordinator.printer_name, err)
+        return self._image

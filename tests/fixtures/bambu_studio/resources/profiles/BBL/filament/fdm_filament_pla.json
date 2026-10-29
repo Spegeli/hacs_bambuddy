@@ -1,0 +1,14 @@
+{
+    "type": "filament",
+    "name": "fdm_filament_pla",
+    "instantiation": "false",
+    "filament_type": [
+        "PLA"
+    ],
+    "nozzle_temperature_range_low": [
+        "190"
+    ],
+    "nozzle_temperature_range_high": [
+        "240"
+    ]
+}
