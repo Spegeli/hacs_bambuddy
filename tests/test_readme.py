@@ -64,6 +64,14 @@ def test_the_license_badge_names_the_license_of_the_license_file_and_opens_it():
     ) in _README
 
 
+def test_every_badge_under_the_title_says_what_it_shows():
+    """A badge is a picture: its text is what a screen reader reads and
+    what shows where the picture does not load."""
+    badges = re.findall(r'<img src="https://img\.shields\.io/[^"]*"([^>]*)>', _README)
+    assert len(badges) == 4
+    assert all(re.search(r'alt="[^"]+"', rest) for rest in badges), badges
+
+
 def test_the_release_badge_opens_the_release_it_shows():
     """The badge shows the newest stable release -- pre-releases left out,
     as include_prereleases is not set -- and GitHub's /releases/latest
@@ -168,6 +176,23 @@ def test_the_head_sends_date_version_users_to_the_upgrade_and_names_the_app() ->
     assert "> [!IMPORTANT]" in head and "(#%EF%B8%8F-upgrading-from-a-date-version)" in head
 
 
+def test_the_head_links_where_people_ask_and_talk() -> None:
+    """Under the badges, one line to the integration's thread in the Home
+    Assistant forum -- the thread the issue chooser sends questions to -- and
+    to its post on r/BambuLab. Ideas and bugs belong to GitHub's forms, so the
+    line names questions and discussion only."""
+    head = _README[: _README.index("## ✨ Features")]
+    chooser = (_ROOT / ".github" / "ISSUE_TEMPLATE" / "config.yml").read_text(encoding="utf-8")
+    forum = re.search(r"name: Questions about this integration\n\s+url: (\S+)", chooser)
+    assert forum
+    start = head.index("💬 Questions and discussion:")
+    line = head[start:].split("\n", 1)[0]
+    assert f'<a href="{forum.group(1)}">Home Assistant forum</a>' in line
+    assert '<a href="https://www.reddit.com/r/BambuLab/comments/1xim2qw/' in line
+    assert line.endswith(">r/BambuLab on Reddit</a>")
+    assert head.index('alt="Home Assistant 2025.5+"') < start < head.index("A custom <a href=")
+
+
 def test_the_app_section_follows_the_requirements() -> None:
     """Where a reader without a BamBuddy server looks next: the app that runs
     it inside Home Assistant, and the address to enter for it -- named as the
@@ -179,7 +204,52 @@ def test_the_app_section_follows_the_requirements() -> None:
     assert _APP in section and "`http://homeassistant.local:8000`" in section and "`localhost`" in section
 
 
-_OWN_IMAGE = "https://raw.githubusercontent.com/Spegeli/hacs_bambuddy/main/"
+def _section(heading: str) -> str:
+    start = _README.index(f"\n## {heading}\n")
+    return _README[start : _README.index("\n## ", start + 1)]
+
+
+def test_the_pictures_come_right_after_the_features() -> None:
+    """Many decide by the pictures whether to install: the card's four
+    pictures stand right after the features, and the card's own section
+    points up to them instead of showing them again."""
+    headings = re.findall(r"^## (.+)$", _README, re.MULTILINE)
+    assert headings[:3] == ["✨ Features", "📸 Screenshots", "📋 Requirements"]
+    assert _section("📸 Screenshots").count("/.github/readme/cards/") == 4
+    card = _section("🃏 Dashboard card")
+    assert "<img " not in card and "[Screenshots](#-screenshots)" in card
+
+
+def test_the_card_and_the_examples_come_before_the_reference() -> None:
+    """What a new user wants first -- the card, then what to automate --
+    before the lists to look things up in: the entities and the actions."""
+    headings = re.findall(r"^## (.+)$", _README, re.MULTILINE)
+    order = ["⚙️ Configuration", "🃏 Dashboard card", "🤖 Automation examples", "📊 Entities", "🎛️ Actions", "⬆️ Upgrading from a date version"]
+    assert [headings.index(heading) for heading in order] == sorted(headings.index(heading) for heading in order)
+
+
+def test_the_reference_folds_and_its_headings_stay_outside() -> None:
+    """The long tables and the examples' YAML are folded, closed at first.
+    Their headings stay outside the folds, so the links to them and GitHub's
+    outline still find them; a blank line after the summary lets GitHub and
+    Home Assistant (HACS shows the README) render the table or code inside."""
+    folds = re.findall(r"<details>\n<summary>([^<]+)</summary>\n\n(.*?)\n\n</details>", _README, re.DOTALL)
+    assert _README.count("<details") == len(folds) and "<details open" not in _README
+    assert [summary for summary, _ in folds] == [
+        "Show the options",
+        *["Show the YAML"] * 5,
+        "Show the entities of a printer",
+        "Show the entities of an AMS unit",
+        "Show the entities of a smart plug",
+        "Show the entities of the BamBuddy server",
+        "Show the actions",
+    ]
+    for summary, body in folds:
+        assert not re.search(r"^#", body, re.MULTILINE), summary
+        assert body.startswith("| ") if summary != "Show the YAML" else body.startswith("```yaml\n"), summary
+
+
+_OWN_IMAGE ="https://raw.githubusercontent.com/Spegeli/hacs_bambuddy/main/"
 
 
 def test_the_readmes_own_images_are_in_the_repository_with_a_text() -> None:
