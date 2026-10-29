@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Awaitable
+from http import HTTPStatus
 import logging
 from typing import Any
 from urllib.parse import urlsplit, urlunsplit
@@ -325,13 +326,19 @@ class BamBuddyClient:
         printer first."""
         return await self._object(f"/printers/{printer_id}/print/objects", timeout=_OBJECTS_TIMEOUT)
 
-    async def get_kprofiles(self, printer_id: int, nozzle_diameter: str) -> list[dict[str, Any]]:
+    async def get_kprofiles(self, printer_id: int, nozzle_diameter: str) -> list[dict[str, Any]] | None:
         """The printer's own K (pressure advance) calibrations for a nozzle
-        diameter; empty where it has none -- and where it did not answer:
-        BamBuddy then gives an empty list too, after its retries."""
-        answer = await self._request(
-            "GET", f"/printers/{printer_id}/kprofiles/", params={"nozzle_diameter": nozzle_diameter}, timeout=_KPROFILES_TIMEOUT
-        )
+        diameter; empty where it has none. Where it did not answer, None from
+        BamBuddy 1.3's 504 (maziggy/bambuddy#3404) -- BamBuddy 1.2.5.7 gives
+        an empty list then too, after its retries."""
+        try:
+            answer = await self._request(
+                "GET", f"/printers/{printer_id}/kprofiles/", params={"nozzle_diameter": nozzle_diameter}, timeout=_KPROFILES_TIMEOUT
+            )
+        except BamBuddyApiError as err:
+            if err.status == HTTPStatus.GATEWAY_TIMEOUT:
+                return None
+            raise
         profiles = answer.get("profiles") if isinstance(answer, dict) else None
         return [profile for profile in profiles if isinstance(profile, dict)] if isinstance(profiles, list) else []
 

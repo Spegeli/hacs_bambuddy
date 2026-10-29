@@ -422,6 +422,22 @@ async def test_an_empty_list_after_bambuddys_retries_is_no_answer(
     assert (late["answered"], third["answered"]) == (False, True)
 
 
+async def test_bambuddys_504_is_no_answer(hass: HomeAssistant, bambuddy_api: SimpleNamespace) -> None:
+    """BamBuddy 1.3 says the printer did not answer by a 504, which the
+    client gives as None: no profiles, not answered -- however fast."""
+    bambuddy_api.get_kprofiles.return_value = None
+    entry = await set_up(hass, A1_MINI)
+    slot = entity_id(hass, "sensor", ams_uid(entry, 0, "slot_2", A1_MINI))
+
+    response = await hass.services.async_call(DOMAIN, "get_k_profiles", {"entity_id": slot}, blocking=True, return_response=True)
+
+    assert response is not None
+    assert (response["profiles"], response["answered"]) == ([], False)
+    with pytest.raises(ServiceValidationError) as silent:
+        await _set_filament(hass, ams_uid(entry, 0, "slot_2", A1_MINI), k_profile=3)
+    assert silent.value.translation_key == "k_profiles_no_answer"
+
+
 async def test_a_two_nozzle_printers_k_profiles_are_its_nozzles(hass: HomeAssistant, bambuddy_api: SimpleNamespace) -> None:
     """The H2D's AMS HT feeds the left nozzle: its calibrations only."""
     entry = await set_up(hass, H2D)

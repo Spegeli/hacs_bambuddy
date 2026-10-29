@@ -410,6 +410,26 @@ async def test_the_printers_k_profiles(hass: HomeAssistant, aioclient_mock: Aioh
     assert await _client(hass).get_kprofiles(1, "0.6") == [{"slot_id": 1}]
 
 
+async def test_k_profiles_the_printer_did_not_answer(hass: HomeAssistant, aioclient_mock: AiohttpClientMocker) -> None:
+    """BamBuddy 1.3 answers 504 where the printer answered none of its
+    attempts (maziggy/bambuddy#3404): None, not an empty list -- that one is
+    a printer without profiles. Another error stays an error, and a proxy's
+    bare 504 is a BamBuddy that cannot be reached, as on every route."""
+    url = f"{API}/printers/1/kprofiles/?nozzle_diameter=0.4"
+    aioclient_mock.get(url, status=504, json={"detail": "The printer did not answer the K-profile request"})
+    assert await _client(hass).get_kprofiles(1, "0.4") is None
+
+    aioclient_mock.clear_requests()
+    aioclient_mock.get(url, status=400, json={"detail": "Printer not connected"})
+    with pytest.raises(BamBuddyApiError):
+        await _client(hass).get_kprofiles(1, "0.4")
+
+    aioclient_mock.clear_requests()
+    aioclient_mock.get(url, status=504, text="Gateway Timeout")
+    with pytest.raises(BamBuddyConnectionError):
+        await _client(hass).get_kprofiles(1, "0.4")
+
+
 @pytest.mark.parametrize(("enabled", "flag"), [(True, "true"), (False, "false")])
 async def test_switching_a_detector(hass: HomeAssistant, aioclient_mock: AiohttpClientMocker, enabled: bool, flag: str) -> None:
     """"never_halt" makes BamBuddy leave the sensitivity out: the printer

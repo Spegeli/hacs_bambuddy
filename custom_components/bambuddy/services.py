@@ -404,8 +404,8 @@ async def _k_profiles(
     """The printer's K calibrations for the nozzle that feeds the slot --
     on a two-nozzle printer that nozzle's, where the printer files them per
     nozzle -- as BamBuddy's own Configure dialog offers them, and whether
-    the printer answered: BamBuddy gives an empty list also when it did not,
-    only after its retries (`K_PROFILES_NO_ANSWER`). `listed_lately`: the
+    the printer answered: BamBuddy 1.3 says it did not by a 504, 1.2.5.7 by
+    an empty list after its retries (`K_PROFILES_NO_ANSWER`). `listed_lately`: the
     list read for the card a moment ago will do (a printer may not answer
     the same question twice in a row)."""
     data = coordinator.data
@@ -417,10 +417,13 @@ async def _k_profiles(
         listed = kept[1]
     else:
         asked = _monotonic()
-        listed = await async_run_command(
+        read = await async_run_command(
             coordinator, partial(coordinator.client.get_kprofiles, coordinator.printer_id, diameter), refresh=False
         )
-        answered = bool(listed) or _monotonic() - asked < K_PROFILES_NO_ANSWER
+        # Not answered: BamBuddy 1.3's 504 (None), or 1.2.5.7's empty list
+        # after its retries.
+        listed = read or []
+        answered = read is not None and (bool(listed) or _monotonic() - asked < K_PROFILES_NO_ANSWER)
         if listed:
             coordinator.kprofiles[diameter] = (now, listed)
     nozzle = _extruder(data, ams, slot)
