@@ -1839,6 +1839,72 @@ async def test_the_same_model_in_another_spelling_reloads_nothing(
     assert entry.state is ConfigEntryState.LOADED
 
 
+@pytest.mark.parametrize("part", ["temperature", "heater"])
+async def test_a_chamber_bambuddy_reports_after_setup_reloads_once(
+    hass: HomeAssistant, bambuddy_api: SimpleNamespace, freezer: FrozenDateTimeFactory, part: str
+) -> None:
+    """BamBuddy 1.2.5.7 reports no chamber temperature or heater for the H2D Pro (it compares
+    "H2D PRO" with "H2DPRO"); 1.3 does (maziggy/bambuddy#3335). Updated while the entry runs -- or a
+    printer that had not reported at setup --, the entities come with one reload, without the user."""
+    _listed_as(bambuddy_api, H2D, model="H2D Pro")
+    status = bambuddy_api.statuses[H2D]
+    status["temperatures"].update({"chamber": None, "chamber_target": None})
+    status["supports_chamber_heater"] = False
+    entry = await set_up(hass, H2D)
+    if part == "temperature":
+        status["temperatures"]["chamber"] = 31.0
+    else:
+        status["supports_chamber_heater"] = True
+
+    with patch.object(hass.config_entries, "async_schedule_reload") as reload:
+        for _ in range(3):
+            await next_refresh(hass, freezer)
+
+    reload.assert_called_once_with(entry.entry_id)
+
+
+async def test_the_reload_for_a_late_chamber_builds_its_entities(
+    hass: HomeAssistant, bambuddy_api: SimpleNamespace, freezer: FrozenDateTimeFactory
+) -> None:
+    """After BamBuddy's update the H2D Pro's chamber temperature and target are there by themselves."""
+    _listed_as(bambuddy_api, H2D, model="H2D Pro")
+    status = bambuddy_api.statuses[H2D]
+    status["temperatures"].update({"chamber": None, "chamber_target": None})
+    status["supports_chamber_heater"] = False
+    entry = await set_up(hass, H2D)
+    assert no_entity(hass, "sensor", printer_uid(entry, "chamber_temp", H2D))
+    status["temperatures"].update({"chamber": 31.0, "chamber_target": 0.0})
+    status["supports_chamber_heater"] = True
+
+    await next_refresh(hass, freezer)
+    await hass.async_block_till_done()
+
+    assert state_of(hass, "sensor", printer_uid(entry, "chamber_temp", H2D)).state == "31.0"
+    assert state_of(hass, "number", printer_uid(entry, "chamber_target", H2D)) is not None
+
+
+async def test_a_chamber_that_comes_and_goes_reloads_at_most_three_times_a_run(
+    hass: HomeAssistant, bambuddy_api: SimpleNamespace, freezer: FrozenDateTimeFactory
+) -> None:
+    """A chamber temperature that every setup misses and every read after it brings (a BamBuddy that
+    reports it late, again and again): three reloads in a run, then the entry stays as it is."""
+    status = bambuddy_api.statuses[H2D]
+    status["temperatures"]["chamber"] = None
+    entry = await set_up(hass, H2D)
+    reloads = 0
+    with patch.object(hass.config_entries, "async_schedule_reload") as reload:
+        for _ in range(4):
+            status["temperatures"]["chamber"] = 31.0
+            for _ in range(2):
+                await next_refresh(hass, freezer)
+            reloads = reload.call_count
+            status["temperatures"]["chamber"] = None
+            await hass.config_entries.async_reload(entry.entry_id)
+            await hass.async_block_till_done()
+
+    assert reloads == 3
+
+
 @pytest.mark.parametrize("field", ["exhaust_fan_present", "left_aux_fan_speed"])
 async def test_a_fan_kit_bambuddy_reports_after_setup_reloads_once(
     hass: HomeAssistant, bambuddy_api: SimpleNamespace, freezer: FrozenDateTimeFactory, field: str

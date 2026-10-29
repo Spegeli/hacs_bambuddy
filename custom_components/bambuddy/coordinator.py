@@ -148,6 +148,12 @@ def _ams_holds(hass: HomeAssistant) -> dict[tuple[str, str, str], int]:
     return holds
 
 
+def _chamber_reloads(hass: HomeAssistant) -> dict[tuple[str, str], int]:
+    """How often each (entry, printer) reloaded in this run for a chamber BamBuddy reported late."""
+    reloads: dict[tuple[str, str], int] = hass.data.setdefault(DOMAIN, {}).setdefault("chamber_reloads", {})
+    return reloads
+
+
 
 def names_issue(entry_id: str, key: str) -> str:
     """The notice that a printer's names come from BamBuddy: one per printer."""
@@ -272,6 +278,7 @@ class BamBuddyPrinterCoordinator(DataUpdateCoordinator[PrinterData]):
         self.camera_fps: int | None = None
         # The fan kits BamBuddy reported at setup (`PrinterData.fan_kits`).
         self._kits_at_setup: frozenset[str] = frozenset()
+        self._chamber_at_setup: frozenset[str] = frozenset()
         self._hours_read = -RUNTIME_INTERVAL
         # The AMS units' names in BamBuddy by place; None until read in this run.
         self.ams_labels: dict[int, str] | None = None
@@ -349,6 +356,7 @@ class BamBuddyPrinterCoordinator(DataUpdateCoordinator[PrinterData]):
         if self.data is None:
             self._blank_at_setup = data.blank
             self._kits_at_setup = data.fan_kits()
+            self._chamber_at_setup = data.chamber_parts()
         elif self._blank_at_setup and not data.blank:
             self._blank_at_setup = False
             self._schedule_reload()
@@ -356,6 +364,9 @@ class BamBuddyPrinterCoordinator(DataUpdateCoordinator[PrinterData]):
             # A fan kit BamBuddy learnt of after the setup: its fan comes with one reload.
             self._kits_at_setup = data.fan_kits()
             self._schedule_reload()
+        elif not data.chamber_parts() <= self._chamber_at_setup:
+            self._chamber_at_setup = data.chamber_parts()
+            self._reload_for_chamber()
         self._follow_serials(data)
         self._follow_firmware(data)
         if read or self._names_due:
@@ -611,6 +622,18 @@ class BamBuddyPrinterCoordinator(DataUpdateCoordinator[PrinterData]):
 
     def _schedule_reload(self) -> None:
         async_schedule_reload(self.hass, self.config_entry)
+
+    def _reload_for_chamber(self) -> None:
+        """BamBuddy reports a chamber temperature or heater the setup had not: BamBuddy was updated
+        (1.3 gives the H2D Pro and the X1E theirs, maziggy/bambuddy#3335), or the printer had not
+        reported at setup. Their entities come with one reload, at most `HOLD_LIMIT` a run."""
+        reloads = _chamber_reloads(self.hass)
+        key = (self.config_entry.entry_id, self.key)
+        if reloads.get(key, 0) >= HOLD_LIMIT:
+            return
+        reloads[key] = reloads.get(key, 0) + 1
+        _LOGGER.debug("BamBuddy reports a chamber for %s that the setup had not: the entry reloads", self.printer_name)
+        self._schedule_reload()
 
     @callback
     def async_name_devices(self, data: PrinterData) -> None:

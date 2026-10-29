@@ -660,6 +660,11 @@ def test_every_model_heats_as_far_as_it_can(model: str, nozzle: int | None, bed:
     assert (heater_max(model, "nozzle"), heater_max(model, "bed")) == (nozzle, bed)
 
 
+def test_only_the_x1e_has_a_chamber_limit_below_bambuddys() -> None:
+    """The X1E's chamber heats to 60 °C; every other heater takes BamBuddy's 65 °C."""
+    assert (heater_max("X1E", "chamber"), heater_max("C13", "chamber"), heater_max("H2D", "chamber")) == (60, 60, None)
+
+
 @pytest.mark.parametrize(
     ("value", "ten"),
     [(0, 0), (4, 0), (5, 10), (7, 10), (13, 10), (47, 50), (53, 50), (55, 60), (93, 90), (95, 100), (100, 100), (104, 100), (-3, 0)],

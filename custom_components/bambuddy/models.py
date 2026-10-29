@@ -165,7 +165,7 @@ _OPEN_FRAME = _A1_FAMILY | {"P1P"}
 # The A1 and the A1 mini dry an AMS 2 Pro / AMS HT from their screen only
 # (Bambu's drying guide); BamBuddy files them as unsupported.
 _SCREEN_DRYING = frozenset({"A1", "A1 MINI"})
-# The most each model's nozzle and bed heat to (Bambu Studio's printer
+# The most each model's nozzle, bed and chamber heat to (Bambu Studio's printer
 # profiles, Bambu's spec pages). The X1 and X1C bed: 110 °C on 220 V, 120 °C
 # on 110 V -- the higher, so no printer is refused what it reaches.
 _HEATER_MAX: dict[str, dict[str, int]] = {
@@ -180,6 +180,9 @@ _HEATER_MAX: dict[str, dict[str, int]] = {
         **dict.fromkeys(("X1E", "P2S"), 110),
         **dict.fromkeys(("X1", "X1C", "X2D", "H2D", "H2D PRO", "H2C", "H2S"), 120),
     },
+    # BamBuddy takes up to 65 °C; the X1E heats its chamber to 60 °C (Bambu's
+    # spec page, BamBuddy's own note on its heater list).
+    "chamber": {"X1E": 60},
 }
 
 # Tray ids BamBuddy uses for the external spool holder(s).
@@ -328,8 +331,8 @@ def round_ten(value: float) -> int:
 
 
 def heater_max(model: str | None, heater: str) -> int | None:
-    """The most a model's `heater` ("nozzle", "bed") heats to; None for a
-    model the table does not know."""
+    """The most a model's `heater` ("nozzle", "bed", "chamber") heats to;
+    None for a model the table does not know."""
     return _HEATER_MAX.get(heater, {}).get(model_key(model))
 
 
@@ -504,6 +507,16 @@ class PrinterData:
         if self.status.get("left_aux_fan_speed") is not None:
             kits.add("left_aux")
         return frozenset(kits)
+
+    def chamber_parts(self) -> frozenset[str]:
+        """What BamBuddy reports of the chamber: its temperature, its heater -- for the H2D Pro and
+        the X1E only from BamBuddy 1.3 on (maziggy/bambuddy#3335)."""
+        parts = set()
+        if self.temperatures.get("chamber") is not None:
+            parts.add("temperature")
+        if self.status.get("supports_chamber_heater"):
+            parts.add("heater")
+        return frozenset(parts)
 
     def stock_aux_fan(self) -> bool:
         return self.has_aux_fans() and model_key(self.model) not in _NO_STOCK_AUX_FAN

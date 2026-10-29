@@ -101,6 +101,7 @@ NUMBERS: tuple[BamBuddyTemperatureDescription, ...] = (
         key="chamber_target",
         translation_key="chamber_target_temperature",
         native_max_value=65,
+        heater="chamber",
         set_fn=lambda client, printer, target: client.set_chamber_temperature(printer, target),
         exists_fn=lambda data: bool(data.status.get("supports_chamber_heater")),
     ),

@@ -667,6 +667,21 @@ async def test_a_target_goes_as_high_as_the_model_heats(hass: HomeAssistant, bam
     assert state_of(hass, "number", printer_uid(entry, "chamber_target", H2D)).attributes["max"] == 65
 
 
+async def test_an_x1e_heats_its_chamber_to_60(hass: HomeAssistant, bambuddy_api: SimpleNamespace) -> None:
+    """BamBuddy 1.3 gives the X1E its chamber heater (maziggy/bambuddy#3335) and takes up to 65 °C;
+    the X1E heats its chamber to 60 °C (Bambu's spec, BamBuddy's own note)."""
+    printers = load_fixture("printers.json")
+    for printer in printers:
+        if printer["id"] == X1C:
+            printer["model"] = "X1E"
+    bambuddy_api.get_printers.return_value = printers
+    bambuddy_api.statuses[X1C]["supports_chamber_heater"] = True
+    bambuddy_api.statuses[X1C]["temperatures"]["chamber_target"] = 0.0
+    entry = await set_up(hass, X1C)
+
+    assert state_of(hass, "number", printer_uid(entry, "chamber_target")).attributes["max"] == 60
+
+
 def _reauths(hass: HomeAssistant) -> list[str]:
     return [flow["flow_id"] for flow in hass.config_entries.flow.async_progress() if flow["context"]["source"] == "reauth"]
 
