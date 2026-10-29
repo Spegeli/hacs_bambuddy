@@ -17,7 +17,7 @@
 
 A custom <a href="https://www.home-assistant.io/">Home Assistant</a> integration for **BamBuddy**: the status, camera and controls of your Bambu Lab printers on your dashboard.
 
-[BamBuddy](https://github.com/maziggy/bambuddy) is a self-hosted command center for Bambu Lab 3D printers. The integration talks only to your own BamBuddy server, through its REST API; it uses no cloud.
+[BamBuddy](https://github.com/maziggy/bambuddy) is a self-hosted command center for Bambu Lab 3D printers. The integration talks only to your own BamBuddy server, through its REST API and its live connection; it uses no cloud.
 
 *This is the integration, not the app: it connects Home Assistant to a BamBuddy server — on any machine, or inside Home Assistant with the [BamBuddy app](https://github.com/Spegeli/homeassistant-app-bambuddy).*
 
@@ -152,7 +152,7 @@ After a command it reads the printer again a moment later and once more a few se
 
 ## 📊 Entities
 
-Entity names are in Home Assistant's language: English or German, English for any other. Which entities a printer gets depends on its model: an A1 has no chamber temperature, no door and no auxiliary fan; only printers with a chamber heater get a chamber target temperature; a two-nozzle printer (H2D, H2D Pro, H2C, X2D) gets left and right versions.
+Entity names are in Home Assistant's language: English or German, English for any other. Which entities a printer gets depends on its model: an A1 has no chamber temperature, no door and no auxiliary fan; only printers with a chamber heater that BamBuddy reports get a chamber target temperature (see [Known limitations](#%EF%B8%8F-known-limitations) for the H2D Pro and the X1E); a two-nozzle printer (H2D, H2D Pro, H2C, X2D) gets left and right versions.
 
 While a printer is offline, BamBuddy keeps its last values, so most of its entities are unavailable: **Online** and **Print status** (`offline`) tell about it; the print hours, *Maintenance*, the build plate, *Plate cleared*, the firmware and *Camera frame rate* stay available. Home Assistant skips an unavailable entity without an error (only a warning in its log): an automation that presses an offline printer's *Pause* or sets its nozzle target sends nothing. The `bambuddy.*` actions refuse with "… is offline" instead — all but `bambuddy.run_diagnostic`, `bambuddy.mark_maintenance_done` and `bambuddy.get_filaments`, which work without the printer, as *Plate cleared* does.
 
@@ -169,16 +169,16 @@ While a printer is offline, BamBuddy keeps its last values, so most of its entit
 | Print hours | Sensor | Hours the printer has printed, as BamBuddy counts them (with the offset set in BamBuddy) |
 | Maintenance | Sensor | *OK*, *Due soon* or *Overdue*, as BamBuddy keeps the printer's maintenance; its tasks in the attribute `tasks`. Read every 10 minutes and after a print: a read can write to BamBuddy's database (it adds missing default tasks). BamBuddy counts a task never marked done from 0 hours, so a printer with print hours shows such tasks overdue until you mark them done. Attributes `due_count` and `due_soon_count` (numbers) |
 | Nozzle / Bed / Chamber temperature | Sensor | Current temperatures (two nozzles: left and right) |
-| Nozzle / Bed / Chamber target temperature | Number | Set the heaters; their lowest value (0 °C, 32 °F) turns them off. A running job may set them again |
+| Nozzle / Bed / Chamber target temperature | Number | Set the heaters, up to what the model reaches (the X1E's chamber: 60 °C); their lowest value (0 °C, 32 °F) turns them off. A running job may set them again |
 | Part cooling / Auxiliary / Chamber fan | Fan | Fan speeds in %, settable, in steps of 10 as Bambu's apps show them. The H2 series, the X2D and a P2S with the External Exhaust Fan kit have an *Exhaust fan* instead of a *Chamber fan* (a base P2S has neither); the X2D has a *Left* and a *Right auxiliary fan*, a P2S with a left auxiliary fan a *Left auxiliary fan* beside its *Auxiliary fan*. The stock X1 has no auxiliary fan and the P1P neither that nor a chamber fan: kits add them, so they are there, disabled at first |
 | Hotend fan | Sensor | Hotend fan speed *(Diagnostic)* |
 | Chamber light | Light | Switch the chamber light (*Light* on the open A1 series and the P1P) |
 | Print speed | Select | Silent, Standard, Sport, Ludicrous — while printing |
 | Airduct mode | Select | Cooling or heating (P2S, X2D, H2 series) — while no print runs: the printer sets it at every print start; *Laser mode* while the printer has set it for its laser module. Cooling is refused while the chamber heats, heating while it is ventilated *(Configuration)* |
-| Ventilation | Fan | Printers with an airduct (P2S, X2D, H2 series): on sets the airduct to cooling and runs the fans that bring the air through — the exhaust fan on the H2 series, the right auxiliary and the exhaust fan on the X2D, the auxiliary fan on the P2S and, with the kit, its exhaust fan — at one speed in steps of 10 %, 60 % unless you give one. It is refused while the chamber heats (on the P2S: while the airduct keeps it warm) and during a print in heating mode. A chamber target in turn is refused while the chamber is ventilated and during a print in cooling mode, and sets the airduct to heating first. Off sends nothing outside cooling mode: the ventilation is off there already, and its fans do other work — filtering on the X2D, circulating through the filter on the P2S, drawing off a laser's fumes on the H2 series |
+| Ventilation | Fan | Printers with an airduct (P2S, X2D, H2 series): on sets the airduct to cooling and runs the fans that bring the air through — the exhaust fan on the H2 series, the right auxiliary and the exhaust fan on the X2D, the auxiliary fan on the P2S and, with the kit, its exhaust fan — at one speed in steps of 10 %, 60 % unless you give one. It is refused while the chamber heats (on the P2S: while the airduct keeps it warm) and during a print in heating or laser mode. A chamber target in turn is refused while the chamber is ventilated and during a print in cooling mode, and sets the airduct to heating first. Off sends nothing outside cooling mode: the ventilation is off there already, and its fans do other work — filtering on the X2D, circulating through the filter on the P2S, drawing off a laser's fumes on the H2 series |
 | Active nozzle | Select | Left or right nozzle of a two-nozzle printer — while no print runs |
 | AMS filament backup | Switch | When a spool runs out, the printer continues with a matching spool from the AMS (same brand, material and color). Printers with an AMS; *unknown* where BamBuddy cannot read it (the A1 and P1 series before BamBuddy 1.3.0) — switching works all the same *(Configuration)* |
-| AI print monitoring / First layer inspection / Build plate (position) detection / Spaghetti, purge chute pile-up, nozzle clumping and air printing detection | Switch | The printer's AI detection, only what the model has: the X1 series has AI monitoring, the first layer and the plate position check, the A series the plate position check, the P2S, X2D and H2 series the build plate check and each detector on its own — air printing only the H2D, H2D Pro and H2C (an H2D before firmware 01.01.02.08: AI monitoring and the build plate check). Their sensitivity stays as set on the printer *(Configuration)* |
+| AI print monitoring / First layer inspection / Build plate (position) detection / Spaghetti, purge chute pile-up, nozzle clumping and air printing detection | Switch | The printer's AI detection, only what the model has: the X1 series has AI monitoring, the first layer and the plate position check, the A series the plate position check, the P2S, X2D and H2 series the build plate check and each detector on its own — air printing only the H2D, H2D Pro and H2C (an H2D before firmware 01.01.02.08: AI monitoring and the build plate check). Where a detection has a sensitivity (AI monitoring and the spaghetti, purge chute pile-up, nozzle clumping and air printing detection), it stays as set on the printer; the build plate and first layer checks are on or off only *(Configuration)* |
 | Pause print / Resume print / Stop print | Button | Print controls; pressed at the wrong time they say why. They act at once — the dashboard card asks only before it stops a print |
 | Plate cleared | Button | Tell BamBuddy the plate is empty: its queue may start the next print |
 | Build plate | Binary sensor | *Needs clearing* while BamBuddy waits for the plate to be cleared, else *Ready* |
@@ -250,7 +250,7 @@ For what is no entity. Moving, homing and extruding refuse while a print is runn
 | `bambuddy.get_k_profiles` | `entity_id` (a slot or external spool sensor) | Returns `nozzle_diameter`, the slot's current profile (`current`; `-1`: none) and `profiles`, the printer's own K (pressure advance) calibrations for the nozzle that feeds the slot (`index`, `name`, `k_value`, `filament_id`, `nozzle` on two-nozzle printers). The printer is asked live, which takes up to about 16 seconds. With an empty `profiles`, `answered` says whether the printer has no profiles of its own for that nozzle diameter (`true`) or did not answer (`false`) |
 | `bambuddy.get_filaments` | `entity_id` (a slot or external spool sensor) | Returns the slot's current filament (`current`, a profile id) and `vendors`: the filaments Bambu Studio offers for the slot, by vendor (`name`, `filaments` with `id`, `name`, `type`) — a response only, as `get_k_profiles` |
 | `bambuddy.reset_slot` | `entity_id` (a slot or external spool sensor) | Clears the slot's material and color, as Reset on the printer's screen — not during a print; in a paused one it is allowed |
-| `bambuddy.refresh_rfid` | `entity_id` (an AMS slot sensor) | Lets the AMS read the spool's chip again — only while no filament is loaded (BamBuddy's rule) |
+| `bambuddy.refresh_rfid` | `entity_id` (an AMS slot sensor) | Lets the AMS read the spool's chip again — not during a print (in a paused one it is allowed), and only while no filament is loaded (BamBuddy's rule) |
 | `bambuddy.start_drying` | `device_id` (AMS 2 Pro or AMS HT), `temperature` (45 … 85 °C), `duration` (1 … 24 h) | Dries the unit's filament (AMS 2 Pro: at most 65 °C) |
 | `bambuddy.stop_drying` | `device_id` (AMS 2 Pro or AMS HT) | Stops drying |
 | `bambuddy.get_print_objects` | `device_id` | Returns the running print's objects (`id`, `name`, `skipped`) — while a print runs or is paused |
@@ -272,8 +272,8 @@ The integration brings its own card: one per printer, with its status, camera, t
 
 <table>
   <tr>
-    <td valign="top"><img src="https://raw.githubusercontent.com/Spegeli/hacs_bambuddy/main/.github/readme/cards/status.png" alt="The BamBuddy card's Status tab: a print at 45 % with its cover, layer, time left and end time; pause, stop and skip objects; the printer's plug with its power and the switch-off after the print; temperatures; four AMS units with their colors; fans and print speed" width="300"></td>
-    <td valign="top"><img src="https://raw.githubusercontent.com/Spegeli/hacs_bambuddy/main/.github/readme/cards/two-nozzle.png" alt="The Status tab of a two-nozzle H2D: left and right nozzle with the active one marked, and four AMS 2 Pro and eight AMS HT units, two of them drying" width="300"></td>
+    <td valign="top"><img src="https://raw.githubusercontent.com/Spegeli/hacs_bambuddy/main/.github/readme/cards/status.png" alt="The BamBuddy card's Status tab: a print at 46 % with its cover, layer, time left and end time; pause, stop and skip objects; the printer's plug with its power and the switch-off after the print, and two accessory plugs; temperatures; an AMS and an AMS HT with their colors, and the external spool; fans and print speed" width="300"></td>
+    <td valign="top"><img src="https://raw.githubusercontent.com/Spegeli/hacs_bambuddy/main/.github/readme/cards/two-nozzle.png" alt="The Status tab of a two-nozzle H2D Pro: left and right nozzle with the active one marked, and four AMS units and eight AMS HT units, each with the nozzle it feeds" width="300"></td>
   </tr>
   <tr>
     <td valign="top"><img src="https://raw.githubusercontent.com/Spegeli/hacs_bambuddy/main/.github/readme/cards/control.png" alt="The Control tab: nozzle and bed heating, the print options with the AI detections, and the jog pad with bed and extruder" width="300"></td>
@@ -289,10 +289,10 @@ The integration brings its own card: one per printer, with its status, camera, t
 
 ### What it shows
 
-- **Status:** the job on top — a picture (the job's cover — a tap shows it large — and the live view: its camera button starts it, or it runs always; it names its frame rate, and where the camera gives more than 5 frames a second, its ⚙ sets it, and ⛶ shows it full screen (on an iPhone as large as the window: iOS has no full screen for it)), its state in words (*Printing*, *Paused by the user*, *Heating nozzle*, …), progress with layers, time left and end time, and *Plate cleared* when the next print waits for it. Below it, in the order you choose: pause, stop and skip objects; temperatures with their targets, the chamber's with its ventilation or keeping warm (tap one to set it); the printer's smart plugs with their power and energy — every plug asks before it goes off — and the switch-off after the print; the AMS colors with what is left, each unit's model, humidity and temperature, and what a filament change is doing; fans; the print speed. While the printer's plug is off, the card says so and switches the printer on, and counts while it starts.
+- **Status:** the job on top — a picture (the job's cover — a tap shows it large — and the live view: its camera button starts it, or it runs always; it names the frames a second that arrive (a dash while it measures them), and where the camera gives more than 5 frames a second, its ⚙ sets it, and ⛶ shows it full screen (on an iPhone as large as the window: iOS has no full screen for it)), its state in words (*Printing*, *Paused by the user*, *Heating nozzle*, …), progress with layers, time left and end time, and *Plate cleared* when the next print waits for it. Below it, in the order you choose: pause, stop and skip objects; temperatures with their targets, the chamber's with its ventilation or keeping warm (tap one to set it); the printer's smart plugs with their power and energy — every plug asks before it goes off — and the switch-off after the print; the AMS colors with what is left, each unit's model, humidity and temperature, and what a filament change is doing; fans; the print speed. While the printer's plug is off, the card says so and switches the printer on, and counts while it starts.
 - **Head:** the printer's name in BamBuddy with its model, nozzle and print hours; the chamber light; chips for the network, HMS messages colored by severity and the firmware (tap one for more), and on request (`header_chips`) for maintenance — add it to see due tasks on the card —, an open door, missing storage, drying AMS units and the printer's plug; a line while an HMS message matters; and ⋮ for the printer's information, its maintenance, a refresh, the connection check and, for admins, its device page. The maintenance list marks a task done after a question in its row. The HMS messages offer the answers the printer's screen offers for them — resume, retry, ignore, stop (stopping asks first) — and a link to Bambu Lab's HMS wiki.
-- **Control:** heating and ventilation — the nozzle, the bed and, where the printer heats it, the chamber, each with − and + and a power switch that switches it on or off (the switches of the nozzles and the bed are hidden while a print runs or is paused); on the P2S, keeping the chamber warm, on or off; on printers with an airduct, ventilating the chamber, on or off and in steps of 10 % — the chamber heated and the chamber ventilated wait for each other, and each says why; the print options — the printer's AI detections, folded, the head saying how many are off; the active nozzle on two-nozzle printers; a jog pad for X and Y and the bed closer or farther, in steps of 1, 10 or 50 mm, homing, and extruding or retracting 10 mm; a camera button beside the steps opens the live view above them. Moving and extruding are locked while a print runs or is paused and during a filament change.
-- **Filament:** each AMS unit with its slots — load and unload, humidity, temperature, drying for the AMS 2 Pro and the AMS HT, set to the gentlest of the loaded spools' advice —, the AMS filament backup, and the external spool (left and right on two-nozzle printers). The ✏️ on a filled slot opens its tools: vendor, filament, color and K profile for a spool without an RFID chip, reading the chip again, and resetting the slot. On two-nozzle printers each unit names the nozzle it feeds (L or R). From three units on, each unit shows only its head, colors and drying at first; a tap on the head shows its slots. In a paused print it offers to resume once the new filament is in.
+- **Control:** heating and ventilation — the nozzle, the bed and, where the printer heats it, the chamber, each with − and + and a power switch that switches it on or off (the switches of the nozzles and the bed are hidden while a print runs or is paused); on the P2S, keeping the chamber warm, on or off; on printers with an airduct, ventilating the chamber, on or off and in steps of 10 % — the chamber heated and the chamber ventilated wait for each other, and each says why; the print options — the printer's AI detections, folded, the head saying how many are off; the active nozzle on two-nozzle printers; a jog pad for X and Y and the bed closer or farther (on the A1, the A1 mini and the A2L the nozzle height), in steps of 1, 10 or 50 mm, homing, and extruding or retracting 10 mm; a camera button beside the steps opens the live view above them. Moving and extruding are locked while a print runs or is paused and during a filament change.
+- **Filament:** each AMS unit with its slots — load and unload, humidity, temperature, drying for the AMS 2 Pro and the AMS HT, set to the gentlest of the loaded spools' advice —, the AMS filament backup, and the external spool (left and right on two-nozzle printers). The ✏️ on a filled slot opens its tools: vendor, filament, color and K profile for a spool without an RFID chip, reading the chip again, and resetting the slot. Below its title it names the nozzle that feeds the slot. The K field can be chosen at once: the printer's own profiles join once it answers (up to about 16 seconds), and the dialog says when it has none for the nozzle diameter or did not answer. On two-nozzle printers each unit names the nozzle it feeds (L or R). From three units on, each unit shows only its head, colors and drying at first; a tap on the head shows its slots. In a paused print it offers to resume once the new filament is in.
 
 While the printer is offline, or BamBuddy gives no data, every tab says so with the printer's picture; offline it offers *Check connection*: BamBuddy checks its ports and its connection to the printer, and the card says what is wrong and what to do. Stop, skipping objects, homing, loading, unloading, and starting and stopping drying ask before they act. After a command the card shows *Sent*; with developer LAN mode off it warns that the printer takes no commands.
 
@@ -303,7 +303,7 @@ While the printer is offline, or BamBuddy gives no data, every tab says so with 
 | `printer` | a device ID | — | The printer (the editor lists them). The ID is the last part of the address of the printer's device page (`…/config/devices/device/<ID>`) |
 | `camera` | `tap`, `always`, `off` | `tap` | The live view: on a tap of its camera button, always while the dashboard is open, or never (the job's picture then) |
 | `status_blocks` | a list of `controls`, `power`, `temperatures`, `ams`, `fans`, `speed` | all six, in this order | The Status tab's sections below the job, in the list's order; a section left out is hidden. The job always stays on top. Print controls and print speed show only while a print runs or is paused; power only for a printer with a smart plug |
-| `header_chips` | a list of `network`, `hms`, `firmware`, `maintenance`, `door`, `storage`, `drying`, `power` | `network`, `hms`, `firmware` | The chips below the name, in the list's order; a chip left out is hidden. Door, storage and drying show only while the door is open, the storage is missing or an AMS unit dries — one chip for all units, with the longest time left; power only for a printer with a smart plug, a tap shows its plugs. An HMS error shows whatever you choose. Chips never cut their text: more chips take more rows |
+| `header_chips` | a list of `network`, `hms`, `firmware`, `maintenance`, `door`, `storage`, `drying`, `power` | `network`, `hms`, `firmware` | The chips below the name, in the list's order; a chip left out is hidden. Door, storage and drying show only while the door is open, the storage is missing or an AMS unit dries — one chip for all units, with the longest time left; power only for a printer with a smart plug, a tap shows its plugs. An HMS error shows whatever you choose. Chips never cut their text: more chips take more rows. Each chip shows its full text as a tooltip. |
 | `compact_chips` | `true`, `false` | `false` | The chips with icon and value only: *OK* instead of *HMS OK*, *3* instead of *Maintenance: 3 due*, the version an update brings, the drying time (*2×* before it for several units), a plug's power or its state in a word; an open door and missing storage as their icon. A tooltip shows the full text, and screen readers read it out |
 | `start_view` | `status`, `control`, `filament` | `status` | The tab the card opens on; Status where that tab is hidden (the editor warns when its options hide it) |
 | `show_control_tab` | `true`, `false` | `true` | The Control tab |
@@ -332,68 +332,123 @@ The live view uses bandwidth while it runs; with `tap` it stops when you leave t
 
 ## 🤖 Automation examples
 
-How to use them: **Settings → Automations & scenes → Create automation → ⋮ → Edit in YAML**, paste an example and put in your entity IDs (your printer's device under **Settings → Devices & services → BamBuddy** lists them) and your phone's notify action (`notify.mobile_app_<your phone>`). Easier for a first one: in the visual editor choose **Add trigger → Entity**, then the state trigger (**State**; **State changed** in the newest versions), pick your printer's *Print status*, set **From** to *Printing* and **To** to *Finished*.
+How to use them: **Settings → Automations & scenes → Create automation → ⋮ → Edit in YAML**, paste an example and put in your entity IDs (your printer's device under **Settings → Devices & services → BamBuddy** lists them) and your phone's notify action (`notify.mobile_app_<your phone>`) — the examples send to `notify.mobile_app_your_phone`; write yours in its place. Easier for a first one: in the visual editor choose **Add trigger → Entity**, then the state trigger (**State**; **State changed** in the newest versions), pick your printer's *Print status*, set **From** to *Printing* and **To** to *Finished*. Every example works from Home Assistant 2025.5 on.
 
 Entity IDs are made of the printer's model and serial number and the entity's English key — `sensor.x1c_00m00a000000001_print_status` —, an AMS unit's of its own model and serial — `sensor.ams_2_pro_19c06a000000001_humidity`; an AMS Lite's, for now, of the printer's serial and its letter (see [Per AMS unit](#per-ams-unit)) —, whatever the printer is called and in any language. Yours carry the model and serial of your printer or AMS unit; its device page shows the serial. BamBuddy's own start with `bambuddy`, such as `sensor.bambuddy_total_prints` (a second BamBuddy's end in `_2`). A smart plug's carry a short code made from what the plug switches — `switch.bambuddy_smart_plug_3f9a2c` (the plug itself), `sensor.bambuddy_smart_plug_3f9a2c_power`, `sensor.bambuddy_smart_plug_3f9a2c_energy_today` —: they stay when the plug is renamed or moved to another printer, and go with what it switches (see [Per smart plug](#per-smart-plug)); a second plug that switches the same device ends in `_2`.
 
-**Tell me when a print is done**
+### 1. Print done: a push message when a print finishes or fails
+
+A message with the job's name when a print finishes, or fails — a print you stop yourself counts as failed. It fires only when the status changes from `printing` or `paused`, so a printer that comes back from offline, a restart of Home Assistant or a reload of the integration sends nothing about a print that ended earlier.
 
 ```yaml
+alias: BamBuddy print finished or failed
 triggers:
   - trigger: state
     entity_id: sensor.x1c_00m00a000000001_print_status
-    from: printing
-    to: finished
+    from: [printing, paused]
+    to: [finished, failed]
 actions:
-  - action: notify.notify
+  - action: notify.mobile_app_your_phone
     data:
-      message: "{{ states('sensor.x1c_00m00a000000001_current_print') }} is done."
+      title: "{{ 'Print done' if trigger.to_state.state == 'finished' else 'Print failed' }}"
+      message: "{{ states('sensor.x1c_00m00a000000001_current_print') }}"
 ```
 
-**Warn on an HMS error**
+---
+
+### 2. HMS message: a push message for each new message of the printer
+
+A message with the text of the printer's HMS messages whenever there are more than before. A trigger on "above 0" would miss a second message while the first still stands. The condition keeps it quiet when a message clears, when the integration reloads and when the sensor is created. `severity` tells an `error` from a `warning` or a `notice`.
 
 ```yaml
+alias: BamBuddy HMS message
 triggers:
-  - trigger: numeric_state
+  - trigger: state
     entity_id: sensor.x1c_00m00a000000001_hms_errors
-    above: 0
+    not_from: [unavailable, unknown]
 conditions:
-  - "{{ trigger.from_state.state not in ['unavailable', 'unknown'] }}"
+  # Only a new message: the count rose. Not one that cleared, not a reload.
+  - condition: template
+    value_template: "{{ trigger.from_state is not none and trigger.to_state.state | int(0) > trigger.from_state.state | int(0) }}"
 actions:
-  - action: notify.notify
+  - action: notify.mobile_app_your_phone
     data:
+      title: "{{ device_attr(trigger.entity_id, 'name') }}"
       message: >
-        {% for error in state_attr('sensor.x1c_00m00a000000001_hms_errors', 'errors') %}
+        {% for error in state_attr(trigger.entity_id, 'errors') %}
         {{ error.severity }}: {{ error.description or error.code }}
         {% endfor %}
 ```
 
-**Light on while printing**
+---
+
+### 3. Chamber light: on while a print runs, off when it ends
+
+The light comes on when a print starts and goes off when it ends — finished, failed or stopped. Both triggers name the states they come from, so a restart, a reload of the integration or a printer that drops offline in the middle of a print leaves the light as it is, and a pause does not switch it. The trigger's `id` is the second half of the action's name. Delete the second trigger to leave the light on at the end.
 
 ```yaml
+alias: BamBuddy chamber light while printing
 triggers:
+  # The light comes on when a print starts ...
   - trigger: state
+    id: "on"
     entity_id: sensor.x1c_00m00a000000001_print_status
+    from: [idle, slicing, finished, failed]
+    to: [preparing, printing]
+  # ... and goes off when it ends.
+  - trigger: state
+    id: "off"
+    entity_id: sensor.x1c_00m00a000000001_print_status
+    from: [preparing, printing, paused]
+    to: [finished, failed, idle]
 actions:
-  - action: "light.turn_{{ 'on' if trigger.to_state.state in ['preparing', 'printing', 'paused'] else 'off' }}"
+  - action: "light.turn_{{ trigger.id }}"
     target:
       entity_id: light.x1c_00m00a000000001_chamber_light
 ```
 
 On an A1, A1 mini, A2L or P1P the light is `light.<model>_<serial>_light` (they have no chamber).
 
-**Remind me of a wet AMS**
+---
+
+### 4. Wet filament: a push message when an AMS stays humid
+
+A message when an AMS unit's humidity has stayed above 40 % for an hour. It fires once when the hour is up, and again only after the humidity has fallen below 40 % and risen above it again. The message reads the humidity as it is then, and the unit's device name says which unit it is; list several humidity sensors under `entity_id` for several units. To dry the filament, see `bambuddy.start_drying` under [Actions](#%EF%B8%8F-actions).
 
 ```yaml
+alias: BamBuddy wet AMS
 triggers:
   - trigger: numeric_state
     entity_id: sensor.ams_2_pro_19c06a000000001_humidity
     above: 40
     for: "01:00:00"
 actions:
-  - action: notify.notify
+  - action: notify.mobile_app_your_phone
     data:
-      message: "{{ device_attr(trigger.entity_id, 'name') }} is at {{ trigger.to_state.state }} % humidity: time to dry the filament."
+      title: Wet filament
+      message: "{{ device_attr(trigger.entity_id, 'name') }} is at {{ states(trigger.entity_id) }} % humidity: time to dry the filament."
+```
+
+---
+
+### 5. Lost printer: a push message when a print loses its printer
+
+A message when the print status has been `offline` for three minutes after `printing` or `paused`: the printer lost its power or its Wi-Fi, or BamBuddy lost it. The three minutes ignore a short drop. Because only a status that comes from a running print counts, switching the printer off after a finished print — by hand or with the switch-off after the print — sends nothing. If BamBuddy itself stops answering, every entity of the printer turns `unavailable`, not `offline`: write `to: [offline, unavailable]` to hear of that too.
+
+```yaml
+alias: BamBuddy printer lost during a print
+triggers:
+  - trigger: state
+    entity_id: sensor.x1c_00m00a000000001_print_status
+    from: [printing, paused]
+    to: offline
+    # A short drop is ignored.
+    for: "00:03:00"
+actions:
+  - action: notify.mobile_app_your_phone
+    data:
+      title: Printer lost
+      message: "{{ device_attr(trigger.entity_id, 'name') }} went offline during a print."
 ```
 
 ---
@@ -422,6 +477,7 @@ HACS offers 2.0.0 as an update to everyone on a date version.
 - **What BamBuddy cannot do, neither can the integration:** start a print, change the plate type, load from an AMS HT, send raw G-code.
 - **Filament Track Switch:** a load from an AMS slot must name the nozzle to feed, which `bambuddy.load_filament` and the card do not ask: load it on the printer or in BamBuddy. The external spools load.
 - **AMS Lite without its serial number:** BamBuddy 1.2.5.7 does not report it ([maziggy/bambuddy#3348](https://github.com/maziggy/bambuddy/issues/3348); its 1.3.0 betas do). Until yours does, the AMS Lite's entity IDs carry the printer's serial number and the unit's letter (`sensor.ams_lite_0309da000000002_a_slot_1`). Once BamBuddy reports it, they are renamed once and **Settings → Repairs** lists them — see [Per AMS unit](#per-ams-unit).
+- **Chamber of the H2D Pro and the X1E with BamBuddy 1.2.5.7:** BamBuddy 1.2.5.7 reports no chamber temperature or chamber heater for an H2D Pro, and no chamber heater for an X1E ([maziggy/bambuddy#3335](https://github.com/maziggy/bambuddy/issues/3335); its 1.3.0 betas do). Until yours does, the H2D Pro has no *Chamber temperature*, and neither has a *Chamber target temperature*. Once BamBuddy reports them, the BamBuddy entry reloads once by itself and the entities come.
 - **Firmware and BamBuddy updates** are shown, not installed.
 - **Live updates need BamBuddy's WebSocket.** A reverse proxy in front of BamBuddy must pass WebSockets on the address you gave; without them the status is up to 10 seconds old. **Configure → Settings → Live updates** tests it. Some values BamBuddy's live connection does not tell of on their own — HMS messages, the remaining time, the print speed, the chamber and right-nozzle targets, the AI detection switches, the airduct, the AMS humidity: they come with the next change, at the latest with the 10-second read.
 - **Printer names come from BamBuddy:** a printer is named after its name in BamBuddy, then model and serial number, e.g. *Workshop (X1C / 00M00A000000001)*. Rename it in BamBuddy; a name given in Home Assistant goes back to BamBuddy's within a minute, and **Settings → Repairs** says why. Smart plug devices and the BamBuddy device keep a name you give them in Home Assistant. AMS units follow their printer, lettered as on the printer — *Workshop AMS A (AMS 2 Pro / serial number)* — or named as in BamBuddy — *Workshop Silk (AMS 2 Pro / serial number)* —, so they sort right under it.
@@ -434,6 +490,9 @@ HACS offers 2.0.0 as an update to everyone on a date version.
 
 **The setup form, or the BamBuddy entry under Settings → Devices & services, says BamBuddy cannot be reached.**
 Use the address you open BamBuddy with in your browser, including the port. With BamBuddy running as a Home Assistant app, use the host's address and the port the app shows, not `localhost`. The part in brackets after the entry's message, such as `(GET /updates/version: ClientConnectorDNSError)`, is for a bug report.
+
+**The setup, or the BamBuddy entry, says BamBuddy is too old.**
+The integration needs BamBuddy 1.2.5.7 or newer. Update BamBuddy, then try again (on the entry: **⋮ → Reload**).
 
 **The setup does not accept the key.**
 Check that you pasted all of it. BamBuddy shows a key only once: if you no longer have it, create a new one. Where the form shows the three permissions, the key lacks those marked ✗: BamBuddy cannot add them to an existing key — create a new one with **Read Status**, **Control Printer** and **Manage Maintenance**. If you ticked one marked ✗, the key's owner may not do it: give them that right in BamBuddy, or create the key as a user who has it.
@@ -465,10 +524,11 @@ The card remembers the printer's device, and deleting the BamBuddy entry deletes
 
 ## 🗑️ Removal
 
-1. Go to **Settings → Devices & services → BamBuddy** and delete the entry with **⋮ → Delete**. Its devices, their entities and the API key stored in Home Assistant go with it — set up again later, the printers get new devices, and cards that showed them need their printer chosen again.
-2. Remove **BamBuddy** in HACS (its **⋮** menu → **Remove**). Installed manually: delete the `/config/custom_components/bambuddy/` folder.
-3. Restart Home Assistant.
-4. Optional: delete the API key in BamBuddy (**Settings → API Keys**) if nothing else uses it.
+1. Remove the BamBuddy printer cards from your dashboards: without the integration they show "Custom element doesn't exist".
+2. Go to **Settings → Devices & services → BamBuddy** and delete the entry with **⋮ → Delete**. Its devices, their entities and the API key stored in Home Assistant go with it — set up again later, the printers get new devices, and cards that showed them need their printer chosen again.
+3. Remove **BamBuddy** in HACS (its **⋮** menu → **Remove**). Installed manually: delete the `/config/custom_components/bambuddy/` folder.
+4. Restart Home Assistant.
+5. Optional: delete the API key in BamBuddy (**Settings → API Keys**) if nothing else uses it.
 
 **History:** the recorded history of the removed entities stays in Home Assistant's database until the recorder purges it — after 10 days by default (the recorder's `purge_keep_days`).
 
