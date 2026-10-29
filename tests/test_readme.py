@@ -64,6 +64,14 @@ def test_the_license_badge_names_the_license_of_the_license_file_and_opens_it():
     ) in _README
 
 
+def test_every_badge_under_the_title_says_what_it_shows():
+    """A badge is a picture: its text is what a screen reader reads and
+    what shows where the picture does not load."""
+    badges = re.findall(r'<img src="https://img\.shields\.io/[^"]*"([^>]*)>', _README)
+    assert len(badges) == 4
+    assert all(re.search(r'alt="[^"]+"', rest) for rest in badges), badges
+
+
 def test_the_release_badge_opens_the_release_it_shows():
     """The badge shows the newest stable release -- pre-releases left out,
     as include_prereleases is not set -- and GitHub's /releases/latest
@@ -166,6 +174,23 @@ def test_the_head_sends_date_version_users_to_the_upgrade_and_names_the_app() ->
     assert "[!WARNING]" not in head and "active development" not in head
     assert "This is the integration, not the app" in head and _APP in head
     assert "> [!IMPORTANT]" in head and "(#%EF%B8%8F-upgrading-from-a-date-version)" in head
+
+
+def test_the_head_links_where_people_ask_and_talk() -> None:
+    """Under the badges, one line to the integration's thread in the Home
+    Assistant forum -- the thread the issue chooser sends questions to -- and
+    to its post on r/BambuLab. Ideas and bugs belong to GitHub's forms, so the
+    line names questions and discussion only."""
+    head = _README[: _README.index("## ✨ Features")]
+    chooser = (_ROOT / ".github" / "ISSUE_TEMPLATE" / "config.yml").read_text(encoding="utf-8")
+    forum = re.search(r"name: Questions about this integration\n\s+url: (\S+)", chooser)
+    assert forum
+    start = head.index("💬 Questions and discussion:")
+    line = head[start:].split("\n", 1)[0]
+    assert f'<a href="{forum.group(1)}">Home Assistant forum</a>' in line
+    assert '<a href="https://www.reddit.com/r/BambuLab/comments/1xim2qw/' in line
+    assert line.endswith(">r/BambuLab on Reddit</a>")
+    assert head.index('alt="Home Assistant 2025.5+"') < start < head.index("A custom <a href=")
 
 
 def test_the_app_section_follows_the_requirements() -> None:
