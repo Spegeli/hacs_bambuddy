@@ -474,6 +474,30 @@ describe("the status view", () => {
     }
   });
 
+  it("opens a dialog at its top, the safe button focused without scrolling to it", async () => {
+    // The button row stands last in the dialog: focusing it would scroll a long dialog down.
+    const scrolled: number[] = [];
+    const original = HTMLDialogElement.prototype.showModal;
+    HTMLDialogElement.prototype.showModal = function (this: HTMLDialogElement): void {
+      original.call(this);
+      this.scrollTop = 251;
+    };
+    const focus = vi.spyOn(HTMLElement.prototype, "focus");
+    try {
+      const { card } = await cardFor("x1c");
+      await press(card, "Stop print");
+      const dialog = find<HTMLDialogElement>(card, "dialog") as HTMLDialogElement;
+      scrolled.push(dialog.scrollTop);
+      const safe = find(card, "dialog .dlg-actions .safe");
+      expect(focus.mock.contexts.at(-1)).toBe(safe);
+      expect(focus.mock.calls.at(-1)?.[0]).toEqual({ preventScroll: true });
+      expect(scrolled).toEqual([0]);
+    } finally {
+      HTMLDialogElement.prototype.showModal = original;
+      focus.mockRestore();
+    }
+  });
+
   it("opens a dialog where the browser has no modal dialogs", async () => {
     const original = HTMLDialogElement.prototype.showModal;
     // @ts-expect-error -- a browser without showModal

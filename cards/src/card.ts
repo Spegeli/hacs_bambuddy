@@ -501,8 +501,11 @@ export class BamBuddyPrinterCard extends LitElement {
     if (dialog && !dialog.open && this.isConnected) {
       if (typeof dialog.showModal === "function") dialog.showModal();
       else dialog.setAttribute("open", "");
-      // The safe choice has the focus: Enter never confirms by accident.
-      dialog.querySelector<HTMLElement>(".dlg-actions .safe")?.focus();
+      // The safe choice has the focus: Enter never confirms by accident. Its
+      // row stands last in the dialog: focused with scrolling, a long dialog
+      // would open scrolled down -- it opens at its top.
+      dialog.querySelector<HTMLElement>(".dlg-actions .safe")?.focus({ preventScroll: true });
+      dialog.scrollTop = 0;
     }
     // The button row may wrap to two lines: what the keyboard reaches stays
     // above it. Measured open: a closed dialog lays out nothing.
