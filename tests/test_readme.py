@@ -305,6 +305,25 @@ def test_the_readme_names_get_filaments() -> None:
     assert row.count(" | ") == 2 and "`entity_id`" in row and "response only" in row
 
 
+def test_the_readme_names_the_inventory_actions() -> None:
+    """The spool inventory's three actions, the response-only one as get_filaments."""
+    rows = {line.split(" | ")[0]: line for line in _README.splitlines() if line.startswith("| `bambuddy.")}
+    for action in ("assign_spool", "unassign_spool", "get_spools"):
+        assert f"| `bambuddy.{action}`" in rows, action
+    spools = rows["| `bambuddy.get_spools`"]
+    assert spools.count(" | ") == 2 and "`entity_id`" in spools and "response only" in spools
+    assert "`spool_id`" in rows["| `bambuddy.assign_spool`"]
+
+
+def test_the_readme_names_manage_inventory_as_optional() -> None:
+    """Manage Inventory is no permission the integration needs: under "Create an API key"
+    the README says what it adds and that everything else works without it."""
+    section = _README.split("### Create an API key", 1)[1].split("\n### ", 1)[0]
+    assert "**Manage Inventory**" in section
+    assert "without it" in section
+    assert "`inventory_spool`" in _README and "`inventory_assignable`" in _README
+
+
 def test_the_readme_names_the_camera_modes_as_the_editor_does() -> None:
     """On a tap of its camera button, always, never: the editor's three words."""
     assert "| `camera` | `tap`, `always`, `off` | `tap` | The live view: on a tap of its camera button, always while the dashboard is open, or never (the job's picture then) |" in _README
