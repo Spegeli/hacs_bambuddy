@@ -1,6 +1,7 @@
 // The card's dialogs: a confirmation before an action that cannot be taken
 // back, the drying settings, the objects of a print to skip, a slot's
-// filament and colour, and what the head's chips and menu open -- the HMS
+// filament and colour or its spool from BamBuddy's inventory (the list, its
+// filters and search), and what the head's chips and menu open -- the HMS
 // messages, the firmware, the storage, the printer information, the plugs'
 // power and the switch-off after the print, the camera's frame rate,
 // maintenance, the connection check. The safe choice comes first and has
@@ -134,7 +135,7 @@ export interface FilamentDialog {
   kprofile?: string;
   /** Which way the slot is set: its filament, or a spool of BamBuddy's inventory. */
   tab?: "set" | "inventory";
-  /** An empty slot, or the one the running print feeds: only the inventory. */
+  /** An empty slot, or a chip spool the running print feeds: only the inventory. */
   inventoryOnly?: boolean;
   /** The inventory's spools for the slot, while asked "loading", or
    * "failed" when the integration did not answer. */
@@ -809,8 +810,8 @@ function shownSpools(dialog: FilamentDialog, list: SpoolList, assigned: number |
     .map(([material, spools]): [string, ListedSpool[]] => [material, [...spools].sort((a, b) => Number(b.id === assigned) - Number(a.id === assigned))]);
 }
 
-/** The chosen spool can be assigned now: another than the slot's, it fits,
- * and the slot does not feed the running print. */
+/** Why the chosen spool cannot be assigned now: a filament change under
+ * way. The slot a running print feeds takes one too, as in BamBuddy. */
 function slotBusy(ctx: CardContext, slot: Slot): string | undefined {
   const printer = printerTitle(ctx);
   // The slot a running print feeds takes a spool too, as in BamBuddy.

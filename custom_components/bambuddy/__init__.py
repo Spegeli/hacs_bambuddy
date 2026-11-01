@@ -592,7 +592,8 @@ async def async_remove_config_entry_device(
     hass: HomeAssistant, entry: BamBuddyConfigEntry, device: dr.DeviceEntry
 ) -> bool:
     """Deleting a printer's device removes the printer; an AMS unit's device
-    goes when its printer no longer reports it; the instance stays."""
+    goes when its printer no longer reports it, a smart plug's when BamBuddy
+    no longer links it; the instance stays."""
     if (DOMAIN, entry.entry_id) in device.identifiers:
         raise HomeAssistantError(translation_domain=DOMAIN, translation_key="cannot_delete_instance")
     printers: list[dict[str, Any]] = entry.options.get(CONF_PRINTERS, [])

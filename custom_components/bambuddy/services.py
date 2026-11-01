@@ -1,8 +1,10 @@
 """The integration's actions: what is no entity -- moving the axes, homing,
 extruding, loading and unloading filament, setting a slot's filament and K
-profile, resetting a slot, reading its chip again, drying an AMS unit,
-skipping objects, answering HMS messages, checking the connection, marking
-maintenance done. The dashboard card calls them too."""
+profile (and listing the filaments and K profiles to choose from), resetting
+a slot, reading its chip again, assigning a spool of BamBuddy's inventory to
+a slot (and listing its spools), drying an AMS unit, skipping objects,
+answering HMS messages, checking the connection, marking maintenance done.
+The dashboard card calls them too."""
 from __future__ import annotations
 
 from collections.abc import Callable, Coroutine, Iterator
@@ -691,7 +693,8 @@ def _spool_answer(spool: Spool, here: tuple[int, int, int], fresh: InventoryData
 async def _get_spools(hass: HomeAssistant, call: ServiceCall) -> ServiceResponse:
     """The spools of BamBuddy's inventory for a slot, read fresh: where each
     sits and whether it fits; the slot's own first, then by material, brand
-    and colour name as BamBuddy lists them. Read Status suffices."""
+    and colour name as BamBuddy lists them. The inventory's reads suffice
+    (BamBuddy's Read Status toggle grants them); Manage Inventory is not needed."""
     coordinator, ams, slot, _tray = _place(hass, call.data[ATTR_ENTITY_ID])
     inventory, _known = _inventory(coordinator, assigning=False)
     fresh = await _fresh_inventory(inventory)

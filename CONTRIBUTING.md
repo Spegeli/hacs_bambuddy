@@ -39,7 +39,7 @@ The integration needs no build step and no dependencies beyond Home Assistant it
 3. Restart Home Assistant.
 4. Add the integration: **Settings → Devices & services → Add integration → BamBuddy**.
 
-You need a BamBuddy server and an API key with Read Status, Control Printer and Manage Maintenance (see the README's [Create an API key](README.md#create-an-api-key)): the integration refuses any other. Test with BamBuddy's authentication on, so that BamBuddy enforces the permissions too. **Try the print controls only on a printer that is not printing**: pause, stop and the other commands act on the real printer.
+You need a BamBuddy server and an API key with Read Status, Control Printer and Manage Maintenance (see the README's [Create an API key](README.md#create-an-api-key)): the integration refuses any other. For the spool inventory, give the key Manage Inventory too; it is optional. Test with BamBuddy's authentication on, so that BamBuddy enforces the permissions too. **Try the print controls only on a printer that is not printing**: pause, stop and the other commands act on the real printer.
 
 To see what the integration is doing, enable debug logging in `configuration.yaml`:
 
@@ -75,7 +75,7 @@ docker run --rm -v "${PWD}:/workspace" -w /workspace python:3.13 sh -c 'git conf
 
 CI runs both (see [Continuous integration](#continuous-integration)): the suite must pass on both Home Assistant releases, with at least 95 % line coverage on the newest, and `mypy --strict` must report no error. `config_flow.py` stays at 100 %, and every test that shows an error in a dialog goes on to finish that dialog.
 
-The suite has two layers. `tests/test_api.py` (and the camera's stream in `tests/test_camera.py`) checks what each `BamBuddyClient` method sends and makes of BamBuddy's answer, against Home Assistant's HTTP mock. Every other test sets the integration up in Home Assistant with the client's methods replaced by mocks — the fixture `bambuddy_api` in `tests/conftest.py`, answering from `tests/fixtures/` (BamBuddy's shapes, invented values) — and finds an entity by its unique ID, not by its entity ID. Some tests read the repository's documents and pin texts in them (`tests/test_readme.py`, `tests/test_contributing.py`, `tests/test_strings.py` …): a change there goes with its test.
+The suite has two layers. `tests/test_api.py` (and the camera's stream in `tests/test_camera.py`) checks what each `BamBuddyClient` method sends and makes of BamBuddy's answer, against Home Assistant's HTTP mock. Most other tests set the integration up in Home Assistant with the client's methods replaced by mocks — the fixture `bambuddy_api` in `tests/conftest.py`, answering from `tests/fixtures/` (BamBuddy's shapes, invented values) — and finds an entity by its unique ID, not by its entity ID. Some tests read the repository's documents and pin texts in them (`tests/test_readme.py`, `tests/test_contributing.py`, `tests/test_strings.py` …): a change there goes with its test. Pure functions are tested directly (`test_models.py`, `test_inventory_fits.py` …), and the filament list's generator against a cut-down Bambu Studio tree in `tests/fixtures/bambu_studio/`.
 
 ## Dashboard card
 
@@ -92,6 +92,31 @@ To see a change in Home Assistant, run `npm run build`, restart Home Assistant a
 
 The card finds a printer's entities by their translation keys, and its AMS units and smart plugs as the devices connected through the printer (`cards/src/discovery.ts`). A translation key, a state or an attribute the card reads is an interface: change the card in the same pull request. Its editor (`cards/src/editor.ts`) shows Home Assistant's own form with the fields of `cards/src/forms.ts`, filled with the defaults, and writes back only what the user changed. In the editor's preview, a section with nothing to show now shows as a faded example (`sample`, `cards/src/parts.ts`); the card knows that preview by Home Assistant's dialog `hui-dialog-edit-card` around it, because Home Assistant sets `preview` on every card of a dashboard in edit mode too. Its texts are English and German, `cards/src/translations/en.ts` as the source and `de.ts`, with the same keys and placeholders (`cards/test/i18n.test.ts`); entity states come translated from the integration.
 
+The card's modules, in `cards/src/`:
+
+| Module | What it holds |
+|---|---|
+| `card.ts` | The element: the three tabs, opening the dialogs and calling the actions; the editor's preview |
+| `status-view.ts`, `control-view.ts`, `filament-view.ts` | The three tabs; `filament-view.ts` also places each slot's ✏️ |
+| `heating.ts` | Heating and ventilating |
+| `detection.ts` | The print options |
+| `power.ts` | Smart plugs and the switch-off after the print |
+| `maintenance.ts`, `check.ts` | Maintenance; the connection check |
+| `header.ts` | The head: name, chips, menu, the printer information |
+| `dialogs.ts` | Every dialog, the slot's with its tab From the inventory included |
+| `actions.ts` | Calling the actions and reading their responses (`get_spools`, `get_filaments`, `get_k_profiles` …); failures in the viewer's language |
+| `parts.ts` | Shared pieces; a slot as its sensor tells it, its inventory spool included |
+| `discovery.ts` | Entities by translation key, devices by `via_device_id` |
+| `forms.ts`, `editor.ts` | The options and the card's editor |
+| `format.ts` | Numbers, units, times |
+| `i18n.ts`, `translations/` | The texts |
+| `icons.ts` | The icons, inline |
+| `styles.ts` | Styles, theme colors, container queries |
+| `types.ts` | Shared types |
+| `register.ts`, `index.ts` | The element's definition and the card picker's entry |
+
+`cards/test/setup.ts` waits for every real timer before a file ends; fixtures and helpers are in `cards/test/fixtures.ts` and `cards/test/helpers.ts`.
+
 Every change that can alter the build — under `cards/src`, or to `build.mjs`, `tsconfig.json` or `package-lock.json` — commits the rebuilt bundle with it, and nothing else ever changes the bundle: the check "Repository / Cards" rebuilds it and fails when the committed file differs. Pin every package to an exact version.
 
 ## Project layout
@@ -100,7 +125,7 @@ The integration lives in `custom_components/bambuddy/`; the dashboard card's sou
 
 | File | Responsibility |
 |---|---|
-| `__init__.py` | Setup and unload: the key's check, BamBuddy's printers, the devices, one coordinator per printer added in the options, a repair issue for a printer BamBuddy no longer lists; the actions and the card, once per run; Configure's live update settings taken by the running entry (any other change of the entry reloads it); migrating older entries; deleting a device from its device page (not the instance's, nor a smart plug BamBuddy still links, nor an AMS unit its printer still reports) |
+| `__init__.py` | Setup and unload: the key's check, BamBuddy's printers, the devices, one coordinator per printer added in the options, and the instance's, the smart plugs' and the spool inventory's, a repair issue for a printer BamBuddy no longer lists; the actions and the card, once per run; Configure's live update settings taken by the running entry (any other change of the entry reloads it); migrating older entries; deleting a device from its device page (not the instance's, nor a smart plug BamBuddy still links, nor an AMS unit its printer still reports) |
 | `api.py` | `BamBuddyClient` — every HTTP call to BamBuddy, and its errors; `normalise_url` for the address |
 | `key.py` | The API key while the entry runs: checked every ten minutes and whenever BamBuddy refuses a request; the only place that starts a reauthentication (a 401 confirmed a minute later, never for an unreachable BamBuddy), and ends it once a check finds the key fine again |
 | `auto_off.py` | The switch-off after the print: Home Assistant's own, for the printer's own plug — BamBuddy's pick among the plugs that power it (waits for the nozzles, the AMS, a target; never beside BamBuddy's own auto off) |
@@ -112,7 +137,7 @@ The integration lives in `custom_components/bambuddy/`; the dashboard card's sou
 | `config_flow.py` | Setup (address, API key, certificate check, printers), reauthentication, reconfiguration (a new address, its printers matched by serial number), and the options (Configure): Manage printers (add and remove them) and Settings (the live updates, with a test of the connection) |
 | `const.py` | Domain, config keys, the permissions the key needs (`REQUIRED_SCOPES`) and those it may have (`OPTIONAL_PERMISSIONS`), intervals, the live updates' defaults, the minimum BamBuddy version, print speed modes |
 | `coordinator.py` | One coordinator per printer (`/printers/{id}/status` every 10 seconds, when BamBuddy's live connection tells of a change, and twice after a command; print hours, BamBuddy's name and details and the AMS units' names in BamBuddy (`/printers/{id}/ams-labels`) once a minute, and the device names after them; its maintenance every 10 minutes and after a print), the instance's (`/archives/stats` every minute, `/system/info` every 5 minutes), the update checks' (`/updates/check`, `/firmware/updates` every 6 hours) and the smart plugs' (the list every minute, each plug's state every 15 seconds) |
-| `diagnostics.py` | Entry and device diagnostics, redacted (`TO_REDACT`) |
+| `diagnostics.py` | Entry and device diagnostics: redacted (`TO_REDACT`), smart plugs only by an allowlist of fields, the spool inventory as counts and numbers only |
 | `entity.py` | Device infos; the base entities — availability, unique IDs and entity IDs; `async_run_command`, how a command reaches a printer |
 | `fan.py` | Part cooling, auxiliary (on the X2D the left one), chamber or exhaust, and left (on the X2D right) auxiliary fan, in tens; the ventilation of a printer with an airduct (the airduct on cooling and the fans that bring the air through, `models.ventilation_fans`) |
 | `fan_ids.py` | The X2D's two auxiliary fans: their entity IDs from 2.0.0-beta.2 renamed after their side in the setup |
@@ -122,9 +147,9 @@ The integration lives in `custom_components/bambuddy/`; the dashboard card's sou
 | `frontend/bambuddy-card.js` | The dashboard card, built from `cards/` — never edited by hand |
 | `icons.json` | Entity and action icons |
 | `image.py` | The cover image of the current print job |
-| `inventory.py` | BamBuddy's spool inventory, one coordinator per entry: which spool sits in which slot, read once a minute and at once on BamBuddy's spool events; its reads need only optional permissions, so a refusal shows no inventory and never reaches the key guard |
+| `inventory.py` | BamBuddy's spool inventory, one coordinator per entry: which spool sits in which slot, read once a minute and at once on BamBuddy's spool events; not shown while Spoolman keeps the spools; also whether a spool fits a slot as Bambu Studio's list says (`spool_fit`), and the slot sensors' `inventory_*` attributes; its reads need only optional permissions, so a refusal shows no inventory and never reaches the key guard |
 | `light.py` | Chamber light |
-| `live.py` | BamBuddy's live connection (its WebSocket), one per entry: a printer's change reads its status at once (`BamBuddyPrinterCoordinator.async_pushed`, at most once per the gap set under Configure → Settings → Live updates, a second by default), switched off and on there without a reload; between two attempts only a timer runs, never a task |
+| `live.py` | BamBuddy's live connection (its WebSocket), one per entry: a printer's change reads its status at once (`BamBuddyPrinterCoordinator.async_pushed`, at most once per the gap set under Configure → Settings → Live updates, a second by default), switched off and on there without a reload; between two attempts only a timer runs, never a task; a spool event reads the inventory (`BamBuddyInventoryCoordinator.async_pushed`) |
 | `manifest.json` | The integration's manifest: keys in alphabetical order after `domain` and `name`, no package under `requirements` that Home Assistant ships (hassfest refuses it); its `version` is set by Create Release, never by hand |
 | `models.py` | What BamBuddy's printer status means, independent of entities: print status and stage, what each model has, AMS units and slots, names and keys |
 | `number.py` | Target temperatures; the camera's frame rate; the switch-off's temperature |
@@ -135,8 +160,8 @@ The integration lives in `custom_components/bambuddy/`; the dashboard card's sou
 | `renames.py` | The renamed AMS entity IDs in the integration's own store, and their notice under Repairs, one per printer |
 | `repairs.py` | The repairs: removing a printer BamBuddy no longer lists; confirming the AMS entity IDs that followed their unit's serial |
 | `select.py` | Print speed, airduct mode, active nozzle |
-| `sensor.py` | BamBuddy's figures; per printer status, job, temperatures, filament, maintenance and diagnostics; per AMS unit slots, humidity, temperature and drying time; a plug's power and energy |
-| `services.py`, `services.yaml` | The actions |
+| `sensor.py` | BamBuddy's figures; per printer status, job, temperatures, filament, maintenance and diagnostics; per AMS unit slots (with the inventory spool BamBuddy assigns them), humidity, temperature and drying time; a plug's power and energy |
+| `services.py`, `services.yaml` | The actions — among them `assign_spool`, `unassign_spool` and `get_spools`, which judge a spool against the slot and the other printers before BamBuddy is asked |
 | `strings.json`, `translations/` | UI strings, two languages (see [Translations](#translations)) |
 | `switch.py` | AMS filament backup (with an AMS unit, also one plugged in later), AI detection; a plug's switch; the switch-off after the print and its *Repeat after every print* |
 | `update.py` | New BamBuddy releases and printer firmware |
@@ -163,9 +188,9 @@ The integration lives in `custom_components/bambuddy/`; the dashboard card's sou
 
 **Never set `model_id` on a device:** Home Assistant then shows the model twice. A printer's model is BamBuddy's model string, its manufacturer Bambu Lab.
 
-**The key needs three permissions.** The integration asks `/auth/me` at every setup, in the flows and every ten minutes, whatever BamBuddy's authentication setting: a key lacking Read Status, Control Printer or Manage Maintenance is refused (`const.REQUIRED_SCOPES`; `tests/test_key_scopes_table.py` ties every client call that sends the key to one of them, but the live connection's token, which the integration does without when BamBuddy refuses it). BamBuddy itself enforces them only with its authentication on, so a route's refusal shows only then. Before BamBuddy 1.2.5.7, `/auth/me` claims every permission for any key — hence that minimum.
+**The key needs three permissions.** The integration asks `/auth/me` at every setup, in the flows and every ten minutes, whatever BamBuddy's authentication setting: a key lacking Read Status, Control Printer or Manage Maintenance is refused (`const.REQUIRED_SCOPES`; `tests/test_key_scopes_table.py` ties every client call that sends the key to one of them, except the calls of the optional permissions below, which it lists in `OPTIONAL`). BamBuddy itself enforces them only with its authentication on, so a route's refusal shows only then. Before BamBuddy 1.2.5.7, `/auth/me` claims every permission for any key — hence that minimum.
 
-**Some permissions are optional.** The live connection's token (`websocket:connect`) and the spool inventory's reads and writes (`inventory:read`, `inventory:view_assignments`, `filaments:read`, `inventory:update`) are in `const.OPTIONAL_PERMISSIONS`, never in `REQUIRED_SCOPES`: the key check keeps which of them the key holds (`KeyScopes.optional`), but they change neither what is missing nor the marks, and a refusal of one of their routes never reaches the key guard — the inventory is then not shown (`inventory.py`), its actions refuse in words (`services.py`). `tests/test_key_scopes_table.py` lists each such call in `OPTIONAL`.
+**Some permissions are optional.** The live connection's token (`websocket:connect`) and the spool inventory's reads and writes (`inventory:read`, `inventory:view_assignments`, `filaments:read`, `inventory:update`) are in `const.OPTIONAL_PERMISSIONS`, never in `REQUIRED_SCOPES`: the key check keeps which of them the key holds (`KeyScopes.optional`), but they change neither what is missing nor the marks, and a refusal of the inventory's routes never reaches the key guard: the inventory is then not shown (`inventory.py`), and its actions refuse in words (`services.py`). The live connection's token is the one exception: a 401 there goes to the key guard once per run, which checks the key (`live.py`); a 403 does not. `tests/test_key_scopes_table.py` lists each such call in `OPTIONAL`.
 
 **Home Assistant 2025.5 is the floor** (`homeassistant` in `hacs.json`), and only APIs that exist there may be used. Home Assistant 2025.5 runs on Python 3.13, so the integration must run on 3.13 too, although the tests and mypy run on 3.14: use no syntax and no standard-library API newer than 3.13 (such as `except A, B:` without parentheses), and keep `from __future__ import annotations` at the top of every module. 3.13 evaluates annotations as it defines a class or function, so without that line a name defined further down the module fails the import there, while 3.14 evaluates them only when asked. CI compiles the integration with Python 3.13, checks that every module keeps `from __future__ import annotations`, and runs the suite on 2025.5; what the tests do not reach is for review.
 

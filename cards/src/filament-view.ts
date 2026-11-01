@@ -44,7 +44,9 @@ const EXTERNAL_EDITS: TextKey[] = ["edit_external_left", "edit_external_right"];
 /** A pencil beside every filled slot: a spool without a chip
  * gets its material, colour and K profile set by hand, a Bambu spool its
  * chip read again or the slot reset. The slot a running print feeds from is
- * set too (mid-print, as in BamBuddy) -- but a chip spool's. */
+ * set too (mid-print, as in BamBuddy) -- but a chip spool's. An empty slot,
+ * and a chip spool the print feeds, get one for their inventory spool:
+ * shown, or to assign. */
 function editButton(ctx: CardContext, slot: Slot, title: string, label: string): TemplateResult | typeof nothing {
   // An empty slot, or a chip spool the running print feeds (nothing to set,
   // its tools wait for the print): only its inventory spool -- shown, or to assign.

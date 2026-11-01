@@ -86,8 +86,8 @@ export interface CardContext {
   confirm: (confirmation: Confirmation) => void;
   dry: (unit: AmsRefs) => void;
   /** Opens the dialog that sets a slot's material and colour, titled so;
-   * `inventoryOnly`: the slot is empty or feeds the running print -- only
-   * its inventory spool is offered. */
+   * `inventoryOnly`: the slot is empty, or a chip spool the running print
+   * feeds -- only its inventory spool is offered. */
   setFilament: (slot: Slot, title: string, inventoryOnly?: boolean) => void;
   /** Opens the list of the running print's objects to skip some. */
   skip: () => void;
