@@ -184,6 +184,8 @@ async def test_an_unanswered_check_keeps_what_the_key_may_assign(
         load_fixture("auth_me_control.json"),
         BamBuddyConnectionError("down"),
         load_fixture("auth_me_read.json"),
+        # The reauthentication the last check starts asks once more.
+        load_fixture("auth_me_read.json"),
     ]
     guard = _guard(hass, entry)
     assert guard.can_assign_spools is False  # the setup's check said nothing of it
@@ -195,6 +197,10 @@ async def test_an_unanswered_check_keeps_what_the_key_may_assign(
     assert guard.can_assign_spools is True
     await guard.async_check()
     assert guard.can_assign_spools is False
+    # The key now lacks a permission: the reauthentication runs to its form within the test.
+    await hass.async_block_till_done()
+    assert len(list(entry.async_get_active_flows(hass, {"reauth"}))) == 1
+    assert bambuddy_api.get_auth_me.await_count == 4
 
 
 async def test_the_checks_end_with_the_entry(
