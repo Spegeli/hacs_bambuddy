@@ -4,8 +4,9 @@
 // tappable piece is a button, so it works by keyboard.
 import { html, nothing, type TemplateResult } from "lit";
 
-import { filamentColor, formatPercent, formatState, hasValue, needsOutline, numericState, stateOf } from "./format";
+import { filamentColor, formatNumber, formatPercent, formatState, hasValue, needsOutline, numericState, stateOf } from "./format";
 import { icon, type IconName } from "./icons";
+import { placesOf, type SpoolPlace } from "./actions";
 import { LANGUAGES, t, type TextKey } from "./i18n";
 import type { Settings } from "./forms";
 import type { AmsRefs, Hass, HassEntityState, Heater, PrinterRefs, View } from "./types";
@@ -84,8 +85,10 @@ export interface CardContext {
   run: (key: string, domain: string, service: string, data: Record<string, unknown>) => void;
   confirm: (confirmation: Confirmation) => void;
   dry: (unit: AmsRefs) => void;
-  /** Opens the dialog that sets a slot's material and colour, titled so. */
-  setFilament: (slot: Slot, title: string) => void;
+  /** Opens the dialog that sets a slot's material and colour, titled so;
+   * `inventoryOnly`: the slot is empty or feeds the running print -- only
+   * its inventory spool is offered. */
+  setFilament: (slot: Slot, title: string, inventoryOnly?: boolean) => void;
   /** Opens the list of the running print's objects to skip some. */
   skip: () => void;
   /** A heater's target as the card shows it: the one being set, else its state. */
@@ -366,6 +369,31 @@ export function amsActivity(ctx: CardContext): string | undefined {
   return t(hass, "ams_activity", { state: formatState(hass, refs.amsStatus) as string });
 }
 
+/** A spool of BamBuddy's inventory, as a slot sensor names it (its
+ * `inventory_spool` attribute). */
+export interface InventorySpool {
+  id: number;
+  name: string;
+  colorName?: string;
+  /** BamBuddy's RRGGBBAA. */
+  rgba?: string;
+  /** More colours of a multicolour spool, RRGGBB each. */
+  extraColors: string[];
+  remainingG: number;
+  remainingPct?: number;
+  storage?: string;
+  /** BamBuddy linked it by the spool's chip. */
+  rfid: boolean;
+  /** The other slots it is assigned to: BamBuddy can hold a spool in two. */
+  alsoAssigned: SpoolPlace[];
+  /** The colour (RRGGBBAA) and type BamBuddy matched the slot with; empty
+   * where it was assigned to an empty slot. */
+  assignedColor: string;
+  assignedType: string;
+  /** The slot types that match the spool for BamBuddy, upper case. */
+  spoolTypes: string[];
+}
+
 export interface Slot {
   entityId: string;
   name: string;
@@ -380,6 +408,79 @@ export interface Slot {
   rfid: boolean;
   /** A spool sits there, described or not. */
   present: boolean;
+  /** The spool BamBuddy's inventory assigns to the slot. */
+  inventory?: InventorySpool;
+  /** Spools of the inventory may be assigned here (Manage Inventory). */
+  assignable: boolean;
+}
+
+/** The slot sensor's `inventory_spool`, as the card reads it; undefined
+ * for anything else. */
+export function inventorySpool(value: unknown): InventorySpool | undefined {
+  if (typeof value !== "object" || value === null) return undefined;
+  const spool = value as Record<string, unknown>;
+  if (typeof spool["id"] !== "number" || typeof spool["name"] !== "string") return undefined;
+  const text = (item: unknown): string | undefined => (typeof item === "string" && item ? item : undefined);
+  const grams = spool["remaining_g"];
+  const pct = spool["remaining_pct"];
+  return {
+    id: spool["id"],
+    name: spool["name"],
+    ...(text(spool["color_name"]) ? { colorName: text(spool["color_name"]) } : {}),
+    ...(text(spool["rgba"]) ? { rgba: text(spool["rgba"]) } : {}),
+    extraColors: Array.isArray(spool["extra_colors"]) ? spool["extra_colors"].filter((item): item is string => typeof item === "string") : [],
+    remainingG: typeof grams === "number" ? grams : 0,
+    ...(typeof pct === "number" ? { remainingPct: pct } : {}),
+    ...(text(spool["storage_location"]) ? { storage: text(spool["storage_location"]) } : {}),
+    rfid: spool["rfid"] === true,
+    alsoAssigned: placesOf(spool["also_assigned"]),
+    assignedColor: text(spool["assigned_color"]) ?? "",
+    assignedType: text(spool["assigned_type"]) ?? "",
+    spoolTypes: Array.isArray(spool["spool_types"]) ? spool["spool_types"].filter((item): item is string => typeof item === "string") : [],
+  };
+}
+
+/** An inventory spool's colours: its own first, then a multicolour
+ * spool's others ("#RRGGBB"). */
+type Colored = Pick<InventorySpool, "rgba" | "extraColors">;
+type Lined = Pick<InventorySpool, "id" | "colorName" | "remainingG" | "remainingPct"> & { storage?: string | undefined };
+
+export function spoolColors(spool: Colored): string[] {
+  const own = spool.rgba && /^[0-9a-f]{6}/i.test(spool.rgba) ? [`#${spool.rgba.slice(0, 6).toUpperCase()}`] : [];
+  const more = spool.extraColors.filter((item) => /^[0-9a-f]{6}$/i.test(item)).map((item) => `#${item.toUpperCase()}`);
+  return [...own, ...more];
+}
+
+/** A spool's colour as a dot; a multicolour spool's split into as many
+ * segments as it has colours. */
+export function spoolDot(spool: Colored): TemplateResult {
+  const colors = spoolColors(spool);
+  const step = 100 / Math.max(1, colors.length);
+  const fill =
+    colors.length > 1
+      ? `conic-gradient(${colors.map((color, index) => `${color} ${index * step}% ${(index + 1) * step}%`).join(", ")})`
+      : (colors[0] ?? "var(--bb-muted)");
+  const outline = colors.some((color) => needsOutline(color));
+  return html`<span class="spool-dot ${outline ? "outline" : ""}" style="--dot: ${fill}" data-colors=${colors.length} aria-hidden="true"></span>`;
+}
+
+/** What is left of an inventory spool: "89 % · 886 g". */
+export function spoolLine(hass: Hass, spool: Lined): string {
+  const grams = `${formatNumber(hass, spool.remainingG)}\u00a0g`;
+  return [
+    spool.colorName ?? "",
+    spool.remainingPct === undefined ? grams : `${grams} (${formatPercent(hass, spool.remainingPct)})`,
+    t(hass, "inv_no", { id: spool.id }),
+    spool.storage ?? "",
+  ]
+    .filter(Boolean)
+    .join(" · ");
+}
+
+export function inventoryLine(hass: Hass, spool: InventorySpool): string {
+  const grams = `${formatNumber(hass, spool.remainingG)}\u00a0g`;
+  // No line ends in the dot: it stays with what stands before it.
+  return spool.remainingPct === undefined ? grams : `${formatPercent(hass, spool.remainingPct)}\u00a0·\u00a0${grams}`;
 }
 
 /** A slot's number in its unit: its own (the sensor's `slot`), the place
@@ -404,6 +505,7 @@ export function slotOf(hass: Hass, entityId: string): Slot {
   const text = (value: unknown): string => (typeof value === "string" ? value : "");
   const remaining = attributes["remaining"];
   const empty = !unknown && (attributes["empty"] === true || state?.state === "empty");
+  const inventory = inventorySpool(attributes["inventory_spool"]);
   return {
     entityId,
     name: empty || unknown ? "" : text(attributes["name"]) || (state?.state ?? ""),
@@ -415,6 +517,8 @@ export function slotOf(hass: Hass, entityId: string): Slot {
     unknown,
     rfid: attributes["rfid"] === true,
     present: attributes["present"] === true,
+    ...(inventory ? { inventory } : {}),
+    assignable: attributes["inventory_assignable"] === true,
   };
 }
 
@@ -425,7 +529,8 @@ export function slotOf(hass: Hass, entityId: string): Slot {
  * slot in use has a ring. */
 export function swatch(slot: Slot, size: "small" | "large" = "small"): TemplateResult {
   const color = slot.color ?? "var(--bb-muted)";
-  const fill = slot.remaining ?? 100;
+  // An inventory spool says what is left of it; else the AMS's estimate.
+  const fill = slot.inventory?.remainingPct ?? slot.remaining ?? 100;
   const outline = slot.color !== undefined && needsOutline(slot.color);
   const partial = !slot.empty && fill < 100;
   return html`<span
@@ -443,6 +548,10 @@ export const emptyText = (hass: Hass, slot: Slot): string => t(hass, slot.presen
 /** The slot's label: what the strip shows below a swatch. */
 export function slotTitle(hass: Hass, slot: Slot): string {
   if (slot.unknown) return t(hass, "unknown");
+  const spool = slot.inventory;
+  if (spool) {
+    return slot.empty ? t(hass, "inv_strip_waiting", { empty: emptyText(hass, slot), name: spool.name }) : `${spool.name} · ${inventoryLine(hass, spool)}`;
+  }
   if (slot.empty) return emptyText(hass, slot);
   const left = slot.remaining === undefined ? "" : ` · ${formatPercent(hass, slot.remaining)}`;
   return `${slot.name || slot.type}${left}`;

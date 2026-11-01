@@ -13,6 +13,7 @@ from homeassistant.helpers import device_registry as dr
 
 from .const import CONF_API_KEY, CONF_PRINTER_NAME, CONF_URL
 from .coordinator import BamBuddyConfigEntry, BamBuddyData, BamBuddyPrinterCoordinator
+from .inventory import diagnostics as inventory_diagnostics
 from .live import live_settings
 from .plugs import Plug
 
@@ -132,6 +133,8 @@ async def async_get_config_entry_diagnostics(hass: HomeAssistant, entry: BamBudd
         "live": {**runtime.live.diagnostics(), "push_gap": live_settings(entry.options).push_gap},
         "printers": {str(printer_id): _printer(coordinator) for printer_id, coordinator in runtime.printers.items()},
         "plugs": {str(plug_id): _plug(runtime, plug) for plug_id, plug in (runtime.plugs.data or {}).items()},
+        # BamBuddy's spool inventory, by numbers.
+        "inventory": inventory_diagnostics(runtime.inventory),
     }
 
 

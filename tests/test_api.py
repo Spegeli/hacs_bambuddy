@@ -107,6 +107,7 @@ async def test_the_version_is_read_without_the_key(
         ("get_status", (1,), "GET", f"{API}/printers/1/status"),
         ("get_maintenance", (1,), "GET", f"{API}/maintenance/printers/1"),
         ("get_diagnostic", (1,), "GET", f"{API}/printers/1/diagnostic"),
+        ("get_spoolman_status", (), "GET", f"{API}/spoolman/status"),
     ],
 )
 async def test_each_read_reaches_its_path_with_the_key(
@@ -577,6 +578,59 @@ async def test_a_plug_is_switched(hass: HomeAssistant, aioclient_mock: AiohttpCl
     [(method, called, body, headers)] = aioclient_mock.mock_calls
     assert (method, str(called), body) == ("POST", f"{API}/smart-plugs/3/control", {"action": action})
     assert headers["X-API-Key"] == API_KEY
+
+
+@pytest.mark.parametrize(("call", "url"), [("get_spools", "inventory/spools"), ("get_spool_assignments", "inventory/assignments")])
+async def test_the_inventory_lists_reach_their_paths(
+    hass: HomeAssistant, aioclient_mock: AiohttpClientMocker, call: str, url: str
+) -> None:
+    """BamBuddy's spools (archived ones left out) and their slots, for every printer at once."""
+    aioclient_mock.get(f"{API}/{url}", json=[{"id": 1}])
+
+    assert await getattr(_client(hass), call)() == [{"id": 1}]
+    [(method, called, _, headers)] = aioclient_mock.mock_calls
+    assert (method, str(called)) == ("GET", f"{API}/{url}")
+    assert headers["X-API-Key"] == API_KEY
+
+
+@pytest.mark.parametrize(("move", "body"), [
+    (False, {"spool_id": 7, "printer_id": 2, "ams_id": 0, "tray_id": 1}),
+    (True, {"spool_id": 7, "printer_id": 2, "ams_id": 0, "tray_id": 1, "move": True}),
+])
+async def test_a_spool_is_assigned(
+    hass: HomeAssistant, aioclient_mock: AiohttpClientMocker, move: bool, body: dict[str, Any]
+) -> None:
+    """The four numbers; "move" only when moving (1.2.5.7 ignores it, the newer line takes the
+    spool out of its other slot)."""
+    aioclient_mock.post(f"{API}/inventory/assignments", json={"id": 3, "configured": True})
+
+    assert await _client(hass).assign_spool(7, 2, 0, 1, move=move) == {"id": 3, "configured": True}
+    [(method, called, sent, _)] = aioclient_mock.mock_calls
+    assert (method, str(called), sent) == ("POST", f"{API}/inventory/assignments", body)
+
+
+async def test_a_spool_assignment_is_removed(hass: HomeAssistant, aioclient_mock: AiohttpClientMocker) -> None:
+    """The slot by its printer, unit and place; nothing goes to the printer."""
+    aioclient_mock.delete(f"{API}/inventory/assignments/2/255/1", json={"status": "deleted"})
+
+    assert await _client(hass).unassign_spool(2, 255, 1) is None
+    [(method, called, _, _)] = aioclient_mock.mock_calls
+    assert (method, str(called)) == ("DELETE", f"{API}/inventory/assignments/2/255/1")
+
+
+@pytest.mark.parametrize(("fixture", "can_assign"), [("auth_me_control.json", True), ("auth_me_read.json", False)])
+async def test_check_key_keeps_the_optional_permissions(
+    hass: HomeAssistant, aioclient_mock: AiohttpClientMocker, fixture: str, can_assign: bool
+) -> None:
+    """Manage Inventory is no scope the integration needs: it changes neither what is
+    missing nor the marks, it only says whether spools may be assigned."""
+    aioclient_mock.get(f"{API}/auth/me", json=load_fixture(fixture))
+
+    scopes = await _client(hass).check_key()
+
+    assert scopes.can_assign_spools is can_assign
+    assert "inventory:read" in scopes.optional
+    assert set(scopes) == {"read_status", "control_printer", "manage_maintenance"}
 
 
 async def test_a_plug_that_does_not_answer_is_an_api_error(hass: HomeAssistant, aioclient_mock: AiohttpClientMocker) -> None:

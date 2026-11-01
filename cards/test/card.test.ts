@@ -3009,15 +3009,34 @@ describe("setting a slot's filament", () => {
     expect(hass.calls.at(-1)?.data).toEqual({ entity_id: "sensor.dev-x1c_ams_0_slot_4", filament: "GFG99", color: [0, 0, 0] });
   });
 
+  it("says what the kept profile is where the offer lacks it: none set, or a named one not offered here", async () => {
+    const { card } = await cardFor("x1c", {}, { callService: answering({ ...OFFER }) });
+    await showView(card, "Filament");
+    await edit(card, 2);
+    expect(texts(vendors(card))[0]).toBe("Keep the current profile");
+    expect(text(find(card, "dialog .fil-keep"))).toBe("No profile set (PLA).");
+
+    const { card: named, hass } = await cardFor("x1c", {}, { callService: answering({ ...OFFER, current: "GFL96" }) });
+    const state = hass.states[SLOT_3] as { state: string; attributes: Record<string, unknown> };
+    named.hass = hass.withState(SLOT_3, "Generic PLA Silk", { ...state.attributes, name: "Generic PLA Silk" });
+    await settle(named);
+    await showView(named, "Filament");
+    await edit(named, 2);
+    expect(text(find(named, "dialog .fil-keep"))).toBe("Current profile: Generic PLA Silk.");
+  });
+
   it("keeps a profile the offer lacks in the vendor field", async () => {
     const { card, hass } = await cardFor("x1c", {}, { callService: answering({ ...OFFER, current: "P4d64437" }) });
     await showView(card, "Filament");
     await edit(card, 2);
-    expect(texts(vendors(card))).toEqual(["Keep PLA", "Bambu Lab", "Generic", "SUNLU"]);
+    expect(texts(vendors(card))).toEqual(["Keep the current profile", "Bambu Lab", "Generic", "SUNLU"]);
     expect(vendors(card).value).toBe("keep");
     expect(filaments(card)).toBeNull();
-    // A vendor: its filaments, none of them the slot's.
+    // What the kept profile is: one of the user's own, the slot's type in brackets.
+    expect(text(find(card, "dialog .fil-keep"))).toBe("A profile of your own that Bambu Studio's list does not know (PLA).");
+    // A vendor: its filaments, none of them the slot's -- and the line about the kept profile goes.
     await vendor(card, "Generic");
+    expect(find(card, "dialog .fil-keep")).toBeNull();
     expect(texts(filaments(card))[0]).toBe("Choose …");
     await vendor(card, "keep");
     expect(filaments(card)).toBeNull();
@@ -3079,7 +3098,7 @@ describe("setting a slot's filament", () => {
     await showView(card, "Filament");
     await edit(card, 2);
     expect(vendors(card).disabled).toBe(true);
-    expect(texts(vendors(card))).toEqual(["Keep PLA"]);
+    expect(texts(vendors(card))).toEqual(["Keep the current profile"]);
     answer({ response: offerFor(SLOT_3) });
     await settle(card);
     expect(vendors(card).disabled).toBe(false);
@@ -3092,7 +3111,7 @@ describe("setting a slot's filament", () => {
     const { card: failed } = await cardFor("x1c", {}, { callService: failing });
     await showView(failed, "Filament");
     await edit(failed, 2);
-    expect(texts(vendors(failed))).toEqual(["Keep PLA"]);
+    expect(texts(vendors(failed))).toEqual(["Keep the current profile"]);
     expect(vendors(failed).disabled).toBe(true);
     expect(findAll(failed, "dialog .dlg-note").map(text)).toContain("The filament list did not arrive. To ask again, close the dialog and open it once more.");
     expect(findAll(failed, "dialog .dlg-note").map(text)).not.toContain("For spools without a chip. You can choose what Bambu Studio offers for this printer, its nozzle and this slot. Other profiles can be set on the printer or in BamBuddy.");
@@ -3497,7 +3516,7 @@ describe("a slot's tools: K profile, chip, reset", () => {
     expect((button(loaded.card, "Read the chip again") as HTMLButtonElement).disabled).toBe(true);
     // Which filament to unload.
     expect(findAll(loaded.card, "dialog .dlg-note").map(text)).toContain(
-      "Unload the filament from Slot 2 · AMS A first: the AMS reads a chip only while no filament is loaded.",
+      "Re-reading the chip works only while no filament is loaded. Filament from Slot 2 · AMS A is loaded now: unload it first.",
     );
     expect(text(find(loaded.card, "dialog .rfid-spool"))).toBe(`PLA Basic · 80${NBSP}%`);
     expect(findAll(loaded.card, "dialog .dlg-actions .btn").map(text)).toEqual(["Close"]);

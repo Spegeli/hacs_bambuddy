@@ -106,6 +106,30 @@ async def test_the_diagnostics_tell_the_live_connection(hass: HomeAssistant, bam
     assert WS_TOKEN not in json.dumps(diagnostics)
 
 
+async def test_the_diagnostics_tell_the_inventory(hass: HomeAssistant, bambuddy_api: SimpleNamespace) -> None:
+    """Whether the inventory is shown and which spool sits where -- by numbers:
+    no spool name, no owner's note."""
+    bambuddy_api.get_spools.return_value = load_fixture("inventory_spools.json")
+    bambuddy_api.get_spool_assignments.return_value = load_fixture("inventory_assignments.json")
+    entry = await set_up(hass, X1C)
+
+    diagnostics = await async_get_config_entry_diagnostics(hass, entry)
+
+    assert diagnostics["inventory"] == {
+        "shown": True,
+        "assignable": True,
+        "spools": 3,
+        "assignments": [
+            {"printer": 1, "ams_id": 0, "tray_id": 2, "spool_id": 1},
+            {"printer": 1, "ams_id": 0, "tray_id": 3, "spool_id": 2},
+            {"printer": 99, "ams_id": 0, "tray_id": 0, "spool_id": 3},
+        ],
+    }
+    text = json.dumps(diagnostics)
+    assert "opened in May" not in text
+    assert "Geeetech" not in text
+
+
 async def test_the_diagnostics_tell_configures_settings(hass: HomeAssistant, bambuddy_api: SimpleNamespace) -> None:
     """Switched off in Configure, a read every 5 seconds at most."""
     entry = make_entry(hass, X1C, live_updates=False, push_gap=5)

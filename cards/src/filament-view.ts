@@ -18,6 +18,7 @@ import {
   callout,
   developerHint,
   emptyText,
+  inventoryLine,
   note,
   resumeButton,
   shownExternalSpools,
@@ -45,7 +46,11 @@ const EXTERNAL_EDITS: TextKey[] = ["edit_external_left", "edit_external_right"];
  * chip read again or the slot reset. Never for the slot a running print
  * feeds from. */
 function editButton(ctx: CardContext, slot: Slot, title: string, label: string): TemplateResult | typeof nothing {
-  if (!ctx.canControl || !ctx.online || !slot.present || (ctx.running && slot.active)) return nothing;
+  // An empty slot, or the one the running print feeds: only its inventory
+  // spool -- shown, or to assign.
+  const inventoryOnly = !slot.present || (ctx.running && slot.active);
+  // A chip spool's: BamBuddy links it itself, and its tools wait for the print.
+  if (!ctx.canControl || !ctx.online || (inventoryOnly && (slot.rfid || (!slot.inventory && !slot.assignable)))) return nothing;
   return actionButton({
     label,
     iconName: "pencil",
@@ -54,7 +59,7 @@ function editButton(ctx: CardContext, slot: Slot, title: string, label: string):
     className: "edit",
     disabled: ctx.changing,
     pending: ctx.isPending(`filament_${slot.entityId}`),
-    onClick: () => ctx.setFilament(slot, title),
+    onClick: () => ctx.setFilament(slot, title, inventoryOnly),
   });
 }
 
@@ -83,11 +88,21 @@ function slotRow(
   const named = slot.name.toLowerCase().includes(slot.type.toLowerCase());
   // On the line below the name, so that a phone has room for the name.
   const inUse = slot.active ? html`<span class="in-use">${t(hass, "in_use")}</span>` : undefined;
-  const details = [
-    options.side ?? "",
-    slot.empty || !slot.name || named ? "" : slot.type,
-    slot.empty || slot.remaining === undefined ? "" : formatPercent(hass, slot.remaining),
-  ].filter(Boolean);
+  const spool = slot.inventory;
+  // With an inventory spool: its name, then what is left of it (its name
+  // says the material); an empty slot waits for it.
+  const details = spool
+    ? slot.empty
+      ? []
+      : [options.side ?? "", inventoryLine(hass, spool)].filter(Boolean)
+    : [
+        options.side ?? "",
+        slot.empty || !slot.name || named ? "" : slot.type,
+        slot.empty || slot.remaining === undefined ? "" : formatPercent(hass, slot.remaining),
+      ].filter(Boolean);
+  const waiting = spool && slot.empty ? t(hass, "inv_waiting") : undefined;
+  // An inventory spool's line keeps each dot with what stands before it.
+  const joint = spool ? "\u00a0· " : " · ";
   // In a paused print the change happens in the middle of it.
   const pauseHint = ctx.status === "paused" ? { note: t(hass, "paused_change") } : {};
   let action: TemplateResult | typeof nothing = nothing;
@@ -132,7 +147,13 @@ function slotRow(
     <button
       class="slot-main"
       aria-label=${t(hass, "slot_named", {
-        shown: [slot.unknown ? t(hass, "unknown") : title, ...(slot.active ? [t(hass, "in_use")] : []), ...details].join(" · "),
+        shown: [
+          slot.unknown ? t(hass, "unknown") : title,
+          ...(spool ? [spool.name] : []),
+          ...(waiting ? [waiting] : []),
+          ...(slot.active ? [t(hass, "in_use")] : []),
+          ...details,
+        ].join(" · "),
         place: options.place,
       })}
       @click=${() => ctx.moreInfo(slot.entityId)}
@@ -140,8 +161,10 @@ function slotRow(
       ${swatch(slot, "large")}
       <span class="slot-text">
         <span class="slot-name">${title}</span>
+        ${spool ? html`<span class="slot-sub">${spool.name}</span>` : nothing}
+        ${waiting ? html`<span class="slot-sub">${waiting}</span>` : nothing}
         ${details.length || inUse
-          ? html`<span class="slot-sub">${inUse}${inUse && details.length ? " · " : ""}${details.join(" · ")}</span>`
+          ? html`<span class="slot-sub">${inUse}${inUse && details.length ? joint : ""}${details.join(joint)}</span>`
           : nothing}
       </span>
     </button>

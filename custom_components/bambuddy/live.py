@@ -39,6 +39,9 @@ _LOGGER = logging.getLogger(__name__)
 # What tells of a change of a printer. BamBuddy sends more (archives,
 # spools, its queue's toasts): none of it is the printer's state.
 _PUSHES = frozenset({"printer_status", "print_start", "print_complete"})
+# A spool assigned, linked by its chip, or changed in the inventory: of any
+# printer or none -- the inventory is read whole.
+_SPOOL_EVENTS = frozenset({"spool_assignment_changed", "spool_auto_assigned", "inventory_changed"})
 # Code 1000: a close in order; none: the socket simply ended.
 _ORDERLY = (None, 1000)
 
@@ -241,6 +244,10 @@ class BamBuddyLive:
                 body = json.loads(message.data)
             except ValueError:
                 body = None
+        if isinstance(body, dict) and body.get("type") in _SPOOL_EVENTS:
+            self._messages += 1
+            self.entry.runtime_data.inventory.async_pushed()
+            return
         printer_id = body.get("printer_id") if isinstance(body, dict) and body.get("type") in _PUSHES else None
         if not isinstance(printer_id, int) or isinstance(printer_id, bool):
             self._ignored += 1

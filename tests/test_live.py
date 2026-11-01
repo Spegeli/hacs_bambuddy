@@ -371,6 +371,24 @@ async def test_a_status_push_reads_that_printer(
     assert _reads(bambuddy_api, X1C) == before + 2
 
 
+async def test_spool_events_read_the_inventory(
+    hass: HomeAssistant, bambuddy_api: SimpleNamespace, freezer: FrozenDateTimeFactory, steady_waits: None
+) -> None:
+    """A spool assigned, linked by its chip or changed in the inventory reads
+    the inventory -- whichever printer it names, or none."""
+    entry, socket = await _connected(hass, bambuddy_api, freezer)
+    with patch.object(type(entry.runtime_data.inventory), "async_pushed") as pushed:
+        socket.push({"type": "spool_assignment_changed", "printer_id": 99, "data": {}})
+        socket.push({"type": "spool_auto_assigned", "printer_id": X1C, "data": {}})
+        socket.push({"type": "inventory_changed", "data": {}})
+        socket.end()
+        await hass.async_block_till_done(wait_background_tasks=True)
+
+    assert pushed.call_count == 3
+    live = entry.runtime_data.live.diagnostics()
+    assert (live["messages"], live["other_printers"], live["ignored"]) == (3, 0, 0)
+
+
 async def test_a_closed_socket_reconnects_with_a_new_token(
     hass: HomeAssistant, bambuddy_api: SimpleNamespace, freezer: FrozenDateTimeFactory, steady_waits: None
 ) -> None:

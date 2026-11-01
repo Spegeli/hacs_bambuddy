@@ -4,9 +4,9 @@
 // Assistant hands a card a new hass on every state change in the house.
 import { html, LitElement, nothing, type CSSResultGroup, type PropertyValues, type TemplateResult } from "lit";
 
-import { callAction, errorText, filamentOffer, kProfiles, printObjects } from "./actions";
+import { callAction, errorText, filamentOffer, kProfiles, printObjects, spoolList } from "./actions";
 import { controlView, sectionShown, type Step } from "./control-view";
-import { dialogView, DRYING, filamentChanges, inPalette, KEEP, matchingProfile, ownVendor, type Dialog, type DryingField, type DryingSpool, type FilamentDialog } from "./dialogs";
+import { dialogView, DRYING, filamentChanges, inPalette, KEEP, matchingProfile, ownVendor, type Dialog, type DryingField, type DryingSpool, type FilamentDialog, onInventory } from "./dialogs";
 import { findPrinter, hasControls, isPrinterDevice, notListed, printerDevices, printerOnline, printStatus, shownUnits } from "./discovery";
 import { filamentView } from "./filament-view";
 import { BUSY, FILAMENT_CHANGE, formatNumber, formatPercent, hasValue, numericState, RUNNING, stateOf, textOrUndefined, WITH_JOB } from "./format";
@@ -1068,7 +1068,7 @@ export class BamBuddyPrinterCard extends LitElement {
 
   /** The dialog that sets a slot's filament: its own kept where it has
    * one, its colour chosen -- also one outside the palette. */
-  private openFilament(slot: Slot, title: string): void {
+  private openFilament(slot: Slot, title: string, inventoryOnly = false): void {
     const hass = this.hass as Hass;
     const refs = this.refs as PrinterRefs;
     // A slot with a filament always has a name: its state at least.
@@ -1085,17 +1085,53 @@ export class BamBuddyPrinterCard extends LitElement {
       ams: !refs.externalSpools.includes(slot.entityId),
       active: slot.active,
       ...(slot.rfid ? { spool: [slot.name, slot.remaining === undefined ? "" : formatPercent(hass, slot.remaining)].filter(Boolean).join(" · ") } : {}),
-      ...(slot.rfid ? {} : { kprofiles: "loading" as const, offer: "loading" as const }),
+      ...(slot.rfid || inventoryOnly ? {} : { kprofiles: "loading" as const, offer: "loading" as const }),
+      ...(inventoryOnly ? { inventoryOnly: true, tab: "inventory" as const } : {}),
       ask: ++this.asks,
     };
     this.dialog = opened;
     clearTimeout(this.kSlowTimer);
-    if (!slot.rfid) {
+    if (inventoryOnly && slot.assignable) this.startSpools(opened);
+    if (!slot.rfid && !inventoryOnly) {
       const ask = opened.ask as number;
       void this.loadOffer(slot.entityId, ask);
       void this.loadKProfiles(slot.entityId, ask);
       this.kSlowTimer = setTimeout(() => this.markKSlow(slot.entityId, ask), K_SLOW_MS);
     }
+  }
+
+  /** The inventory's spools for the slot dialog's slot, asked once per open. */
+  private startSpools(dialog: FilamentDialog): void {
+    const ask = dialog.ask as number;
+    if (this.isAsk(this.dialog, dialog.entityId, ask)) this.dialog = { ...this.dialog, spools: "loading" };
+    void this.loadSpools(dialog.entityId, ask);
+  }
+
+  private async loadSpools(entityId: string, ask: number): Promise<void> {
+    // Asked once more on its own, as BamBuddy's own page does: a moment's
+    // hiccup then never shows.
+    let found: FilamentDialog["spools"] = "failed";
+    for (let attempt = 0; attempt < 2 && found === "failed"; attempt += 1) {
+      try {
+        found = (await spoolList(this.hass as Hass, entityId)) ?? "failed";
+      } catch {
+        found = "failed";
+      }
+    }
+    const placed = (open: FilamentDialog): FilamentDialog => {
+      const list = typeof found === "object" ? found : undefined;
+      const chosen = open.chosenSpool ?? list?.assigned;
+      return { ...open, spools: found, ...(chosen !== undefined ? { chosenSpool: chosen } : {}) };
+    };
+    // Also into the dialog a question parked meanwhile.
+    const dialog = this.dialog;
+    if (this.isAsk(dialog, entityId, ask)) {
+      this.dialog = placed(dialog);
+      // The slot's own spool in the list's view: it may sit far down.
+      void this.updateComplete.then(() => this.renderRoot.querySelector<HTMLElement>('dialog .inv-row[aria-checked="true"]')?.scrollIntoView?.({ block: "nearest" }));
+    }
+    const back = this.dialogBack;
+    if (this.isAsk(back, entityId, ask)) this.dialogBack = placed(back);
   }
 
   /** The printer has not answered for a while: the K field says BamBuddy
@@ -1259,6 +1295,10 @@ export class BamBuddyPrinterCard extends LitElement {
       void this.run("clear_hms", "button", "press", { entity_id: this.refs?.clearHms });
     } else if (dialog.kind === "skip") {
       void this.run("skip", "bambuddy", "skip_objects", { device_id: this.refs?.deviceId, objects: dialog.chosen });
+    } else if (dialog.kind === "filament" && onInventory(this.hass as Hass, dialog)) {
+      if (dialog.chosenSpool !== undefined) {
+        void this.run(`filament_${dialog.entityId}`, "bambuddy", "assign_spool", { entity_id: dialog.entityId, spool_id: dialog.chosenSpool });
+      }
     } else if (dialog.kind === "filament") {
       void this.run(`filament_${dialog.entityId}`, "bambuddy", "set_filament", { entity_id: dialog.entityId, ...filamentChanges(dialog) });
     } else if (dialog.kind === "drying") {
@@ -1318,6 +1358,40 @@ export class BamBuddyPrinterCard extends LitElement {
       this.confirmTask(undefined);
     },
     markDone: (id: number, name: string) => void this.markDone(id, name),
+    setTab: (tab: "set" | "inventory") => {
+      const dialog = this.dialog;
+      if (dialog?.kind !== "filament" || dialog.tab === tab) return;
+      this.dialog = { ...dialog, tab };
+      if (tab === "inventory" && dialog.spools === undefined) this.startSpools(dialog);
+    },
+    chooseSpool: (id: number) => {
+      const dialog = this.dialog;
+      if (dialog?.kind === "filament") this.dialog = { ...dialog, chosenSpool: id };
+    },
+    filterSpools: (field: "vendor" | "material" | "location", value: string) => {
+      const dialog = this.dialog;
+      if (dialog?.kind !== "filament") return;
+      const { vendorFilter: _vendor, materialFilter: _material, locationFilter: _location, ...rest } = dialog;
+      const vendorFilter = field === "vendor" ? value : dialog.vendorFilter;
+      const materialFilter = field === "material" ? value : dialog.materialFilter;
+      const locationFilter = field === "location" ? value : dialog.locationFilter;
+      this.dialog = {
+        ...rest,
+        ...(vendorFilter ? { vendorFilter } : {}),
+        ...(materialFilter ? { materialFilter } : {}),
+        ...(locationFilter ? { locationFilter } : {}),
+      };
+    },
+    searchSpools: (text: string) => {
+      const dialog = this.dialog;
+      if (dialog?.kind === "filament") this.dialog = { ...dialog, search: text };
+    },
+    unassign: () => {
+      const dialog = this.dialog;
+      if (dialog?.kind !== "filament") return;
+      this.closeDialog();
+      void this.run(`filament_${dialog.entityId}`, "bambuddy", "unassign_spool", { entity_id: dialog.entityId });
+    },
     toggleFold: (which: "pass" | "skip") => {
       const dialog = this.dialog;
       if (dialog?.kind !== "check") return;
@@ -1555,7 +1629,7 @@ export class BamBuddyPrinterCard extends LitElement {
         this.dialog = { kind: "confirm", ...confirmation };
       },
       dry: (unit) => this.openDrying(unit),
-      setFilament: (slot, title) => this.openFilament(slot, title),
+      setFilament: (slot, title, inventoryOnly) => this.openFilament(slot, title, inventoryOnly),
       skip: () => void this.openSkip(),
       targetOf: (entityId) => this.targetOf(entityId),
       stepTarget: (entityId, value) => this.stepTarget(entityId, value),

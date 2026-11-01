@@ -37,7 +37,7 @@ import pytest
 from pytest_homeassistant_custom_component.common import MockConfigEntry, async_fire_time_changed
 
 from custom_components.bambuddy import plug_identity
-from custom_components.bambuddy.api import BamBuddyClient, BamBuddyConnectionError
+from custom_components.bambuddy.api import BamBuddyClient, BamBuddyConnectionError, BamBuddyNotFoundError
 from custom_components.bambuddy.const import DOMAIN
 
 URL = "http://bambuddy.local:8000"
@@ -76,6 +76,13 @@ def plug_secret(hass_storage: dict[str, Any]) -> None:
 def load_fixture(name: str) -> Any:
     """One of BamBuddy's answers, as tests/fixtures/ holds it."""
     return json.loads((_FIXTURES / name).read_text(encoding="utf-8"))
+
+
+def _status_of(statuses: dict[int, Any], printer_id: int) -> Any:
+    """A printer's status as the mock BamBuddy has it; one it lacks answers 404, as BamBuddy does."""
+    if printer_id not in statuses:
+        raise BamBuddyNotFoundError(404, "Printer not found", path=f"GET /printers/{printer_id}/status")
+    return copy.deepcopy(statuses[printer_id])
 
 
 def printer_info(printer_id: int) -> dict[str, Any]:
@@ -161,6 +168,7 @@ CONTROLS = (
     "skip_objects",
     "perform_maintenance",
     "control_plug",
+    "unassign_spool",
 )
 
 
@@ -189,7 +197,7 @@ def bambuddy_api() -> Iterator[SimpleNamespace]:
         "get_printer": AsyncMock(
             side_effect=lambda printer_id: printer_info(printer_id)
         ),
-        "get_status": AsyncMock(side_effect=lambda printer_id: copy.deepcopy(statuses[printer_id])),
+        "get_status": AsyncMock(side_effect=lambda printer_id: _status_of(statuses, printer_id)),
         "get_stream_token": AsyncMock(return_value=STREAM_TOKEN),
         "get_ws_token": AsyncMock(return_value=WS_TOKEN),
         "open_socket": AsyncMock(side_effect=BamBuddyConnectionError("WebSocket: no socket in tests")),
@@ -210,6 +218,11 @@ def bambuddy_api() -> Iterator[SimpleNamespace]:
         "get_kprofiles": AsyncMock(return_value=load_fixture("kprofiles.json")),
         # No smart plugs unless a test gives BamBuddy some (`with_plugs`).
         "get_smart_plugs": AsyncMock(return_value=[]),
+        # BamBuddy's spool inventory: none by default (tests/test_inventory.py sets its own).
+        "get_spools": AsyncMock(return_value=[]),
+        "get_spool_assignments": AsyncMock(return_value=[]),
+        "get_spoolman_status": AsyncMock(return_value={"enabled": False, "connected": False, "url": None}),
+        "assign_spool": AsyncMock(return_value={}),
         "get_plug_status": AsyncMock(side_effect=lambda plug_id, patient=True: copy.deepcopy(plug_statuses[str(plug_id)])),
         **{name: AsyncMock(return_value=None) for name in CONTROLS},
     }

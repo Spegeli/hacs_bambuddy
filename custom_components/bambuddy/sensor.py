@@ -31,9 +31,11 @@ from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 from homeassistant.helpers.typing import StateType
+from homeassistant.helpers.update_coordinator import CoordinatorEntity
 from homeassistant.util import dt as dt_util
 
 from .const import DOMAIN
+from .inventory import inventory_attributes
 from .coordinator import BamBuddyConfigEntry, BamBuddyInstanceCoordinator, BamBuddyPlugCoordinator, BamBuddyPrinterCoordinator
 from .entity import (
     BamBuddyAmsEntity,
@@ -523,11 +525,24 @@ class BamBuddyInstanceSensor(BamBuddyInstanceEntity, SensorEntity):
         return None if data is None else self.entity_description.value_fn(data)
 
 
+# The slot attributes from BamBuddy's inventory; the external spools in its
+# numbers (AMS 255, tray 0 left or the only one, 1 right).
+_INVENTORY_ATTRIBUTES = ("inventory_spool", "inventory_assignable")
+EXTERNAL_AMS_ID = 255
+_EXTERNAL_TRAYS = {"external_spool": 0, "external_spool_2": 1}
+
+
+def _follow_inventory(entity: CoordinatorEntity[BamBuddyPrinterCoordinator]) -> None:
+    """The entity writes its state when the inventory changes too."""
+    inventory = entity.coordinator.config_entry.runtime_data.inventory
+    entity.async_on_remove(inventory.async_add_listener(entity.async_write_ha_state))
+
+
 class BamBuddyPrinterSensor(BamBuddyDescribedEntity, SensorEntity):
     entity_description: BamBuddyPrinterSensorDescription
-    # The HMS list can be long and changes with each error: kept out of the
-    # recorder.
-    _unrecorded_attributes = frozenset({"errors"})
+    # The HMS list can be long and changes with each error, the inventory
+    # spool with each print: kept out of the recorder.
+    _unrecorded_attributes = frozenset({"errors", *_INVENTORY_ATTRIBUTES})
 
     def __init__(self, coordinator: BamBuddyPrinterCoordinator, description: BamBuddyPrinterSensorDescription) -> None:
         super().__init__(coordinator, description)
@@ -552,10 +567,20 @@ class BamBuddyPrinterSensor(BamBuddyDescribedEntity, SensorEntity):
     def native_value(self) -> StateType | datetime:
         return self.entity_description.value_fn(self.data)
 
+    async def async_added_to_hass(self) -> None:
+        await super().async_added_to_hass()
+        if self.entity_description.key in _EXTERNAL_TRAYS:
+            _follow_inventory(self)
+
     @property
     def extra_state_attributes(self) -> dict[str, Any] | None:
         attr_fn = self.entity_description.attr_fn
-        return attr_fn(self.data) if attr_fn else None
+        attributes = attr_fn(self.data) if attr_fn else None
+        tray = _EXTERNAL_TRAYS.get(self.entity_description.key)
+        if tray is None:
+            return attributes
+        spool = inventory_attributes(self.coordinator.config_entry.runtime_data.inventory, self.coordinator.printer_id, EXTERNAL_AMS_ID, tray)
+        return {**(attributes or {}), **spool} if spool else attributes
 
 
 class BamBuddyMaintenanceSensor(BamBuddyPrinterSensor):
@@ -619,11 +644,17 @@ class BamBuddyAmsSlotSensor(BamBuddyAmsEntity, SensorEntity):
     """One slot of an AMS unit: the filament's name, or empty."""
 
     _attr_translation_key = "ams_slot"
+    # The inventory spool changes with each print: kept out of the recorder.
+    _unrecorded_attributes = frozenset(_INVENTORY_ATTRIBUTES)
 
     def __init__(self, coordinator: BamBuddyPrinterCoordinator, ams_id: int, slot: int) -> None:
         super().__init__(coordinator, ams_id, f"slot_{slot + 1}")
         self.slot = slot
         self._attr_translation_placeholders = {"slot": str(slot + 1)}
+
+    async def async_added_to_hass(self) -> None:
+        await super().async_added_to_hass()
+        _follow_inventory(self)
 
     @property
     def tray(self) -> dict[str, Any] | None:
@@ -650,6 +681,8 @@ class BamBuddyAmsSlotSensor(BamBuddyAmsEntity, SensorEntity):
             # The nozzle the unit feeds: BamBuddy's 0 right, 1 left;
             # a unit on the filament track switch reaches both and has none.
             attributes["nozzle"] = "left" if str(fed) == "1" else "right"
+        # BamBuddy's inventory knows a slot by the unit's id and the place in it.
+        attributes.update(inventory_attributes(self.coordinator.config_entry.runtime_data.inventory, self.coordinator.printer_id, self.ams_id, self.slot))
         return attributes
 
 

@@ -2550,6 +2550,38 @@ export const cardStyles = css`
   .dlg-error .icon {
     color: var(--bb-err);
   }
+  /* Set ends the spool's assignment: a line of its own above the buttons. */
+  .dlg-actions .dlg-warn {
+    flex: 1 0 100%;
+    display: flex;
+    align-items: flex-start;
+    gap: 6px;
+    font-size: 13px;
+    line-height: 18px;
+    color: color-mix(in srgb, var(--bb-warn) 75%, var(--bb-text));
+  }
+  .dlg-actions .dlg-warn .icon {
+    flex: none;
+    width: 16px;
+    height: 16px;
+    margin-top: 1px;
+  }
+  /* The slot's profile: a heading and what the list holds. */
+  .fil-head {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+  }
+  .fil-title {
+    font-size: 14px;
+    line-height: 20px;
+    font-weight: 500;
+  }
+  .fil-help {
+    font-size: 12px;
+    line-height: 16px;
+    color: var(--bb-muted);
+  }
   /* What the confirming button still waits for, beside it. */
   .dlg-actions .dlg-need {
     flex: 1;
@@ -2654,6 +2686,192 @@ export const cardStyles = css`
   }
   .rfid-spool {
     font-weight: 500;
+  }
+  /* What the kept profile is, under the vendor field. */
+  .dlg-body .fil-keep {
+    margin-top: 6px;
+    font-size: 12px;
+    line-height: 16px;
+    color: var(--bb-muted);
+  }
+  /* The slot dialog's switch: its filament, or a spool of the inventory. */
+  .inv-switch button[aria-selected="true"] {
+    color: color-mix(in srgb, var(--bb-accent) 50%, var(--bb-text));
+    background: color-mix(in srgb, var(--bb-accent) 18%, transparent);
+    font-weight: 500;
+  }
+  /* The slot's spool from BamBuddy's inventory. */
+  .inv-card {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    padding: 10px 12px;
+    border-radius: 12px;
+    background: var(--bb-tint);
+    font-size: 13px;
+    line-height: 18px;
+  }
+  .inv-from {
+    color: var(--bb-muted);
+    font-size: 12px;
+  }
+  .inv-spool {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    min-width: 0;
+  }
+  .inv-name {
+    font-weight: 500;
+    font-size: 14px;
+    overflow-wrap: anywhere;
+  }
+  .inv-line {
+    color: var(--bb-muted);
+    overflow-wrap: anywhere;
+  }
+  /* The spool is assigned to other slots too. */
+  .inv-also {
+    display: flex;
+    align-items: flex-start;
+    gap: 6px;
+    margin-top: 4px;
+    color: color-mix(in srgb, var(--bb-warn) 75%, var(--bb-text));
+  }
+  .inv-also .icon {
+    flex: none;
+    width: 16px;
+    height: 16px;
+    margin-top: 1px;
+  }
+  /* The inventory's way: the list in a box of its own that takes the room
+     left and scrolls (the one such box of the card's dialogs), so that the
+     head and the buttons stay in reach; about three rows at least, below
+     that the dialog scrolls as well. */
+  .dlg-body:has(.inv-list) {
+    max-height: calc(100dvh - 48px);
+    box-sizing: border-box;
+  }
+  .inv-panel {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    min-height: 0;
+  }
+  .inv-filters {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    gap: 10px;
+  }
+  /* Side by side, each label above its select. */
+  .inv-filters .field {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 4px;
+  }
+  .inv-filters .select {
+    max-width: none;
+  }
+  /* The location below vendor and material, across the row. */
+  .inv-filters .field.inv-wide {
+    grid-column: 1 / -1;
+  }
+  .inv-search {
+    width: 100%;
+    box-sizing: border-box;
+  }
+  .inv-search {
+    font: inherit;
+    padding: 8px 10px;
+    border-radius: 8px;
+    border: 1px solid var(--bb-divider);
+    color: var(--bb-text);
+    background: transparent;
+  }
+  .inv-list {
+    flex: 0 1 auto;
+    min-height: 0;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    border: 1px solid var(--bb-divider);
+    border-radius: 12px;
+    padding: 4px;
+  }
+  .inv-list.many {
+    min-height: min(180px, 40dvh);
+  }
+  /* A short screen (a phone held sideways): the dialog scrolls as a whole,
+     its button row at its foot; the list keeps a cap of its own. */
+  @media (max-height: 560px) {
+    .dlg-body:has(.inv-list) {
+      max-height: none;
+    }
+    .inv-list {
+      max-height: max(180px, 45dvh);
+    }
+  }
+  .inv-group {
+    padding: 8px 8px 2px;
+    font-size: 12px;
+    color: var(--bb-muted);
+    letter-spacing: 0.02em;
+  }
+  .inv-row {
+    display: flex;
+    align-items: flex-start;
+    gap: 10px;
+    padding: 8px;
+    border-radius: 9px;
+    cursor: pointer;
+    font-size: 13px;
+    line-height: 18px;
+  }
+  .inv-row .spool-dot {
+    margin-top: 2px;
+  }
+  .inv-row[aria-checked="true"] {
+    background: color-mix(in srgb, var(--bb-accent) 16%, transparent);
+  }
+  .inv-row[aria-disabled="true"] {
+    cursor: default;
+    opacity: 0.55;
+  }
+  .inv-row:focus-visible {
+    outline: 2px solid var(--bb-ring);
+    outline-offset: -2px;
+  }
+  .inv-row-text {
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+  }
+  /* The place, read without colour too: a dot before it. */
+  .inv-where::before {
+    content: "• ";
+  }
+  .inv-where.here {
+    color: color-mix(in srgb, var(--bb-accent) 70%, var(--bb-text));
+  }
+  .inv-where.elsewhere {
+    color: color-mix(in srgb, var(--bb-warn) 75%, var(--bb-text));
+  }
+  .inv-where.stored,
+  .inv-where.off {
+    color: var(--bb-muted);
+  }
+  .inv-unassign {
+    margin-inline-end: auto;
+  }
+  /* A spool's colour; a multicolour spool's in segments. */
+  .spool-dot {
+    flex: none;
+    width: 14px;
+    height: 14px;
+    border-radius: 50%;
+    background: var(--dot);
+  }
+  .spool-dot.outline {
+    box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--bb-text) 35%, transparent);
   }
   .k-hint {
     display: block;

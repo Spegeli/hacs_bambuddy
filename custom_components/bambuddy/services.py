@@ -14,19 +14,29 @@ from typing import Any
 import voluptuous as vol
 
 from homeassistant.core import HomeAssistant, ServiceCall, ServiceResponse, SupportsResponse, callback
-from homeassistant.exceptions import ServiceValidationError
+from homeassistant.exceptions import HomeAssistantError, ServiceValidationError
 from homeassistant.helpers import config_validation as cv
 from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers import entity_registry as er
 
 from . import filaments
-from .api import BamBuddyApiError
+from .api import (
+    BamBuddyApiError,
+    BamBuddyAuthError,
+    BamBuddyConnectionError,
+    BamBuddyError,
+    BamBuddyNotFoundError,
+    BamBuddyPermissionError,
+)
 from .const import CONF_PRINTER_NAME, CONF_PRINTERS, DOMAIN, K_PROFILES_KEEP, K_PROFILES_NO_ANSWER
 from .coordinator import BamBuddyConfigEntry, BamBuddyPrinterCoordinator, printer_identifier
+from .api import timed_out
 from .entity import async_run_command, refuse as _refuse
+from .inventory import BamBuddyInventoryCoordinator, InventoryData, Placed, Spool, place_json, spool_fit
 from .models import (
     DRYING_MAX,
     EXTERNAL_LEFT,
+    JOB_STATES,
     EXTERNAL_RIGHT,
     PRINTING_STATES,
     PrinterData,
@@ -63,6 +73,7 @@ ATTR_TASK_ID = "task_id"
 ATTR_CODE = "code"
 ATTR_K_PROFILE = "k_profile"
 ATTR_ACTION = "action"
+ATTR_SPOOL_ID = "spool_id"
 # BamBuddy's AMS id of the external spools.
 _EXTERNAL_AMS = 255
 # BamBuddy's text for the printer's reason 6, "already drying"
@@ -119,6 +130,11 @@ SCHEMAS: dict[str, vol.Schema] = {
     "get_filaments": vol.Schema({vol.Required(ATTR_ENTITY_ID): cv.entity_id}),
     "reset_slot": vol.Schema({vol.Required(ATTR_ENTITY_ID): cv.entity_id}),
     "refresh_rfid": vol.Schema({vol.Required(ATTR_ENTITY_ID): cv.entity_id}),
+    "assign_spool": vol.Schema(
+        {vol.Required(ATTR_ENTITY_ID): cv.entity_id, vol.Required(ATTR_SPOOL_ID): vol.All(vol.Coerce(int), vol.Range(min=1))}
+    ),
+    "unassign_spool": vol.Schema({vol.Required(ATTR_ENTITY_ID): cv.entity_id}),
+    "get_spools": vol.Schema({vol.Required(ATTR_ENTITY_ID): cv.entity_id}),
 }
 
 
@@ -516,6 +532,191 @@ async def _refresh_rfid(hass: HomeAssistant, call: ServiceCall) -> None:
     await async_run_command(coordinator, partial(coordinator.client.refresh_rfid, coordinator.printer_id, ams, slot))
 
 
+def _inventory(coordinator: BamBuddyPrinterCoordinator, *, assigning: bool) -> tuple[BamBuddyInventoryCoordinator, InventoryData]:
+    """The entry's inventory, shown -- and, to change it, a key with Manage Inventory."""
+    inventory = coordinator.config_entry.runtime_data.inventory
+    if assigning and not inventory.can_assign:
+        raise _refuse("inventory_not_allowed")
+    data = inventory.data
+    if data is None or not data.shown:
+        raise _refuse("inventory_not_shown")
+    return inventory, data
+
+
+def _inventory_failure(err: BamBuddyError, *, missing: str = "spool_not_found", spool: int = 0) -> HomeAssistantError:
+    """BamBuddy's answer to an inventory write, in words: these routes need
+    only optional permissions, so a refusal is no matter for the key's guard."""
+    if isinstance(err, (BamBuddyAuthError, BamBuddyPermissionError)):
+        return _refuse("inventory_not_allowed")
+    if isinstance(err, BamBuddyNotFoundError):
+        return _refuse("no_assignment") if missing == "no_assignment" else _refuse("spool_not_found", spool=str(spool))
+    if isinstance(err, BamBuddyApiError) and err.status == 400 and "archived" in err.detail.lower():
+        return _refuse("spool_archived")
+    if isinstance(err, BamBuddyConnectionError):
+        # Timed out: a write may still have reached BamBuddy.
+        return HomeAssistantError(translation_domain=DOMAIN, translation_key="no_answer" if timed_out(err) else "cannot_connect")
+    kind = ServiceValidationError if isinstance(err, BamBuddyApiError) and 400 <= err.status < 500 else HomeAssistantError
+    return kind(translation_domain=DOMAIN, translation_key="command_failed", translation_placeholders={"error": str(err)})
+
+
+async def _fresh_inventory(inventory: BamBuddyInventoryCoordinator) -> InventoryData:
+    """The spools and their slots as BamBuddy has them now (Spoolman asked
+    too); the entry's view follows."""
+    try:
+        fresh = await inventory.async_read_fresh()
+    except (BamBuddyAuthError, BamBuddyPermissionError, BamBuddyNotFoundError) as err:
+        raise _refuse("inventory_not_shown") from err
+    except BamBuddyError as err:
+        raise _inventory_failure(err) from err
+    if not fresh.shown:
+        raise _refuse("inventory_not_shown")
+    return fresh
+
+
+async def _assign_spool(hass: HomeAssistant, call: ServiceCall) -> None:
+    """An inventory spool into a slot: BamBuddy sets the slot from it (its
+    material, colour, profile and K). A spool in another slot moves: that
+    link goes first -- BamBuddy 1.2.5.7 would keep both; should BamBuddy then
+    refuse the new one, the spool is in no slot. The spool is judged by a
+    fresh read; one that read lacks (archived, deleted) BamBuddy refuses
+    in its own words."""
+    coordinator, ams, slot, tray = _place(hass, call.data[ATTR_ENTITY_ID])
+    spool_id: int = call.data[ATTR_SPOOL_ID]
+    inventory, _known = _inventory(coordinator, assigning=True)
+    data = coordinator.data
+    _online(coordinator)
+    if data.changing_filament:
+        raise _refuse("filament_change", printer=short_name(coordinator.info))
+    if data.job_running and data.state != "PAUSE" and _in_use(data, ams, slot, tray):
+        raise _refuse("slot_in_use", printer=short_name(coordinator.info))
+    found = find_tray(data, tray)
+    if found is not None and has_rfid(found[0]):
+        raise _refuse("rfid_spool")
+    fresh = await _fresh_inventory(inventory)
+    spool = fresh.spools.get(spool_id)
+    fit = spool_fit(spool, _slot_of(data, ams, slot)) if spool is not None else None
+    elsewhere = [row for row in fresh.places_of(spool_id) if (row.printer_id, row.ams_id, row.tray_id) != (coordinator.printer_id, ams, slot)]
+    if spool is not None and spool.bambu_chip and elsewhere:
+        # Its chip links it to the slot it is read in, and BamBuddy keeps a hand assignment beside that.
+        raise _refuse("spool_by_chip")
+    printing = await _printing(coordinator, elsewhere)
+    if printing:
+        raise _refuse("spool_printing", printer=printing[0])
+    if fit == "not_for_ams":
+        raise _refuse("spool_not_for_ams")
+    if fit == "not_for_nozzle":
+        raise _refuse("spool_not_for_nozzle")
+    if fit == "not_for_printer":
+        raise _refuse("spool_not_for_printer")
+    printer_id = coordinator.printer_id
+
+    async def assign() -> None:
+        others = [row for row in fresh.places_of(spool_id) if (row.printer_id, row.ams_id, row.tray_id) != (printer_id, ams, slot)]
+        try:
+            for row in others:
+                try:
+                    await inventory.client.unassign_spool(row.printer_id, row.ams_id, row.tray_id)
+                except BamBuddyNotFoundError:
+                    # Gone since the read: nothing to take out.
+                    pass
+            await inventory.client.assign_spool(spool_id, printer_id, ams, slot, move=bool(others))
+        except BamBuddyError as err:
+            raise _inventory_failure(err, spool=spool_id) from err
+        finally:
+            await inventory.async_request_refresh()
+
+    await async_run_command(coordinator, assign)
+
+
+async def _unassign_spool(hass: HomeAssistant, call: ServiceCall) -> None:
+    """A slot's link to its inventory spool goes; nothing is sent to the
+    printer, so also during a print and while it is offline."""
+    coordinator, ams, slot, _tray = _place(hass, call.data[ATTR_ENTITY_ID])
+    inventory, known = _inventory(coordinator, assigning=True)
+    printer_id = coordinator.printer_id
+    if known.at(printer_id, ams, slot) is None:
+        raise _refuse("no_assignment")
+
+    async def unassign() -> None:
+        try:
+            await inventory.client.unassign_spool(printer_id, ams, slot)
+        except BamBuddyError as err:
+            raise _inventory_failure(err, missing="no_assignment") from err
+        finally:
+            await inventory.async_request_refresh()
+
+    await async_run_command(coordinator, unassign, offline_ok=True)
+
+
+async def _printing(coordinator: BamBuddyPrinterCoordinator, rows: list[Placed], read: dict[int, bool] | None = None) -> list[str]:
+    """The names of the other printers among these slots' that print or pause a print:
+    a print may switch to any of its slots, so a spool there is no spool to take.
+    The entry's printers by what they last reported, the others by one read each;
+    one that cannot be read locks nothing. `read` keeps the reads of one list."""
+    read = {} if read is None else read
+    watched = {other.printer_id: other.data for other in coordinator.config_entry.runtime_data.printers.values()}
+    found: list[str] = []
+    for printer_id in dict.fromkeys(row.printer_id for row in rows if row.printer_id != coordinator.printer_id):
+        if printer_id in watched:
+            busy = watched[printer_id].job_running
+        elif printer_id in read:
+            busy = read[printer_id]
+        else:
+            try:
+                status = await coordinator.config_entry.runtime_data.client.get_status(printer_id)
+            except BamBuddyError:
+                status = {}
+            busy = read[printer_id] = bool(status.get("connected")) and status.get("state") in JOB_STATES
+        if busy:
+            name = next(row.printer_name for row in rows if row.printer_id == printer_id)
+            found.append(name or str(printer_id))
+    return found
+
+
+def _spool_answer(spool: Spool, here: tuple[int, int, int], fresh: InventoryData, slot: filaments.Slot, printing: list[str]) -> dict[str, Any]:
+    """A spool of the list: where it sits (this slot, another, none; `also` its
+    further slots -- BamBuddy can hold one in two) and whether it fits; a Bambu
+    spool whose chip links it to another slot is none to assign, nor one in a
+    slot of another printer that prints (`printing` its name)."""
+    places = fresh.places_of(spool.id)
+    others = [{**place_json(row), "same_printer": row.printer_id == here[0]} for row in places if (row.printer_id, row.ams_id, row.tray_id) != here]
+    at_here = len(others) < len(places)
+    place: dict[str, Any] | None = {"this_slot": True} if at_here else (others[0] if others else None)
+    also = others if at_here else others[1:]
+    attributes = spool.attributes()
+    del attributes["label_weight"]
+    fits = "by_chip" if spool.bambu_chip and others else "printing" if printing else spool_fit(spool, slot)
+    return {**attributes, "place": place, "also": also, "fits": fits, **({"printing": printing[0]} if printing and fits == "printing" else {})}
+
+
+async def _get_spools(hass: HomeAssistant, call: ServiceCall) -> ServiceResponse:
+    """The spools of BamBuddy's inventory for a slot, read fresh: where each
+    sits and whether it fits; the slot's own first, then by material, brand
+    and colour name as BamBuddy lists them. Read Status suffices."""
+    coordinator, ams, slot, _tray = _place(hass, call.data[ATTR_ENTITY_ID])
+    inventory, _known = _inventory(coordinator, assigning=False)
+    fresh = await _fresh_inventory(inventory)
+    here = (coordinator.printer_id, ams, slot)
+    assigned = fresh.at(*here)
+    target = _slot_of(coordinator.data, ams, slot)
+    order = sorted(
+        fresh.spools.values(),
+        key=lambda item: (
+            item.id != (assigned.id if assigned else None),
+            item.material.lower(),
+            (item.brand or "").lower(),
+            (item.color_name or "").lower(),
+            item.id,
+        ),
+    )
+    spools: list[Any] = []
+    read: dict[int, bool] = {}
+    for item in order:
+        elsewhere = [row for row in fresh.places_of(item.id) if (row.printer_id, row.ams_id, row.tray_id) != here]
+        spools.append(_spool_answer(item, here, fresh, target, await _printing(coordinator, elsewhere, read)))
+    return {"assigned": assigned.id if assigned else None, "spools": spools}
+
+
 def _online(coordinator: BamBuddyPrinterCoordinator) -> None:
     """Offline the printer's figures are stale: that is the reason to name."""
     if not coordinator.data.connected:
@@ -789,9 +990,12 @@ _HANDLERS: dict[str, Callable[[HomeAssistant, ServiceCall], Coroutine[Any, Any, 
     "get_filaments": _get_filaments,
     "reset_slot": _reset_slot,
     "refresh_rfid": _refresh_rfid,
+    "assign_spool": _assign_spool,
+    "unassign_spool": _unassign_spool,
+    "get_spools": _get_spools,
 }
 # The actions that answer (and only answer).
-_RESPONSES = {"get_print_objects", "run_diagnostic", "get_k_profiles", "get_filaments"}
+_RESPONSES = {"get_print_objects", "run_diagnostic", "get_k_profiles", "get_filaments", "get_spools"}
 
 
 @callback

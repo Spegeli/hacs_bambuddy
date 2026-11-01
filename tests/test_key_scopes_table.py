@@ -8,7 +8,7 @@ import inspect
 import re
 
 from custom_components.bambuddy.api import BamBuddyClient
-from custom_components.bambuddy.const import REQUIRED_SCOPES
+from custom_components.bambuddy.const import OPTIONAL_PERMISSIONS, REQUIRED_SCOPES
 
 # Each client method that sends the key, and the permission its route needs
 # (BamBuddy's routes, read at 943f358: `RequirePermissionIfAuthEnabled(...)`).
@@ -54,7 +54,20 @@ PUBLIC = {"get_version", "get_auth_status", "get_auth_me", "check_key", "get_sna
 # Calls the integration does without: refused, it reads as it always did.
 # The live connection's token (`websocket:connect`, Read Status -- narrowed
 # to what the key's owner may do, so not every Read Status key gets it).
-OPTIONAL = {"get_ws_token": "websocket:connect"}
+OPTIONAL = {
+    "get_ws_token": "websocket:connect",
+    # The spool inventory: shown and assigned only where the key has these (#21).
+    "get_spools": "inventory:read",
+    "get_spool_assignments": "inventory:view_assignments",
+    "get_spoolman_status": "filaments:read",
+    "assign_spool": "inventory:update",
+    "unassign_spool": "inventory:update",
+}
+
+
+def test_the_optional_permissions_are_the_ones_the_key_check_keeps() -> None:
+    """What the key check keeps beside the scopes is exactly what these calls need."""
+    assert set(OPTIONAL.values()) == OPTIONAL_PERMISSIONS
 
 
 def test_every_call_needs_a_listed_permission() -> None:

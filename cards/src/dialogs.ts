@@ -9,15 +9,15 @@ import { html, nothing, type TemplateResult } from "lit";
 import { Directive, directive, type ChildPart } from "lit/directive.js";
 import { keyed } from "lit/directives/keyed.js";
 
-import type { FilamentOffer, KProfile, KProfiles, OfferedFilament, PrintObject } from "./actions";
+import type { FilamentOffer, KProfile, KProfiles, ListedSpool, OfferedFilament, PrintObject, SpoolList, SpoolPlace } from "./actions";
 import { formatFixed, formatNumber, formatTemperature, needsOutline, rgbOf } from "./format";
 import { checkContent, type CheckDialog } from "./check";
-import { canClearHms, firmwareContent, hmsAnswered, hmsContent, infoContent, slotNozzleLines, storageContent } from "./header";
+import { canClearHms, firmwareContent, hmsAnswered, hmsContent, infoContent, printerTitle, slotNozzleLines, storageContent } from "./header";
 import { autoOffContent, powerContent } from "./power";
 import { maintenanceContent, type MaintenanceDialog } from "./maintenance";
 import { icon } from "./icons";
 import { t, type TextKey } from "./i18n";
-import { actionButton, dialogNote, slotOf, slotPlace, stepControl, type CardContext, type Confirmation } from "./parts";
+import { actionButton, dialogNote, radioLeave, slotOf, slotPlace, spoolDot, spoolLine, stepControl, type CardContext, type Confirmation, type InventorySpool, type Slot } from "./parts";
 import type { AmsRefs, Hass } from "./types";
 
 /** Drying defaults and limits: BamBuddy's range; the AMS 2 Pro heats to 65 °C at most. */
@@ -132,6 +132,20 @@ export interface FilamentDialog {
   ask?: number;
   /** The K profile chosen: K_KEEP, "-1" the default, or a profile's index. */
   kprofile?: string;
+  /** Which way the slot is set: its filament, or a spool of BamBuddy's inventory. */
+  tab?: "set" | "inventory";
+  /** An empty slot, or the one the running print feeds: only the inventory. */
+  inventoryOnly?: boolean;
+  /** The inventory's spools for the slot, while asked "loading", or
+   * "failed" when the integration did not answer. */
+  spools?: SpoolList | "loading" | "failed";
+  /** The spool chosen in the list. */
+  chosenSpool?: number;
+  /** The list's filters: a brand (lower case), a material, a storage location; and a search. */
+  vendorFilter?: string;
+  materialFilter?: string;
+  locationFilter?: string;
+  search?: string;
 }
 
 /** The vendor whose filaments hold the slot's own profile, where the offer has it. */
@@ -254,6 +268,14 @@ export interface DialogActions {
   now: () => number;
   /** Escape: closes the dialog, or first a question inside it. */
   cancel: (event: Event) => void;
+  /** The slot dialog's way: its filament, or a spool of the inventory. */
+  setTab: (tab: "set" | "inventory") => void;
+  /** The inventory's list: a spool chosen, a filter set, a search typed. */
+  chooseSpool: (id: number) => void;
+  filterSpools: (field: "vendor" | "material" | "location", value: string) => void;
+  searchSpools: (text: string) => void;
+  /** Removes the slot's assignment. */
+  unassign: () => void;
 }
 
 function stepper(
@@ -485,7 +507,7 @@ function filamentFields(hass: Hass, dialog: FilamentDialog, actions: DialogActio
           ready ? "offer" : String(offer),
           html`<select id="fil-vendor" class=${dialog.vendor === undefined ? "unset" : ""} ?disabled=${!ready} @change=${(event: Event) => actions.setVendor(pick(event))}>
           ${keepVendor
-            ? html`<option value=${KEEP} .selected=${dialog.vendor === KEEP}>${t(hass, "material_keep", { name: dialog.keep ?? "" })}</option>`
+            ? html`<option value=${KEEP} .selected=${dialog.vendor === KEEP}>${t(hass, "profile_keep")}</option>`
             : html`<option value="" disabled .selected=${dialog.vendor === undefined}>${t(hass, "material_choose")}</option>`}
           ${vendors.map((item) => html`<option value=${item.name} .selected=${dialog.vendor === item.name}>${item.name}</option>`)}
           ${selectValue(dialog.vendor ?? "")}
@@ -511,7 +533,18 @@ function filamentFields(hass: Hass, dialog: FilamentDialog, actions: DialogActio
             ${icon("chevronDown")}
           </span>
         </div>`
-      : nothing}</div></div>`;
+      : nothing}</div>${keepVendor && ready && dialog.vendor === KEEP ? html`<p class="fil-keep">${keptProfile(hass, dialog, offer)}</p>` : nothing}</div>`;
+}
+
+/** What the kept profile is, where the offer lacks it: none set, one of the
+ * user's own that the list does not know (the slot then reads as its
+ * type), or a named one not offered for this slot. */
+function keptProfile(hass: Hass, dialog: FilamentDialog, offer: FilamentOffer): string {
+  const type = slotOf(hass, dialog.entityId).type;
+  if (!offer.current) return t(hass, "profile_none", { type });
+  const name = dialog.keep ?? "";
+  if (!name || name.toLocaleLowerCase() === type.toLocaleLowerCase()) return t(hass, "profile_own", { type });
+  return t(hass, "profile_current", { name });
 }
 
 /** What else a slot offers: its chip read again (AMS slots), reset. Both
@@ -551,20 +584,405 @@ function nozzleLine(ctx: CardContext, dialog: FilamentDialog): TemplateResult | 
   return lines.length ? html`<div class="nozzle-line">${lines.map((line) => html`<span>${icon("nozzle")}${line}</span>`)}</div>` : nothing;
 }
 
+const TABS = ["set", "inventory"] as const;
+
+/** The slot dialog shows the inventory's way: an empty slot's or a busy
+ * one's, or its tab -- not a chip spool's, and the tab only while spools may
+ * be assigned (its content and its buttons ask the same). */
+export function onInventory(hass: Hass, dialog: FilamentDialog): boolean {
+  if (dialog.rfid) return false;
+  return dialog.inventoryOnly === true || (dialog.tab === "inventory" && slotOf(hass, dialog.entityId).assignable);
+}
+
+/** The switch between the slot's filament and the inventory: tabs, moved
+ * by the arrow keys -- it changes what the dialog shows, it sets nothing. */
+function inventoryTabs(hass: Hass, dialog: FilamentDialog, actions: DialogActions): TemplateResult {
+  const chosen = dialog.tab ?? "set";
+  const keys = (event: KeyboardEvent): void => {
+    const at = TABS.indexOf(chosen);
+    const next = { ArrowRight: at + 1, ArrowDown: at + 1, ArrowLeft: at - 1, ArrowUp: at - 1, Home: 0, End: TABS.length - 1 }[event.key];
+    if (next === undefined) return;
+    event.preventDefault();
+    const tab = TABS[(next + TABS.length) % TABS.length] as (typeof TABS)[number];
+    const list = (event.currentTarget as HTMLElement).querySelectorAll<HTMLElement>("[role=tab]");
+    list[TABS.indexOf(tab)]?.focus();
+    actions.setTab(tab);
+  };
+  return html`<div class="seg inv-switch" role="tablist" aria-label=${t(hass, "inv_tabs")} @keydown=${keys}>
+    ${TABS.map(
+      (tab) =>
+        html`<button
+          type="button"
+          role="tab"
+          id="inv-tab-${tab}"
+          aria-controls=${tab === chosen && tab === "inventory" ? "inv-panel" : nothing}
+          aria-selected=${tab === chosen ? "true" : "false"}
+          tabindex=${tab === chosen ? 0 : -1}
+          @click=${() => actions.setTab(tab)}
+        >
+          ${t(hass, tab === "set" ? "inv_tab_set" : "inv_tab_inventory")}
+        </button>`,
+    )}
+  </div>`;
+}
+
+/** The slot's spool from BamBuddy's inventory, whatever the key may; a
+ * warning where it is assigned to other slots too. */
+function inventoryCard(ctx: CardContext, spool: InventorySpool, chip: boolean): TemplateResult {
+  const { hass } = ctx;
+  return html`<div class="inv-card">
+    <span class="inv-from">${t(hass, chip ? "inv_from_chip" : "inv_from")}</span>
+    <span class="inv-spool">${spoolDot(spool)}<span class="inv-name">${spool.name}</span></span>
+    <span class="inv-line">${spoolLine(hass, spool)}</span>
+    ${spool.alsoAssigned.map(
+      (place) => html`<span class="inv-also">${icon("warning")}<span>${t(hass, "inv_also", { where: place.here ? "" : whereOf(ctx, place).line })}</span></span>`,
+    )}
+  </div>`;
+}
+
+/** The inventory's way: the spools to choose from, where they may be assigned. */
+function inventoryPanel(ctx: CardContext, dialog: FilamentDialog, actions: DialogActions, slot: Slot): TemplateResult | typeof nothing {
+  return slot.assignable ? inventoryContent(ctx, dialog, actions, slot) : nothing;
+}
+
+/** Filters and the search show from this many spools on. */
+const SEARCH_FROM = 5;
+
+/** BamBuddy's AMS letters: unit 0-3 AMS A-D, 128-135 AMS HT A-H, 6 the AMS Lite. */
+function unitName(amsId: number): string {
+  if (amsId === 6) return "AMS Lite";
+  return amsId >= 128 ? `AMS HT ${String.fromCharCode(65 + amsId - 128)}` : `AMS ${String.fromCharCode(65 + amsId)}`;
+}
+
+/** BamBuddy's global id of a slot, as the slot sensors carry it. */
+const globalTray = (amsId: number, trayId: number): number => (amsId >= 128 ? amsId : amsId === 6 ? 24 + trayId : amsId * 4 + trayId);
+
+interface Where {
+  /** The list's line: "In AMS A, Fach 1". */
+  line: string;
+  /** The move's note: "AMS A, Fach 1", "dem Drucker Desk, …". */
+  from: string;
+}
+
+/** Where a spool of the list sits, in the card's words. */
+function whereOf(ctx: CardContext, place: Exclude<SpoolPlace, { here: true }>): Where {
+  const { hass, refs } = ctx;
+  if (place.samePrinter) {
+    if (place.amsId === 255) {
+      const sides = refs.externalSpools.length > 1;
+      const side = !sides ? "" : place.trayId === 1 ? "_right" : "_left";
+      return { line: t(hass, `inv_ext${side}` as TextKey), from: t(hass, `inv_from_ext${side}` as TextKey) };
+    }
+    // The unit's name as the card shows it, its slot by the sensor's number.
+    const tray = globalTray(place.amsId, place.trayId);
+    let unit = place.amsLabel ?? unitName(place.amsId);
+    let slot: number | undefined = place.amsId >= 128 ? undefined : place.trayId + 1;
+    for (const ams of refs.ams) {
+      for (const entityId of ams.slots) {
+        const attributes = ctx.hass.states[entityId]?.attributes ?? {};
+        if (attributes["tray_id"] !== tray) continue;
+        unit = place.amsLabel ?? ams.name;
+        slot = ams.model === "AMS HT" ? undefined : typeof attributes["slot"] === "number" ? attributes["slot"] : slot;
+      }
+    }
+    const short = slot === undefined ? unit : t(hass, "inv_other_slot", { unit, slot });
+    return { line: slot === undefined ? t(hass, "inv_in_unit", { unit }) : t(hass, "inv_in_slot", { unit, slot }), from: short };
+  }
+  // Another printer: BamBuddy's names of its units; its external spools
+  // only where the place says the right one.
+  const unit = place.amsLabel ?? unitName(place.amsId);
+  const at =
+    place.amsId === 255
+      ? t(hass, place.trayId === 1 ? "inv_other_ext_right" : "inv_other_ext")
+      : place.amsId >= 128
+        ? unit
+        : t(hass, "inv_other_slot", { unit, slot: place.trayId + 1 });
+  return {
+    line: t(hass, "inv_other", { printer: place.printerName, where: at }),
+    from: t(hass, "inv_from_printer", { printer: place.printerName, where: at }),
+  };
+}
+
+/** A spool sits in a slot: this one (the sensor's), or another BamBuddy
+ * names. Its storage location then stays in its line, as BamBuddy keeps it;
+ * a spool in no slot names it as its place instead. */
+const inSlot = (spool: ListedSpool, assigned: number | undefined): boolean => spool.id === assigned || (spool.place !== undefined && !spool.place.here);
+
+/** A spool's place line: here, elsewhere, and why it does not fit. "Here"
+ * is the slot sensor's spool -- BamBuddy may link or drop one while the
+ * list is open; the list's own "this slot" is then the past. */
+function placeLine(ctx: CardContext, spool: ListedSpool, assigned: number | undefined): TemplateResult {
+  const { hass } = ctx;
+  const place = spool.place;
+  const here = spool.id === assigned;
+  const line = here
+    ? html`<span class="inv-where here">${t(hass, "inv_here")}</span>`
+    : place && !place.here
+      ? html`<span class="inv-where elsewhere">${whereOf(ctx, place).line}</span>`
+      : spool.storage
+        ? html`<span class="inv-where stored">${t(hass, "inv_stored", { location: spool.storage })}</span>`
+        : nothing;
+  // Its further slots: BamBuddy can hold a spool in two.
+  const more = spool.also.map((other) => (other.here ? nothing : html`<span class="inv-where elsewhere">${whereOf(ctx, other).line}</span>`));
+  if (!spool.fits) return html`${line}${more}`;
+  const why = { not_for_ams: "inv_not_ams", not_for_nozzle: "inv_not_nozzle", not_for_printer: "inv_not_printer", by_chip: "inv_by_chip", printing: "inv_printing" }[spool.fits] as TextKey;
+  return html`${line}${more}<span class="inv-where off">${t(hass, why, { printer: spool.printing ?? "" })}</span>`;
+}
+
+/** The brands of the spools, those that differ only in case as one, in the
+ * spelling most spools carry (ties: the first). */
+function vendorsOf(spools: ListedSpool[]): [key: string, shown: string][] {
+  const counts = new Map<string, Map<string, number>>();
+  for (const spool of spools) {
+    if (!spool.brand) continue;
+    const key = spool.brand.toLocaleLowerCase();
+    const spellings = counts.get(key) ?? new Map<string, number>();
+    spellings.set(spool.brand, (spellings.get(spool.brand) ?? 0) + 1);
+    counts.set(key, spellings);
+  }
+  return [...counts.entries()]
+    .map(([key, spellings]): [string, string] => [key, [...spellings.entries()].reduce((best, item) => (item[1] > best[1] ? item : best))[0]])
+    .sort((a, b) => a[1].localeCompare(b[1], undefined, { sensitivity: "base" }));
+}
+
+/** Whether a spool matches the search, word by word: every word somewhere
+ * in its name, brand, material, colour or storage -- in any order, part of
+ * a word too; a word of digits its spool number ("5", "Nr. 5"). */
+function matches(spool: ListedSpool, query: string): boolean {
+  const words = query.toLocaleLowerCase().split(/\s+/).filter((word) => word && !/^(?:nr|no)\.?$/.test(word));
+  const text = [spool.name, spool.brand, spool.material, spool.colorName ?? "", spool.storage ?? ""].join(" ").toLocaleLowerCase();
+  return words
+    .map((word) => word.replace(/^(?:nr|no)\.(?=\d)/, ""))
+    .every((word) => (/^\d+$/.test(word) ? spool.id === Number(word) : text.includes(word)));
+}
+
+/** The spools the filters and the search leave, by material, the slot's own first in its group. */
+type Facet = "vendor" | "material" | "location";
+const FACETS: readonly Facet[] = ["vendor", "material", "location"];
+const FACET_OF: Record<Facet, (spool: ListedSpool) => string> = {
+  vendor: (spool) => spool.brand.toLocaleLowerCase(),
+  material: (spool) => spool.material,
+  location: (spool) => spool.storage ?? "",
+};
+
+interface Filters {
+  chosen: Record<Facet, string>;
+  vendors: [key: string, shown: string][];
+  materials: string[];
+  locations: string[];
+}
+
+/** The filters narrow each other: each offers what the spools the others
+ * leave have; a choice the others no longer leave (the inventory changed
+ * meanwhile) counts as all. The search narrows none of them: the lists
+ * would jump while typing. A vendor keeps the spelling most of all its
+ * spools carry. */
+function filtersOf(dialog: FilamentDialog, list: SpoolList): Filters {
+  const wanted: Record<Facet, string> = { vendor: dialog.vendorFilter ?? "", material: dialog.materialFilter ?? "", location: dialog.locationFilter ?? "" };
+  const passes = (spool: ListedSpool, chosen: Record<Facet, string>, skip: Facet): boolean =>
+    FACETS.every((facet) => facet === skip || !chosen[facet] || FACET_OF[facet](spool) === chosen[facet]);
+  const offered = (chosen: Record<Facet, string>, facet: Facet): Set<string> =>
+    new Set(list.spools.filter((spool) => passes(spool, chosen, facet)).map(FACET_OF[facet]).filter(Boolean));
+  const chosen = { ...wanted };
+  for (const facet of FACETS) if (chosen[facet] && !offered(wanted, facet).has(chosen[facet])) chosen[facet] = "";
+  const sorted = (values: Set<string>): string[] => [...values].sort((a, b) => a.localeCompare(b, undefined, { sensitivity: "base", numeric: true }));
+  const vendors = offered(chosen, "vendor");
+  return {
+    chosen,
+    vendors: vendorsOf(list.spools).filter(([key]) => vendors.has(key)),
+    materials: sorted(offered(chosen, "material")),
+    locations: sorted(offered(chosen, "location")),
+  };
+}
+
+function shownSpools(dialog: FilamentDialog, list: SpoolList, assigned: number | undefined, filters: Filters): [material: string, spools: ListedSpool[]][] {
+  const left = list.spools.filter(
+    (spool) =>
+      FACETS.every((facet) => !filters.chosen[facet] || FACET_OF[facet](spool) === filters.chosen[facet]) && matches(spool, dialog.search ?? ""),
+  );
+  const groups = new Map<string, ListedSpool[]>();
+  for (const spool of left) groups.set(spool.material, [...(groups.get(spool.material) ?? []), spool]);
+  return [...groups.entries()]
+    .sort((a, b) => a[0].localeCompare(b[0], undefined, { sensitivity: "base" }))
+    .map(([material, spools]): [string, ListedSpool[]] => [material, [...spools].sort((a, b) => Number(b.id === assigned) - Number(a.id === assigned))]);
+}
+
+/** The chosen spool can be assigned now: another than the slot's, it fits,
+ * and the slot does not feed the running print. */
+function slotBusy(ctx: CardContext, slot: Slot): string | undefined {
+  const printer = printerTitle(ctx);
+  if (ctx.changing) return t(ctx.hass, "inv_busy_change", { printer });
+  if (ctx.running && slot.active) return t(ctx.hass, "inv_busy", { printer });
+  return undefined;
+}
+
+/** The list's keys: the arrows choose the next spool that fits, Home and End
+ * the first and the last; Tab leaves from the chosen one. */
+function spoolKeys(actions: DialogActions): (event: KeyboardEvent) => void {
+  return (event) => {
+    const group = event.currentTarget as HTMLElement;
+    const rows = [...group.querySelectorAll<HTMLElement>(".inv-row:not([aria-disabled=true])")];
+    const at = rows.indexOf(event.target as HTMLElement);
+    const index = at >= 0 ? at : rows.findIndex((row) => row.getAttribute("aria-checked") === "true");
+    const moves: Record<string, number> = { ArrowDown: index + 1, ArrowRight: index + 1, ArrowUp: index - 1, ArrowLeft: index - 1, Home: 0, End: rows.length - 1 };
+    if (index < 0 || !(event.key in moves) || rows.length === 0) return;
+    event.preventDefault();
+    const next = rows[((moves[event.key] as number) + rows.length) % rows.length] as HTMLElement;
+    next.focus();
+    actions.chooseSpool(Number(next.dataset["spool"]));
+  };
+}
+
+function spoolRow(ctx: CardContext, dialog: FilamentDialog, actions: DialogActions, spool: ListedSpool, stop: boolean, assigned: number | undefined): TemplateResult {
+  const { hass } = ctx;
+  const chosen = dialog.chosenSpool === spool.id;
+  const off = spool.fits !== undefined;
+  const choose = (): void => {
+    if (!off) actions.chooseSpool(spool.id);
+  };
+  const press = (event: KeyboardEvent): void => {
+    if (event.key !== " " && event.key !== "Enter") return;
+    event.preventDefault();
+    choose();
+  };
+  return html`<div
+    class="inv-row ${chosen ? "chosen" : ""}"
+    role="radio"
+    data-spool=${spool.id}
+    aria-checked=${chosen ? "true" : "false"}
+    aria-disabled=${off ? "true" : "false"}
+    tabindex=${off ? nothing : stop ? 0 : -1}
+    @click=${choose}
+    @keydown=${press}
+  >
+    ${spoolDot(spool)}
+    <span class="inv-row-text">
+      <span class="inv-name">${spool.name}</span>
+      <span class="inv-line">${spoolLine(hass, inSlot(spool, assigned) ? spool : { ...spool, storage: undefined })}</span>
+      ${placeLine(ctx, spool, assigned)}
+    </span>
+  </div>`;
+}
+
+/** The spools of the inventory for the slot: filters, a search, the list
+ * in a box that scrolls on its own (the one such box of the card's dialogs:
+ * the head and the buttons stay in reach), and its notes. */
+function inventoryContent(ctx: CardContext, dialog: FilamentDialog, actions: DialogActions, slot: Slot): TemplateResult {
+  const { hass } = ctx;
+  const list = dialog.spools;
+  if (list === undefined || list === "loading") {
+    return html`<div id="inv-panel" role="tabpanel" aria-labelledby="inv-tab-inventory">
+      <div class="k-wait inv-wait"><span class="check-spinner" aria-hidden="true"></span><span>${t(hass, "inv_loading")}</span></div>
+    </div>`;
+  }
+  if (list === "failed") {
+    return html`<div id="inv-panel" role="tabpanel" aria-labelledby="inv-tab-inventory">${dialogNote(t(hass, "inv_failed"), "warning")}</div>`;
+  }
+  const assigned = slot.inventory?.id;
+  const searchable = list.spools.length >= SEARCH_FROM;
+  const filters = filtersOf(dialog, list);
+  const groups = shownSpools(dialog, list, assigned, filters);
+  const shown = groups.flatMap(([, spools]) => spools);
+  const choosable = shown.filter((spool) => spool.fits === undefined);
+  const stop = choosable.find((spool) => spool.id === dialog.chosenSpool)?.id ?? choosable[0]?.id;
+  const chosen = list.spools.find((spool) => spool.id === dialog.chosenSpool);
+  const elsewhere = chosen && chosen.id !== assigned && chosen.place && !chosen.place.here ? whereOf(ctx, chosen.place).from : undefined;
+  const pick = (event: Event): string => (event.target as HTMLSelectElement).value;
+  return html`<div id="inv-panel" role="tabpanel" aria-labelledby="inv-tab-inventory" class="inv-panel">
+    ${searchable
+      ? html`<div class="inv-filters">
+            <label class="field"
+              ><span class="field-label">${t(hass, "inv_vendor")}</span>
+              <span class="select"
+                ><select id="inv-vendor" @change=${(event: Event) => actions.filterSpools("vendor", pick(event))}>
+                  <option value="" .selected=${!filters.chosen.vendor}>${t(hass, "inv_all")}</option>
+                  ${filters.vendors.map(([key, name]) => html`<option value=${key} .selected=${filters.chosen.vendor === key}>${name}</option>`)}
+                  ${selectValue(filters.chosen.vendor)}
+                </select>
+                ${icon("chevronDown")}</span
+              ></label
+            >
+            <label class="field"
+              ><span class="field-label">${t(hass, "inv_material")}</span>
+              <span class="select"
+                ><select id="inv-material" @change=${(event: Event) => actions.filterSpools("material", pick(event))}>
+                  <option value="" .selected=${!filters.chosen.material}>${t(hass, "inv_all")}</option>
+                  ${filters.materials.map((material) => html`<option value=${material} .selected=${filters.chosen.material === material}>${material}</option>`)}
+                  ${selectValue(filters.chosen.material)}
+                </select>
+                ${icon("chevronDown")}</span
+              ></label
+            >
+            ${list.spools.some((spool) => spool.storage)
+              ? html`<label class="field inv-wide"
+                  ><span class="field-label">${t(hass, "inv_location")}</span>
+                  <span class="select"
+                    ><select id="inv-location" @change=${(event: Event) => actions.filterSpools("location", pick(event))}>
+                      <option value="" .selected=${!filters.chosen.location}>${t(hass, "inv_all")}</option>
+                      ${filters.locations.map((location) => html`<option value=${location} .selected=${filters.chosen.location === location}>${location}</option>`)}
+                      ${selectValue(filters.chosen.location)}
+                    </select>
+                    ${icon("chevronDown")}</span
+                  ></label
+                >`
+              : nothing}
+          </div>
+          <input
+            id="inv-search"
+            class="inv-search"
+            type="search"
+            aria-label=${t(hass, "inv_search")}
+            placeholder=${t(hass, "inv_search")}
+            .value=${dialog.search ?? ""}
+            @input=${(event: Event) => actions.searchSpools((event.target as HTMLInputElement).value)}
+          />`
+      : nothing}
+    ${shown.length
+      ? html`<div
+          class="inv-list ${shown.length > 3 ? "many" : ""}"
+          role="radiogroup"
+          aria-label=${t(hass, "inv_choose")}
+          @keydown=${spoolKeys(actions)}
+          @focusout=${radioLeave}
+        >
+          ${groups.map(
+            ([material, spools]) =>
+              html`<div class="inv-group" aria-hidden="true">${material}</div>
+                ${spools.map((spool) => spoolRow(ctx, dialog, actions, spool, spool.id === stop, assigned))}`,
+          )}
+        </div>`
+      : dialogNote(t(hass, "inv_no_hit"))}
+    ${elsewhere ? dialogNote(t(hass, "inv_takes_from", { where: elsewhere })) : nothing}
+    ${slot.empty ? dialogNote(t(hass, "inv_empty_slot")) : nothing}
+  </div>`;
+}
+
 function filamentContent(ctx: CardContext, dialog: FilamentDialog, actions: DialogActions): TemplateResult {
   const { hass } = ctx;
+  // Read at every render: BamBuddy may link or drop the spool meanwhile.
+  const slot = slotOf(hass, dialog.entityId);
+  const spool = slot.inventory;
+  const inventory = onInventory(hass, dialog);
+  const switcher = slot.assignable && !dialog.rfid && !dialog.inventoryOnly ? inventoryTabs(hass, dialog, actions) : nothing;
+  // One head for every way, so that the switch keeps its place and its focus.
+  return html`<h2 id="dlg-title">${dialog.title}</h2>
+    ${nozzleLine(ctx, dialog)} ${switcher} ${spool ? inventoryCard(ctx, spool, slot.rfid) : nothing}
+    ${inventory ? inventoryPanel(ctx, dialog, actions, slot) : filamentBody(ctx, dialog, actions, spool)}`;
+}
+
+/** The filament's way: the vendor and filament, the colour, the K profile;
+ * a chip spool's or a slot without an offer's tools only. */
+function filamentBody(ctx: CardContext, dialog: FilamentDialog, actions: DialogActions, spool: InventorySpool | undefined): TemplateResult {
+  const { hass } = ctx;
   if (dialog.rfid) {
-    return html`<h2 id="dlg-title">${dialog.title}</h2>
-      ${nozzleLine(ctx, dialog)}
-      <p>${t(hass, "filament_rfid")}</p>
-      ${dialog.spool ? html`<p class="rfid-spool">${dialog.spool}</p>` : nothing}
+    // The chip's name and the AMS's estimate -- unless the inventory's box above names the spool.
+    return html`<p>${t(hass, "filament_rfid")}</p>
+      ${dialog.spool && !spool ? html`<p class="rfid-spool">${dialog.spool}</p>` : nothing}
       ${slotTools(ctx, dialog, actions)}`;
   }
   // Nothing to set: why (nothing offered, or no list) and the slot's tools.
   if (nothingToSet(dialog)) {
-    return html`<h2 id="dlg-title">${dialog.title}</h2>
-      ${nozzleLine(ctx, dialog)}
-      ${dialogNote(t(hass, dialog.offer === "failed" ? "offer_failed" : "offer_empty"))}
+    return html`${dialogNote(t(hass, dialog.offer === "failed" ? "offer_failed" : "offer_empty"))}
       ${slotTools(ctx, dialog, actions)}`;
   }
   const options = PALETTE.map((item) => ({ color: item.color, label: t(hass, item.name) }));
@@ -572,8 +990,11 @@ function filamentContent(ctx: CardContext, dialog: FilamentDialog, actions: Dial
   // The chosen colour is the stop in the tab order, else the first.
   const stop = Math.max(0, [...options, ...(custom ? [custom] : [])].findIndex((item) => item.color === dialog.color));
   const picked = (event: Event): void => actions.pickColor((event.target as HTMLInputElement).value);
-  return html`<h2 id="dlg-title">${dialog.title}</h2>
-    ${nozzleLine(ctx, dialog)}
+  return html`${spool ? dialogNote(t(hass, "inv_note_change")) : nothing}
+    <div class="fil-head">
+      <span class="fil-title">${t(hass, "profile_title")}</span>
+      <span class="fil-help">${t(hass, "profile_help")}</span>
+    </div>
     ${filamentFields(hass, dialog, actions)}
     <div class="colors">
       <span class="field-label">${t(hass, "color")}</span>
@@ -589,14 +1010,14 @@ function filamentContent(ctx: CardContext, dialog: FilamentDialog, actions: Dial
       </div>
     </div>
     ${kField(hass, dialog, actions)}
-    ${noOffer(dialog) ? nothing : dialogNote(t(hass, dialog.offer === "failed" ? "offer_failed" : "filament_note"))}
+    ${dialog.offer === "failed" ? dialogNote(t(hass, "offer_failed")) : nothing}
     ${slotTools(ctx, dialog, actions)}`;
 }
 
 /** What the safe and the confirming button say; no confirming button
  * where there is nothing to confirm. `need` says what is missing while the
  * confirming button waits. */
-function buttons(ctx: CardContext, dialog: Dialog): { keep: string; confirm?: string; danger: boolean; ready: boolean; need?: string; quiet?: boolean } {
+function buttons(ctx: CardContext, dialog: Dialog): { keep: string; confirm?: string; danger: boolean; ready: boolean; need?: string; quiet?: boolean; unassign?: string; warn?: string } {
   const { hass } = ctx;
   switch (dialog.kind) {
     case "confirm":
@@ -604,6 +1025,8 @@ function buttons(ctx: CardContext, dialog: Dialog): { keep: string; confirm?: st
     case "drying":
       return { keep: t(hass, "cancel"), confirm: t(hass, "dry_start"), danger: false, ready: true };
     case "filament":
+      // The inventory's way: the spools (`inventoryButtons`).
+      if (onInventory(ctx.hass, dialog)) return inventoryButtons(ctx, dialog);
       // A Bambu spool, or nothing to set: its tools only.
       if (dialog.rfid || nothingToSet(dialog)) return { keep: t(hass, "dismiss"), danger: false, ready: false };
       // A filament -- the slot's kept, or one chosen -- and a change.
@@ -617,6 +1040,7 @@ function buttons(ctx: CardContext, dialog: Dialog): { keep: string; confirm?: st
         ...(!noOffer(dialog) && !keeping(dialog) && chosenFilament(dialog) === undefined && (dialog.vendor !== undefined || dialog.color !== undefined || dialog.kprofile !== undefined)
           ? { need: t(hass, "filament_need_filament") }
           : {}),
+        ...endsAssignment(ctx, dialog),
       };
     case "hms":
       return { keep: t(hass, "dismiss"), ...(canClearHms(ctx) ? { confirm: t(hass, "hms_clear") } : {}), danger: false, ready: true, quiet: hmsAnswered(ctx) };
@@ -638,6 +1062,58 @@ function buttons(ctx: CardContext, dialog: Dialog): { keep: string; confirm?: st
       return { keep: t(hass, "cancel"), confirm, danger: true, ready: count > 0 && !everyObject(dialog) };
     }
   }
+}
+
+/** The warning that Set ends the slot's spool assignment. BamBuddy keeps
+ * it while the slot reports the colour and type it matched it with, or the
+ * spool's own colour with one of its types (colours within 50 of each
+ * other, as its colors_similar); a spool assigned to an empty slot sets the
+ * slot itself. */
+function endsAssignment(ctx: CardContext, dialog: FilamentDialog): { warn?: string } {
+  const slot = slotOf(ctx.hass, dialog.entityId);
+  const spool = slot.inventory;
+  const chosen = chosenFilament(dialog);
+  const changed = (dialog.color !== undefined && dialog.color !== dialog.current) || chosen !== undefined;
+  if (!spool || !spool.assignedType || !changed) return {};
+  const colour = dialog.color ?? dialog.current ?? "";
+  const type = (chosen?.type ?? slot.type).toUpperCase();
+  const keeps =
+    (similarColors(colour, spool.assignedColor) && type === spool.assignedType.toUpperCase()) ||
+    (similarColors(colour, spool.rgba ?? "FFFFFFFF") && spool.spoolTypes.includes(type));
+  return keeps ? {} : { warn: t(ctx.hass, "inv_warn_change", { name: spool.name }) };
+}
+
+/** BamBuddy's colors_similar: RGB at most 50 apart, alpha ignored. */
+function similarColors(a: string, b: string): boolean {
+  const rgb = (hex: string): number[] | undefined => {
+    const digits = hex.replace(/^#/, "");
+    return /^[0-9a-f]{6}/i.test(digits) ? [0, 2, 4].map((at) => parseInt(digits.slice(at, at + 2), 16)) : undefined;
+  };
+  const [x, y] = [rgb(a), rgb(b)];
+  if (!x || !y) return false;
+  return Math.hypot(x[0]! - y[0]!, x[1]! - y[1]!, x[2]! - y[2]!) <= 50;
+}
+
+/** The inventory's buttons: Assign once another spool is chosen (and the
+ * slot may take it now), Remove assignment where the slot has one. */
+function inventoryButtons(ctx: CardContext, dialog: FilamentDialog): { keep: string; confirm?: string; danger: boolean; ready: boolean; need?: string; unassign?: string } {
+  const { hass } = ctx;
+  const slot = slotOf(hass, dialog.entityId);
+  if (!slot.assignable) return { keep: t(hass, "dismiss"), danger: false, ready: false };
+  const list = typeof dialog.spools === "object" ? dialog.spools : undefined;
+  // The sensor's spool: BamBuddy may link or drop one while the list is open.
+  const assigned = slot.inventory?.id;
+  const chosen = list?.spools.find((spool) => spool.id === dialog.chosenSpool);
+  const busy = slotBusy(ctx, slot);
+  const ready = chosen !== undefined && chosen.id !== assigned && chosen.fits === undefined && busy === undefined;
+  return {
+    keep: t(hass, "cancel"),
+    confirm: t(hass, "inv_assign"),
+    danger: false,
+    ready,
+    ...(busy && chosen !== undefined && chosen.id !== assigned ? { need: busy } : {}),
+    ...(assigned !== undefined ? { unassign: t(hass, "inv_unassign") } : {}),
+  };
 }
 
 function content(ctx: CardContext, dialog: Dialog, actions: DialogActions): TemplateResult {
@@ -704,7 +1180,7 @@ const pressedBeside = new WeakSet<EventTarget>();
 /** The dialog; `notice`: "Sent" or an error, inside it while it is open --
  * the card behind a modal dialog is out of reach. */
 export function dialogView(ctx: CardContext, dialog: Dialog, actions: DialogActions, notice: TemplateResult | typeof nothing = nothing): TemplateResult {
-  const { keep, confirm, danger, ready, need, quiet } = buttons(ctx, dialog);
+  const { keep, confirm, danger, ready, need, quiet, unassign, warn } = buttons(ctx, dialog);
   // A tap on the backdrop -- the dialog element itself -- closes it. Only
   // one pressed there too: a drag from a field out of the dialog, selecting
   // its text, ends with a click on the backdrop as well.
@@ -734,7 +1210,9 @@ export function dialogView(ctx: CardContext, dialog: Dialog, actions: DialogActi
       ${content(ctx, dialog, actions)}
       ${notice}
       <div class="dlg-actions">
+        ${warn ? html`<span class="dlg-warn">${icon("warning")}<span>${warn}</span></span>` : nothing}
         ${need ? html`<span class="dlg-need">${need}</span>` : nothing}
+        ${unassign ? html`<button class="btn plain inv-unassign" @click=${actions.unassign}>${unassign}</button>` : nothing}
         <button class="btn plain safe" autofocus @click=${actions.close}>${keep}</button>
         ${confirm === undefined
           ? nothing

@@ -67,6 +67,7 @@ from .coordinator import (
     printer_identifier,
 )
 from .entity import instance_device_info, plug_device_info, printer_device_info, switch_off_unique_id
+from .inventory import BamBuddyInventoryCoordinator
 from .key import KeyCheck, KeyGuard
 from .live import BamBuddyLive, live_settings
 from .models import ams_key, display_model, find_printers, model_changed, stored_key, stored_printer, too_old
@@ -157,7 +158,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: BamBuddyConfigEntry) -> 
         # The printers' smart plugs: when BamBuddy cannot list them, only
         # their entities wait.
         plugs = BamBuddyPlugCoordinator(hass, entry, client, printers, await plug_identity.async_secret(hass))
-        await asyncio.gather(figures, plugs.async_refresh())
+        # BamBuddy's spool inventory: only optional permissions, so a refusal shows none.
+        inventory = BamBuddyInventoryCoordinator(hass, entry, client, first)
+        await asyncio.gather(figures, plugs.async_refresh(), inventory.async_refresh())
         plugs.async_built(dict(plugs.identities) if plugs.last_update_success else None)
     except BaseException:
         figures.cancel()
@@ -191,6 +194,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: BamBuddyConfigEntry) -> 
         updates,
         printers,
         plugs,
+        inventory,
         key=KeyGuard(hass, entry, client, first),
         auth_enabled=auth_enabled,
         live=BamBuddyLive(hass, entry, client),

@@ -110,6 +110,98 @@ export async function filamentOffer(hass: Hass, entityId: string): Promise<Filam
   return { ...(typeof response["current"] === "string" ? { current: response["current"] } : {}), vendors };
 }
 
+/** Where a spool of the list sits: this slot, another slot (of this
+ * printer or another of the BamBuddy), or none. */
+export type SpoolPlace =
+  | { here: true }
+  | { here: false; printerId: number; printerName: string; amsId: number; trayId: number; amsLabel?: string; samePrinter: boolean };
+
+/** A spool of BamBuddy's inventory, as get_spools lists it for a slot. */
+export interface ListedSpool {
+  id: number;
+  name: string;
+  brand: string;
+  material: string;
+  colorName?: string;
+  rgba?: string;
+  extraColors: string[];
+  remainingG: number;
+  remainingPct?: number;
+  storage?: string;
+  rfid: boolean;
+  place?: SpoolPlace;
+  /** Its further slots: BamBuddy can hold a spool in two. */
+  also: SpoolPlace[];
+  /** Why the slot cannot take it; none where it can. */
+  /** BamBuddy links a Bambu spool by its chip itself ("by_chip"); a spool
+   * in a slot of another printer that prints is locked ("printing"). */
+  fits?: "not_for_ams" | "not_for_nozzle" | "not_for_printer" | "by_chip" | "printing";
+  /** The printer that prints, for "printing". */
+  printing?: string;
+}
+
+export interface SpoolList {
+  /** The spool assigned to the slot. */
+  assigned?: number;
+  spools: ListedSpool[];
+}
+
+const FITS = new Set(["not_for_ams", "not_for_nozzle", "not_for_printer", "by_chip", "printing"]);
+
+export function placeOf(value: unknown): SpoolPlace | undefined {
+  if (typeof value !== "object" || value === null) return undefined;
+  const place = value as Record<string, unknown>;
+  if (place["this_slot"] === true) return { here: true };
+  const { printer_id: printerId, ams_id: amsId, tray_id: trayId } = place;
+  if (typeof printerId !== "number" || typeof amsId !== "number" || typeof trayId !== "number") return undefined;
+  return {
+    here: false,
+    printerId,
+    printerName: typeof place["printer_name"] === "string" ? place["printer_name"] : String(printerId),
+    amsId,
+    trayId,
+    ...(typeof place["ams_label"] === "string" && place["ams_label"] ? { amsLabel: place["ams_label"] } : {}),
+    samePrinter: place["same_printer"] === true,
+  };
+}
+
+/** A list of slots a spool is assigned to besides this one. */
+export const placesOf = (value: unknown): SpoolPlace[] =>
+  (Array.isArray(value) ? value : []).map(placeOf).filter((place): place is SpoolPlace => place !== undefined && !place.here);
+
+/** The integration's get_spools action, called for its response: the
+ * inventory's spools for a slot. An answer without a list is none. */
+export async function spoolList(hass: Hass, entityId: string): Promise<SpoolList | undefined> {
+  const response = await responseOf(hass, "get_spools", { entity_id: entityId });
+  if (!Array.isArray(response["spools"])) return undefined;
+  const text = (value: unknown): string | undefined => (typeof value === "string" && value ? value : undefined);
+  const spools = entriesOf(response["spools"], "id", "number").map((item): ListedSpool => {
+    const place = placeOf(item["place"]);
+    const fits = item["fits"];
+    const pct = item["remaining_pct"];
+    const grams = item["remaining_g"];
+    return {
+      id: item["id"] as number,
+      name: text(item["name"]) ?? String(item["id"]),
+      brand: text(item["brand"]) ?? "",
+      material: text(item["material"]) ?? "",
+      ...(text(item["color_name"]) ? { colorName: text(item["color_name"]) } : {}),
+      ...(text(item["rgba"]) ? { rgba: text(item["rgba"]) } : {}),
+      extraColors: Array.isArray(item["extra_colors"]) ? item["extra_colors"].filter((color): color is string => typeof color === "string") : [],
+      remainingG: typeof grams === "number" ? grams : 0,
+      ...(typeof pct === "number" ? { remainingPct: pct } : {}),
+      ...(text(item["storage_location"]) ? { storage: text(item["storage_location"]) } : {}),
+      rfid: item["rfid"] === true,
+      ...(place ? { place } : {}),
+      also: placesOf(item["also"]),
+      ...(typeof fits === "string" && FITS.has(fits) ? { fits: fits as ListedSpool["fits"] } : {}),
+      ...(text(item["printing"]) ? { printing: text(item["printing"]) } : {}),
+    };
+  });
+  const assigned = response["assigned"];
+  return { ...(typeof assigned === "number" ? { assigned } : {}), spools };
+}
+
 /** An object of the running print, as the integration lists it. */
 export interface PrintObject {
   id: number;

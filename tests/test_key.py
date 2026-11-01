@@ -175,6 +175,28 @@ async def test_unreachable_changes_nothing_and_retries(
     assert _reauths(hass) == []
 
 
+async def test_an_unanswered_check_keeps_what_the_key_may_assign(
+    hass: HomeAssistant, bambuddy_api: SimpleNamespace, entry: MockConfigEntry
+) -> None:
+    """Manage Inventory as the last answered check said: one check without an
+    answer takes nothing away; a check that answers without it does."""
+    bambuddy_api.get_auth_me.side_effect = [
+        load_fixture("auth_me_control.json"),
+        BamBuddyConnectionError("down"),
+        load_fixture("auth_me_read.json"),
+    ]
+    guard = _guard(hass, entry)
+    assert guard.can_assign_spools is False  # the setup's check said nothing of it
+
+    await guard.async_check()
+    assert guard.can_assign_spools is True
+    await guard.async_check()
+    assert guard.last.outcome == "unreachable"
+    assert guard.can_assign_spools is True
+    await guard.async_check()
+    assert guard.can_assign_spools is False
+
+
 async def test_the_checks_end_with_the_entry(
     hass: HomeAssistant, bambuddy_api: SimpleNamespace, entry: MockConfigEntry, freezer: FrozenDateTimeFactory
 ) -> None:

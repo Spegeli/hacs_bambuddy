@@ -12,7 +12,7 @@ from urllib.parse import urlsplit, urlunsplit
 
 import aiohttp
 
-from .const import REQUIRED_SCOPES
+from .const import OPTIONAL_PERMISSIONS, REQUIRED_SCOPES
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -124,7 +124,18 @@ class BamBuddyNotJsonError(BamBuddyApiError):
 
 class KeyScopes(dict[str, bool]):
     """Whether the key has each scope the integration needs (the keys of
-    REQUIRED_SCOPES), as BamBuddy reports what it may really do."""
+    REQUIRED_SCOPES), as BamBuddy reports what it may really do; beside them
+    the optional permissions it holds (OPTIONAL_PERMISSIONS), which change
+    neither what is missing nor the marks."""
+
+    def __init__(self, scopes: dict[str, bool], optional: frozenset[str] = frozenset()) -> None:
+        super().__init__(scopes)
+        self.optional = optional
+
+    @property
+    def can_assign_spools(self) -> bool:
+        """Manage Inventory: spools of BamBuddy's inventory may be assigned to slots."""
+        return "inventory:update" in self.optional
 
     @property
     def missing(self) -> list[str]:
@@ -268,7 +279,10 @@ class BamBuddyClient:
         if not isinstance(granted, list):
             raise BamBuddyBadAnswerError(200, "No permissions in the answer", "GET /auth/me")
         held = {permission for permission in granted if isinstance(permission, str)}
-        return KeyScopes({scope: needed <= held for scope, needed in REQUIRED_SCOPES.items()})
+        return KeyScopes(
+            {scope: needed <= held for scope, needed in REQUIRED_SCOPES.items()},
+            frozenset(held & OPTIONAL_PERMISSIONS),
+        )
 
     async def get_system_info(self, *, patient: bool = True) -> dict[str, Any]:
         """For it BamBuddy walks through its whole archive: 30 s -- or 10
@@ -346,6 +360,19 @@ class BamBuddyClient:
         """BamBuddy's smart plugs, from its database. The answer holds a
         plug's address and login: never logged."""
         return await self._list("/smart-plugs/")
+
+    async def get_spools(self) -> list[dict[str, Any]]:
+        """BamBuddy's spool inventory, archived spools left out (no paging).
+        A spool carries its owner's note: never logged."""
+        return await self._list("/inventory/spools")
+
+    async def get_spool_assignments(self) -> list[dict[str, Any]]:
+        """Which spool sits in which slot, for every printer at once."""
+        return await self._list("/inventory/assignments")
+
+    async def get_spoolman_status(self) -> dict[str, Any]:
+        """Whether Spoolman keeps the spools instead of BamBuddy's inventory."""
+        return await self._object("/spoolman/status")
 
     async def get_plug_status(self, plug_id: int, *, patient: bool = True) -> dict[str, Any]:
         """A plug's state, reachability and energy figures: BamBuddy asks the
@@ -586,6 +613,21 @@ class BamBuddyClient:
 
     async def set_ams_backup(self, printer_id: int, enabled: bool) -> None:
         await self._command(f"/printers/{printer_id}/ams-backup", enabled=_flag(enabled))
+
+    async def assign_spool(self, spool_id: int, printer_id: int, ams_id: int, tray_id: int, *, move: bool = False) -> dict[str, Any]:
+        """An inventory spool to a slot (external: ams 255, tray 0/1); BamBuddy
+        sets the slot from it. "move" (BamBuddy's newer line) takes the spool
+        out of its other slot; 1.2.5.7 ignores the field. BamBuddy checks no
+        print."""
+        body: dict[str, Any] = {"spool_id": spool_id, "printer_id": printer_id, "ams_id": ams_id, "tray_id": tray_id}
+        if move:
+            body["move"] = True
+        answer = await self._request("POST", "/inventory/assignments", json=body)
+        return answer if isinstance(answer, dict) else {}
+
+    async def unassign_spool(self, printer_id: int, ams_id: int, tray_id: int) -> None:
+        """Drop a slot's link to its spool; nothing goes to the printer."""
+        await self._request("DELETE", f"/inventory/assignments/{printer_id}/{ams_id}/{tray_id}")
 
     async def control_plug(self, plug_id: int, on: bool) -> None:
         """A plug on or off, by name: BamBuddy's toggle skips what it does

@@ -82,6 +82,9 @@ class KeyGuard:
         self._warned: set[str] = set()
         # Reads refused since the last check, by route: named once it finds the key fine.
         self._refused_reads: dict[str, BamBuddyApiError] = {}
+        # The optional permissions of the last check that answered: one without
+        # an answer takes nothing away (#21).
+        self._optional = first.scopes.optional if first.scopes is not None else frozenset()
 
     @callback
     def async_start(self) -> None:
@@ -89,6 +92,11 @@ class KeyGuard:
         -- and Home Assistant runs: its web session closes as it stops."""
         self.entry.async_on_unload(async_track_time_interval(self.hass, self._async_due, KEY_CHECK_INTERVAL, cancel_on_shutdown=True))
         self.entry.async_on_unload(self._stop)
+
+    @property
+    def can_assign_spools(self) -> bool:
+        """Manage Inventory, as the last answered check said."""
+        return "inventory:update" in self._optional
 
     @property
     def refused(self) -> bool:
@@ -109,6 +117,8 @@ class KeyGuard:
             refused, self._refused_reads = self._refused_reads, {}
             check = await async_check_key(self.client)
             self.last = check
+            if check.scopes is not None:
+                self._optional = check.scopes.optional
             self._act(check)
             if check.outcome == "ok" and self._active:
                 for err in refused.values():

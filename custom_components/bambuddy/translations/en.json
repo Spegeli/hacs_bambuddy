@@ -1004,6 +1004,36 @@
     },
     "hms_answer_not_taken": {
       "message": "{printer} did not take the answer. Is it still connected to BamBuddy?"
+    },
+    "inventory_not_allowed": {
+      "message": "The API key may not assign spools: it lacks Manage Inventory."
+    },
+    "inventory_not_shown": {
+      "message": "BamBuddy's spool inventory cannot be read now, or Spoolman keeps the spools."
+    },
+    "spool_not_found": {
+      "message": "BamBuddy has no spool {spool}."
+    },
+    "spool_archived": {
+      "message": "This spool is archived in BamBuddy."
+    },
+    "spool_not_for_nozzle": {
+      "message": "The spool does not fit this nozzle."
+    },
+    "spool_not_for_ams": {
+      "message": "The spool is not for the AMS."
+    },
+    "spool_not_for_printer": {
+      "message": "The spool is not for this printer."
+    },
+    "no_assignment": {
+      "message": "No spool is assigned to this slot."
+    },
+    "spool_printing": {
+      "message": "This spool sits in a slot of {printer}, and {printer} is printing. Change the assignment there first."
+    },
+    "spool_by_chip": {
+      "message": "BamBuddy links this spool by its chip."
     }
   },
   "issues": {
@@ -1261,6 +1291,40 @@
         "entity_id": {
           "name": "Slot",
           "description": "The sensor of the slot (or of the external spool)."
+        }
+      }
+    },
+    "assign_spool": {
+      "name": "Assign spool",
+      "description": "Assigns a spool of BamBuddy's inventory to a slot; BamBuddy sets the slot from it (material, color, profile, K). A spool assigned to another slot moves. Needs an API key with Manage Inventory. Not for a slot a running print feeds, nor for a spool with a chip (BamBuddy links those itself).",
+      "fields": {
+        "entity_id": {
+          "name": "Slot",
+          "description": "The sensor of the AMS slot or of the external spool."
+        },
+        "spool_id": {
+          "name": "Spool",
+          "description": "The spool's number in BamBuddy's inventory."
+        }
+      }
+    },
+    "unassign_spool": {
+      "name": "Remove spool assignment",
+      "description": "Removes a slot's link to its inventory spool. Nothing is sent to the printer: the slot keeps its filament. Needs an API key with Manage Inventory.",
+      "fields": {
+        "entity_id": {
+          "name": "Slot",
+          "description": "The sensor of the AMS slot or of the external spool."
+        }
+      }
+    },
+    "get_spools": {
+      "name": "Get spools",
+      "description": "Lists the spools of BamBuddy's inventory for a slot, read fresh from BamBuddy: the slot's spool first, where each one sits, and whether it fits the slot. Read only.",
+      "fields": {
+        "entity_id": {
+          "name": "Slot",
+          "description": "The sensor of the AMS slot or of the external spool."
         }
       }
     }

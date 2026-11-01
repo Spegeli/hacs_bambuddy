@@ -152,8 +152,8 @@ describe("a slot's tools", () => {
   it("names the external spool to unload before a chip is read, in both languages", async () => {
     const spool = { name: "TPU 95A HF", type: "TPU", color: "#FF6A13", remaining: null, trayId: 254, active: true };
     for (const [language, hint] of [
-      ["en", "Unload the filament from the external spool first: the AMS reads a chip only while no filament is loaded."],
-      ["de", "Entlade erst das Filament von der externen Spule: Das AMS liest einen Chip nur, solange kein Filament geladen ist."],
+      ["en", "Re-reading the chip works only while no filament is loaded. Filament from the external spool is loaded now: unload it first."],
+      ["de", "Chip neu lesen geht nur, solange kein Filament geladen ist. Gerade ist Filament von der externen Spule geladen: entlade es zuerst."],
     ] as const) {
       const card = await mount(a1mini({ status: "idle", stage: "idle", externalSpools: [spool] }), "dev-a1mini", {}, { language });
       await showView(card, "Filament");
@@ -387,7 +387,7 @@ describe("each of a slot's texts", () => {
     (findAll(card, ".slot")[0]?.querySelector(".btn.edit") as HTMLButtonElement).click();
     await settle(card);
     expect(findAll(card, "dialog .dlg-note").map(text)).toContain(
-      "Unload the filament from the right external spool first: the AMS reads a chip only while no filament is loaded.",
+      "Re-reading the chip works only while no filament is loaded. Filament from the right external spool is loaded now: unload it first.",
     );
   });
 

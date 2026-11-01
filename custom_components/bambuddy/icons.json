@@ -416,6 +416,15 @@
     },
     "refresh_rfid": {
       "service": "mdi:nfc-search-variant"
+    },
+    "assign_spool": {
+      "service": "mdi:paperclip-plus"
+    },
+    "unassign_spool": {
+      "service": "mdi:paperclip-remove"
+    },
+    "get_spools": {
+      "service": "mdi:format-list-bulleted"
     }
   }
 }

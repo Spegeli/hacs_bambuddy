@@ -1004,6 +1004,36 @@
     },
     "hms_answer_not_taken": {
       "message": "{printer} hat die Antwort nicht angenommen. Ist er noch mit BamBuddy verbunden?"
+    },
+    "inventory_not_allowed": {
+      "message": "Der API-Schlüssel darf keine Spulen zuweisen: ihm fehlt Manage Inventory."
+    },
+    "inventory_not_shown": {
+      "message": "BamBuddys Spuleninventar lässt sich gerade nicht lesen, oder Spoolman verwaltet die Spulen."
+    },
+    "spool_not_found": {
+      "message": "BamBuddy hat keine Spule {spool}."
+    },
+    "spool_archived": {
+      "message": "Diese Spule ist in BamBuddy archiviert."
+    },
+    "spool_not_for_nozzle": {
+      "message": "Die Spule passt nicht zu dieser Düse."
+    },
+    "spool_not_for_ams": {
+      "message": "Die Spule ist nicht für das AMS."
+    },
+    "spool_not_for_printer": {
+      "message": "Die Spule ist nicht für diesen Drucker."
+    },
+    "no_assignment": {
+      "message": "Diesem Fach ist keine Spule zugewiesen."
+    },
+    "spool_printing": {
+      "message": "Diese Spule steckt in einem Fach von {printer}, und {printer} druckt gerade. Ändere zuerst dort die Zuweisung."
+    },
+    "spool_by_chip": {
+      "message": "Diese Spule verknüpft BamBuddy über ihren Chip."
     }
   },
   "issues": {
@@ -1261,6 +1291,40 @@
         "entity_id": {
           "name": "Fach",
           "description": "Der Sensor des Fachs (oder der externen Spule)."
+        }
+      }
+    },
+    "assign_spool": {
+      "name": "Spule zuweisen",
+      "description": "Weist einem Fach eine Spule aus BamBuddys Inventar zu; BamBuddy stellt das Fach danach ein (Material, Farbe, Profil, K). Eine Spule, die einem anderen Fach zugewiesen ist, wechselt. Braucht einen API-Schlüssel mit Manage Inventory. Nicht für ein Fach, aus dem ein laufender Druck druckt, und nicht für eine Spule mit Chip (die verknüpft BamBuddy selbst).",
+      "fields": {
+        "entity_id": {
+          "name": "Fach",
+          "description": "Der Sensor des AMS-Fachs oder der externen Spule."
+        },
+        "spool_id": {
+          "name": "Spule",
+          "description": "Die Nummer der Spule in BamBuddys Inventar."
+        }
+      }
+    },
+    "unassign_spool": {
+      "name": "Spulenzuweisung aufheben",
+      "description": "Hebt die Verknüpfung eines Fachs mit seiner Inventarspule auf. An den Drucker geht nichts: Das Fach behält sein Filament. Braucht einen API-Schlüssel mit Manage Inventory.",
+      "fields": {
+        "entity_id": {
+          "name": "Fach",
+          "description": "Der Sensor des AMS-Fachs oder der externen Spule."
+        }
+      }
+    },
+    "get_spools": {
+      "name": "Spulen abrufen",
+      "description": "Nennt die Spulen aus BamBuddys Inventar für ein Fach, frisch aus BamBuddy gelesen: die Spule des Fachs zuerst, wo jede sitzt und ob sie zum Fach passt. Nur lesend.",
+      "fields": {
+        "entity_id": {
+          "name": "Fach",
+          "description": "Der Sensor des AMS-Fachs oder der externen Spule."
         }
       }
     }

@@ -74,6 +74,7 @@ from .plugs import ENERGY_FIELDS, Plug, main_of, plug_device_name
 
 if TYPE_CHECKING:
     from .auto_off import AutoOff
+    from .inventory import BamBuddyInventoryCoordinator
     from .key import KeyGuard
     from .live import BamBuddyLive
 
@@ -1150,6 +1151,8 @@ class BamBuddyData:
     printers: dict[int, BamBuddyPrinterCoordinator]
     # The smart plugs of the printers.
     plugs: BamBuddyPlugCoordinator
+    # BamBuddy's spool inventory: which spool sits in which slot.
+    inventory: BamBuddyInventoryCoordinator
     key: KeyGuard
     # BamBuddy's authentication on or off (None: it did not say), for the diagnostics.
     auth_enabled: bool | None
