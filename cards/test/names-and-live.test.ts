@@ -84,7 +84,10 @@ describe("dialogs, said whole", () => {
     (findAll(card, ".slot")[2]?.querySelector(".btn.edit") as HTMLButtonElement).click();
     await settle(card);
     const select = find(card, "dialog select#fil-k") as HTMLSelectElement;
-    const hint = find(card, `#${select.getAttribute("aria-describedby")}`) as HTMLElement;
+    // What the field holds, then its hint.
+    const [about, hintId] = (select.getAttribute("aria-describedby") ?? "").split(" ");
+    expect(find(card, `#${about}`)?.classList.contains("k-about")).toBe(true);
+    const hint = find(card, `#${hintId}`) as HTMLElement;
     expect(hint.classList.contains("k-hint-box")).toBe(true);
     expect(hint.getAttribute("aria-live")).toBe("polite");
   });

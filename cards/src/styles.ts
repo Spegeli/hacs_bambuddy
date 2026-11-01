@@ -2873,6 +2873,13 @@ export const cardStyles = css`
   .spool-dot.outline {
     box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--bb-text) 35%, transparent);
   }
+  /* What the K field holds, between its label and the select. */
+  .k-about {
+    margin-top: -2px;
+    font-size: 12px;
+    line-height: 16px;
+    color: var(--bb-muted);
+  }
   .k-hint {
     display: block;
     margin-top: 4px;

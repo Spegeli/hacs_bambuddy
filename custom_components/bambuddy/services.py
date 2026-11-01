@@ -32,6 +32,7 @@ from .const import CONF_PRINTER_NAME, CONF_PRINTERS, DOMAIN, K_PROFILES_KEEP, K_
 from .coordinator import BamBuddyConfigEntry, BamBuddyPrinterCoordinator, printer_identifier
 from .api import timed_out
 from .entity import async_run_command, refuse as _refuse
+from .filament_types import printer_filament_type
 from .inventory import BamBuddyInventoryCoordinator, InventoryData, Placed, Spool, place_json, spool_fit
 from .models import (
     DRYING_MAX,
@@ -339,9 +340,7 @@ async def _set_filament(hass: HomeAssistant, call: ServiceCall) -> None:
         raise _refuse("rfid_spool")
     if data.changing_filament:
         raise _refuse("filament_change", printer=short_name(coordinator.info))
-    # A paused print may relabel the spool swapped in by hand.
-    if data.job_running and data.state != "PAUSE" and _in_use(data, ams, slot, tray):
-        raise _refuse("slot_in_use", printer=short_name(coordinator.info))
+    # The slot a running print feeds is set too, as in BamBuddy: the card warns it changes mid-print.
     if filament_id is not None:
         why = filaments.refusal(filament_id, _slot_of(data, ams, slot))
         item = filaments.get(filament_id)
@@ -585,10 +584,10 @@ async def _assign_spool(hass: HomeAssistant, call: ServiceCall) -> None:
     inventory, _known = _inventory(coordinator, assigning=True)
     data = coordinator.data
     _online(coordinator)
+    # The slot a running print feeds takes a spool too, as in BamBuddy: a wrong spool
+    # noticed after the start is put right during the print.
     if data.changing_filament:
         raise _refuse("filament_change", printer=short_name(coordinator.info))
-    if data.job_running and data.state != "PAUSE" and _in_use(data, ams, slot, tray):
-        raise _refuse("slot_in_use", printer=short_name(coordinator.info))
     found = find_tray(data, tray)
     if found is not None and has_rfid(found[0]):
         raise _refuse("rfid_spool")
@@ -686,7 +685,7 @@ def _spool_answer(spool: Spool, here: tuple[int, int, int], fresh: InventoryData
     attributes = spool.attributes()
     del attributes["label_weight"]
     fits = "by_chip" if spool.bambu_chip and others else "printing" if printing else spool_fit(spool, slot)
-    return {**attributes, "place": place, "also": also, "fits": fits, **({"printing": printing[0]} if printing and fits == "printing" else {})}
+    return {**attributes, "type": printer_filament_type(spool.material).upper(), "place": place, "also": also, "fits": fits, **({"printing": printing[0]} if printing and fits == "printing" else {})}
 
 
 async def _get_spools(hass: HomeAssistant, call: ServiceCall) -> ServiceResponse:
@@ -733,18 +732,6 @@ def _pause_first(coordinator: BamBuddyPrinterCoordinator) -> None:
         raise _refuse("filament_change", printer=short_name(coordinator.info))
     if data.job_running and data.state != "PAUSE":
         raise _refuse("slot_pause_first", printer=short_name(coordinator.info))
-
-
-def _in_use(data: PrinterData, ams: int, slot: int, tray: int) -> bool:
-    """The slot feeds a nozzle: BamBuddy's tray_now names one, its
-    extruder_slots each nozzle's on two-nozzle printers -- in the printer's
-    own ids there, the external spools 254 (left) and 255 (right)."""
-    if active_tray(data) == tray:
-        return True
-    fed = [item for item in (data.status.get("extruder_slots") or {}).values() if item.get("has_filament")]
-    if ams == _EXTERNAL_AMS:
-        return any(item.get("ams_id") == tray for item in fed)
-    return any((item.get("ams_id"), item.get("slot_id")) == (ams, slot) for item in fed)
 
 
 def _extruder(data: PrinterData, ams: int, slot: int) -> int | None:

@@ -891,9 +891,6 @@
     "rfid_spool": {
       "message": "Der Chip dieser Spule nennt dem Drucker ihr Filament; es lässt sich nicht von Hand festlegen. Hat die Spule keinen Chip? Dann kennt der Drucker vielleicht noch den letzten: Nimm die Spule heraus, bis das Fach leer ist, und lege sie wieder ein."
     },
-    "slot_in_use": {
-      "message": "{printer} druckt gerade aus diesem Fach. Pausiere den Druck, um sein Filament zu ändern."
-    },
     "material_needed": {
       "message": "Für dieses Fach kennt der Drucker noch kein Filament: Wähle eines aus."
     },
@@ -1296,7 +1293,7 @@
     },
     "assign_spool": {
       "name": "Spule zuweisen",
-      "description": "Weist einem Fach eine Spule aus BamBuddys Inventar zu; BamBuddy stellt das Fach danach ein (Material, Farbe, Profil, K). Eine Spule, die einem anderen Fach zugewiesen ist, wechselt. Braucht einen API-Schlüssel mit Manage Inventory. Nicht für ein Fach, aus dem ein laufender Druck druckt, und nicht für eine Spule mit Chip (die verknüpft BamBuddy selbst).",
+      "description": "Weist einem Fach eine Spule aus BamBuddys Inventar zu; BamBuddy stellt das Fach danach ein (Material, Farbe, Profil, K). Eine Spule, die einem anderen Fach zugewiesen ist, wechselt. Braucht einen API-Schlüssel mit Manage Inventory. Nicht für ein Fach mit einer Bambu-Lab-Spule mit Chip und nicht während eines Filamentwechsels; das Fach, aus dem ein laufender Druck druckt, stellt BamBuddy mitten im Druck um.",
       "fields": {
         "entity_id": {
           "name": "Fach",

@@ -891,9 +891,6 @@
     "rfid_spool": {
       "message": "This spool's chip tells the printer its filament; it cannot be set by hand. If the spool has no chip, the printer may still remember the last one: take the spool out until the slot shows empty, then put it back."
     },
-    "slot_in_use": {
-      "message": "{printer} is printing from this slot. Pause the print to change its filament."
-    },
     "material_needed": {
       "message": "The printer knows no filament for this slot yet: choose one."
     },
@@ -1296,7 +1293,7 @@
     },
     "assign_spool": {
       "name": "Assign spool",
-      "description": "Assigns a spool of BamBuddy's inventory to a slot; BamBuddy sets the slot from it (material, color, profile, K). A spool assigned to another slot moves. Needs an API key with Manage Inventory. Not for a slot a running print feeds, nor for a spool with a chip (BamBuddy links those itself).",
+      "description": "Assigns a spool of BamBuddy's inventory to a slot; BamBuddy sets the slot from it (material, color, profile, K). A spool assigned to another slot moves. Needs an API key with Manage Inventory. Not for a slot that holds a Bambu Lab spool with its chip, nor during a filament change; BamBuddy sets the slot a running print feeds anew mid-print.",
       "fields": {
         "entity_id": {
           "name": "Slot",

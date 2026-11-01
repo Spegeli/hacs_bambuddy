@@ -1172,8 +1172,6 @@ async def test_the_external_spool_gets_its_filament(
         # A Bambu spool's chip says what it holds; the printer reads it again.
         (X1C, {}, "slot_1", {"color": [0, 0, 0]}, "rfid_spool"),
         (X1C, {}, "slot_4", {"filament": "GFL99"}, "slot_empty"),
-        # The slot printing right now.
-        (A1_MINI, {"state": "RUNNING", "tray_now": 1}, "slot_2", {"color": [0, 0, 0]}, "slot_in_use"),
         (A1_MINI, {"ams_status_main": 1, "ams_status_sub": 3}, "slot_2", {"color": [0, 0, 0]}, "filament_change"),
     ],
 )
@@ -1258,19 +1256,18 @@ async def test_an_ams_slot_names_the_nozzle_it_feeds(
     assert bambuddy_api.configure_slot.await_args.kwargs["nozzle_diameter"] == diameter
 
 
-async def test_the_slot_feeding_the_other_nozzle_is_in_use(
+async def test_the_slot_printing_now_is_set_mid_print(
     hass: HomeAssistant, bambuddy_api: SimpleNamespace, freezer: FrozenDateTimeFactory
 ) -> None:
-    """Two nozzles, two slots in use: BamBuddy's tray_now names one, its
-    extruder_slots both."""
-    entry = await set_up(hass, H2D)
-    bambuddy_api.statuses[H2D]["ams"][0]["tray"][2].update({"tag_uid": None, "tray_uuid": None})
+    """As BamBuddy: the slot a running print feeds takes a filament, a colour
+    or a K profile too -- the card warns that it changes mid-print."""
+    entry = await set_up(hass, A1_MINI)
+    bambuddy_api.statuses[A1_MINI].update({"state": "RUNNING", "tray_now": 1})
     await next_refresh(hass, freezer)
 
-    with pytest.raises(ServiceValidationError) as raised:
-        await _set_filament(hass, ams_uid(entry, 0, "slot_3", H2D), color=[0, 0, 0])
+    await _set_filament(hass, ams_uid(entry, 0, "slot_2", A1_MINI), color=[0, 0, 0])
 
-    assert raised.value.translation_key == "slot_in_use"
+    bambuddy_api.configure_slot.assert_awaited_once()
 
 
 async def test_a_filament_without_a_colour_is_opaque(
@@ -1316,22 +1313,6 @@ async def test_an_unknown_nozzle_counts_as_0_4_mm(
     await _set_filament(hass, ams_uid(entry, 0, "slot_2", A1_MINI), color=[0, 0, 0])
 
     assert bambuddy_api.configure_slot.await_args.kwargs["nozzle_diameter"] == "0.4"
-
-
-@pytest.mark.parametrize(("feed", "external"), [(255, "external_spool_2"), (254, "external_spool")])
-async def test_the_external_spool_feeding_a_nozzle_is_in_use(
-    hass: HomeAssistant, bambuddy_api: SimpleNamespace, freezer: FrozenDateTimeFactory, feed: int, external: str
-) -> None:
-    """The printer names the external spools 254 (left) and 255 (right) in
-    extruder_slots -- not BamBuddy's AMS 255 with slot 0 or 1."""
-    entry = await set_up(hass, H2D)
-    bambuddy_api.statuses[H2D]["extruder_slots"]["0"] = {"ams_id": feed, "slot_id": 0, "has_filament": True}
-    await next_refresh(hass, freezer)
-
-    with pytest.raises(ServiceValidationError) as raised:
-        await _set_filament(hass, printer_uid(entry, external, H2D), filament="GFL99")
-
-    assert raised.value.translation_key == "slot_in_use"
 
 
 async def test_the_left_external_spool_is_free_while_the_right_one_feeds(

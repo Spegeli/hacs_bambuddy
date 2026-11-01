@@ -471,7 +471,6 @@ export function spoolLine(hass: Hass, spool: Lined): string {
     spool.colorName ?? "",
     spool.remainingPct === undefined ? grams : `${grams} (${formatPercent(hass, spool.remainingPct)})`,
     t(hass, "inv_no", { id: spool.id }),
-    spool.storage ?? "",
   ]
     .filter(Boolean)
     .join(" · ");

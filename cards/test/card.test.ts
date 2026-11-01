@@ -2875,7 +2875,7 @@ describe("setting a slot's filament", () => {
     expect(editable(card)).toEqual([true, false, false, false, true]);
   });
 
-  it("leaves out the slot a running print feeds from, and offers it while paused", async () => {
+  it("offers the slot a running print feeds from -- but a chip spool's, whose tools wait for the print", async () => {
     const devices = (status: string): FakeDevice[] => {
       const all = x1c({ status });
       const slot = (all[1] as FakeDevice).entities.find((entity) => entity.entityId === SLOT_3) as { attributes: Record<string, unknown> };
@@ -2885,7 +2885,8 @@ describe("setting a slot's filament", () => {
     for (const status of ["printing", "preparing", "slicing"]) {
       const { card } = await cardFor("x1c", {}, { devices: devices(status) });
       await showView(card, "Filament");
-      expect(editable(card), status).toEqual([true, false, false, true, true]);
+      // Slot 2 a chip spool the print feeds; slot 3 one without a chip: set mid-print.
+      expect(editable(card), status).toEqual([true, false, true, true, true]);
     }
     const { card: paused } = await cardFor("x1c", {}, { devices: devices("paused") });
     await showView(paused, "Filament");
@@ -3473,6 +3474,11 @@ describe("a slot's tools: K profile, chip, reset", () => {
 
     expect(hass.calls.find((call) => call.service === "get_k_profiles")).toMatchObject({ domain: "bambuddy", data: { entity_id: SLOT_3 }, returnResponse: true });
     expect(text(find(card, "dialog label[for=fil-k]"))).toBe("K profile (flow dynamics)");
+    // What the field holds, once, between its label and the select.
+    const about = find(card, "dialog .kfield .k-about");
+    expect(text(about)).toBe("The printer's default and the K profiles saved on the printer for this filament.");
+    expect(about?.nextElementSibling?.classList.contains("select")).toBe(true);
+    expect(find(card, "dialog select#fil-k")?.getAttribute("aria-describedby")).toBe("k-about k-hint");
     // Nothing to warn of: what to do when unsure.
     expect(text(find(card, "dialog .k-hint"))).toBe("If unsure, leave this as it is.");
     // Only those filed under its filament (Generic PLA), as Bambu Studio offers them.

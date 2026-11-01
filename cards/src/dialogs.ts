@@ -457,8 +457,9 @@ function kField(hass: Hass, dialog: FilamentDialog, actions: DialogActions): Tem
     html`<option value=${String(profile.index)} .selected=${value === String(profile.index)}>${label(profile)}</option>`;
   return html`<div class="field kfield">
       <label for="fil-k">${t(hass, "k_profile")}</label>
+      <span class="k-about" id="k-about">${t(hass, "k_about")}</span>
       <span class="select">
-        <select id="fil-k" aria-describedby="k-hint" @change=${(event: Event) => actions.setKProfile((event.target as HTMLSelectElement).value)}>
+        <select id="fil-k" aria-describedby="k-about k-hint" @change=${(event: Event) => actions.setKProfile((event.target as HTMLSelectElement).value)}>
           ${keepText ? html`<option value=${K_KEEP} .selected=${value === K_KEEP}>${keepText}</option>` : nothing}
           <option value="-1" .selected=${value === "-1"}>${t(hass, "k_default", { k: formatFixed(hass, DEFAULT_K, 3) })}</option>
           ${grouped.length ? html`<optgroup label=${t(hass, "k_matching", { material: name })}>${grouped.map(option)}</optgroup>` : nothing}
@@ -628,14 +629,15 @@ function inventoryTabs(hass: Hass, dialog: FilamentDialog, actions: DialogAction
 
 /** The slot's spool from BamBuddy's inventory, whatever the key may; a
  * warning where it is assigned to other slots too. */
-function inventoryCard(ctx: CardContext, spool: InventorySpool, chip: boolean): TemplateResult {
+function inventoryCard(ctx: CardContext, spool: InventorySpool): TemplateResult {
   const { hass } = ctx;
   return html`<div class="inv-card">
-    <span class="inv-from">${t(hass, chip ? "inv_from_chip" : "inv_from")}</span>
+    <span class="inv-from">${t(hass, "inv_from")}</span>
     <span class="inv-spool">${spoolDot(spool)}<span class="inv-name">${spool.name}</span></span>
     <span class="inv-line">${spoolLine(hass, spool)}</span>
+    ${spool.storage ? html`<span class="inv-line">${t(hass, "inv_stored", { location: spool.storage })}</span>` : nothing}
     ${spool.alsoAssigned.map(
-      (place) => html`<span class="inv-also">${icon("warning")}<span>${t(hass, "inv_also", { where: place.here ? "" : whereOf(ctx, place).line })}</span></span>`,
+      (place) => html`<span class="inv-also">${icon("warning")}<span>${t(hass, "inv_also", { where: place.here ? "" : whereOf(ctx, place).at })}</span></span>`,
     )}
   </div>`;
 }
@@ -658,8 +660,10 @@ function unitName(amsId: number): string {
 const globalTray = (amsId: number, trayId: number): number => (amsId >= 128 ? amsId : amsId === 6 ? 24 + trayId : amsId * 4 + trayId);
 
 interface Where {
-  /** The list's line: "In AMS A, Fach 1". */
+  /** The list's line: "Zugewiesen: AMS A, Fach 1". */
   line: string;
+  /** The place alone: "AMS A, Fach 1", "Desk, AMS A, Fach 1". */
+  at: string;
   /** The move's note: "AMS A, Fach 1", "dem Drucker Desk, …". */
   from: string;
 }
@@ -671,7 +675,7 @@ function whereOf(ctx: CardContext, place: Exclude<SpoolPlace, { here: true }>): 
     if (place.amsId === 255) {
       const sides = refs.externalSpools.length > 1;
       const side = !sides ? "" : place.trayId === 1 ? "_right" : "_left";
-      return { line: t(hass, `inv_ext${side}` as TextKey), from: t(hass, `inv_from_ext${side}` as TextKey) };
+      return { line: t(hass, `inv_ext${side}` as TextKey), at: t(hass, `inv_other_ext${side}` as TextKey), from: t(hass, `inv_from_ext${side}` as TextKey) };
     }
     // The unit's name as the card shows it, its slot by the sensor's number.
     const tray = globalTray(place.amsId, place.trayId);
@@ -686,7 +690,7 @@ function whereOf(ctx: CardContext, place: Exclude<SpoolPlace, { here: true }>): 
       }
     }
     const short = slot === undefined ? unit : t(hass, "inv_other_slot", { unit, slot });
-    return { line: slot === undefined ? t(hass, "inv_in_unit", { unit }) : t(hass, "inv_in_slot", { unit, slot }), from: short };
+    return { line: slot === undefined ? t(hass, "inv_in_unit", { unit }) : t(hass, "inv_in_slot", { unit, slot }), at: short, from: short };
   }
   // Another printer: BamBuddy's names of its units; its external spools
   // only where the place says the right one.
@@ -699,14 +703,10 @@ function whereOf(ctx: CardContext, place: Exclude<SpoolPlace, { here: true }>): 
         : t(hass, "inv_other_slot", { unit, slot: place.trayId + 1 });
   return {
     line: t(hass, "inv_other", { printer: place.printerName, where: at }),
+    at: t(hass, "inv_at_printer", { printer: place.printerName, where: at }),
     from: t(hass, "inv_from_printer", { printer: place.printerName, where: at }),
   };
 }
-
-/** A spool sits in a slot: this one (the sensor's), or another BamBuddy
- * names. Its storage location then stays in its line, as BamBuddy keeps it;
- * a spool in no slot names it as its place instead. */
-const inSlot = (spool: ListedSpool, assigned: number | undefined): boolean => spool.id === assigned || (spool.place !== undefined && !spool.place.here);
 
 /** A spool's place line: here, elsewhere, and why it does not fit. "Here"
  * is the slot sensor's spool -- BamBuddy may link or drop one while the
@@ -715,13 +715,15 @@ function placeLine(ctx: CardContext, spool: ListedSpool, assigned: number | unde
   const { hass } = ctx;
   const place = spool.place;
   const here = spool.id === assigned;
-  const line = here
-    ? html`<span class="inv-where here">${t(hass, "inv_here")}</span>`
-    : place && !place.here
-      ? html`<span class="inv-where elsewhere">${whereOf(ctx, place).line}</span>`
-      : spool.storage
-        ? html`<span class="inv-where stored">${t(hass, "inv_stored", { location: spool.storage })}</span>`
-        : nothing;
+  // Its storage location on a line of its own, whether it sits in a slot or not (BamBuddy keeps it).
+  const stored = spool.storage ? html`<span class="inv-where stored">${t(hass, "inv_stored", { location: spool.storage })}</span>` : nothing;
+  const line = html`${stored}${
+    here
+      ? html`<span class="inv-where here">${t(hass, "inv_here")}</span>`
+      : place && !place.here
+        ? html`<span class="inv-where elsewhere">${whereOf(ctx, place).line}</span>`
+        : nothing
+  }`;
   // Its further slots: BamBuddy can hold a spool in two.
   const more = spool.also.map((other) => (other.here ? nothing : html`<span class="inv-where elsewhere">${whereOf(ctx, other).line}</span>`));
   if (!spool.fits) return html`${line}${more}`;
@@ -811,9 +813,8 @@ function shownSpools(dialog: FilamentDialog, list: SpoolList, assigned: number |
  * and the slot does not feed the running print. */
 function slotBusy(ctx: CardContext, slot: Slot): string | undefined {
   const printer = printerTitle(ctx);
-  if (ctx.changing) return t(ctx.hass, "inv_busy_change", { printer });
-  if (ctx.running && slot.active) return t(ctx.hass, "inv_busy", { printer });
-  return undefined;
+  // The slot a running print feeds takes a spool too, as in BamBuddy.
+  return ctx.changing ? t(ctx.hass, "inv_busy_change", { printer }) : undefined;
 }
 
 /** The list's keys: the arrows choose the next spool that fits, Home and End
@@ -858,7 +859,7 @@ function spoolRow(ctx: CardContext, dialog: FilamentDialog, actions: DialogActio
     ${spoolDot(spool)}
     <span class="inv-row-text">
       <span class="inv-name">${spool.name}</span>
-      <span class="inv-line">${spoolLine(hass, inSlot(spool, assigned) ? spool : { ...spool, storage: undefined })}</span>
+      <span class="inv-line">${spoolLine(hass, spool)}</span>
       ${placeLine(ctx, spool, assigned)}
     </span>
   </div>`;
@@ -966,7 +967,7 @@ function filamentContent(ctx: CardContext, dialog: FilamentDialog, actions: Dial
   const switcher = slot.assignable && !dialog.rfid && !dialog.inventoryOnly ? inventoryTabs(hass, dialog, actions) : nothing;
   // One head for every way, so that the switch keeps its place and its focus.
   return html`<h2 id="dlg-title">${dialog.title}</h2>
-    ${nozzleLine(ctx, dialog)} ${switcher} ${spool ? inventoryCard(ctx, spool, slot.rfid) : nothing}
+    ${nozzleLine(ctx, dialog)} ${switcher} ${spool ? inventoryCard(ctx, spool) : nothing}
     ${inventory ? inventoryPanel(ctx, dialog, actions, slot) : filamentBody(ctx, dialog, actions, spool)}`;
 }
 
@@ -976,7 +977,7 @@ function filamentBody(ctx: CardContext, dialog: FilamentDialog, actions: DialogA
   const { hass } = ctx;
   if (dialog.rfid) {
     // The chip's name and the AMS's estimate -- unless the inventory's box above names the spool.
-    return html`<p>${t(hass, "filament_rfid")}</p>
+    return html`<p>${t(hass, spool ? "filament_rfid_linked" : "filament_rfid")}</p>
       ${dialog.spool && !spool ? html`<p class="rfid-spool">${dialog.spool}</p>` : nothing}
       ${slotTools(ctx, dialog, actions)}`;
   }
@@ -1017,7 +1018,7 @@ function filamentBody(ctx: CardContext, dialog: FilamentDialog, actions: DialogA
 /** What the safe and the confirming button say; no confirming button
  * where there is nothing to confirm. `need` says what is missing while the
  * confirming button waits. */
-function buttons(ctx: CardContext, dialog: Dialog): { keep: string; confirm?: string; danger: boolean; ready: boolean; need?: string; quiet?: boolean; unassign?: string; warn?: string } {
+function buttons(ctx: CardContext, dialog: Dialog): { keep: string; confirm?: string; danger: boolean; ready: boolean; need?: string; quiet?: boolean; unassign?: string; warn?: string[] } {
   const { hass } = ctx;
   switch (dialog.kind) {
     case "confirm":
@@ -1040,7 +1041,7 @@ function buttons(ctx: CardContext, dialog: Dialog): { keep: string; confirm?: st
         ...(!noOffer(dialog) && !keeping(dialog) && chosenFilament(dialog) === undefined && (dialog.vendor !== undefined || dialog.color !== undefined || dialog.kprofile !== undefined)
           ? { need: t(hass, "filament_need_filament") }
           : {}),
-        ...endsAssignment(ctx, dialog),
+        ...warnings(midPrint(ctx, dialog), endsAssignment(ctx, dialog).warn),
       };
     case "hms":
       return { keep: t(hass, "dismiss"), ...(canClearHms(ctx) ? { confirm: t(hass, "hms_clear") } : {}), danger: false, ready: true, quiet: hmsAnswered(ctx) };
@@ -1063,6 +1064,19 @@ function buttons(ctx: CardContext, dialog: Dialog): { keep: string; confirm?: st
     }
   }
 }
+
+/** The slot a running print feeds changes mid-print once anything is to be set. */
+function midPrint(ctx: CardContext, dialog: FilamentDialog): string | undefined {
+  const slot = slotOf(ctx.hass, dialog.entityId);
+  if (!ctx.running || !slot.active || Object.keys(filamentChanges(dialog)).length === 0) return undefined;
+  return t(ctx.hass, "filament_mid_print", { printer: printerTitle(ctx) });
+}
+
+/** The orange lines above the buttons, those that apply. */
+const warnings = (...lines: (string | undefined)[]): { warn?: string[] } => {
+  const shown = lines.filter((line): line is string => line !== undefined);
+  return shown.length ? { warn: shown } : {};
+};
 
 /** The warning that Set ends the slot's spool assignment. BamBuddy keeps
  * it while the slot reports the colour and type it matched it with, or the
@@ -1096,7 +1110,7 @@ function similarColors(a: string, b: string): boolean {
 
 /** The inventory's buttons: Assign once another spool is chosen (and the
  * slot may take it now), Remove assignment where the slot has one. */
-function inventoryButtons(ctx: CardContext, dialog: FilamentDialog): { keep: string; confirm?: string; danger: boolean; ready: boolean; need?: string; unassign?: string } {
+function inventoryButtons(ctx: CardContext, dialog: FilamentDialog): { keep: string; confirm?: string; danger: boolean; ready: boolean; need?: string; unassign?: string; warn?: string[] } {
   const { hass } = ctx;
   const slot = slotOf(hass, dialog.entityId);
   if (!slot.assignable) return { keep: t(hass, "dismiss"), danger: false, ready: false };
@@ -1113,7 +1127,20 @@ function inventoryButtons(ctx: CardContext, dialog: FilamentDialog): { keep: str
     ready,
     ...(busy && chosen !== undefined && chosen.id !== assigned ? { need: busy } : {}),
     ...(assigned !== undefined ? { unassign: t(hass, "inv_unassign") } : {}),
+    ...(chosen !== undefined && chosen.id !== assigned ? warnings(otherMaterial(ctx, slot, chosen).warn) : {}),
   };
+}
+
+/** Another material than the slot's: assigning sets the slot to it -- in a
+ * running print, mid-print. Compared by the type BamBuddy reduces it to; an
+ * empty slot is set from whatever comes. */
+function otherMaterial(ctx: CardContext, slot: Slot, spool: ListedSpool): { warn?: string } {
+  const current = slot.type.toUpperCase();
+  if (slot.empty || !current || !spool.type) return {};
+  const same = current === spool.type || current.startsWith(`${spool.type}-`);
+  if (same) return {};
+  const values = { material: spool.type, slot: slot.type, printer: printerTitle(ctx) };
+  return { warn: t(ctx.hass, ctx.running && slot.active ? "inv_warn_material_printing" : "inv_warn_material", values) };
 }
 
 function content(ctx: CardContext, dialog: Dialog, actions: DialogActions): TemplateResult {
@@ -1210,7 +1237,7 @@ export function dialogView(ctx: CardContext, dialog: Dialog, actions: DialogActi
       ${content(ctx, dialog, actions)}
       ${notice}
       <div class="dlg-actions">
-        ${warn ? html`<span class="dlg-warn">${icon("warning")}<span>${warn}</span></span>` : nothing}
+        ${(warn ?? []).map((line) => html`<span class="dlg-warn">${icon("warning")}<span>${line}</span></span>`)}
         ${need ? html`<span class="dlg-need">${need}</span>` : nothing}
         ${unassign ? html`<button class="btn plain inv-unassign" @click=${actions.unassign}>${unassign}</button>` : nothing}
         <button class="btn plain safe" autofocus @click=${actions.close}>${keep}</button>

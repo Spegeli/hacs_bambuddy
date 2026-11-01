@@ -124,6 +124,27 @@ async def test_a_paused_print_may_take_a_spool_in_its_slot(hass: HomeAssistant, 
     bambuddy_api.assign_spool.assert_awaited_once()
 
 
+async def test_a_running_print_may_take_a_spool_in_its_slot(hass: HomeAssistant, bambuddy_api: SimpleNamespace) -> None:
+    """As BamBuddy: a wrong spool noticed after the start is put right during the print."""
+    with_inventory(bambuddy_api, _extra(7))
+    bambuddy_api.statuses[X1C].update(state="RUNNING", tray_now=2)
+    entry = await set_up(hass, X1C)
+
+    await _act(hass, "assign_spool", entity_id=_slot(hass, entry, 3), spool_id=7)
+
+    bambuddy_api.assign_spool.assert_awaited_once()
+
+
+async def test_each_listed_spool_names_its_slot_type(hass: HomeAssistant, bambuddy_api: SimpleNamespace) -> None:
+    """The type a slot takes for the spool, as BamBuddy reduces its material ("PLA+" -> PLA)."""
+    with_inventory(bambuddy_api, _extra(7, material="PLA+"), _extra(8, material="PETG"))
+    entry = await set_up(hass, X1C)
+
+    answer = await _act(hass, "get_spools", entity_id=_slot(hass, entry, 3))
+    types = {spool["id"]: spool["type"] for spool in answer["spools"]}
+    assert (types[1], types[7], types[8]) == ("PLA", "PLA", "PETG")
+
+
 @pytest.mark.parametrize(
     ("setup", "slot", "spool", "key"),
     [
@@ -131,7 +152,6 @@ async def test_a_paused_print_may_take_a_spool_in_its_slot(hass: HomeAssistant, 
         ("spoolman", 3, 7, "inventory_not_shown"),
         ("offline", 3, 7, "printer_offline"),
         ("filament_change", 3, 7, "filament_change"),
-        ("printing_from_it", 3, 7, "slot_in_use"),
         ("idle", 1, 7, "rfid_spool"),
         ("idle", 3, 8, "spool_not_for_ams"),
     ],
@@ -150,8 +170,6 @@ async def test_an_assignment_is_refused(
         status["connected"] = False
     elif setup == "filament_change":
         status["ams_status_main"] = 1
-    elif setup == "printing_from_it":
-        status.update(state="RUNNING", tray_now=2)
     entry = await set_up(hass, X1C)
 
     with pytest.raises(ServiceValidationError) as raised:

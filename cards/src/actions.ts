@@ -138,6 +138,8 @@ export interface ListedSpool {
   fits?: "not_for_ams" | "not_for_nozzle" | "not_for_printer" | "by_chip" | "printing";
   /** The printer that prints, for "printing". */
   printing?: string;
+  /** The type a slot takes for it, as BamBuddy reduces its material ("PLA+" -> PLA). */
+  type?: string;
 }
 
 export interface SpoolList {
@@ -196,6 +198,7 @@ export async function spoolList(hass: Hass, entityId: string): Promise<SpoolList
       also: placesOf(item["also"]),
       ...(typeof fits === "string" && FITS.has(fits) ? { fits: fits as ListedSpool["fits"] } : {}),
       ...(text(item["printing"]) ? { printing: text(item["printing"]) } : {}),
+      ...(text(item["type"]) ? { type: text(item["type"]) } : {}),
     };
   });
   const assigned = response["assigned"];

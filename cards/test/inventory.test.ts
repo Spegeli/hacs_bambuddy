@@ -208,13 +208,20 @@ describe("the slot dialog and the inventory", () => {
       expect(text(box?.querySelector(".inv-line"))).toBe(`Apple Green · 886${NBSP}g (89${NBSP}%) · Nr. 1`);
     }
     const stored = await openSlot3({ ...GEEETECH, storage_location: "Regal A2" }, true);
-    expect(text(find(stored, "dialog .inv-card .inv-line"))).toBe(`Apple Green · 886${NBSP}g (89${NBSP}%) · Nr. 1 · Regal A2`);
+    // Its location on a line of its own.
+    expect(findAll(stored, "dialog .inv-card .inv-line").map(text)).toEqual([`Apple Green · 886${NBSP}g (89${NBSP}%) · Nr. 1`, "Lagerort: Regal A2"]);
   });
 
-  it("a chip spool's box says it is linked by its chip, no switch", async () => {
+  it("a chip spool's box is any assigned spool's; the sentence below says the chip linked it", async () => {
     const card = await openSlot3({ ...GEEETECH, rfid: true }, true, 0);
-    expect(text(find(card, "dialog .inv-card .inv-from"))).toBe("Zugewiesene Spule aus dem Inventar · über den Chip verknüpft");
+    expect(text(find(card, "dialog .inv-card .inv-from"))).toBe("Zugewiesene Spule aus dem Inventar");
     expect(findAll(card, "dialog [role=tablist]")).toHaveLength(0);
+    expect(text(find(card, "dialog .inv-card")?.nextElementSibling)).toBe(
+      "Eine Bambu-Lab-Spule mit Chip: Das AMS liest Material und Farbe vom Chip, und BamBuddy hat sie darüber der Spule oben zugewiesen.",
+    );
+    // Without a spool of the inventory: the chip alone.
+    const plain = await openSlot3(null, true, 0);
+    expect(text(find(plain, "dialog .rfid-spool")?.previousElementSibling)).toBe("Eine Bambu-Lab-Spule mit Chip: Material und Farbe liest das AMS vom Chip.");
   });
 
   it("a chip spool's own line goes where the inventory's box names the spool", async () => {
@@ -339,17 +346,29 @@ describe("the pencil of an empty or busy slot", () => {
     expect(find(card, "dialog select#fil-vendor")).toBeNull();
   });
 
-  it("the slot the running print feeds offers its inventory spool", async () => {
+  it("the slot the running print feeds is set too, with a warning that it changes mid-print", async () => {
     const devices = withoutChip(assign(x1c(), "sensor.dev-x1c_ams_0_slot_2", GEEETECH, true));
     const card = await mount(devices, "dev-x1c");
     await showView(card, "Filament");
     expect(pencils(card)[1]).toBe(true);
     await edit(card, 1);
-    expect(find(card, "dialog select#fil-vendor")).toBeNull();
+    expect(tabs(card).map(text)).toEqual(["Filament einstellen", "Aus dem Inventar"]);
+    expect(find(card, "dialog select#fil-vendor")).not.toBeNull();
+    // Its tools wait for the print.
+    expect(findAll<HTMLButtonElement>(card, "dialog .slot-tools .btn").every((button) => button.disabled)).toBe(true);
+    expect(find(card, "dialog .dlg-warn")).toBeNull();
+    // Another colour: it changes mid-print, and ends the spool's assignment.
+    (findAll<HTMLButtonElement>(card, "dialog [role=radiogroup] [role=radio]").find((item) => item.getAttribute("aria-label") === "Schwarz") as HTMLButtonElement).click();
+    await settle(card);
+    expect(findAll(card, "dialog .dlg-actions .dlg-warn").map(text)).toEqual([
+      "Workshop druckt gerade aus diesem Fach. Übernehmen stellt es mitten im Druck um.",
+      "Übernehmen hebt die Zuweisung von Geeetech PLA Basic auf.",
+    ]);
 
+    // Without the inventory too: its filament can be set.
     const plain = await mount(withoutChip(assign(x1c(), "sensor.dev-x1c_ams_0_slot_2", null, false)), "dev-x1c");
     await showView(plain, "Filament");
-    expect(pencils(plain)[1]).toBe(false);
+    expect(pencils(plain)[1]).toBe(true);
   });
 });
 
@@ -369,6 +388,7 @@ interface Listed {
   place?: Record<string, unknown> | null;
   fits?: string | null;
   printing?: string;
+  type?: string;
 }
 
 const listed = (spool: Listed): Record<string, unknown> => ({
@@ -383,6 +403,7 @@ const listed = (spool: Listed): Record<string, unknown> => ({
   rfid: false,
   place: null,
   fits: null,
+  type: spool.material.toUpperCase(),
   ...spool,
 });
 
@@ -464,7 +485,7 @@ describe("the inventory tab", () => {
     expect(rows(card).map(rowName)).toEqual(["eSUN PETG", "Geeetech PLA Basic", "Bambu PLA Basic", "Sunlu TPU 95A"]);
     const first = rows(card)[1] as HTMLElement;
     expect(first.getAttribute("aria-checked")).toBe("true");
-    expect(where(first)).toBe("In diesem Fach");
+    expect(where(first)).toBe("Zugewiesen: dieses Fach");
     expect(first.querySelector(".inv-where")?.classList.contains("here")).toBe(true);
   });
 
@@ -483,14 +504,14 @@ describe("the inventory tab", () => {
     ].map(listed);
     const card = await openInventory(spools, { assigned: null, spool: null });
     expect(rows(card).map(where)).toEqual([
-      "In AMS A, Fach 1",
-      "In Werkstatt Silk, Fach 2",
-      "Auf der externen Spule",
-      "Im Drucker Desk, AMS A, Fach 2",
-      "Im Drucker Desk, externe Spule (rechts)",
-      "Im Drucker Desk, AMS HT A",
-      "Im Drucker Desk, AMS Lite, Fach 2",
-      "Im Drucker Desk, externe Spule",
+      "Zugewiesen: AMS A, Fach 1",
+      "Zugewiesen: Werkstatt Silk, Fach 2",
+      "Zugewiesen: externe Spule",
+      "Zugewiesen: Desk, AMS A, Fach 2",
+      "Zugewiesen: Desk, externe Spule (rechts)",
+      "Zugewiesen: Desk, AMS HT A",
+      "Zugewiesen: Desk, AMS Lite, Fach 2",
+      "Zugewiesen: Desk, externe Spule",
     ]);
     expect(rows(card).every((row) => row.querySelector(".inv-where")?.classList.contains("elsewhere"))).toBe(true);
   });
@@ -507,7 +528,7 @@ describe("the inventory tab", () => {
     tabs(card)[1]?.click();
     await settle(card);
     await settle(card);
-    expect(rows(card).map(where)).toEqual(["Auf der externen Spule (links)", "Auf der externen Spule (rechts)"]);
+    expect(rows(card).map(where)).toEqual(["Zugewiesen: externe Spule (links)", "Zugewiesen: externe Spule (rechts)"]);
   });
 
   it("greys out what does not fit", async () => {
@@ -525,14 +546,14 @@ describe("the inventory tab", () => {
     const desk = { printer_id: 99, printer_name: "Desk", ams_id: 0, tray_id: 1, ams_label: null, same_printer: false };
     const spools = FOUR.map((spool) => (spool["id"] === 1 ? { ...spool, also: [desk] } : spool["id"] === 2 ? { ...spool, also: [{ ...desk, tray_id: 2 }] } : spool));
     const card = await openInventory(spools);
-    expect([...rowNamed(card, "Geeetech PLA Basic").querySelectorAll(".inv-where")].map(text)).toEqual(["In diesem Fach", "Im Drucker Desk, AMS A, Fach 2"]);
-    expect([...rowNamed(card, "Bambu PLA Basic").querySelectorAll(".inv-where")].map(text)).toEqual(["In AMS A, Fach 1", "Im Drucker Desk, AMS A, Fach 3"]);
+    expect([...rowNamed(card, "Geeetech PLA Basic").querySelectorAll(".inv-where")].map(text)).toEqual(["Zugewiesen: dieses Fach", "Zugewiesen: Desk, AMS A, Fach 2"]);
+    expect([...rowNamed(card, "Bambu PLA Basic").querySelectorAll(".inv-where")].map(text)).toEqual(["Zugewiesen: AMS A, Fach 1", "Zugewiesen: Desk, AMS A, Fach 3"]);
   });
 
   it("the box warns of the spool's other slots", async () => {
     const also = [{ printer_id: 99, printer_name: "Desk", ams_id: 0, tray_id: 1, ams_label: null, same_printer: false }];
     const card = await openSlot3({ ...GEEETECH, also_assigned: also }, true);
-    expect(findAll(card, "dialog .inv-card .inv-also").map(text)).toEqual(["Auch zugewiesen: Im Drucker Desk, AMS A, Fach 2"]);
+    expect(findAll(card, "dialog .inv-card .inv-also").map(text)).toEqual(["Auch zugewiesen: Desk, AMS A, Fach 2"]);
     const single = await openSlot3(GEEETECH, true);
     expect(find(single, "dialog .inv-card .inv-also")).toBeNull();
   });
@@ -541,7 +562,7 @@ describe("the inventory tab", () => {
     const card = await openInventory([...FOUR, listed({ id: 9, name: "Bambu Lab ABS", material: "ABS", fits: "by_chip", place: { printer_id: 1, printer_name: "Workshop", ams_id: 0, tray_id: 0, ams_label: null, same_printer: true } })]);
     const row = rowNamed(card, "Bambu Lab ABS");
     expect(row.getAttribute("aria-disabled")).toBe("true");
-    expect([...row.querySelectorAll(".inv-where")].map(text)).toEqual(["In AMS A, Fach 1", "Verknüpft sich über ihren Chip"]);
+    expect([...row.querySelectorAll(".inv-where")].map(text)).toEqual(["Zugewiesen: AMS A, Fach 1", "Verknüpft sich über ihren Chip"]);
   });
 
   it("locks a spool in a slot of another printer that prints", async () => {
@@ -642,12 +663,61 @@ describe("the inventory tab", () => {
     expect(dialogButton(none, "Zuweisung aufheben")).toBeUndefined();
   });
 
-  it("keeps Zuweisen disabled while the slot feeds a running print", async () => {
+  it("lets the slot a running print feeds take a spool, as BamBuddy does", async () => {
     const card = await openInventory(FOUR, { slot: 1, assigned: null, devices: withoutChip(assign(x1c(), "sensor.dev-x1c_ams_0_slot_2", null, true)) });
     rowNamed(card, "Bambu PLA Basic").click();
     await settle(card);
-    expect(dialogButton(card, "Zuweisen")?.disabled).toBe(true);
-    expect(text(find(card, "dialog .dlg-need"))).toBe("Workshop druckt gerade aus diesem Fach.");
+    expect(dialogButton(card, "Zuweisen")?.disabled).toBe(false);
+    expect(find(card, "dialog .dlg-need")).toBeNull();
+    expect(find(card, "dialog .dlg-warn")).toBeNull();
+    // Another material: it switches mid-print.
+    rowNamed(card, "eSUN PETG").click();
+    await settle(card);
+    expect(dialogButton(card, "Zuweisen")?.disabled).toBe(false);
+    expect(text(find(card, "dialog .dlg-actions .dlg-warn"))).toBe("Workshop druckt gerade aus diesem Fach (PLA). Zuweisen stellt es mitten im Druck auf PETG um.");
+  });
+
+  /** The X1C with its slot 4 empty and open to assigning. */
+  const emptySlot4 = (): FakeDevice[] => {
+    const devices = assign(x1c(), X1C_SLOT_4, null, true);
+    for (const entity of devices.flatMap((device) => device.entities)) {
+      if (entity.entityId === X1C_SLOT_4) {
+        entity.state = "empty";
+        entity.attributes = { ...entity.attributes, empty: true, present: false, type: "", name: "" };
+      }
+    }
+    return devices;
+  };
+
+  it("warns where the spool's material differs from the slot's", async () => {
+    const spools = [...FOUR, listed({ id: 9, name: "Sunlu PLA+", material: "PLA+", type: "PLA" })];
+    const card = await openInventory(spools, { assigned: null });
+    rowNamed(card, "eSUN PETG").click();
+    await settle(card);
+    expect(text(find(card, "dialog .dlg-actions .dlg-warn"))).toBe("Die Spule ist PETG, das Fach ist auf PLA eingestellt. Zuweisen stellt das Fach auf PETG um.");
+    // PLA+ is PLA to BamBuddy: no warning.
+    rowNamed(card, "Sunlu PLA+").click();
+    await settle(card);
+    expect(find(card, "dialog .dlg-warn")).toBeNull();
+    // A spool whose type the integration did not name: nothing to compare.
+    const untyped = await openInventory([...FOUR, listed({ id: 9, name: "Mystery", material: "PETG", type: "" })], { assigned: null });
+    rowNamed(untyped, "Mystery").click();
+    await settle(untyped);
+    expect(find(untyped, "dialog .dlg-warn")).toBeNull();
+    // A TPU spool in a slot set to TPU for AMS ("TPU-AMS"): the same type.
+    const tpu = assign(x1c(), X1C_SLOT_3, null, true);
+    for (const entity of tpu.flatMap((device) => device.entities)) {
+      if (entity.entityId === X1C_SLOT_3) entity.attributes = { ...entity.attributes, type: "TPU-AMS" };
+    }
+    const tpuCard = await openInventory([...FOUR, listed({ id: 9, name: "Overture TPU", material: "TPU" })], { assigned: null, devices: tpu });
+    rowNamed(tpuCard, "Overture TPU").click();
+    await settle(tpuCard);
+    expect(find(tpuCard, "dialog .dlg-warn")).toBeNull();
+    // An empty slot is set from whatever comes.
+    const empty = await openInventory(FOUR, { slot: 3, assigned: null, devices: emptySlot4() });
+    rowNamed(empty, "eSUN PETG").click();
+    await settle(empty);
+    expect(find(empty, "dialog .dlg-warn")).toBeNull();
   });
 
   it("moves the chosen spool with the arrow keys, past the ones that do not fit", async () => {
@@ -738,7 +808,7 @@ describe("the inventory tab", () => {
 describe("the inventory tab follows the slot", () => {
   it("drops „In diesem Fach“ when BamBuddy unlinks the spool meanwhile, and names a spool linked meanwhile", async () => {
     const card = await openInventory();
-    expect(where(rowNamed(card, "Geeetech PLA Basic"))).toBe("In diesem Fach");
+    expect(where(rowNamed(card, "Geeetech PLA Basic"))).toBe("Zugewiesen: dieses Fach");
     const state = (card.hass as FakeHass).states[X1C_SLOT_3] as { state: string; attributes: Record<string, unknown> };
     const { inventory_spool: _gone, ...rest } = state.attributes;
     card.hass = (card.hass as FakeHass).withState(X1C_SLOT_3, state.state, rest);
@@ -752,7 +822,7 @@ describe("the inventory tab follows the slot", () => {
 
     card.hass = (card.hass as FakeHass).withState(X1C_SLOT_3, state.state, { ...rest, inventory_spool: { ...GEEETECH, id: 2, name: "Bambu PLA Basic" } });
     await settle(card);
-    expect(where(rowNamed(card, "Bambu PLA Basic"))).toBe("In diesem Fach");
+    expect(where(rowNamed(card, "Bambu PLA Basic"))).toBe("Zugewiesen: dieses Fach");
     expect(dialogButton(card, "Zuweisung aufheben")).toBeDefined();
   });
 
@@ -760,7 +830,7 @@ describe("the inventory tab follows the slot", () => {
     const spools = FOUR.map((spool) => (spool["id"] === 4 ? { ...spool, place: { this_slot: true } } : spool["id"] === 1 ? { ...spool, place: null } : spool));
     const card = await openInventory(spools, { assigned: 4, spool: { ...GEEETECH, id: 4, name: "Sunlu TPU 95A" } });
     const row = rowNamed(card, "Sunlu TPU 95A");
-    expect([...row.querySelectorAll(".inv-where")].map(text)).toEqual(["In diesem Fach", "Nicht für das AMS"]);
+    expect([...row.querySelectorAll(".inv-where")].map(text)).toEqual(["Zugewiesen: dieses Fach", "Nicht für das AMS"]);
   });
 
   it("a row that does not fit takes no focus", async () => {
@@ -952,18 +1022,18 @@ describe("storage locations", () => {
   it("a spool in no slot names its location as its place; the line above leaves it out", async () => {
     const card = await openInventory(SHELVES);
     const shelf = rowNamed(card, "eSUN PETG");
-    expect(where(shelf)).toBe("Im Lager: Regal A");
+    expect(where(shelf)).toBe("Lagerort: Regal A");
     expect(shelf.querySelector(".inv-where")?.classList.contains("stored")).toBe(true);
     expect(text(shelf.querySelector(".inv-line"))).not.toContain("Regal A");
     expect(where(rowNamed(card, "Polymaker PLA"))).toBe("");
   });
 
-  it("a spool in a slot keeps its location in its line: BamBuddy keeps it there too", async () => {
+  it("a spool in a slot names its location on a line of its own above its slot: BamBuddy keeps it", async () => {
     const card = await openInventory(SHELVES);
-    expect(text(rowNamed(card, "Bambu PLA Basic").querySelector(".inv-line"))).toContain("Regal B");
-    expect(where(rowNamed(card, "Bambu PLA Basic"))).toBe("In AMS A, Fach 1");
-    expect(text(rowNamed(card, "Geeetech PLA Basic").querySelector(".inv-line"))).toContain("Regal A");
-    expect(where(rowNamed(card, "Geeetech PLA Basic"))).toBe("In diesem Fach");
+    const places = (name: string): string[] => [...rowNamed(card, name).querySelectorAll(".inv-where")].map(text);
+    expect(text(rowNamed(card, "Bambu PLA Basic").querySelector(".inv-line"))).not.toContain("Regal B");
+    expect(places("Bambu PLA Basic")).toEqual(["Lagerort: Regal B", "Zugewiesen: AMS A, Fach 1"]);
+    expect(places("Geeetech PLA Basic")).toEqual(["Lagerort: Regal A", "Zugewiesen: dieses Fach"]);
   });
 
   it("filters by location, narrowed with the others", async () => {

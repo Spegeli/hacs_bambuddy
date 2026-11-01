@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { callAction, errorText, printObjects } from "../src/actions";
+import { callAction, errorText, printObjects, spoolList } from "../src/actions";
 import { makeHass } from "./fixtures";
 
 describe("calling an action", () => {
@@ -67,5 +67,52 @@ describe("the objects of a running print", () => {
     for (const answer of [undefined, {}, { response: null }, { response: { objects: "many" } }]) {
       expect(await printObjects(makeHass({ callService: async () => answer }), "dev-x1c")).toEqual([]);
     }
+  });
+});
+
+describe("the inventory's spools for a slot", () => {
+  it("keep what the answer names and leave out what it lacks or mistypes", async () => {
+    const hass = makeHass({
+      callService: async () => ({
+        response: {
+          assigned: "one",
+          spools: [
+            {
+              id: 4,
+              name: "",
+              brand: null,
+              material: 3,
+              extra_colors: "nope",
+              remaining_g: "lots",
+              remaining_pct: null,
+              place: { printer_id: 2, ams_id: 0, tray_id: 1, ams_label: "", same_printer: true },
+              fits: "unknown",
+              printing: "",
+              type: "",
+            },
+            { id: "x", name: "No ID" },
+          ],
+        },
+      }),
+    });
+    expect(await spoolList(hass, "sensor.slot")).toEqual({
+      spools: [
+        {
+          id: 4,
+          name: "4",
+          brand: "",
+          material: "",
+          extraColors: [],
+          remainingG: 0,
+          rfid: false,
+          place: { here: false, printerId: 2, printerName: "2", amsId: 0, trayId: 1, samePrinter: true },
+          also: [],
+        },
+      ],
+    });
+  });
+
+  it("are none where the answer holds no list", async () => {
+    expect(await spoolList(makeHass({ callService: async () => ({ response: { spools: "many" } }) }), "sensor.slot")).toBeUndefined();
   });
 });
