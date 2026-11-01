@@ -247,9 +247,9 @@ describe("the status view", () => {
       { key: "right_auxiliary_fan", percent: 30 },
     ];
     const { card } = await cardFor("x1c", {}, { language: "de", devices: x1c({ fans }) });
-    // "Bauteil" alone read as "component off": the part cooling fan keeps
-    // its whole name, no longer than "Linker Zusatz".
-    expect(findAll(card, ".fan .fan-label.short").map(text)).toEqual(["Bauteillüfter", "Abluft", "Linker Zusatz", "Rechter Zusatz", "Hotend"]);
+    // Short as the others: beside "Kammer" and "Abluft" in the
+    // fans' row "Bauteil" reads as a fan; the full name stays for screen readers.
+    expect(findAll(card, ".fan .fan-label.short").map(text)).toEqual(["Bauteil", "Abluft", "Linker Zusatz", "Rechter Zusatz", "Hotend"]);
     expect(findAll(card, ".fan .fan-label.full").map(text)).toEqual(expect.arrayContaining(["Linker Zusatzlüfter", "Rechter Zusatzlüfter"]));
   });
 
@@ -2927,7 +2927,9 @@ describe("setting a slot's filament", () => {
     // White and black keep the outline that makes them visible on every theme.
     expect(swatches(card).filter((item) => item.classList.contains("outline")).map((item) => item.getAttribute("aria-label"))).toEqual(["White", "Black", "Yellow", "Beige"]);
     expect(text(find(card, "dialog .other-color"))).toBe("Other color …");
-    expect(text(find(card, "dialog .dlg-note"))).toBe("For spools without a chip. You can choose what Bambu Studio offers for this printer, its nozzle and this slot. Other profiles can be set on the printer or in BamBuddy.");
+    expect(text(find(card, "dialog .fil-head .fil-title"))).toBe("Slot profile");
+    expect(text(find(card, "dialog .fil-head .fil-help"))).toBe("The profiles Bambu Studio comes with, for this printer, its nozzle and this slot. Your own profiles are not here; set those on the printer or in BamBuddy.");
+    expect(text(find(card, "dialog"))).not.toContain("For spools without a chip");
     expect(findAll(card, "dialog .dlg-actions .btn").map(text)).toEqual(["Cancel", "Set"]);
     expect(root(card).activeElement).toBe(find(card, "dialog .btn.safe"));
     // Nothing changed yet.
@@ -3259,7 +3261,7 @@ describe("setting a slot's filament", () => {
       "Weiß", "Schwarz", "Grau", "Silber", "Rot", "Orange", "Gelb", "Grün", "Türkis", "Cyan", "Blau", "Lila", "Pink", "Braun", "Beige", "Gold",
     ]);
     expect(text(find(card, "dialog .other-color"))).toBe("Andere Farbe …");
-    expect(text(find(card, "dialog .dlg-note"))).toBe("Für Spulen ohne Chip. Zur Wahl steht, was Bambu Studio für diesen Drucker, seine Düse und dieses Fach anbietet. Andere Profile kannst du am Drucker oder in BamBuddy setzen.");
+    expect(text(find(card, "dialog .fil-head .fil-title"))).toBe("Profil des Fachs");
     expect(findAll(card, "dialog .dlg-actions .btn").map(text)).toEqual(["Abbrechen", "Übernehmen"]);
     await press(card, "Abbrechen");
     await edit(card, 3);

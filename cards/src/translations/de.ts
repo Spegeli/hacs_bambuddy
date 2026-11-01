@@ -174,7 +174,7 @@ export const de: Texts = {
   chamber: "Kammer",
   heater_off: "Aus",
   target: "Ziel {value}",
-  fan_part: "Bauteillüfter",
+  fan_part: "Bauteil",
   fan_aux: "Zusatz",
   fan_chamber: "Kammer",
   fan_exhaust: "Abluft",
