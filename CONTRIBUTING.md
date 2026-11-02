@@ -104,6 +104,7 @@ The card's modules, in `cards/src/`:
 | `maintenance.ts`, `check.ts` | Maintenance; the connection check |
 | `header.ts` | The head: name, chips, menu, the printer information |
 | `dialogs.ts` | Every dialog, the slot's with its tab From the inventory included |
+| `scan.ts` | Scanning a BamBuddy spool label in the tab From the inventory: the Home Assistant app's own scanner, the browser's camera or a photo; reading the QR code (the browser's own reader where it has one, else jsQR) |
 | `actions.ts` | Calling the actions and reading their responses (`get_spools`, `get_filaments`, `get_k_profiles` …); failures in the viewer's language |
 | `parts.ts` | Shared pieces; a slot as its sensor tells it, its inventory spool included |
 | `discovery.ts` | Entities by translation key, devices by `via_device_id` |
@@ -117,7 +118,7 @@ The card's modules, in `cards/src/`:
 
 `cards/test/setup.ts` waits for every real timer before a file ends; fixtures and helpers are in `cards/test/fixtures.ts` and `cards/test/helpers.ts`.
 
-Every change that can alter the build — under `cards/src`, or to `build.mjs`, `tsconfig.json` or `package-lock.json` — commits the rebuilt bundle with it, and nothing else ever changes the bundle: the check "Repository / Cards" rebuilds it and fails when the committed file differs. Pin every package to an exact version.
+Every change that can alter the build — under `cards/src`, or to `build.mjs`, `tsconfig.json` or `package-lock.json` — commits the rebuilt bundle with it, and nothing else ever changes the bundle: the check "Repository / Cards" rebuilds it and fails when the committed file differs. Pin every package to an exact version. Two go into the bundle: Lit, and jsQR (Apache License 2.0), which reads a QR code where the browser has no reader of its own.
 
 ## Project layout
 
@@ -145,6 +146,7 @@ The integration lives in `custom_components/bambuddy/`; the dashboard card's sou
 | `filaments.py` | Bambu Studio's filament profiles: a slot's name by its profile, what Bambu Studio offers a slot (per printer model, nozzle diameter, nozzle and slot) and why it refuses a filament there |
 | `filaments.json` | Bambu Studio's filament list, made by `.github/scripts/bambu_filaments.py --fetch` from Bambu Studio's profiles — never edited by hand |
 | `frontend/bambuddy-card.js` | The dashboard card, built from `cards/` — never edited by hand |
+| `frontend/jsqr-LICENSE.txt` | The licence of jsQR, which the card's bundle carries (copied from `cards/node_modules/jsqr/LICENSE`) |
 | `icons.json` | Entity and action icons |
 | `image.py` | The cover image of the current print job |
 | `inventory.py` | BamBuddy's spool inventory, one coordinator per entry: which spool sits in which slot, read once a minute and at once on BamBuddy's spool events; not shown while Spoolman keeps the spools; also whether a spool fits a slot as Bambu Studio's list says (`spool_fit`), and the slot sensors' `inventory_*` attributes; its reads need only optional permissions, so a refusal shows no inventory and never reaches the key guard |
