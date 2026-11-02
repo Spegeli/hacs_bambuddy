@@ -19,6 +19,7 @@ import { maintenanceContent, type MaintenanceDialog } from "./maintenance";
 import { icon } from "./icons";
 import { t, type TextKey } from "./i18n";
 import { actionButton, dialogNote, radioLeave, slotOf, slotPlace, spoolDot, spoolLine, stepControl, type CardContext, type Confirmation, type InventorySpool, type Slot } from "./parts";
+import type { CameraFailure } from "./scan";
 import type { AmsRefs, Hass } from "./types";
 
 /** Drying defaults and limits: BamBuddy's range; the AMS 2 Pro heats to 65 °C at most. */
@@ -147,7 +148,33 @@ export interface FilamentDialog {
   materialFilter?: string;
   locationFilter?: string;
   search?: string;
+  /** A scan of a spool label: in the app's own scanner, in the camera's
+   * picture, or the camera area saying why there is no picture. `torch`
+   * where the camera has a light. */
+  scan?: {
+    way: "app" | "live" | "blocked";
+    reason?: ScanReason;
+    torch?: "on" | "off";
+    height?: number;
+    streaming?: boolean;
+    /** A QR code that is no label is in the picture; one was, earlier. */
+    foreign?: boolean;
+    foreignSaid?: boolean;
+    /** How many photos ended without a spool: the same outcome is said again. */
+    tries?: number;
+  };
+  /** The spool a scan found, as the line above the list names it. */
+  scanned?: number;
+  /** The number a scan found that the list lacks. */
+  scanUnknown?: number;
+  /** The search holds what a scan put there ("Nr. 42"), not what the user typed. */
+  searchByScan?: boolean;
+  /** The filters are unfolded below the search. */
+  filtersOpen?: boolean;
 }
+
+/** Why the camera area shows no picture. */
+export type ScanReason = CameraFailure | "insecure" | "no_code" | "not_label";
 
 /** The vendor whose filaments hold the slot's own profile, where the offer has it. */
 export function ownVendor(dialog: FilamentDialog): string | undefined {
@@ -275,6 +302,13 @@ export interface DialogActions {
   chooseSpool: (id: number) => void;
   filterSpools: (field: "vendor" | "material" | "location", value: string) => void;
   searchSpools: (text: string) => void;
+  /** A spool label's scan: started, the camera closed, a photo taken, the light switched. */
+  startScan: () => void;
+  /** The filters below the search, folded and unfolded. */
+  toggleFilters: () => void;
+  closeScan: () => void;
+  takePhoto: (file: File) => void;
+  toggleTorch: () => void;
   /** Removes the slot's assignment. */
   unassign: () => void;
 }
@@ -630,7 +664,7 @@ function inventoryTabs(hass: Hass, dialog: FilamentDialog, actions: DialogAction
 
 /** The slot's spool from BamBuddy's inventory, whatever the key may; a
  * warning where it is assigned to other slots too. */
-function inventoryCard(ctx: CardContext, spool: InventorySpool): TemplateResult {
+function inventoryCard(ctx: CardContext, spool: InventorySpool, unassign?: () => void): TemplateResult {
   const { hass } = ctx;
   return html`<div class="inv-card">
     <span class="inv-from">${t(hass, "inv_from")}</span>
@@ -640,6 +674,7 @@ function inventoryCard(ctx: CardContext, spool: InventorySpool): TemplateResult 
     ${spool.alsoAssigned.map(
       (place) => html`<span class="inv-also">${icon("warning")}<span>${t(hass, "inv_also", { where: place.here ? "" : whereOf(ctx, place).at })}</span></span>`,
     )}
+    ${unassign ? html`<button class="inv-unassign" @click=${unassign}>${t(hass, "inv_unassign")}</button>` : nothing}
   </div>`;
 }
 
@@ -866,6 +901,61 @@ function spoolRow(ctx: CardContext, dialog: FilamentDialog, actions: DialogActio
   </div>`;
 }
 
+/** The camera area of a scan, in the place of the filters, the search and
+ * the list: the camera's picture, or why there is none and a photo instead. */
+function cameraArea(hass: Hass, dialog: FilamentDialog, actions: DialogActions): TemplateResult {
+  const scan = dialog.scan as NonNullable<FilamentDialog["scan"]>;
+  const photo = (event: Event): void => {
+    const input = event.target as HTMLInputElement;
+    const file = input.files?.[0];
+    // The same photo again is a new choice.
+    input.value = "";
+    if (file) actions.takePhoto(file);
+  };
+  return html`<div class="inv-camera" style=${scan.height ? `min-height: min(${scan.height}px, 60dvh)` : ""}>
+    ${scan.way === "live"
+      ? html`<div class="inv-camera-view">
+            <video playsinline muted autoplay .muted=${true}></video>
+            <div class="inv-camera-frame" aria-hidden="true"></div>
+          </div>
+          <p class="inv-camera-help">${t(hass, scan.foreign ? "inv_scan_not_label" : "inv_scan_help")}</p>`
+      : html`<div class="inv-camera-blocked">
+          <p class="inv-camera-reason">${t(hass, `inv_scan_${scan.reason ?? "failed"}` as TextKey)}</p>
+          <label class="btn tonal inv-photo"
+            >${icon("camera")}<span>${t(hass, "inv_scan_photo")}</span
+            ><input type="file" accept="image/*" capture="environment" @change=${photo}
+          /></label>
+        </div>`}
+    <div class="inv-camera-actions">
+      ${scan.torch
+        ? html`<button class="btn plain" aria-pressed=${scan.torch === "on" ? "true" : "false"} @click=${actions.toggleTorch}>
+            ${icon("flashlight")}<span>${t(hass, "inv_scan_torch")}</span>
+          </button>`
+        : nothing}
+      <button class="btn tonal inv-camera-close" @click=${actions.closeScan}>${t(hass, "inv_scan_close")}</button>
+    </div>
+  </div>`;
+}
+
+/** Whether the camera area stands in the list's place. */
+const cameraOpen = (dialog: FilamentDialog): boolean => dialog.scan !== undefined && dialog.scan.way !== "app";
+
+/** What the inventory's one live region says: the camera on (once its
+ * picture comes), why it is not, the spool a scan found or the number it
+ * lacks. One region that stays: one put in with its text is often not read. */
+function scanSays(hass: Hass, dialog: FilamentDialog): string {
+  const scan = dialog.scan;
+  if (scan?.way === "live") {
+    if (scan.foreign) return t(hass, "inv_scan_not_label");
+    return scan.streaming && !scan.foreignSaid ? t(hass, "inv_scan_on") : "";
+  }
+  // A zero-width space every other photo: the same text again is read again.
+  if (scan?.way === "blocked") return t(hass, `inv_scan_${scan.reason ?? "failed"}` as TextKey) + ((scan.tries ?? 0) % 2 ? "\u200b" : "");
+  if (dialog.scanned !== undefined) return t(hass, "inv_scan_done", { id: dialog.scanned });
+  if (dialog.scanUnknown !== undefined) return t(hass, "inv_scan_unknown", { id: dialog.scanUnknown });
+  return "";
+}
+
 /** The spools of the inventory for the slot: filters, a search, the list
  * in a box that scrolls on its own (the one such box of the card's dialogs:
  * the head and the buttons stay in reach), and its notes. */
@@ -883,6 +973,8 @@ function inventoryContent(ctx: CardContext, dialog: FilamentDialog, actions: Dia
   const assigned = slot.inventory?.id;
   const searchable = list.spools.length >= SEARCH_FROM;
   const filters = filtersOf(dialog, list);
+  /** How many filters are set: the folded button shows it. */
+  const set = Object.values(filters.chosen).filter(Boolean).length;
   const groups = shownSpools(dialog, list, assigned, filters);
   const shown = groups.flatMap(([, spools]) => spools);
   const choosable = shown.filter((spool) => spool.fits === undefined);
@@ -890,9 +982,45 @@ function inventoryContent(ctx: CardContext, dialog: FilamentDialog, actions: Dia
   const chosen = list.spools.find((spool) => spool.id === dialog.chosenSpool);
   const elsewhere = chosen && chosen.id !== assigned && chosen.place && !chosen.place.here ? whereOf(ctx, chosen.place).from : undefined;
   const pick = (event: Event): string => (event.target as HTMLSelectElement).value;
+  const all = list.spools;
   return html`<div id="inv-panel" role="tabpanel" aria-labelledby="inv-tab-inventory" class="inv-panel">
-    ${searchable
-      ? html`<div class="inv-filters">
+    <p class="sr-only inv-say" aria-live="polite">${scanSays(hass, dialog)}</p>
+    ${cameraOpen(dialog) ? cameraArea(hass, dialog, actions) : listContent()}
+  </div>`;
+
+  function listContent(): TemplateResult {
+    return html`${searchable
+      ? html`<div class="inv-search-row">
+            <input
+              id="inv-search"
+              class="inv-search"
+              type="search"
+              aria-label=${t(hass, "inv_search")}
+              placeholder=${t(hass, "inv_search")}
+              .value=${dialog.search ?? ""}
+              @input=${(event: Event) => actions.searchSpools((event.target as HTMLInputElement).value)}
+            />
+            <button
+              class="inv-filter ${dialog.filtersOpen ? "on" : ""}"
+              aria-label=${set ? t(hass, "inv_filter_set", { count: set }) : t(hass, "inv_filter")}
+              title=${t(hass, "inv_filter")}
+              aria-expanded=${dialog.filtersOpen ? "true" : "false"}
+              aria-controls=${dialog.filtersOpen ? "inv-filters" : nothing}
+              @click=${actions.toggleFilters}
+            >
+              ${icon("tune")}${set ? html`<span class="inv-filter-count" aria-hidden="true">${set}</span>` : nothing}
+            </button>
+            <button
+              class="inv-scan"
+              aria-label=${t(hass, "inv_scan")}
+              title=${t(hass, "inv_scan")}
+              ?disabled=${ctx.changing}
+              @click=${actions.startScan}
+            >
+              ${icon("qrcodeScan")}
+            </button>
+          </div>
+          ${dialog.filtersOpen ? html`<div class="inv-filters" id="inv-filters">
             <label class="field"
               ><span class="field-label">${t(hass, "inv_vendor")}</span>
               <span class="select"
@@ -915,7 +1043,7 @@ function inventoryContent(ctx: CardContext, dialog: FilamentDialog, actions: Dia
                 ${icon("chevronDown")}</span
               ></label
             >
-            ${list.spools.some((spool) => spool.storage)
+            ${all.some((spool) => spool.storage)
               ? html`<label class="field inv-wide"
                   ><span class="field-label">${t(hass, "inv_location")}</span>
                   <span class="select"
@@ -928,17 +1056,12 @@ function inventoryContent(ctx: CardContext, dialog: FilamentDialog, actions: Dia
                   ></label
                 >`
               : nothing}
-          </div>
-          <input
-            id="inv-search"
-            class="inv-search"
-            type="search"
-            aria-label=${t(hass, "inv_search")}
-            placeholder=${t(hass, "inv_search")}
-            .value=${dialog.search ?? ""}
-            @input=${(event: Event) => actions.searchSpools((event.target as HTMLInputElement).value)}
-          />`
+          </div>` : nothing}`
       : nothing}
+    ${dialog.scanned !== undefined
+      ? html`<p class="inv-scanned">${icon("check")}<span>${t(hass, "inv_scan_done", { id: dialog.scanned })}</span></p>`
+      : nothing}
+    ${dialog.scanUnknown !== undefined ? dialogNote(t(hass, "inv_scan_unknown", { id: dialog.scanUnknown }), "warning") : nothing}
     ${shown.length
       ? html`<div
           class="inv-list ${shown.length > 3 ? "many" : ""}"
@@ -955,8 +1078,8 @@ function inventoryContent(ctx: CardContext, dialog: FilamentDialog, actions: Dia
         </div>`
       : dialogNote(t(hass, "inv_no_hit"))}
     ${elsewhere ? dialogNote(t(hass, "inv_takes_from", { where: elsewhere })) : nothing}
-    ${slot.empty ? dialogNote(t(hass, "inv_empty_slot")) : nothing}
-  </div>`;
+    ${slot.empty ? dialogNote(t(hass, "inv_empty_slot")) : nothing}`;
+  }
 }
 
 function filamentContent(ctx: CardContext, dialog: FilamentDialog, actions: DialogActions): TemplateResult {
@@ -968,7 +1091,7 @@ function filamentContent(ctx: CardContext, dialog: FilamentDialog, actions: Dial
   const switcher = slot.assignable && !dialog.rfid && !dialog.inventoryOnly ? inventoryTabs(hass, dialog, actions) : nothing;
   // One head for every way, so that the switch keeps its place and its focus.
   return html`<h2 id="dlg-title">${dialog.title}</h2>
-    ${nozzleLine(ctx, dialog)} ${switcher} ${spool ? inventoryCard(ctx, spool) : nothing}
+    ${nozzleLine(ctx, dialog)} ${switcher} ${spool ? inventoryCard(ctx, spool, inventory && slot.assignable ? actions.unassign : undefined) : nothing}
     ${inventory ? inventoryPanel(ctx, dialog, actions, slot) : filamentBody(ctx, dialog, actions, spool)}`;
 }
 
@@ -1019,7 +1142,7 @@ function filamentBody(ctx: CardContext, dialog: FilamentDialog, actions: DialogA
 /** What the safe and the confirming button say; no confirming button
  * where there is nothing to confirm. `need` says what is missing while the
  * confirming button waits. */
-function buttons(ctx: CardContext, dialog: Dialog): { keep: string; confirm?: string; danger: boolean; ready: boolean; need?: string; quiet?: boolean; unassign?: string; warn?: string[] } {
+function buttons(ctx: CardContext, dialog: Dialog): { keep: string; confirm?: string; danger: boolean; ready: boolean; need?: string; quiet?: boolean; warn?: string[] } {
   const { hass } = ctx;
   switch (dialog.kind) {
     case "confirm":
@@ -1111,7 +1234,7 @@ function similarColors(a: string, b: string): boolean {
 
 /** The inventory's buttons: Assign once another spool is chosen (and the
  * slot may take it now), Remove assignment where the slot has one. */
-function inventoryButtons(ctx: CardContext, dialog: FilamentDialog): { keep: string; confirm?: string; danger: boolean; ready: boolean; need?: string; unassign?: string; warn?: string[] } {
+export function inventoryButtons(ctx: CardContext, dialog: FilamentDialog): { keep: string; confirm?: string; danger: boolean; ready: boolean; need?: string; warn?: string[] } {
   const { hass } = ctx;
   const slot = slotOf(hass, dialog.entityId);
   if (!slot.assignable) return { keep: t(hass, "dismiss"), danger: false, ready: false };
@@ -1119,6 +1242,11 @@ function inventoryButtons(ctx: CardContext, dialog: FilamentDialog): { keep: str
   // The sensor's spool: BamBuddy may link or drop one while the list is open.
   const assigned = slot.inventory?.id;
   const chosen = list?.spools.find((spool) => spool.id === dialog.chosenSpool);
+  // While the camera shows, the list is hidden: nothing it hides is
+  // assigned, and nothing is said of a choice out of sight.
+  if (cameraOpen(dialog)) {
+    return { keep: t(hass, "cancel"), confirm: t(hass, "inv_assign"), danger: false, ready: false };
+  }
   const busy = slotBusy(ctx, slot);
   const ready = chosen !== undefined && chosen.id !== assigned && chosen.fits === undefined && busy === undefined;
   return {
@@ -1127,7 +1255,6 @@ function inventoryButtons(ctx: CardContext, dialog: FilamentDialog): { keep: str
     danger: false,
     ready,
     ...(busy && chosen !== undefined && chosen.id !== assigned ? { need: busy } : {}),
-    ...(assigned !== undefined ? { unassign: t(hass, "inv_unassign") } : {}),
     ...(chosen !== undefined && chosen.id !== assigned ? warnings(otherMaterial(ctx, slot, chosen).warn) : {}),
   };
 }
@@ -1208,7 +1335,7 @@ const pressedBeside = new WeakSet<EventTarget>();
 /** The dialog; `notice`: "Sent" or an error, inside it while it is open --
  * the card behind a modal dialog is out of reach. */
 export function dialogView(ctx: CardContext, dialog: Dialog, actions: DialogActions, notice: TemplateResult | typeof nothing = nothing): TemplateResult {
-  const { keep, confirm, danger, ready, need, quiet, unassign, warn } = buttons(ctx, dialog);
+  const { keep, confirm, danger, ready, need, quiet, warn } = buttons(ctx, dialog);
   // A tap on the backdrop -- the dialog element itself -- closes it. Only
   // one pressed there too: a drag from a field out of the dialog, selecting
   // its text, ends with a click on the backdrop as well.
@@ -1240,7 +1367,6 @@ export function dialogView(ctx: CardContext, dialog: Dialog, actions: DialogActi
       <div class="dlg-actions">
         ${(warn ?? []).map((line) => html`<span class="dlg-warn">${icon("warning")}<span>${line}</span></span>`)}
         ${need ? html`<span class="dlg-need">${need}</span>` : nothing}
-        ${unassign ? html`<button class="btn plain inv-unassign" @click=${actions.unassign}>${unassign}</button>` : nothing}
         <button class="btn plain safe" autofocus @click=${actions.close}>${keep}</button>
         ${confirm === undefined
           ? nothing

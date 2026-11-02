@@ -82,6 +82,7 @@ describe("the settings", () => {
       filamentTab: true,
       amsFolding: "auto",
       externalSpool: true,
+      assignScanned: false,
       showAutoOff: true,
       compactChips: false,
     });
@@ -114,6 +115,7 @@ describe("what the editor shows and writes", () => {
       show_filament_tab: true,
       ams_folding: "auto",
       show_external_spool: true,
+      assign_scanned_spool: false,
       show_auto_off: true,
       compact_chips: false,
     });
@@ -208,7 +210,7 @@ describe("the visual editor", () => {
     expect(names(1)).toEqual(["start_view", "camera", "header_chips", "compact_chips", "read_only"]);
     expect(names(2)).toEqual(["status_blocks", "show_auto_off"]);
     expect(names(3)).toEqual(["show_control_tab", "control_sections"]);
-    expect(names(4)).toEqual(["show_filament_tab", "ams_folding", "show_external_spool"]);
+    expect(names(4)).toEqual(["show_filament_tab", "ams_folding", "show_external_spool", "assign_scanned_spool"]);
   });
 
   it("lets the blocks, the chips and the control sections be ordered by dragging", () => {
@@ -428,6 +430,31 @@ describe("the external spool's switch", () => {
     expect(en.computeLabel({ name: "show_external_spool" })).toBe("Show external spool");
     expect(en.computeHelper({ name: "show_external_spool" })).toBe(
       "Shows or hides the external spool in the Status and Filament tabs. Hiding it takes effect only on a printer with an AMS; while the printer feeds from the external spool, the card shows it all the same.",
+    );
+  });
+});
+
+describe("the scanned spool's switch", () => {
+  it("accepts assign_scanned_spool and writes it only when on", () => {
+    expect(settingsOf(validateConfig({ type: TYPE, printer: "dev-x1c" })).assignScanned).toBe(false);
+    expect(settingsOf(validateConfig({ type: TYPE, printer: "dev-x1c", assign_scanned_spool: true })).assignScanned).toBe(true);
+    expect(() => validateConfig({ type: TYPE, printer: "dev-x1c", assign_scanned_spool: "yes" })).toThrow();
+    const shown = editorData({ type: TYPE, printer: "dev-x1c" });
+    expect(shown["assign_scanned_spool"]).toBe(false);
+    expect(changedConfig({ type: TYPE }, shown, { ...shown, assign_scanned_spool: true })).toEqual({ type: TYPE, assign_scanned_spool: true });
+    expect(changedConfig({ type: TYPE, assign_scanned_spool: true }, { ...shown, assign_scanned_spool: true }, shown)).toEqual({ type: TYPE });
+  });
+
+  it("names the switch and says what it does, in both languages", () => {
+    const de = configForm(makeHass({ language: "de" }));
+    expect(de.computeLabel({ name: "assign_scanned_spool" })).toBe("Gescannte Spule gleich zuweisen");
+    expect(de.computeHelper({ name: "assign_scanned_spool" })).toBe(
+      "Passt die gescannte Spule, weist die Karte sie gleich zu. Bei einer Sperre, einer Warnung oder einer Spule aus einem anderen Fach wartet der Dialog auf „Zuweisen“.",
+    );
+    const en = configForm(makeHass({ language: "en" }));
+    expect(en.computeLabel({ name: "assign_scanned_spool" })).toBe("Assign a scanned spool at once");
+    expect(en.computeHelper({ name: "assign_scanned_spool" })).toBe(
+      "If the scanned spool fits, the card assigns it at once. Where something locks or warns, or the spool sits in another slot, the dialog waits for Assign.",
     );
   });
 });

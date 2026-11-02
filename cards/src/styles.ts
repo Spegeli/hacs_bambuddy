@@ -2746,8 +2746,9 @@ export const cardStyles = css`
   }
   /* The inventory's way: the list in a box of its own that takes the room
      left and scrolls (the one such box of the card's dialogs), so that the
-     head and the buttons stay in reach; about three rows at least, below
-     that the dialog scrolls as well. */
+     head and the buttons stay in reach; a spool and a half at least. Where
+     even that does not fit, the card marks the body inv-short and the
+     dialog scrolls as a whole. */
   .dlg-body:has(.inv-list) {
     max-height: calc(100dvh - 48px);
     box-sizing: border-box;
@@ -2788,6 +2789,178 @@ export const cardStyles = css`
     color: var(--bb-text);
     background: transparent;
   }
+  /* The search and the scan button side by side, one pair: the same height, radius and border. */
+  .inv-search-row {
+    display: flex;
+    gap: 8px;
+    align-items: stretch;
+  }
+  .inv-search-row .inv-search {
+    flex: 1;
+    min-width: 0;
+  }
+  .inv-scan,
+  .inv-filter {
+    flex: none;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 40px;
+    min-height: 40px;
+    padding: 0 8px;
+    border-radius: 8px;
+    border: 1px solid var(--bb-divider);
+    background: transparent;
+    color: var(--bb-text);
+    cursor: pointer;
+  }
+  /* The folded filters: the button tinted while they show, the count of those set on it. */
+  .inv-filter {
+    position: relative;
+  }
+  .inv-filter.on {
+    background: var(--bb-tint);
+  }
+  .inv-filter .icon {
+    width: 22px;
+    height: 22px;
+  }
+  .inv-filter-count {
+    position: absolute;
+    top: -6px;
+    right: -6px;
+    min-width: 18px;
+    height: 18px;
+    padding: 0 4px;
+    box-sizing: border-box;
+    border-radius: 9px;
+    background: var(--primary-color);
+    color: var(--text-primary-color, #fff);
+    font-size: 12px;
+    line-height: 18px;
+    text-align: center;
+  }
+  /* „Zuweisung aufheben“ in the assigned spool's box: a link-like button. */
+  .inv-card .inv-unassign {
+    align-self: flex-start;
+    margin-top: 6px;
+    padding: 6px 0;
+    border: 0;
+    background: none;
+    color: var(--primary-color);
+    font: inherit;
+    font-size: 14px;
+    cursor: pointer;
+  }
+  .inv-card .inv-unassign:focus-visible {
+    outline: 2px solid var(--bb-ring);
+    outline-offset: 2px;
+    border-radius: 4px;
+  }
+  .inv-scan:disabled {
+    opacity: 0.4;
+    cursor: default;
+  }
+  .inv-scan .icon {
+    width: 22px;
+    height: 22px;
+  }
+  .inv-scanned {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin: 0;
+    font-size: 14px;
+    color: var(--bb-text);
+  }
+  .inv-scanned .icon {
+    width: 18px;
+    height: 18px;
+    flex: none;
+    color: var(--bb-ok);
+  }
+  /* The camera area in the place of the filters, the search and the list. */
+  .inv-camera {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    box-sizing: border-box;
+  }
+  /* The picture takes the height the list left. */
+  .inv-camera-view {
+    position: relative;
+    flex: 1;
+    min-height: min(330px, 40dvh);
+    border-radius: 12px;
+    overflow: hidden;
+    background: #000;
+  }
+  .inv-camera-view video {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    display: block;
+  }
+  .inv-camera-frame {
+    position: absolute;
+    left: 50%;
+    top: 50%;
+    width: min(190px, 60%);
+    aspect-ratio: 1;
+    transform: translate(-50%, -50%);
+    border: 3px solid rgba(255, 255, 255, 0.9);
+    border-radius: 14px;
+    box-shadow: 0 0 0 9999px rgba(0, 0, 0, 0.35);
+  }
+  .inv-camera-help {
+    margin: 0;
+    text-align: center;
+    font-size: 14px;
+    line-height: 20px;
+    color: var(--bb-text);
+  }
+  .inv-camera-blocked {
+    flex: 1;
+    min-height: min(240px, 40dvh);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 12px;
+    padding: 16px;
+    border: 1px dashed var(--bb-divider);
+    border-radius: 12px;
+    text-align: center;
+  }
+  .inv-camera-reason {
+    margin: 0;
+    font-size: 14px;
+    line-height: 20px;
+    color: var(--bb-text);
+  }
+  .inv-photo {
+    position: relative;
+  }
+  /* The picker opens from its label; the input itself stays out of sight. */
+  .inv-photo input {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    opacity: 0;
+    pointer-events: none;
+  }
+  .inv-photo:has(input:focus-visible) {
+    outline: 2px solid var(--bb-ring);
+    outline-offset: 2px;
+  }
+  .inv-camera-actions {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: center;
+    gap: 8px;
+  }
   .inv-list {
     flex: 0 1 auto;
     min-height: 0;
@@ -2797,11 +2970,21 @@ export const cardStyles = css`
     border-radius: 12px;
     padding: 4px;
   }
+  /* At least a spool and a half: with the filters open on a phone more would
+     push the list's end under the button row. */
   .inv-list.many {
-    min-height: min(180px, 40dvh);
+    min-height: min(140px, 30dvh);
   }
-  /* A short screen (a phone held sideways): the dialog scrolls as a whole,
-     its button row at its foot; the list keeps a cap of its own. */
+  /* Too little room for the list's least (the card measures it: notes,
+     warnings, the filters open, a small phone), and a short screen (a phone
+     held sideways) in any case: the dialog scrolls as a whole, its button
+     row at its foot; the list keeps a cap of its own. */
+  .dlg-body.inv-short:has(.inv-list) {
+    max-height: none;
+  }
+  .dlg-body.inv-short .inv-list {
+    max-height: max(180px, 45dvh);
+  }
   @media (max-height: 560px) {
     .dlg-body:has(.inv-list) {
       max-height: none;

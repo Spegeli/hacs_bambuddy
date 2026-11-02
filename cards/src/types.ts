@@ -62,6 +62,8 @@ export interface Hass {
   config?: { time_zone?: string };
   /** The signed-in user; only an administrator may open the config panel. */
   user?: { is_admin: boolean };
+  /** In the companion apps: the bus to the app, and what the app offers (its QR scanner). */
+  auth?: { external?: { config?: { hasBarCodeScanner?: number }; fireMessage(message: Record<string, unknown>): void } };
   language: string;
   formatEntityState: (stateObj: HassEntityState, state?: string) => string;
   localize: LocalizeFunc;
@@ -120,6 +122,7 @@ export interface CardConfig {
   show_filament_tab?: boolean;
   ams_folding?: AmsFolding;
   show_external_spool?: boolean;
+  assign_scanned_spool?: boolean;
   /** The chips under the name with icon and value only. */
   compact_chips?: boolean;
   /** The row of the switch-off after the print under the printer's plug. */
@@ -274,3 +277,10 @@ export interface PrinterRefs {
   watched: string[];
 }
 
+
+declare global {
+  interface Window {
+    /** The frontend's receiver of the companion app's messages. */
+    externalBus?: (message: unknown) => unknown;
+  }
+}

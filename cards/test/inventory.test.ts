@@ -429,6 +429,8 @@ function spoolAnswer(spools: Record<string, unknown>[], assigned: number | null 
 }
 
 interface OpenOptions {
+  /** Leaves the filters folded, as the tab opens. */
+  folded?: boolean;
   assigned?: number | null;
   slot?: number;
   spool?: Record<string, unknown> | null;
@@ -450,6 +452,12 @@ async function openInventory(spools = FOUR, options: OpenOptions = {}): Promise<
     await settle(card);
   }
   await settle(card);
+  // The filters fold behind their button: the tests of the filters open them.
+  const filters = find<HTMLButtonElement>(card, "dialog .inv-filter");
+  if (filters && !options.folded) {
+    filters.click();
+    await settle(card);
+  }
   return card;
 }
 
@@ -460,7 +468,7 @@ const rowName = (row: Element): string => text(row.querySelector(".inv-name"));
 const where = (row: Element | undefined): string => text(row?.querySelector(".inv-where"));
 const rowNamed = (card: FakeCard, name: string): HTMLElement => rows(card).find((row) => rowName(row) === name) as HTMLElement;
 const dialogButton = (card: FakeCard, name: string): HTMLButtonElement | undefined =>
-  findAll<HTMLButtonElement>(card, "dialog .dlg-actions .btn").find((item) => text(item) === name);
+  findAll<HTMLButtonElement>(card, "dialog .dlg-actions .btn, dialog .inv-card .inv-unassign").find((item) => text(item) === name);
 
 describe("the inventory tab", () => {
   it("reads the spools when the tab opens", async () => {
@@ -562,7 +570,7 @@ describe("the inventory tab", () => {
     const card = await openInventory([...FOUR, listed({ id: 9, name: "Bambu Lab ABS", material: "ABS", fits: "by_chip", place: { printer_id: 1, printer_name: "Workshop", ams_id: 0, tray_id: 0, ams_label: null, same_printer: true } })]);
     const row = rowNamed(card, "Bambu Lab ABS");
     expect(row.getAttribute("aria-disabled")).toBe("true");
-    expect([...row.querySelectorAll(".inv-where")].map(text)).toEqual(["Zugewiesen: AMS A, Fach 1", "Verknüpft sich über ihren Chip"]);
+    expect([...row.querySelectorAll(".inv-where")].map(text)).toEqual(["Zugewiesen: AMS A, Fach 1", "Per Chip mit diesem Fach verknüpft"]);
   });
 
   it("locks a spool in a slot of another printer that prints", async () => {
@@ -951,6 +959,10 @@ describe("after the live check", () => {
     }
   });
 
+  it("keeps a spool and a half of the list at least", () => {
+    expect(styleText()).toMatch(/\.inv-list\.many\s*\{[^}]*min-height:\s*min\(140px, 30dvh\)/);
+  });
+
   it("puts each filter's label above its select", () => {
     expect(styleText()).toMatch(/\.inv-filters \.field\s*\{[^}]*flex-direction:\s*column/);
   });
@@ -959,6 +971,9 @@ describe("after the live check", () => {
     const short = atRule("@media (max-height: 560px)");
     expect(short).toMatch(/\.dlg-body:has\(\.inv-list\)\s*\{[^}]*max-height:\s*none/);
     expect(short).toMatch(/\.inv-list\s*\{[^}]*max-height:\s*max\(180px, 45dvh\)/);
+    // And where the card finds the list's least would not fit, the same.
+    expect(styleText()).toMatch(/\.dlg-body\.inv-short:has\(\.inv-list\)\s*\{[^}]*max-height:\s*none/);
+    expect(styleText()).toMatch(/\.dlg-body\.inv-short \.inv-list\s*\{[^}]*max-height:\s*max\(180px, 45dvh\)/);
   });
 
   it("keeps the dot with what stands before it, so that no line ends in it", async () => {
@@ -1056,5 +1071,62 @@ describe("storage locations", () => {
 
   it("the location field takes the whole row below the two others", () => {
     expect(styleText()).toMatch(/\.inv-filters \.field\.inv-wide\s*\{[^}]*grid-column:\s*1 \/ -1/);
+  });
+});
+
+describe("room for the spool list", () => {
+  const FIVE = [...FOUR, listed({ id: 5, name: "Polymaker PLA Matte", material: "PLA" })];
+
+  it("folds the filters behind a button beside the search", async () => {
+    const card = await openInventory(FIVE, { folded: true });
+    expect(find(card, "dialog .inv-filters")).toBeNull();
+    const button = find<HTMLButtonElement>(card, "dialog .inv-search-row .inv-filter") as HTMLButtonElement;
+    expect(button.getAttribute("aria-label")).toBe("Filter");
+    expect(button.getAttribute("title")).toBe("Filter");
+    expect(button.getAttribute("aria-expanded")).toBe("false");
+    expect(button.nextElementSibling?.classList.contains("inv-scan")).toBe(true);
+    expect(button.previousElementSibling?.id).toBe("inv-search");
+
+    button.click();
+    await settle(card);
+    const filters = find(card, "dialog .inv-filters");
+    expect(filters).not.toBeNull();
+    expect(filters?.previousElementSibling?.classList.contains("inv-search-row")).toBe(true);
+    expect(find(card, "dialog .inv-filter")?.getAttribute("aria-expanded")).toBe("true");
+    expect(find(card, "dialog .inv-filter")?.getAttribute("aria-controls")).toBe(filters?.id);
+
+    find<HTMLButtonElement>(card, "dialog .inv-filter")?.click();
+    await settle(card);
+    expect(find(card, "dialog .inv-filters")).toBeNull();
+  });
+
+  it("counts the filters set on the folded button", async () => {
+    const card = await openInventory(FIVE);
+    const material = find<HTMLSelectElement>(card, "dialog #inv-material") as HTMLSelectElement;
+    material.value = "PLA";
+    material.dispatchEvent(new Event("change"));
+    await settle(card);
+    find<HTMLButtonElement>(card, "dialog .inv-filter")?.click();
+    await settle(card);
+    const button = find(card, "dialog .inv-filter");
+    expect(text(button?.querySelector(".inv-filter-count"))).toBe("1");
+    expect(button?.getAttribute("aria-label")).toBe("Filter, 1 gesetzt");
+    expect(rows(card).map(rowName)).toEqual(["Geeetech PLA Basic", "Bambu PLA Basic", "Polymaker PLA Matte"]);
+  });
+
+  it("puts „Zuweisung aufheben“ into the assigned spool's box, the buttons in one row", async () => {
+    const card = await openInventory();
+    const unassign = find(card, "dialog .inv-card .inv-unassign");
+    expect(text(unassign)).toBe("Zuweisung aufheben");
+    expect(findAll(card, "dialog .dlg-actions .btn").map(text)).toEqual(["Abbrechen", "Zuweisen"]);
+    (unassign as HTMLButtonElement).click();
+    await settle(card);
+    expect(callsOf(card).find((call) => call.service === "unassign_spool")?.data).toEqual({ entity_id: X1C_SLOT_3 });
+  });
+
+  it("leaves the box of the filament tab without it", async () => {
+    const card = await openSlot3(GEEETECH, true);
+    expect(find(card, "dialog .inv-card")).not.toBeNull();
+    expect(find(card, "dialog .inv-unassign")).toBeNull();
   });
 });

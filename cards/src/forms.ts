@@ -53,6 +53,7 @@ const OPTIONS: Record<string, Validator> = {
   show_filament_tab: flag,
   ams_folding: oneOf(AMS_FOLDING),
   show_external_spool: flag,
+  assign_scanned_spool: flag,
   show_auto_off: flag,
 };
 
@@ -93,6 +94,8 @@ export interface Settings {
   filamentTab: boolean;
   amsFolding: AmsFolding;
   externalSpool: boolean;
+  /** A scanned spool label assigns its spool at once, where nothing speaks against it. */
+  assignScanned: boolean;
   showAutoOff: boolean;
   compactChips: boolean;
 }
@@ -108,6 +111,7 @@ export const DEFAULTS: Settings = {
   filamentTab: true,
   amsFolding: "auto",
   externalSpool: true,
+  assignScanned: false,
   showAutoOff: true,
   compactChips: false,
 };
@@ -123,6 +127,7 @@ export const settingsOf = (config: CardConfig): Settings => ({
   filamentTab: config.show_filament_tab ?? DEFAULTS.filamentTab,
   amsFolding: config.ams_folding ?? DEFAULTS.amsFolding,
   externalSpool: config.show_external_spool ?? DEFAULTS.externalSpool,
+  assignScanned: config.assign_scanned_spool ?? DEFAULTS.assignScanned,
   showAutoOff: config.show_auto_off ?? DEFAULTS.showAutoOff,
   compactChips: config.compact_chips ?? DEFAULTS.compactChips,
 });
@@ -149,6 +154,7 @@ const DEFAULT_DATA: Readonly<Record<string, unknown>> = {
   show_filament_tab: DEFAULTS.filamentTab,
   ams_folding: DEFAULTS.amsFolding,
   show_external_spool: DEFAULTS.externalSpool,
+  assign_scanned_spool: DEFAULTS.assignScanned,
   show_auto_off: DEFAULTS.showAutoOff,
   compact_chips: DEFAULTS.compactChips,
 };
@@ -185,6 +191,7 @@ const LABELS: Record<string, TextKey> = {
   show_filament_tab: "editor_filament_tab",
   ams_folding: "editor_ams_folding",
   show_external_spool: "editor_external_spool",
+  assign_scanned_spool: "editor_assign_scanned",
   show_auto_off: "editor_show_auto_off",
   compact_chips: "editor_compact_chips",
 };
@@ -200,6 +207,7 @@ const HELPERS: Record<string, TextKey> = {
   show_filament_tab: "editor_filament_tab_help",
   ams_folding: "editor_ams_folding_help",
   show_external_spool: "editor_external_spool_help",
+  assign_scanned_spool: "editor_assign_scanned_help",
   show_auto_off: "editor_show_auto_off_help",
   compact_chips: "editor_compact_chips_help",
 };
@@ -278,7 +286,7 @@ export function configForm(hass?: Hass): ConfigForm {
       ]),
       group(hass, "editor_group_status", "mdi:printer-3d", [list(hass, "status_blocks", "block", STATUS_BLOCKS), toggle("show_auto_off")]),
       group(hass, "editor_group_control", "mdi:gamepad-round-outline", [toggle("show_control_tab"), list(hass, "control_sections", "section", CONTROL_SECTIONS)]),
-      group(hass, "editor_group_filament", "mdi:printer-3d-nozzle", [toggle("show_filament_tab"), dropdown(hass, "ams_folding", "folding", AMS_FOLDING), toggle("show_external_spool")]),
+      group(hass, "editor_group_filament", "mdi:printer-3d-nozzle", [toggle("show_filament_tab"), dropdown(hass, "ams_folding", "folding", AMS_FOLDING), toggle("show_external_spool"), toggle("assign_scanned_spool")]),
     ],
     computeLabel: (field) => (field.name in LABELS ? t(hass, LABELS[field.name] as TextKey) : undefined),
     computeHelper: (field) => (field.name in HELPERS ? t(hass, HELPERS[field.name] as TextKey) : undefined),

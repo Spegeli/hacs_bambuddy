@@ -4,9 +4,9 @@
 // Assistant hands a card a new hass on every state change in the house.
 import { html, LitElement, nothing, type CSSResultGroup, type PropertyValues, type TemplateResult } from "lit";
 
-import { callAction, errorText, filamentOffer, kProfiles, printObjects, spoolList } from "./actions";
+import { callAction, errorText, filamentOffer, kProfiles, printObjects, spoolList, type ListedSpool } from "./actions";
 import { controlView, sectionShown, type Step } from "./control-view";
-import { dialogView, DRYING, filamentChanges, inPalette, KEEP, matchingProfile, ownVendor, type Dialog, type DryingField, type DryingSpool, type FilamentDialog, onInventory } from "./dialogs";
+import { dialogView, DRYING, filamentChanges, inPalette, inventoryButtons, KEEP, matchingProfile, ownVendor, type Dialog, type DryingField, type DryingSpool, type FilamentDialog, onInventory } from "./dialogs";
 import { findPrinter, hasControls, isPrinterDevice, notListed, printerDevices, printerOnline, printStatus, shownUnits } from "./discovery";
 import { filamentView } from "./filament-view";
 import { BUSY, FILAMENT_CHANGE, formatNumber, formatPercent, hasValue, numericState, RUNNING, stateOf, textOrUndefined, WITH_JOB } from "./format";
@@ -19,6 +19,7 @@ import { icon, printerDrawing, type IconName } from "./icons";
 import { rememberLocale, t, type TextKey } from "./i18n";
 import { asOnline, connection, sample, sampleKey, slotOf, snack, type CardContext, type Slot } from "./parts";
 import { defineCard, defineElement } from "./register";
+import { decodePhoto, scanFrames, scanInApp, scanWay, setTorch, startCamera, stopStream, torchOf, type AppScanEnd } from "./scan";
 import { cardPlugs, starting } from "./power";
 import { offlineJob, stateText, statusView } from "./status-view";
 import { cardStyles } from "./styles";
@@ -168,6 +169,20 @@ export class BamBuddyPrinterCard extends LitElement {
   private fullscreenEntry = "";
   /** Off the page with a live view: it ends when this runs out. */
   private liveGrace?: ReturnType<typeof setTimeout>;
+  /** A spool label's scan: the camera's stream, what reads its picture (and
+   * from which video), the app's scanner; each scan's number, so a camera
+   * that comes after its scan ended goes at once. */
+  private scanStream?: MediaStream;
+  private stopFrames?: () => void;
+  private framesOn?: HTMLVideoElement;
+  /** Ends the camera's "no label" line once no foreign code was seen for a while. */
+  private foreignTimer?: ReturnType<typeof setTimeout>;
+  private stopAppScan?: () => void;
+  private scanRun = 0;
+  /** When the camera area last offered a photo: the camera app may take the page away. */
+  private photoAsked = 0;
+  /** When the page was last hidden: the camera app's trip, before a rebuild. */
+  private hiddenAt = 0;
   protected pageVisible = document.visibilityState !== "hidden";
   private hiddenWait?: ReturnType<typeof setTimeout>;
   protected streamFailed = false;
@@ -317,6 +332,7 @@ export class BamBuddyPrinterCard extends LitElement {
       this.pageVisible = true;
       return;
     }
+    this.hiddenAt = Date.now();
     if (!this.fullscreenAsking) {
       this.pageHidden();
       return;
@@ -353,6 +369,10 @@ export class BamBuddyPrinterCard extends LitElement {
     this.pageVisible = document.visibilityState !== "hidden";
     this.attached = true;
     this.inEditor = inCardEditor(this);
+    // Back on the page itself (a dashboard only moved it): its dialog is its own.
+    if (handover?.from === this) handover = undefined;
+    this.takeOver();
+    window.addEventListener("resize", this.onResize);
     // Back while a check runs: its seconds count on.
     if (this.dialog?.kind === "check" && this.dialog.running) this.startCheckTimer();
     document.addEventListener("visibilitychange", this.onVisibility);
@@ -387,6 +407,21 @@ export class BamBuddyPrinterCard extends LitElement {
     clearTimeout(this.copiedTimer);
     this.stopCheckTimer();
     if (this.dialog?.kind === "info") this.dialog = { kind: "info" };
+    // A phone's camera app freezes the page; back, Home Assistant reconnects
+    // and rebuilds the dashboard with new cards: the next card of this
+    // printer takes the slot dialog on, the photo read here included.
+    const printer = this.config?.printer;
+    const trip = Date.now() - this.photoAsked < PHOTO_TRIP_MS && Date.now() - this.hiddenAt < HIDDEN_TRIP_MS;
+    if (this.dialog?.kind === "filament" && printer && trip && !this.preview && !this.inEditor) {
+      const dialog = this.dialog.scan?.way === "blocked" ? this.dialog : withoutScan(this.dialog);
+      handover = { from: this, printer, page: location.pathname, setup: JSON.stringify(this.config), dialog, view: this.view, at: Date.now() };
+    }
+    window.removeEventListener("resize", this.onResize);
+    // A live scan ends with the page: back, the list shows as it was. The
+    // photo's area stays: its picker may still answer.
+    if (this.dialog?.kind === "filament" && this.dialog.scan && this.dialog.scan.way !== "blocked") this.dialog = withoutScan(this.dialog);
+    this.endCamera();
+    this.endAppScan();
     // A target still being tapped is sent now, not lost.
     for (const [entityId, draft] of this.drafts) if (draft.sentFrom === undefined) void this.sendTarget(entityId);
     // Out of the page a modal dialog leaves the top layer but stays open:
@@ -511,6 +546,8 @@ export class BamBuddyPrinterCard extends LitElement {
     // above it. Measured open: a closed dialog lays out nothing.
     const foot = dialog?.open ? dialog.querySelector<HTMLElement>(".dlg-actions") : null;
     if (dialog && foot) dialog.style.scrollPaddingBottom = `${foot.offsetHeight + 12}px`;
+    this.fitList(dialog);
+    this.followScan();
     // The window's picture goes to the top layer once it is a popover.
     const live = this.liveElement();
     if (this.fullscreen === "window" && !this.popoverShown && live?.hasAttribute("popover")) {
@@ -1240,6 +1277,266 @@ export class BamBuddyPrinterCard extends LitElement {
     this.editFilament({ color, ...(inPalette(color) ? {} : { custom: color }) });
   }
 
+  private readonly onResize = (): void => {
+    if (this.dialog?.kind === "filament") this.fitList(this.renderRoot.querySelector("dialog"));
+  };
+
+  /** The inventory's list takes the room the dialog leaves, down to its
+   * least. Where what stands around it leaves less (notes, warnings, the
+   * filters open, a small screen), the dialog scrolls as a whole instead:
+   * else the list's end would sit under the button row, out of reach. */
+  private fitList(dialog: HTMLDialogElement | null): void {
+    const body = dialog?.querySelector<HTMLElement>(".dlg-body");
+    const list = body?.querySelector<HTMLElement>(".inv-list");
+    if (!body) return;
+    if (!list) {
+      body.classList.remove("inv-short");
+      return;
+    }
+    if (!body.classList.contains("inv-short")) {
+      // The list at its least, and the panel around it squeezed below what it
+      // holds: what it holds would run under the button row.
+      const panel = list.closest<HTMLElement>(".inv-panel");
+      if (panel && panel.scrollHeight > panel.clientHeight + 1) body.classList.add("inv-short");
+      return;
+    }
+    // Scrolling as a whole, the body is as tall as what it holds: back once
+    // that fits with the list at its least.
+    const least = parseFloat(getComputedStyle(list).minHeight) || 0;
+    if (body.scrollHeight - list.offsetHeight + least <= window.innerHeight - DIALOG_MARGIN) body.classList.remove("inv-short");
+  }
+
+  /** The scan the slot dialog runs, while its inventory shows. */
+  private runningScan(): FilamentDialog["scan"] {
+    const dialog = this.dialog;
+    return dialog?.kind === "filament" && this.hass && onInventory(this.hass, dialog) ? dialog.scan : undefined;
+  }
+
+  /** The camera and the app's scanner follow the dialog: whatever ends the
+   * scan -- a scan, Close camera, the dialog closed, the other tab, another
+   * dialog -- ends them here, in one place. */
+  private followScan(): void {
+    const scan = this.runningScan();
+    // The slot left the inventory (a reload, the printer away): the scan
+    // goes with it, or its camera area would stay with no picture.
+    if (!scan && this.dialog?.kind === "filament" && this.dialog.scan) this.dialog = withoutScan(this.dialog);
+    if (scan?.way !== "app") this.endAppScan();
+    if (scan?.way !== "live") {
+      this.endCamera();
+      return;
+    }
+    const video = this.renderRoot.querySelector<HTMLVideoElement>("dialog .inv-camera video");
+    if (!video || !this.scanStream) return;
+    if (video.srcObject !== this.scanStream) {
+      video.srcObject = this.scanStream;
+      void video.play().catch(() => undefined);
+    }
+    if (this.framesOn !== video) {
+      this.stopFrames?.();
+      this.framesOn = video;
+      this.stopFrames = scanFrames(video, (id) => this.applyScan(id), () => this.foreignSeen());
+    }
+  }
+
+  /** A QR code that is no spool label is in the picture: the help line says
+   * so until none was seen for FOREIGN_FOR_MS. */
+  private foreignSeen(): void {
+    const dialog = this.dialog;
+    if (dialog?.kind !== "filament" || dialog.scan?.way !== "live") return;
+    if (!dialog.scan.foreign) this.dialog = { ...dialog, scan: { ...dialog.scan, foreign: true, foreignSaid: true } };
+    clearTimeout(this.foreignTimer);
+    this.foreignTimer = setTimeout(() => {
+      this.foreignTimer = undefined;
+      const now = this.dialog;
+      if (now?.kind !== "filament" || !now.scan?.foreign) return;
+      const { foreign: _foreign, ...scan } = now.scan;
+      this.dialog = { ...now, scan };
+    }, FOREIGN_FOR_MS);
+  }
+
+  private endCamera(): void {
+    clearTimeout(this.foreignTimer);
+    this.foreignTimer = undefined;
+    this.stopFrames?.();
+    this.stopFrames = undefined;
+    this.framesOn = undefined;
+    stopStream(this.scanStream);
+    this.scanStream = undefined;
+  }
+
+  private endAppScan(): void {
+    const stop = this.stopAppScan;
+    this.stopAppScan = undefined;
+    stop?.();
+  }
+
+  private startScan(): void {
+    const dialog = this.dialog;
+    const hass = this.hass;
+    if (dialog?.kind !== "filament" || !hass) return;
+    const run = ++this.scanRun;
+    const way = scanWay(hass);
+    // The camera area as high as what it stands in for: the dialog keeps its size.
+    const height = this.renderRoot.querySelector<HTMLElement>("dialog #inv-panel")?.offsetHeight || undefined;
+    const { scanned: _scanned, scanUnknown: _unknown, ...rest } = dialog;
+    if (way === "app") {
+      this.dialog = { ...rest, scan: { way: "app" } };
+      const texts = {
+        title: t(hass, "inv_scan_app_title"),
+        description: t(hass, "inv_scan_help"),
+        manual: t(hass, "inv_scan_manual"),
+        notLabel: t(hass, "inv_scan_not_label"),
+      };
+      this.stopAppScan = scanInApp(hass, texts, (end) => this.appScanEnded(end));
+      return;
+    }
+    if (way === "insecure") {
+      this.photoAsked = Date.now();
+      this.dialog = { ...rest, scan: { way: "blocked", reason: "insecure", ...(height ? { height } : {}) } };
+      this.focusAfterUpdate("dialog .inv-photo input");
+      return;
+    }
+    this.dialog = { ...rest, scan: { way: "live", ...(height ? { height } : {}) } };
+    // The pressed button is gone with the list: the keyboard goes on in the camera area.
+    this.focusAfterUpdate("dialog .inv-camera-close");
+    void startCamera().then((found) => {
+      const current = this.dialog;
+      if (run !== this.scanRun || this.runningScan()?.way !== "live" || current?.kind !== "filament" || !current.scan) {
+        if (typeof found !== "string") stopStream(found);
+        return;
+      }
+      if (typeof found === "string") {
+        this.photoAsked = Date.now();
+        this.dialog = { ...current, scan: { ...current.scan, way: "blocked", reason: found } };
+        this.focusAfterUpdate("dialog .inv-photo input");
+        return;
+      }
+      this.scanStream = found;
+      this.dialog = { ...current, scan: { ...current.scan, streaming: true, ...(torchOf(found) ? { torch: "off" as const } : {}) } };
+    });
+  }
+
+  private appScanEnded(end: AppScanEnd): void {
+    this.stopAppScan = undefined;
+    const dialog = this.dialog;
+    if (dialog?.kind !== "filament" || dialog.scan?.way !== "app") return;
+    this.dialog = withoutScan(dialog);
+    if (end.kind === "spool") this.applyScan(end.id);
+    else if (end.kind === "manual") this.focusAfterUpdate("dialog #inv-search");
+  }
+
+  /** A spool label read (variant B): the filters back to all, the search
+   * names the spool, which is chosen where it fits. A number the list
+   * lacks is said, the list left as it was. */
+  private applyScan(id: number): void {
+    const dialog = this.dialog;
+    if (dialog?.kind !== "filament") return;
+    const list = typeof dialog.spools === "object" ? dialog.spools : undefined;
+    const spool = list?.spools.find((item) => item.id === id);
+    const { scan: _scan, scanned: _scanned, scanUnknown: _unknown, chosenSpool: _chosen, ...rest } = dialog;
+    if (!spool) {
+      // A search an earlier scan set goes: it named that scan's spool. One
+      // the user typed stays, as the filters do.
+      const { search: _search, searchByScan: _byScan, ...kept } = rest;
+      this.dialog = rest.searchByScan ? { ...kept, scanUnknown: id } : { ...rest, scanUnknown: id };
+      this.focusAfterUpdate("dialog .inv-scan");
+      return;
+    }
+    const { vendorFilter: _vendor, materialFilter: _material, locationFilter: _location, ...open } = rest;
+    this.dialog = {
+      ...open,
+      search: t(this.hass, "inv_scan_search", { id }),
+      searchByScan: true,
+      scanned: id,
+      ...(spool.fits === undefined ? { chosenSpool: id } : {}),
+    };
+    if (this.settings.assignScanned && this.assignsAtOnce(spool)) {
+      this.confirmDialog();
+      return;
+    }
+    void this.updateComplete.then(() => this.renderRoot.querySelector<HTMLElement>("dialog .inv-row")?.scrollIntoView?.({ block: "nearest" }));
+    this.focusAfterUpdate('dialog .inv-row[aria-checked="true"]', "dialog .inv-scan");
+  }
+
+  /** Whether a scanned spool goes in without Assign (the option
+   * assign_scanned_spool): Assign would take it, nothing warns, the slot is
+   * not the one a running print feeds, and the spool sits in no other slot. */
+  private assignsAtOnce(spool: ListedSpool): boolean {
+    const dialog = this.dialog;
+    const hass = this.hass;
+    if (dialog?.kind !== "filament" || !hass || !this.refs) return false;
+    const ctx = this.context(hass, this.refs);
+    const buttons = inventoryButtons(ctx, dialog);
+    const elsewhere = (spool.place !== undefined && !spool.place.here) || spool.also.length > 0;
+    return buttons.ready && !buttons.warn?.length && !(ctx.running && slotOf(hass, dialog.entityId).active) && !elsewhere;
+  }
+
+  private takePhoto(file: File): void {
+    this.photoAsked = Date.now();
+    void decodePhoto(file).then((found) => this.photoRead(found));
+  }
+
+  /** A photo read: its spool, or what it lacked. One this card read after
+   * Home Assistant replaced it goes to the card that took its dialog on. */
+  private photoRead(found: number | "no_code" | "not_label"): void {
+    const left = handover;
+    if (!this.isConnected && left?.from === this) {
+      left.photo = found;
+      if (left.card) {
+        handover = undefined;
+        left.card.photoRead(found);
+      }
+      return;
+    }
+    const dialog = this.dialog;
+    if (dialog?.kind !== "filament" || dialog.scan?.way !== "blocked") return;
+    if (typeof found === "number") this.applyScan(found);
+    else this.dialog = { ...dialog, scan: { ...dialog.scan, reason: found, tries: (dialog.scan.tries ?? 0) + 1 } };
+  }
+
+  /** The slot dialog of a card of this printer Home Assistant just replaced. */
+  private takeOver(): void {
+    const left = handover;
+    if (!left || left.card || left.from === this || this.dialog || this.preview || this.inEditor) return;
+    // The same card again: the same printer, set-up and page.
+    if (left.printer !== this.config?.printer || left.setup !== JSON.stringify(this.config) || left.page !== location.pathname) return;
+    if (Date.now() - left.at > HANDOVER_MS) {
+      handover = undefined;
+      return;
+    }
+    left.card = this;
+    // A fresh ask: what the old card was still waiting for answers it, not this one.
+    const ask = ++this.asks;
+    const dialog: FilamentDialog = { ...left.dialog, ask };
+    this.dialog = dialog;
+    this.view = left.view;
+    this.photoAsked = Date.now();
+    // A second rebuild (a flapping connection) hands it on again.
+    this.hiddenAt = Date.now();
+    if (dialog.offer === "loading") void this.loadOffer(dialog.entityId, ask);
+    if (dialog.kprofiles === "loading") {
+      void this.loadKProfiles(dialog.entityId, ask);
+      clearTimeout(this.kSlowTimer);
+      this.kSlowTimer = setTimeout(() => this.markKSlow(dialog.entityId, ask), K_SLOW_MS);
+    }
+    if (dialog.spools === "loading") void this.loadSpools(dialog.entityId, ask);
+    const photo = left.photo;
+    if (photo === undefined) return;
+    handover = undefined;
+    void this.updateComplete.then(() => this.photoRead(photo));
+  }
+
+  private toggleTorch(): void {
+    const dialog = this.dialog;
+    const track = this.scanStream ? torchOf(this.scanStream) : undefined;
+    if (dialog?.kind !== "filament" || !dialog.scan?.torch || !track) return;
+    const on = dialog.scan.torch === "off";
+    void setTorch(track, on).then((done) => {
+      const now = this.dialog;
+      if (done && now?.kind === "filament" && now.scan?.torch) this.dialog = { ...now, scan: { ...now.scan, torch: on ? "on" : "off" } };
+    });
+  }
+
   /** Ends the dialog. It closes before it goes: the browser then gives the
    * focus back to the button that opened it, where a dialog just removed
    * leaves it nowhere. One the menu opened gives it to the three dots. */
@@ -1364,7 +1661,7 @@ export class BamBuddyPrinterCard extends LitElement {
     setTab: (tab: "set" | "inventory") => {
       const dialog = this.dialog;
       if (dialog?.kind !== "filament" || dialog.tab === tab) return;
-      this.dialog = { ...dialog, tab };
+      this.dialog = { ...withoutScan(dialog), tab };
       if (tab === "inventory" && dialog.spools === undefined) this.startSpools(dialog);
     },
     chooseSpool: (id: number) => {
@@ -1374,7 +1671,7 @@ export class BamBuddyPrinterCard extends LitElement {
     filterSpools: (field: "vendor" | "material" | "location", value: string) => {
       const dialog = this.dialog;
       if (dialog?.kind !== "filament") return;
-      const { vendorFilter: _vendor, materialFilter: _material, locationFilter: _location, ...rest } = dialog;
+      const { vendorFilter: _vendor, materialFilter: _material, locationFilter: _location, scanned: _scanned, scanUnknown: _unknown, ...rest } = dialog;
       const vendorFilter = field === "vendor" ? value : dialog.vendorFilter;
       const materialFilter = field === "material" ? value : dialog.materialFilter;
       const locationFilter = field === "location" ? value : dialog.locationFilter;
@@ -1387,8 +1684,23 @@ export class BamBuddyPrinterCard extends LitElement {
     },
     searchSpools: (text: string) => {
       const dialog = this.dialog;
-      if (dialog?.kind === "filament") this.dialog = { ...dialog, search: text };
+      if (dialog?.kind !== "filament") return;
+      const { scanned: _scanned, scanUnknown: _unknown, searchByScan: _byScan, ...rest } = dialog;
+      this.dialog = { ...rest, search: text };
     },
+    startScan: () => this.startScan(),
+    toggleFilters: () => {
+      const dialog = this.dialog;
+      if (dialog?.kind === "filament") this.dialog = { ...dialog, filtersOpen: !dialog.filtersOpen };
+    },
+    closeScan: () => {
+      const dialog = this.dialog;
+      if (dialog?.kind !== "filament") return;
+      this.dialog = withoutScan(dialog);
+      this.focusAfterUpdate("dialog .inv-scan");
+    },
+    takePhoto: (file: File) => this.takePhoto(file),
+    toggleTorch: () => this.toggleTorch(),
     unassign: () => {
       const dialog = this.dialog;
       if (dialog?.kind !== "filament") return;
@@ -1932,3 +2244,42 @@ defineCard(TAG, BamBuddyPrinterCard, {
   name: () => t(undefined, "picker_name"),
   description: () => t(undefined, "picker_description"),
 });
+
+/** The dialog without its scan: the list shows again. */
+function withoutScan(dialog: FilamentDialog): FilamentDialog {
+  const { scan: _scan, ...rest } = dialog;
+  return rest;
+}
+
+/** How long after the camera area offered a photo a replaced card hands its
+ * dialog on, and how long the handed dialog waits for its new card. */
+const PHOTO_TRIP_MS = 5 * 60_000;
+const HANDOVER_MS = 30_000;
+/** The page hidden this long before at most: the rebuild follows the return. */
+const HIDDEN_TRIP_MS = 60_000;
+
+/** The room a dialog leaves on the screen, above and below (styles: 100dvh - 48px). */
+const DIALOG_MARGIN = 48;
+
+/** A slot dialog on its way from a card Home Assistant replaced to the new one. */
+interface Handover {
+  from: unknown;
+  printer: string;
+  /** The page and the card's set-up it was handed from. */
+  page: string;
+  setup: string;
+  dialog: FilamentDialog;
+  view: View;
+  at: number;
+  card?: BamBuddyPrinterCard;
+  photo?: number | "no_code" | "not_label";
+}
+let handover: Handover | undefined;
+
+/** Tests start without a dialog on its way. */
+export function forgetHandoverForTests(): void {
+    handover = undefined;
+}
+
+/** How long the camera's "no label" line stays after the last foreign code. */
+const FOREIGN_FOR_MS = 3_000;
