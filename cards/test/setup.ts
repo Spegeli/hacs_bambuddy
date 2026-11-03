@@ -8,9 +8,10 @@ customElements.define("home-assistant", class extends HTMLElement {});
 // is gone ("window is not defined"), whenever tearing it down takes longer
 // than the timer -- as with coverage on a slow runner. A card taken off the
 // page keeps its live view for a grace, in case a dashboard puts it back:
-// the file waits until every real timer has fired or been cleared. A faked
-// timer never reaches these; the clock is the real one even while a test
-// fakes performance.
+// the file waits until every real timeout has fired or been cleared
+// (intervals are left to the card's disconnect, which clears both of its
+// own). A faked timer never reaches these; the clock is the real one even
+// while a test fakes performance.
 const pending = new Map<unknown, number>();
 const realSet = globalThis.setTimeout;
 const realClear = globalThis.clearTimeout;

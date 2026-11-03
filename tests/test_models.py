@@ -17,6 +17,7 @@ from custom_components.bambuddy.models import (
     ams_object_id,
     ams_name,
     ams_number,
+    by_code,
     camera_max_fps,
     chamber_heats,
     detectors,
@@ -313,7 +314,7 @@ def test_model_capabilities(
         printer.has_door(),
         printer.has_airduct(),
         printer.has_ethernet(),
-        printer.has_sd_card(),
+        printer.has_storage(),
         printer.has_exhaust_fan(),
         printer.stores_on_usb(),
     ) == (aux, door, airduct, ethernet, sd, exhaust, usb)
@@ -326,28 +327,28 @@ _T, _F = True, False
     ("model", "expected"),
     [
         # aux fans, enclosed, door, airduct, Ethernet, USB drive, chamber fan, exhaust fan (no kit), stock aux,
-        # stock chamber, A1 family, drying from the screen only -- after Bambu's spec pages and FAQs.
-        ("X1", (_T, _T, _T, _F, _F, _F, _T, _F, _F, _T, _F, _F)),
-        ("BL-P002", (_T, _T, _T, _F, _F, _F, _T, _F, _F, _T, _F, _F)),
-        ("X1C", (_T, _T, _T, _F, _F, _F, _T, _F, _T, _T, _F, _F)),
-        ("X1E", (_T, _T, _T, _F, _T, _F, _T, _F, _T, _T, _F, _F)),
-        ("P1P", (_T, _F, _F, _F, _F, _F, _T, _F, _F, _F, _F, _F)),
-        ("P1S", (_T, _T, _F, _F, _F, _F, _T, _F, _T, _T, _F, _F)),
-        ("C12", (_T, _T, _F, _F, _F, _F, _T, _F, _T, _T, _F, _F)),
-        ("P2S", (_T, _T, _T, _T, _F, _T, _F, _F, _T, _F, _F, _F)),
-        ("N7", (_T, _T, _T, _T, _F, _T, _F, _F, _T, _F, _F, _F)),
-        ("A1", (_F, _F, _F, _F, _F, _F, _F, _F, _F, _F, _T, _T)),
-        ("A1 Mini", (_F, _F, _F, _F, _F, _F, _F, _F, _F, _F, _T, _T)),
-        ("A04", (_F, _F, _F, _F, _F, _F, _F, _F, _F, _F, _T, _T)),
-        ("A2L", (_F, _F, _F, _F, _F, _F, _F, _F, _F, _F, _T, _F)),
-        ("N9", (_F, _F, _F, _F, _F, _F, _F, _F, _F, _F, _T, _F)),
-        ("H2D", (_T, _T, _T, _T, _F, _T, _F, _T, _T, _F, _F, _F)),
-        ("H2D Pro", (_T, _T, _T, _T, _T, _T, _F, _T, _T, _F, _F, _F)),
-        ("O1E", (_T, _T, _T, _T, _T, _T, _F, _T, _T, _F, _F, _F)),
-        ("H2S", (_T, _T, _T, _T, _F, _T, _F, _T, _T, _F, _F, _F)),
-        ("H2C", (_T, _T, _T, _T, _F, _T, _F, _T, _T, _F, _F, _F)),
-        ("O1C2", (_T, _T, _T, _T, _F, _T, _F, _T, _T, _F, _F, _F)),
-        ("X2D", (_T, _T, _T, _T, _F, _T, _F, _T, _T, _F, _F, _F)),
+        # stock chamber, drying from the screen only -- after Bambu's spec pages and FAQs.
+        ("X1", (_T, _T, _T, _F, _F, _F, _T, _F, _F, _T, _F)),
+        ("BL-P002", (_T, _T, _T, _F, _F, _F, _T, _F, _F, _T, _F)),
+        ("X1C", (_T, _T, _T, _F, _F, _F, _T, _F, _T, _T, _F)),
+        ("X1E", (_T, _T, _T, _F, _T, _F, _T, _F, _T, _T, _F)),
+        ("P1P", (_T, _F, _F, _F, _F, _F, _T, _F, _F, _F, _F)),
+        ("P1S", (_T, _T, _F, _F, _F, _F, _T, _F, _T, _T, _F)),
+        ("C12", (_T, _T, _F, _F, _F, _F, _T, _F, _T, _T, _F)),
+        ("P2S", (_T, _T, _T, _T, _F, _T, _F, _F, _T, _F, _F)),
+        ("N7", (_T, _T, _T, _T, _F, _T, _F, _F, _T, _F, _F)),
+        ("A1", (_F, _F, _F, _F, _F, _F, _F, _F, _F, _F, _T)),
+        ("A1 Mini", (_F, _F, _F, _F, _F, _F, _F, _F, _F, _F, _T)),
+        ("A04", (_F, _F, _F, _F, _F, _F, _F, _F, _F, _F, _T)),
+        ("A2L", (_F, _F, _F, _F, _F, _F, _F, _F, _F, _F, _F)),
+        ("N9", (_F, _F, _F, _F, _F, _F, _F, _F, _F, _F, _F)),
+        ("H2D", (_T, _T, _T, _T, _F, _T, _F, _T, _T, _F, _F)),
+        ("H2D Pro", (_T, _T, _T, _T, _T, _T, _F, _T, _T, _F, _F)),
+        ("O1E", (_T, _T, _T, _T, _T, _T, _F, _T, _T, _F, _F)),
+        ("H2S", (_T, _T, _T, _T, _F, _T, _F, _T, _T, _F, _F)),
+        ("H2C", (_T, _T, _T, _T, _F, _T, _F, _T, _T, _F, _F)),
+        ("O1C2", (_T, _T, _T, _T, _F, _T, _F, _T, _T, _F, _F)),
+        ("X2D", (_T, _T, _T, _T, _F, _T, _F, _T, _T, _F, _F)),
     ],
 )
 def test_every_model_has_what_it_has(model: str, expected: tuple[bool, ...]) -> None:
@@ -364,7 +365,6 @@ def test_every_model_has_what_it_has(model: str, expected: tuple[bool, ...]) -> 
         printer.has_exhaust_fan(),
         printer.stock_aux_fan(),
         printer.stock_chamber_fan(),
-        printer.is_a1_family(),
         printer.dries_on_screen_only(),
     ) == expected
 
@@ -439,7 +439,7 @@ def test_a_spool_with_a_chip_describes_itself() -> None:
             None,
             ["buildplate_marker_detector", "spaghetti_detector", "pileup_detector", "clump_detector", "airprint_detector"],
         ),
-        # The H2D got the single detectors with 01.01.02.08.
+        # The H2D got the separate detectors with 01.01.02.08.
         (
             "H2D",
             "01.01.02.08",
@@ -605,10 +605,9 @@ def test_a_model_code_has_its_models_capabilities(code: str, model: str) -> None
         printer = _printer({"firmware_version": "01.09.00.00", "exhaust_fan_present": True}, name)
         return (printer.has_aux_fans(), printer.has_chamber_fan(), printer.has_exhaust_fan(), printer.stock_aux_fan(),
                 printer.stock_chamber_fan(), printer.has_door(), printer.has_airduct(), printer.has_ethernet(),
-                printer.has_sd_card(), printer.stores_on_usb(), printer.is_a1_family(), detectors(printer))
+                printer.has_storage(), printer.stores_on_usb(), detectors(printer))
 
     assert capabilities(code) == capabilities(model)
-
 
 
 @pytest.mark.parametrize(
@@ -620,7 +619,6 @@ def test_a_model_code_shows_as_its_model(model: str, shown: str) -> None:
     assert display_model(model) == shown
     printer = {"id": 1, "name": "Lab", "model": model, "serial_number": "00W00A000000001"}
     assert printer_name(printer) == (f"Lab ({shown} / 00W00A000000001)" if shown else "Lab (00W00A000000001)")
-
 
 
 @pytest.mark.parametrize(
@@ -729,3 +727,13 @@ def test_ventilating(model: str, status: dict[str, Any], on: bool) -> None:
 )
 def test_a_slot_is_named_by_its_profile(tray: dict[str, Any], name: str) -> None:
     assert tray_label(tray) == name
+
+
+def test_a_code_is_looked_up_as_the_table_has_it() -> None:
+    """BamBuddy's codes: whatever `dict.get` matches, as before (1.0 and True hash as 1)."""
+    table = {1: "a", 0: "b"}
+    assert by_code(table, 1) == "a"
+    assert by_code(table, 1.0) == "a"
+    assert by_code(table, True) == "a"
+    assert by_code(table, "1") is None
+    assert by_code(table, None) is None

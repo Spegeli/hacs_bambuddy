@@ -8,6 +8,21 @@ export const styleText = (): string => (Array.isArray(cardStyles) ? cardStyles :
 
 export const NBSP = " ";
 
+/** The declarations of every rule of the sheet whose selector list names
+ * this selector, one by one ("opacity: 0.4"); comments left out. */
+export function declarations(selector: string, sheet: string = styleText()): string[] {
+  const found: string[] = [];
+  for (const [, selectors = "", body = ""] of sheet.replace(/\/\*[\s\S]*?\*\//g, "").matchAll(/([^{}]*)\{([^{}]*)\}/g)) {
+    if (!selectors.split(",").some((one) => one.trim().replace(/\s+/g, " ") === selector)) continue;
+    found.push(...body.split(";").map((declaration) => declaration.trim().replace(/\s+/g, " ")).filter(Boolean));
+  }
+  return found;
+}
+
+/** A rule whose selector ends in `selector` (a pattern) with `body` (a
+ * pattern) among its declarations. */
+export const cssRule = (selector: string, body: string): RegExp => new RegExp(`${selector}\\s*\\{[^}]*${body}`);
+
 /** The rules inside every at-rule of the style sheet with this head --
  * "@container (max-width: 280px)" --, one after the other; "" where none. */
 export function atRule(head: string): string {

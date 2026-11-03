@@ -122,71 +122,18 @@ export type FakeHass = Hass & {
   calls: ServiceCall[];
 };
 
-// The integration's state translations, as formatEntityState shows them.
-const STATE_TEXTS: Record<string, Record<string, string>> = {
-  en: {
-    "print_status.idle": "Idle",
-    "print_status.preparing": "Preparing",
-    "print_status.slicing": "Slicing",
-    "print_status.printing": "Printing",
-    "print_status.paused": "Paused",
-    "print_status.finished": "Finished",
-    "print_status.failed": "Failed",
-    "print_status.offline": "Offline",
-    "print_status.unknown": "Unknown",
-    "print_stage.idle": "Idle",
-    "print_stage.printing": "Printing",
-    "print_stage.heating_nozzle": "Heating nozzle",
-    "print_stage.auto_bed_leveling": "Auto bed leveling",
-    "print_stage.paused_by_user": "Paused by the user",
-    "print_speed.silent": "Silent (50 %)",
-    "print_speed.standard": "Standard (100 %)",
-    "print_speed.sport": "Sport (124 %)",
-    "print_speed.ludicrous": "Ludicrous (166 %)",
-    "active_nozzle.left": "Left",
-    "active_nozzle.right": "Right",
-    "ams_status.idle": "Idle",
-    "ams_status.heating": "Heating",
-    "ams_status.feeding": "Feeding",
-    "ams_status.purging": "Purging",
-    "ams_status.changing_filament": "Changing filament",
-    "nozzle_type.hardened_steel": "Hardened steel",
-    "nozzle_type.stainless_steel": "Stainless steel",
-    "left_nozzle_type.hardened_steel": "Hardened steel",
-    "right_nozzle_type.stainless_steel_high_flow": "Stainless steel, high flow",
-  },
-  de: {
-    "print_status.idle": "Bereit",
-    "print_status.preparing": "Vorbereitung",
-    "print_status.slicing": "Slicen",
-    "print_status.printing": "Druckt",
-    "print_status.paused": "Pausiert",
-    "print_status.finished": "Fertig",
-    "print_status.failed": "Fehlgeschlagen",
-    "print_status.offline": "Offline",
-    "print_status.unknown": "Unbekannt",
-    "print_stage.idle": "Bereit",
-    "print_stage.printing": "Druckt",
-    "print_stage.heating_nozzle": "Düse heizt auf",
-    "print_stage.auto_bed_leveling": "Automatische Bettnivellierung",
-    "print_stage.paused_by_user": "Vom Benutzer pausiert",
-    "print_speed.silent": "Leise (50 %)",
-    "print_speed.standard": "Standard (100 %)",
-    "print_speed.sport": "Sport (124 %)",
-    "print_speed.ludicrous": "Ludicrous (166 %)",
-    "active_nozzle.left": "Links",
-    "active_nozzle.right": "Rechts",
-    "ams_status.idle": "Bereit",
-    "ams_status.heating": "Heizt",
-    "ams_status.feeding": "Fördert",
-    "ams_status.purging": "Spült",
-    "ams_status.changing_filament": "Wechselt Filament",
-    "nozzle_type.hardened_steel": "Gehärteter Stahl",
-    "nozzle_type.stainless_steel": "Edelstahl",
-    "left_nozzle_type.hardened_steel": "Gehärteter Stahl",
-    "right_nozzle_type.stainless_steel_high_flow": "Edelstahl, High Flow",
-  },
-};
+// The integration's state translations, as formatEntityState shows them:
+// "translation_key.state" in each of its languages.
+const STATE_TEXTS = Object.fromEntries(
+  Object.entries({ en: integrationEn, de: integrationDe }).map(([language, texts]) => [
+    language,
+    Object.fromEntries(
+      Object.values((texts as { entity: Record<string, Record<string, { state?: Record<string, string> }>> }).entity).flatMap((entities) =>
+        Object.entries(entities).flatMap(([key, entity]) => Object.entries(entity.state ?? {}).map(([value, text]) => [`${key}.${value}`, text])),
+      ),
+    ),
+  ]),
+) as Record<string, Record<string, string>>;
 
 function stateOf(entity: FakeEntity): HassEntityState {
   return {
@@ -307,6 +254,13 @@ export function makeHass(options: FakeHassOptions = {}): FakeHass {
 }
 
 // --- The integration's devices -------------------------------------------------
+
+/** The integration names a unit or a plug after the printer's BamBuddy
+ * name: the part of the device name before " (model / serial)". */
+function shortName(printer: FakeDevice): string {
+  const cut = printer.name.lastIndexOf(" (");
+  return cut > 0 ? printer.name.slice(0, cut) : printer.name;
+}
 
 export interface SlotSpec {
   name?: string;
@@ -749,11 +703,7 @@ export function amsDevice(spec: AmsSpec): FakeDevice {
       { entityId: `sensor.${p}_drying_remaining_time`, key: "drying_remaining_time", state: value(String(spec.drying.remaining)), attributes: { unit_of_measurement: "min" } },
     );
   }
-  // The integration names a unit after the printer's BamBuddy name: the part
-  // of the device name before " (model / serial)".
-  const cut = spec.printer.name.lastIndexOf(" (");
-  const short = cut > 0 ? spec.printer.name.slice(0, cut) : spec.printer.name;
-  return { id: `${spec.printer.id}-ams-${spec.amsId}`, name: `${short} ${spec.label ?? label} (${spec.model})`, model: spec.model, via: spec.printer.id, entities };
+  return { id: `${spec.printer.id}-ams-${spec.amsId}`, name: `${shortName(spec.printer)} ${spec.label ?? label} (${spec.model})`, model: spec.model, via: spec.printer.id, entities };
 }
 
 // --- The printers the tests and the screenshots use ---------------------------
@@ -1036,6 +986,7 @@ export interface FakeCard extends HTMLElement {
   getCardSize(): number;
   getGridOptions(): Record<string, unknown>;
   updateComplete: Promise<boolean>;
+  requestUpdate(): void;
 }
 
 /** The card as a dashboard creates it: element, configuration, hass. */
@@ -1046,6 +997,31 @@ export async function mountCard(hass: FakeHass, config: Record<string, unknown>)
   document.body.append(card);
   await card.updateComplete;
   return card;
+}
+
+/** The X1C idle, no slot in use: every slot may be set. */
+export const idleX1c = (): FakeDevice[] => {
+  const all = x1c({ status: "idle", stage: "idle" });
+  for (const entity of (all[1] as FakeDevice).entities) {
+    if ("attributes" in entity && entity.attributes) entity.attributes = { ...entity.attributes, active: false };
+  }
+  return all;
+};
+
+/** A printer at rest: idle, nothing printed, the nozzle cold. */
+export const IDLE: Partial<PrinterSpec> = { status: "idle", stage: "idle", progress: 0, nozzles: [[30, 0]] };
+
+/** A card for the printer device given, on a hass with these devices: the
+ * hass options beside the devices in `options`. */
+export async function mountFor(
+  devices: FakeDevice[],
+  printer: string,
+  config: Record<string, unknown> = {},
+  options: Partial<FakeHassOptions> = {},
+): Promise<{ card: FakeCard; hass: FakeHass }> {
+  const hass = makeHass({ devices, ...options });
+  const card = await mountCard(hass, { printer, ...config });
+  return { card, hass };
 }
 
 // --- Smart plugs ----------------------------------------------------------------
@@ -1130,8 +1106,95 @@ export function plugDevice(spec: PlugSpec): FakeDevice {
       { entityId: `button.${p}_auto_off_skip`, key: "auto_off_skip", state: auto.phase === "waiting" ? "unknown" : "unavailable" },
     );
   }
-  const cut = spec.printer.name.lastIndexOf(" (");
-  const short = cut > 0 ? spec.printer.name.slice(0, cut) : spec.printer.name;
-  return { id: `${spec.printer.id}-plug-${spec.id}`, name: `${short} ${spec.name} (Smart Plug)`, model: "Tasmota", via: spec.printer.id, entities };
+  return { id: `${spec.printer.id}-plug-${spec.id}`, name: `${shortName(spec.printer)} ${spec.name} (Smart Plug)`, model: "Tasmota", via: spec.printer.id, entities };
 }
 
+/** The X1C -- printing, unless its overrides say otherwise -- with the plugs given. */
+export function x1cWithPlugs(printer: Partial<PrinterSpec>, ...plugs: Omit<PlugSpec, "printer">[]): FakeDevice[] {
+  const devices = x1c(printer);
+  return [...devices, ...plugs.map((spec) => plugDevice({ printer: devices[0] as FakeDevice, ...spec }))];
+}
+
+// --- BamBuddy's spool inventory ---------------------------------------------
+
+/** BamBuddy's Geeetech spool, as the slot sensor's attribute names it. */
+const GEEETECH = {
+  id: 1,
+  name: "Geeetech PLA Basic",
+  brand: "Geeetech",
+  material: "PLA",
+  subtype: "Basic",
+  color_name: "Apple Green",
+  rgba: "B6D648FF",
+  extra_colors: [],
+  remaining_g: 886,
+  remaining_pct: 89,
+  label_weight: 1000,
+  storage_location: null,
+  rfid: false,
+  assigned_color: "FFFFFFFF",
+  assigned_type: "PLA",
+  spool_types: ["PLA"],
+};
+
+/** The X1C's active slot 2 without a chip (a third-party spool the print feeds). */
+export function withoutChip(devices: FakeDevice[], entityId = "sensor.dev-x1c_ams_0_slot_2"): FakeDevice[] {
+  for (const device of devices) {
+    for (const entity of device.entities) {
+      if (entity.entityId === entityId) entity.attributes = { ...entity.attributes, rfid: false };
+    }
+  }
+  return devices;
+}
+
+/** The slot sensor `entityId` gets the inventory's attributes. */
+export function assign(devices: FakeDevice[], entityId: string, spool: Record<string, unknown> | null, assignable = true): FakeDevice[] {
+  for (const device of devices) {
+    for (const entity of device.entities) {
+      if (entity.entityId === entityId) {
+        entity.attributes = { ...entity.attributes, inventory_assignable: assignable, ...(spool ? { inventory_spool: spool } : {}) };
+      }
+    }
+  }
+  return devices;
+}
+
+/** BamBuddy's Geeetech spool as a slot sensor's attribute names it, with
+ * the overrides given. */
+export const geeetech = (overrides: Record<string, unknown> = {}): typeof GEEETECH & Record<string, unknown> => ({ ...GEEETECH, ...overrides });
+
+export interface Listed {
+  id: number;
+  name: string;
+  brand?: string;
+  material: string;
+  color_name?: string;
+  rgba?: string;
+  extra_colors?: string[];
+  remaining_g?: number;
+  remaining_pct?: number;
+  storage_location?: string | null;
+  place?: Record<string, unknown> | null;
+  fits?: string | null;
+  printing?: string;
+  type?: string;
+  /** Any other field of BamBuddy's answer. */
+  [field: string]: unknown;
+}
+
+/** A spool of `get_spools`' list: what the test gives over sensible defaults. */
+export const listed = (spool: Listed): Record<string, unknown> => ({
+  brand: spool.name.split(" ")[0],
+  subtype: null,
+  color_name: "Black",
+  rgba: "000000FF",
+  extra_colors: [],
+  remaining_g: 500,
+  remaining_pct: 50,
+  storage_location: null,
+  rfid: false,
+  place: null,
+  fits: null,
+  type: spool.material.toUpperCase(),
+  ...spool,
+});

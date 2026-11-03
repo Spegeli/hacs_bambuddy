@@ -57,7 +57,7 @@ from tests.conftest import (
     set_up,
     setup_integration,
 )
-from tests.test_live import FakeSocket, _settle
+from tests.helpers import FakeSocket, settle
 
 _INPUT = {"url": "bambuddy.local:8000/", "api_key": API_KEY, "verify_ssl": True}
 
@@ -1252,7 +1252,6 @@ async def test_adding_printers_with_a_refused_key_says_so(hass: HomeAssistant, b
     assert result["description_placeholders"] == {"name": entry.title}
 
 
-
 async def test_a_setup_left_open_blocks_no_new_one(hass: HomeAssistant, bambuddy_api: SimpleNamespace) -> None:
     """The browser tab closed during a setup: its flow stays, and Home Assistant lists no user flow to end
     it. A new setup for the address goes through; the one left ends with it."""
@@ -1549,7 +1548,7 @@ async def test_live_updates_say_an_open_connection(hass: HomeAssistant, bambuddy
     bambuddy_api.open_socket.side_effect = None
     bambuddy_api.open_socket.return_value = FakeSocket()
     entry.runtime_data.live.async_retry_now()
-    await _settle(hass)
+    await settle(hass)
     assert entry.runtime_data.live.connected
     tokens = bambuddy_api.get_ws_token.await_count
 
@@ -1573,7 +1572,7 @@ async def test_live_updates_test_a_connection_that_is_not_open(hass: HomeAssista
 
     assert (result["type"], result["step_id"], result["errors"]) == (FlowResultType.FORM, "live_updates_tested", None)
     assert tested.closes == 1
-    await _settle(hass)
+    await settle(hass)
     assert live.connected
     assert live._socket is kept
     assert (await _save(hass, result))["type"] is FlowResultType.CREATE_ENTRY
@@ -1606,7 +1605,7 @@ async def test_live_updates_name_what_failed(
     assert (result["type"], result["step_id"], result["errors"]) == (FlowResultType.FORM, "live_updates_failed", {"base": key})
     assert result["description_placeholders"] == {"error": kind}
     # A test that failed leaves the entry's connection waiting as it was.
-    await _settle(hass)
+    await settle(hass)
     assert entry.runtime_data.live._later is waiting
     assert (await _save(hass, result, live_updates=False))["type"] is FlowResultType.CREATE_ENTRY
     assert entry.options["live_updates"] is False
@@ -1628,7 +1627,7 @@ async def test_live_updates_give_up_after_ten_seconds(hass: HomeAssistant, bambu
     # A line of its own: no answer within the limit.
     assert (result["step_id"], result["errors"]) == ("live_updates_failed", {"base": "live_timeout"})
     assert result["description_placeholders"] == {"error": "TimeoutError"}
-    await _settle(hass)
+    await settle(hass)
     assert entry.runtime_data.live._later is waiting
     assert (await _save(hass, result))["type"] is FlowResultType.CREATE_ENTRY
 
@@ -1645,7 +1644,7 @@ async def test_live_updates_while_switched_off_still_test(hass: HomeAssistant, b
 
     assert result["step_id"] == "live_updates_tested"
     assert socket.closes == 1
-    await _settle(hass)
+    await settle(hass)
     assert bambuddy_api.get_ws_token.await_count == 1
     assert not entry.runtime_data.live.connected
     assert (await _save(hass, result, live_updates=False))["type"] is FlowResultType.CREATE_ENTRY

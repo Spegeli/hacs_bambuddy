@@ -23,7 +23,7 @@ from pytest_homeassistant_custom_component.common import MockConfigEntry
 from pytest_homeassistant_custom_component.typing import ClientSessionGenerator
 
 from custom_components.bambuddy import renames
-from custom_components.bambuddy.const import DOMAIN, HOLD_LIMIT
+from custom_components.bambuddy.const import DOMAIN, RELOADS_PER_RUN
 from custom_components.bambuddy.coordinator import find_device, renames_issue
 from tests.conftest import (
     A1_MINI,
@@ -206,7 +206,7 @@ async def test_the_hold_gives_up_after_three_runs(
     """Three reloads that did not settle it: the unit gets its entities as
     a new device rather than the entry reloading for ever."""
     entry = await set_up(hass, A1_MINI)
-    hass.data.setdefault(DOMAIN, {}).setdefault("ams_holds", {})[(entry.entry_id, printer_key(A1_MINI), LITE_SERIAL)] = HOLD_LIMIT
+    hass.data.setdefault(DOMAIN, {}).setdefault("ams_holds", {})[(entry.entry_id, printer_key(A1_MINI), LITE_SERIAL)] = RELOADS_PER_RUN
     _lite_reports_its_serial(bambuddy_api)
 
     with caplog.at_level(logging.WARNING), patch.object(hass.config_entries, "async_schedule_reload") as reload:
@@ -704,7 +704,7 @@ async def test_the_setup_moves_the_unit_at_the_cap_too(hass: HomeAssistant, bamb
     entry = make_entry(hass, A1_MINI)
     await setup_integration(hass, entry)
     assert await hass.config_entries.async_unload(entry.entry_id)
-    hass.data.setdefault(DOMAIN, {}).setdefault("ams_holds", {})[(entry.entry_id, printer_key(A1_MINI), LITE_SERIAL)] = HOLD_LIMIT
+    hass.data.setdefault(DOMAIN, {}).setdefault("ams_holds", {})[(entry.entry_id, printer_key(A1_MINI), LITE_SERIAL)] = RELOADS_PER_RUN
     _lite_reports_its_serial(bambuddy_api)
 
     await setup_integration(hass, entry)

@@ -8,7 +8,23 @@ import "../src/index";
 import { findPrinter } from "../src/discovery";
 import { configForm } from "../src/forms";
 
-import { h2d, makeHass, mountCard, offlineP1s, plugDevice, unreachable, x1c, type FakeCard, type FakeDevice, type FakeHass, type PlugSpec, type PrinterSpec } from "./fixtures";
+import {
+  h2d,
+  IDLE,
+  makeHass,
+  mountCard,
+  mountFor,
+  offlineP1s,
+  plugDevice,
+  unreachable,
+  x1c,
+  x1cWithPlugs,
+  type FakeCard,
+  type FakeDevice,
+  type FakeHass,
+  type PlugSpec,
+  type PrinterSpec,
+} from "./fixtures";
 import { atRule, find, findAll, NBSP, styleText, text, update } from "./helpers";
 
 const NOW = new Date("2026-10-18T14:10:00Z");
@@ -18,22 +34,14 @@ interface Mounted {
   hass: FakeHass;
 }
 
-async function mount(devices: FakeDevice[], printer: string, config: Record<string, unknown> = {}, language = "en"): Promise<Mounted> {
-  const hass = makeHass({ devices, language });
-  const card = await mountCard(hass, { printer, ...config });
-  return { card, hass };
-}
+const mount = (devices: FakeDevice[], printer: string, config: Record<string, unknown> = {}, language = "en"): Promise<Mounted> =>
+  mountFor(devices, printer, config, { language });
 
 /** The X1C -- printing, unless its overrides say otherwise -- and
  * the plugs given (the printer's own, by default). */
-function x1cWith(printer: Partial<PrinterSpec> = {}, ...plugs: Omit<PlugSpec, "printer">[]): FakeDevice[] {
-  const devices = x1c(printer);
-  const device = devices[0] as FakeDevice;
-  const specs = plugs.length ? plugs : [{ id: 3, name: "Tasmota – FA3F19", watts: 182.4, today: 1.27 }];
-  return [...devices, ...specs.map((spec) => plugDevice({ printer: device, ...spec }))];
-}
+const x1cWith = (printer: Partial<PrinterSpec> = {}, ...plugs: Omit<PlugSpec, "printer">[]): FakeDevice[] =>
+  x1cWithPlugs(printer, ...(plugs.length ? plugs : [{ id: 3, name: "Tasmota – FA3F19", watts: 182.4, today: 1.27 }]));
 
-const IDLE: Partial<PrinterSpec> = { status: "idle", stage: "idle", progress: 0, nozzles: [[30, 0]] };
 const ACCESSORY = { id: 4, name: "Shelly – Abluftfilter", powersPrinter: false, watts: 12 };
 const PLUG = "switch.dev-x1c_plug_3";
 

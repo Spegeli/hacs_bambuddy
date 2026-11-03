@@ -5,6 +5,8 @@ auxiliary fan and, with the kit, its exhaust fan -- and what does not go
 together with heating the chamber locks the other."""
 from __future__ import annotations
 
+import json
+import re
 from types import SimpleNamespace
 from typing import Any
 
@@ -13,7 +15,13 @@ from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import ServiceValidationError
 
 from custom_components.bambuddy import fan as fan_module
-from tests.conftest import X1C, as_model, entity_id, printer_uid, set_up, state_at
+from tests.conftest import INTEGRATION, X1C, as_model, entity_id, printer_uid, set_up, state_at
+
+
+def placeholders_of(key: str) -> set[str]:
+    """The placeholders a refusal's English text uses: a refusal passes those, no more."""
+    texts = json.loads((INTEGRATION / "translations" / "en.json").read_text(encoding="utf-8"))["exceptions"]
+    return set(re.findall(r"\{(\w+)\}", texts[key]["message"]))
 
 _FANS = ("cooling_fan_speed", "big_fan1_speed", "big_fan2_speed", "heatbreak_fan_speed")
 _HEATER = {"H2D": True, "H2S": True, "H2C": True, "H2D Pro": True, "X2D": True, "P2S": False}
@@ -248,6 +256,7 @@ async def test_ventilation_waits_where_it_does_not_go(
         await _call(hass, "turn_on", entity)
 
     assert raised.value.translation_key == refusal
+    assert set(raised.value.translation_placeholders or {}) == placeholders_of(refusal)
     bambuddy_api.set_fan_speed.assert_not_awaited()
     bambuddy_api.set_airduct_mode.assert_not_awaited()
 
@@ -347,6 +356,7 @@ async def test_a_chamber_target_waits_where_it_does_not_go(
     with pytest.raises(ServiceValidationError) as raised:
         await _set_chamber(hass, entity, 40)
     assert raised.value.translation_key == refusal
+    assert set(raised.value.translation_placeholders or {}) == placeholders_of(refusal)
     assert order == []
 
     await _set_chamber(hass, entity, 0)
@@ -367,6 +377,7 @@ async def test_keep_warm_waits_on_the_ventilation(hass: HomeAssistant, bambuddy_
         await hass.services.async_call("select", "select_option", {"entity_id": entity, "option": "heating"}, blocking=True)
 
     assert raised.value.translation_key == "ventilation_on"
+    assert set(raised.value.translation_placeholders or {}) == placeholders_of("ventilation_on")
     bambuddy_api.set_airduct_mode.assert_not_awaited()
 
 

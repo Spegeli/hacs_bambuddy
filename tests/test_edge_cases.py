@@ -32,6 +32,8 @@ from tests.conftest import (
     load_fixture,
     next_refresh,
     no_entity,
+    past_minutes,
+    past_the_minute,
     printer_device,
     printer_info,
     printer_key,
@@ -171,8 +173,7 @@ async def test_the_names_notice_goes_with_its_entry(
     printer = dr.async_get(hass).async_get(device_id(hass, entry, printer_device(entry, X1C)))
     assert printer is not None
     dr.async_get(hass).async_update_device(printer.id, name_by_user="Mine")
-    for _ in range(6):
-        await next_refresh(hass, freezer)
+    await past_the_minute(hass, freezer)
     issue_id = names_issue(entry.entry_id, printer_key(X1C))
     assert ir.async_get(hass).async_get_issue(DOMAIN, issue_id) is not None
 
@@ -209,8 +210,7 @@ async def test_the_replaced_refusal_names_this_printer(
     bambuddy_api.statuses[X1C] = load_fixture("status_a1mini.json")
 
     with patch.object(hass.config_entries, "async_schedule_reload"):
-        for _ in range(6):
-            await next_refresh(hass, freezer)
+        await past_the_minute(hass, freezer)
         device = dr.async_get(hass).async_get(device_id(hass, entry, printer_device(entry, X1C)))
         assert device is not None
         with pytest.raises(ServiceValidationError) as raised:
@@ -227,8 +227,7 @@ async def test_another_name_under_the_number_is_checked_at_once(
     reaches the newcomer."""
     entry = await set_up(hass, X1C)
     a1_mini = printer_info(2)
-    for _ in range(6):
-        await next_refresh(hass, freezer)
+    await past_the_minute(hass, freezer)
     bambuddy_api.get_printer.side_effect = None
     bambuddy_api.get_printer.return_value = {**a1_mini, "id": X1C}
     bambuddy_api.statuses[X1C] = {**load_fixture("status_a1mini.json"), "name": a1_mini["name"]}
@@ -266,8 +265,7 @@ async def test_bambuddys_system_information_may_fail_once(
     bambuddy_api.get_system_info.side_effect = BamBuddyConnectionError("GET /system/info: TimeoutError")
     bambuddy_api.get_statistics.return_value = {**load_fixture("archives_stats.json"), "total_prints": 900}
 
-    for _ in range(30):
-        await next_refresh(hass, freezer)
+    await past_minutes(hass, freezer, 30)
 
     assert bambuddy_api.get_system_info.await_count == 2
     assert entry.runtime_data.instance.last_update_success

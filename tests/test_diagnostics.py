@@ -22,16 +22,16 @@ from tests.conftest import (
     API_KEY,
     H2D,
     X1C,
+    WS_TOKEN,
     device_id,
     load_fixture,
     make_entry,
-    next_refresh,
+    past_the_minute,
     printer_device,
     printer_serial,
     printers_but,
     set_up,
     setup_integration,
-    WS_TOKEN,
 )
 
 
@@ -170,8 +170,7 @@ async def test_the_download_names_no_serial_through_the_repairs(
     workshop = dr.async_get(hass).async_get(device_id(hass, entry, printer_device(entry, X1C)))
     assert workshop is not None
     dr.async_get(hass).async_update_device(workshop.id, name_by_user="My printer")
-    for _ in range(6):
-        await next_refresh(hass, freezer)
+    await past_the_minute(hass, freezer)
     assert await async_setup_component(hass, "diagnostics", {})
     client = await hass_client()
 

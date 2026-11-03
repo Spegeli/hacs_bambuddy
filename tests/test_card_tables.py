@@ -15,7 +15,7 @@ import pytest
 import voluptuous as vol
 import yaml
 
-from custom_components.bambuddy import auto_off, coordinator, fan, filaments, models, plug_identity, plugs, services
+from custom_components.bambuddy import auto_off, coordinator, fan, filaments, models, plug_identity, services
 from custom_components.bambuddy.models import DRYING_MAX, HMS_ANSWERS
 
 from tests.conftest import INTEGRATION
@@ -46,7 +46,9 @@ def test_set_filament_names_a_profile_by_its_id_alone() -> None:
     the card asks the integration for its filaments: get_filaments."""
     actions = yaml.safe_load((INTEGRATION / "services.yaml").read_text(encoding="utf-8"))
     assert "material" not in actions["set_filament"]["fields"]
-    assert "GENERIC" not in _card("dialogs.ts")
+    # The dialogs, the slot dialog's two ways and the shared pieces dialogs.ts was split into.
+    for name in ("dialogs.ts", "filament-dialog.ts", "inventory-dialog.ts", "parts.ts"):
+        assert "GENERIC" not in _card(name), name
 
 
 def test_the_filament_choice_is_the_list() -> None:

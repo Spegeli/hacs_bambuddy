@@ -4,7 +4,18 @@
 import { afterEach, describe, expect, it } from "vitest";
 
 import "../src/index";
-import { h2d, makeHass, maintenanceSpec, mountCard, offlineP1s, readOnlyX1c, unreachable, x1c, type FakeDevice } from "./fixtures";
+import {
+  h2d,
+  maintenanceSpec,
+  makeHass,
+  mountCard,
+  offlineP1s,
+  plugDevice,
+  readOnlyX1c,
+  unreachable,
+  x1c,
+  type FakeDevice,
+} from "./fixtures";
 import { atRule, button, find, findAll, NBSP, press, settle, showView, styleText, text, update } from "./helpers";
 
 afterEach(() => {
@@ -109,14 +120,14 @@ describe("dialogs, said whole", () => {
 
   it("the switch-off's steppers say what they change", async () => {
     const devices = x1c({ status: "idle", stage: "idle" });
-    const { plugDevice } = await import("./fixtures");
     const card = await mountCard(makeHass({ devices: [...devices, plugDevice({ printer: devices[0] as FakeDevice, id: 3, name: "Tasmota", autoOff: { armed: true, phase: "idle", temperature: 50 } })] }), {
       printer: "dev-x1c",
     });
     (find(card, ".power .p-open") as HTMLButtonElement).click();
     await settle(card);
-    expect(button(card, `Lower the switch-off temperature by 5${NBSP}°C`)).toBeTruthy();
-    expect(button(card, `Raise the switch-off temperature by 5${NBSP}°C`)).toBeTruthy();
+    // button() fails where no button has this name.
+    button(card, `Lower the switch-off temperature by 5${NBSP}°C`);
+    button(card, `Raise the switch-off temperature by 5${NBSP}°C`);
   });
 });
 

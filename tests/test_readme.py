@@ -273,7 +273,6 @@ def test_the_readmes_own_images_are_in_the_repository_with_a_text() -> None:
     assert not (_ROOT / "logo.png").exists()
 
 
-
 def test_the_readme_says_how_plugs_are_known() -> None:
     """A plug's entities belong to what it switches, its device to BamBuddy's plug (words as approved)."""
     assert (

@@ -12,52 +12,16 @@ import {
   instanceDevice,
   makeHass,
   mountCard,
-  offlineP1s,
   p1s,
   readOnlyX1c,
   unreachable,
   x1c,
   type FakeCard,
   type FakeDevice,
-  type FakeHass,
-  type FakeHassOptions,
-  type PrinterSpec,
 } from "./fixtures";
-import { button, find, findAll, hasButton, NBSP, press, root, settle, shownText, styleText, text, update } from "./helpers";
+import { cardFor, withX1c } from "./card-helpers";
+import { button, declarations, find, findAll, hasButton, NBSP, press, root, settle, shownText, styleText, text, update } from "./helpers";
 
-const PRINTERS = {
-  x1c: [x1c, "dev-x1c"],
-  h2d: [h2d, "dev-h2d"],
-  a1mini: [a1mini, "dev-a1mini"],
-  p1s: [p1s, "dev-p1s"],
-  offline: [offlineP1s, "dev-p1s"],
-  readOnly: [readOnlyX1c, "dev-x1c"],
-} as const;
-
-type Name = keyof typeof PRINTERS;
-
-async function cardFor(
-  name: Name,
-  options: {
-    language?: string;
-    devices?: FakeDevice[];
-    config?: Record<string, unknown>;
-    admin?: boolean;
-    callService?: FakeHassOptions["callService"];
-  } = {},
-): Promise<{ card: FakeCard; hass: FakeHass }> {
-  const [devices, printer] = PRINTERS[name];
-  const hass = makeHass({
-    devices: options.devices ?? (devices as () => FakeDevice[])(),
-    language: options.language ?? "en",
-    ...(options.admin === undefined ? {} : { admin: options.admin }),
-    ...(options.callService ? { callService: options.callService } : {}),
-  });
-  const card = await mountCard(hass, { printer, ...(options.config ?? {}) });
-  return { card, hass };
-}
-
-const withX1c = (overrides: Partial<PrinterSpec>) => cardFor("x1c", { devices: x1c(overrides) });
 
 /** The status chips under the title, by their kind. */
 const pill = (card: FakeCard, kind: "network" | "hms" | "firmware"): HTMLElement | null => find(card, `.pills .pill.${kind}`);
@@ -75,7 +39,6 @@ const nozzleLinesOf = (card: FakeCard, label: string): Element[] => {
   return [...(row?.querySelectorAll(".spec-value > span") ?? [])];
 };
 
-const css = styleText;
 
 beforeEach(() => {
   vi.useFakeTimers({ toFake: ["Date"] });
@@ -146,8 +109,8 @@ describe("the title", () => {
   });
 
   it("may wrap a long name to two lines before it is cut", () => {
-    expect(css()).toMatch(/\.name\s*\{[^}]*-webkit-line-clamp: 2/);
-    expect(css()).not.toMatch(/\.name\s*\{[^}]*white-space: nowrap/);
+    expect(declarations(".name", styleText())).toContain("-webkit-line-clamp: 2");
+    expect(styleText()).not.toMatch(/\.name\s*\{[^}]*white-space: nowrap/);
   });
 
   it("leaves out what it does not know", async () => {
@@ -240,16 +203,16 @@ describe("the head's chips", () => {
 
   it("line up with the tabs and the blocks below, also on a very narrow card", () => {
     // The card's padding: 16 px, 12 px below 340 px -- one left edge under the head.
-    expect(css()).toMatch(/ha-card\s*\{[^}]*--bb-inset: 16px/);
-    expect(css()).toMatch(/@container \(max-width: 340px\)\s*\{[^@]*ha-card\s*\{[^}]*--bb-inset: 12px/);
+    expect(declarations("ha-card", styleText())).toContain("--bb-inset: 16px");
+    expect(styleText()).toMatch(/@container \(max-width: 340px\)\s*\{[^@]*ha-card\s*\{[^}]*--bb-inset: 12px/);
     // On both sides, as the tabs and the blocks below.
-    expect(css()).toMatch(/\.pills\s*\{[^}]*margin: -2px var\(--bb-inset\) 10px/);
-    expect(css()).toMatch(/\.hms-line\s*\{[^}]*margin: -4px var\(--bb-inset\) 10px/);
-    expect(css()).toMatch(/\.hms-line\s*\{[^}]*width: calc\(100% - 2 \* var\(--bb-inset\)\)/);
+    expect(declarations(".pills", styleText())).toContain("margin: -2px var(--bb-inset) 10px");
+    expect(declarations(".hms-line", styleText())).toContain("margin: -4px var(--bb-inset) 10px");
+    expect(declarations(".hms-line", styleText())).toContain("width: calc(100% - 2 * var(--bb-inset))");
   });
 
   it("are easy to hit on a touch screen without looking bigger", () => {
-    expect(css()).toMatch(/@media \(pointer: coarse\)\s*\{[^}]*button\.pill::before\s*\{[^}]*inset: -3px 0/);
+    expect(styleText()).toMatch(/@media \(pointer: coarse\)\s*\{[^}]*button\.pill::before\s*\{[^}]*inset: -3px 0/);
   });
 
   it("leave HMS out offline or without the sensor", async () => {
@@ -362,8 +325,8 @@ describe("the HMS line", () => {
   });
 
   it("is one line at most", () => {
-    expect(css()).toMatch(/\.hms-line-text\s*\{[^}]*text-overflow: ellipsis/);
-    expect(css()).toMatch(/\.hms-line-text\s*\{[^}]*white-space: nowrap/);
+    expect(declarations(".hms-line-text", styleText())).toContain("text-overflow: ellipsis");
+    expect(declarations(".hms-line-text", styleText())).toContain("white-space: nowrap");
   });
 
   it("says it in German", async () => {

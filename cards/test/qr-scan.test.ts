@@ -4,28 +4,25 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import "../src/index";
 import { forgetHandoverForTests } from "../src/card";
 import { setDecoderForTests } from "../src/scan";
-import { h2d, makeHass, mountCard, x1c, type FakeCard, type FakeDevice, type FakeHass, type FakeHassOptions } from "./fixtures";
+import {
+  assign,
+  geeetech,
+  h2d,
+  listed,
+  makeHass,
+  mountCard,
+  withoutChip,
+  x1c,
+  type FakeCard,
+  type FakeDevice,
+  type FakeHass,
+  type FakeHassOptions,
+} from "./fixtures";
 import { find, findAll, settle, showView, text } from "./helpers";
 
 // --- The world: a slot, its spools, a camera ----------------------------------
 
 const SLOT = "sensor.dev-x1c_ams_0_slot_3";
-
-const listed = (spool: { id: number; name: string; material: string } & Record<string, unknown>): Record<string, unknown> => ({
-  brand: spool.name.split(" ")[0],
-  subtype: null,
-  color_name: "Black",
-  rgba: "000000FF",
-  extra_colors: [],
-  remaining_g: 500,
-  remaining_pct: 50,
-  storage_location: null,
-  rfid: false,
-  place: null,
-  fits: null,
-  type: spool.material.toUpperCase(),
-  ...spool,
-});
 
 /** Six spools: the slot's own (1), free ones, one in another slot, one that does not fit. */
 const SIX = [
@@ -37,32 +34,9 @@ const SIX = [
   { id: 6, name: "Elegoo PLA Plus", material: "PLA" },
 ].map(listed);
 
-const GEEETECH = {
-  id: 1,
-  name: "Geeetech PLA Basic",
-  brand: "Geeetech",
-  material: "PLA",
-  subtype: "Basic",
-  color_name: "Black",
-  rgba: "000000FF",
-  extra_colors: [],
-  remaining_g: 500,
-  remaining_pct: 50,
-  storage_location: null,
-  rfid: false,
-  assigned_color: "000000FF",
-  assigned_type: "PLA",
-  spool_types: ["PLA"],
-};
-
-function assignable(devices: FakeDevice[], slot = SLOT): FakeDevice[] {
-  for (const device of devices) {
-    for (const entity of device.entities) {
-      if (entity.entityId === slot) entity.attributes = { ...entity.attributes, rfid: false, inventory_assignable: true, inventory_spool: GEEETECH };
-    }
-  }
-  return devices;
-}
+/** The slot without a chip, Geeetech's black spool assigned to it. */
+const assignable = (devices: FakeDevice[], slot = SLOT): FakeDevice[] =>
+  withoutChip(assign(devices, slot, geeetech({ color_name: "Black", rgba: "000000FF", remaining_g: 500, remaining_pct: 50, assigned_color: "000000FF" })), slot);
 
 interface World {
   spools?: Record<string, unknown>[];
@@ -123,7 +97,7 @@ function camera(options: { torch?: boolean; error?: string } = {}): { tracks: Fa
   return { tracks, getUserMedia };
 }
 
-/** What the decoder reads from the next frames: nothing until `reads` is set. */
+/** What the decoder reads from the next frames: nothing until `text` is set. */
 const decoded: { text?: string } = {};
 
 beforeEach(() => {
@@ -180,7 +154,7 @@ describe("the scan button", () => {
   it("is locked while a filament change runs", async () => {
     const card = await openScan();
     expect(scanButton(card)?.disabled).toBe(false);
-    card.hass = (card.hass as unknown as FakeHass).withState("sensor.x1c_ams_status", "feeding") as never;
+    card.hass = (card.hass as FakeHass).withState("sensor.x1c_ams_status", "feeding") as never;
     await settle(card);
     expect(scanButton(card)?.disabled).toBe(true);
   });
@@ -454,7 +428,7 @@ describe("after a scan", () => {
     const card = await scanned("3");
     dialogButton(card, "Zuweisen")?.click();
     await settle(card);
-    const calls = (card.hass as unknown as { calls: { service: string; data?: Record<string, unknown> }[] }).calls;
+    const calls = (card.hass as FakeHass).calls;
     expect(calls.filter((call) => call.service === "assign_spool").map((call) => call.data)).toEqual([{ entity_id: SLOT, spool_id: 3 }]);
   });
 });
@@ -572,7 +546,7 @@ describe("the scan's edges", () => {
 describe("assign_scanned_spool", () => {
   type Calls = { service: string; data?: Record<string, unknown> }[];
   const assigned = (card: FakeCard): unknown[] =>
-    (card.hass as unknown as { calls: Calls }).calls.filter((call) => call.service === "assign_spool").map((call) => call.data);
+    (card.hass as FakeHass).calls.filter((call) => call.service === "assign_spool").map((call) => call.data);
 
   async function scanWith(id: string, world: World = {}): Promise<FakeCard> {
     camera();
@@ -627,12 +601,12 @@ describe("the scan while things change", () => {
     const { tracks } = camera();
     const card = await openScan();
     await startScan(card);
-    const hass = card.hass as unknown as FakeHass;
+    const hass = card.hass as FakeHass;
     const before = hass.states[SLOT] as { state: string; attributes: Record<string, unknown> };
     card.hass = hass.withState(SLOT, before.state, { ...before.attributes, inventory_assignable: false }) as never;
     await settle(card);
     expect(tracks[0]?.stop).toHaveBeenCalledTimes(1);
-    card.hass = (card.hass as unknown as FakeHass).withState(SLOT, before.state, before.attributes) as never;
+    card.hass = (card.hass as FakeHass).withState(SLOT, before.state, before.attributes) as never;
     await settle(card);
     expect(find(card, "dialog .inv-camera")).toBeNull();
     expect(find(card, "dialog .inv-list")).not.toBeNull();
@@ -738,7 +712,7 @@ describe("the photo's trip to the camera app", () => {
   async function rebuilt(old: FakeCard, hidden = true, config: Record<string, unknown> = {}): Promise<FakeCard> {
     if (hidden) trip();
     old.remove();
-    const card = await mountCard(old.hass as unknown as FakeHass, { printer: "dev-x1c", ...config });
+    const card = await mountCard(old.hass as FakeHass, { printer: "dev-x1c", ...config });
     await settle(card);
     await settle(card);
     return card;
@@ -782,7 +756,7 @@ describe("the photo's trip to the camera app", () => {
     trip();
     late.remove();
     const clock = vi.spyOn(Date, "now").mockReturnValue(now + 31_000);
-    const after = await mountCard(late.hass as unknown as FakeHass, { printer: "dev-x1c" });
+    const after = await mountCard(late.hass as FakeHass, { printer: "dev-x1c" });
     await settle(after);
     expect(find(after, "dialog")).toBeNull();
     clock.mockRestore();
@@ -802,7 +776,7 @@ describe("the photo's trip to the camera app", () => {
     decoded.text = "3";
     await choosePhoto(old);
     await settle(old);
-    const card = await mountCard(old.hass as unknown as FakeHass, { printer: "dev-x1c" });
+    const card = await mountCard(old.hass as FakeHass, { printer: "dev-x1c" });
     await settle(card);
     await settle(card);
     expect(rowNames(card)).toEqual(["Polymaker PLA Matte"]);
@@ -814,7 +788,7 @@ describe("the photo's trip to the camera app", () => {
     card.remove();
     document.body.append(card);
     await settle(card);
-    const other = await mountCard(card.hass as unknown as FakeHass, { printer: "dev-x1c" });
+    const other = await mountCard(card.hass as FakeHass, { printer: "dev-x1c" });
     await settle(other);
     expect(find(other, "dialog")).toBeNull();
     expect(find(card, "dialog[open] .inv-camera")).not.toBeNull();
@@ -825,7 +799,7 @@ describe("the photo's trip to the camera app", () => {
     trip();
     first.remove();
     history.pushState(null, "", "/other-dashboard");
-    const elsewhere = await mountCard(first.hass as unknown as FakeHass, { printer: "dev-x1c" });
+    const elsewhere = await mountCard(first.hass as FakeHass, { printer: "dev-x1c" });
     await settle(elsewhere);
     expect(find(elsewhere, "dialog")).toBeNull();
     history.pushState(null, "", "/");
@@ -845,7 +819,7 @@ describe("the photo's trip to the camera app", () => {
   it("the new card asks again what the old one was still waiting for", async () => {
     const old = await photoArea({ holdK: true });
     const asked = (card: FakeCard): number =>
-      (card.hass as unknown as { calls: { service: string }[] }).calls.filter((call) => call.service === "get_k_profiles").length;
+      (card.hass as FakeHass).calls.filter((call) => call.service === "get_k_profiles").length;
     expect(asked(old)).toBe(1);
     const card = await rebuilt(old);
     expect(asked(card)).toBe(2);
@@ -953,11 +927,11 @@ describe("a dialog too tall for the screen", () => {
     const card = await openScan();
     define(window, "innerHeight", 766);
     define(HTMLElement.prototype, "scrollHeight", 900);
-    (card as unknown as { requestUpdate(): void }).requestUpdate();
+    card.requestUpdate();
     await settle(card);
     expect(find(card, "dialog .dlg-body")?.classList.contains("inv-short")).toBe(true);
     define(HTMLElement.prototype, "scrollHeight", 400);
-    (card as unknown as { requestUpdate(): void }).requestUpdate();
+    card.requestUpdate();
     await settle(card);
     expect(find(card, "dialog .dlg-body")?.classList.contains("inv-short")).toBe(false);
   });

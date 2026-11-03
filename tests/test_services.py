@@ -1065,7 +1065,6 @@ async def test_a_model_code_is_read_as_its_model(
     assert absent not in offered and present in offered
 
 
-
 async def test_a_generic_filament_takes_its_profile(
     hass: HomeAssistant, bambuddy_api: SimpleNamespace, freezer: FrozenDateTimeFactory
 ) -> None:
@@ -1492,7 +1491,6 @@ async def test_a_connection_check_bambuddy_fails(hass: HomeAssistant, bambuddy_a
         )
 
     assert (raised.value.translation_key, raised.value.translation_placeholders) == ("read_failed", {"error": "Simulated failure"})
-
 
 
 async def test_a_unit_drying_already_is_said_so(hass: HomeAssistant, bambuddy_api: SimpleNamespace) -> None:

@@ -4,7 +4,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import "../src/index";
 import { h2d, makeHass, maintenanceSpec, mountCard, p1s, plugDevice, x1c, type FakeCard, type FakeDevice, type FakeHass, type ServiceCall } from "./fixtures";
-import { button, find, findAll, root, settle, styleText, text, update } from "./helpers";
+import { button, declarations, find, findAll, root, settle, styleText, text, update } from "./helpers";
 
 afterEach(() => {
   document.body.innerHTML = "";
@@ -82,8 +82,8 @@ describe("the HMS dialog while the printer goes offline", () => {
 describe("a dialog's buttons on a narrow phone", () => {
   it("wrap instead of pushing the safe one out of the dialog; the drying steppers wrap below their label", () => {
     const sheet = styleText();
-    expect(sheet).toMatch(/\.dlg-actions\s*\{[^}]*flex-wrap: wrap;/);
-    expect(sheet).toMatch(/\.field\s*\{[^}]*flex-wrap: wrap;/);
+    expect(declarations(".dlg-actions", sheet)).toContain("flex-wrap: wrap");
+    expect(declarations(".field", sheet)).toContain("flex-wrap: wrap");
   });
 });
 
@@ -104,7 +104,7 @@ describe("the check's problems and the HMS messages on a phone", () => {
   it("are not capped in a box of their own that scrolls inside the scrolling dialog; the buttons stay in reach", () => {
     const sheet = styleText();
     expect(sheet).not.toMatch(/\.hms-list\s*\{[^}]*max-height/);
-    expect(sheet).toMatch(/\.dlg-actions\s*\{[^}]*position: sticky;/);
+    expect(declarations(".dlg-actions", sheet)).toContain("position: sticky");
   });
 });
 

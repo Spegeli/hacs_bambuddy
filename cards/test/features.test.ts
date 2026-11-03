@@ -8,15 +8,14 @@ import { findPrinter } from "../src/discovery";
 import { configForm } from "../src/forms";
 import { en } from "../src/translations/en";
 
-const t_developer_off = en.developer_off;
 import {
   a1mini,
   amsDevice,
   h2d,
-  makeHass,
   MAINTENANCE_TASKS,
   maintenanceSpec,
-  mountCard,
+  makeHass,
+  mountFor,
   offlineP1s,
   unreachable,
   x1c,
@@ -26,7 +25,7 @@ import {
   type FakeHassOptions,
   type PrinterSpec,
 } from "./fixtures";
-import { atRule, button, find, findAll, hasButton, NBSP, settle, styleText, text, update } from "./helpers";
+import { atRule, button, cssRule, declarations, find, findAll, hasButton, NBSP, settle, shownText, styleText, text, update } from "./helpers";
 
 interface Mounted {
   card: FakeCard;
@@ -39,9 +38,7 @@ async function mount(
   config: Record<string, unknown> = {},
   options: { language?: string; callService?: FakeHassOptions["callService"] } = {},
 ): Promise<Mounted> {
-  const hass = makeHass({ devices, language: options.language ?? "en", ...(options.callService ? { callService: options.callService } : {}) });
-  const card = await mountCard(hass, { printer, ...config });
-  return { card, hass };
+  return mountFor(devices, printer, config, options);
 }
 
 const withX1c = (overrides: Partial<PrinterSpec>, config: Record<string, unknown> = {}, language = "en"): Promise<Mounted> =>
@@ -54,12 +51,6 @@ const chip = (card: FakeCard, name: string): HTMLButtonElement => {
   return found;
 };
 
-/** An element's text as it shows: without what only a screen reader hears. */
-const shown = (element: Element): string => {
-  const copy = element.cloneNode(true) as Element;
-  copy.querySelectorAll(".sr-only").forEach((hidden) => hidden.remove());
-  return text(copy);
-};
 
 async function openMenu(card: FakeCard): Promise<string[]> {
   (find(card, ".menu-btn") as HTMLButtonElement).click();
@@ -350,7 +341,7 @@ describe("checking the connection", () => {
     const { card } = await mount(offlineP1s(), "dev-p1s", {}, { callService: answering(alone) });
     button(card, "Check connection").click();
     await settle(card);
-    expect(findAll(card, ".check-item").map(shown)).toEqual(["File transfer (port 990) Not reachable: BamBuddy cannot send prints. Unblock port 990."]);
+    expect(findAll(card, ".check-item").map(shownText)).toEqual(["File transfer (port 990) Not reachable: BamBuddy cannot send prints. Unblock port 990."]);
   });
 
   it("is offered in the offline view, not while BamBuddy gives no data", async () => {
@@ -380,7 +371,7 @@ describe("checking the connection", () => {
     answer({ response: RESULT });
     await settle(card);
     expect(text(find(card, ".check-verdict"))).toBe("1 problem found.");
-    expect(findAll(card, ".check-item").map(shown)).toEqual([
+    expect(findAll(card, ".check-item").map(shownText)).toEqual([
       "Control (port 8883) Not reachable. Is the printer on and still at the same IP address? Is a firewall blocking the port?",
       "File transfer (port 990) Not reachable: BamBuddy cannot send prints. Usually follows from the problem above.",
       "Camera (port 322) Not reachable: no live view. Printing still works. Usually follows from the problem above.",
@@ -565,7 +556,7 @@ describe("the connection check's words, closer", () => {
     await settle(card);
     return card;
   };
-  const items = (card: FakeCard): string[] => findAll(card, ".check-item").map(shown);
+  const items = (card: FakeCard): string[] => findAll(card, ".check-item").map(shownText);
 
   it("takes the most specific text there is for a reason", async () => {
     const card = await check([
@@ -584,7 +575,7 @@ describe("the connection check's words, closer", () => {
       "Subnet The printer (10.0.0.5) and BamBuddy (192.168.1.2) are on different subnets. This works only with routing between them.",
     ]);
     // The developer mode: the card's own advice, as on its Status tab.
-    expect(found[2]).toBe(`Developer mode (LAN) ${t_developer_off}`);
+    expect(found[2]).toBe(`Developer mode (LAN) ${en.developer_off}`);
     // A screen reader hears whether each is a failure or a warning.
     expect(findAll(card, ".check-item .sr-only").map(text)).toEqual(["Error:", "Error:", "Error:", "Warning:", "Warning:"]);
     expect(text(find(card, ".check-verdict"))).toBe("3 problems found.");
@@ -915,21 +906,21 @@ describe("the narrow card at 168 px", () => {
 
   it("keeps the step's three choices whole: on a line of their own from 280 px down", () => {
     const narrow = atRule("@container (max-width: 280px)");
-    expect(narrow).toMatch(rule("\\.step-row", "flex-wrap: wrap;"));
-    expect(narrow).toMatch(rule("\\.step-row \\.seg", "flex: 1 0 100%;"));
+    expect(narrow).toMatch(cssRule("\\.step-row", "flex-wrap: wrap;"));
+    expect(narrow).toMatch(cssRule("\\.step-row \\.seg", "flex: 1 0 100%;"));
   });
 
   it("puts an AMS unit's colours two a row, so the fourth stays in its box", () => {
     const tiny = atRule("@container (max-width: 200px)");
-    expect(tiny).toMatch(rule("\\.ams-slots", "display: grid;[^}]*grid-template-columns: repeat\\(2, auto\\);"));
+    expect(tiny).toMatch(cssRule("\\.ams-slots", "display: grid;[^}]*grid-template-columns: repeat\\(2, auto\\);"));
     // A slot's sub line wraps rather than being cut (from 280 px down).
-    expect(atRule("@container (max-width: 280px)")).toMatch(rule("\\.slot-sub", "white-space: normal;"));
+    expect(atRule("@container (max-width: 280px)")).toMatch(cssRule("\\.slot-sub", "white-space: normal;"));
   });
 
   it("gives each heater room above the line below it", () => {
     const half = atRule("@container (max-width: 280px)");
-    expect(half).toMatch(rule("\\.heat-row", "padding-bottom: 8px;"));
-    expect(half).toMatch(rule("\\.heat-row \\+ \\.heat-row", "padding-top: 6px;"));
+    expect(half).toMatch(cssRule("\\.heat-row", "padding-bottom: 8px;"));
+    expect(half).toMatch(cssRule("\\.heat-row \\+ \\.heat-row", "padding-top: 6px;"));
   });
 
   it("marks the active nozzle only during a job, in the Status tab and the Control tab", async () => {
@@ -998,9 +989,9 @@ describe("the drying chip on a narrow card", () => {
       ["dry-time", `3${NBSP}h${NBSP}20${NBSP}min`],
     ]);
     const sheet = styleText();
-    expect(sheet).toMatch(/\.dry-chip \.dry-text\s*\{[^}]*flex-wrap: wrap;/);
-    expect(sheet).toMatch(/\.dry-chip \.dry-text > span\s*\{[^}]*white-space: nowrap;/);
-    expect(sheet).toMatch(/\.dry-chip \.dry-time\s*\{[^}]*font-weight: 700;/);
+    expect(declarations(".dry-chip .dry-text", sheet)).toContain("flex-wrap: wrap");
+    expect(declarations(".dry-chip .dry-text > span", sheet)).toContain("white-space: nowrap");
+    expect(declarations(".dry-chip .dry-time", sheet)).toContain("font-weight: 700");
   });
 });
 
@@ -1048,7 +1039,7 @@ describe("Hide controls shows states", () => {
   it("shows the Control tab read-only: targets, print options and keeping warm as text, no axes", async () => {
     const { card, hass } = await withX1c({ airduct: "heating", status: "idle", stage: "idle" }, { ...hidden, start_view: "control" }, "de");
     expect(find(card, ".heating button")).toBeNull();
-    expect(findAll(card, ".heat-target").map(shown)).toEqual(["220 °C", "55 °C", "An"].map((value) => value.replace(" ", "\u00a0")));
+    expect(findAll(card, ".heat-target").map(shownText)).toEqual(["220 °C", "55 °C", "An"].map((value) => value.replace(" ", "\u00a0")));
     expect(find(card, ".pad")).toBeNull();
     (find(card, ".det-head") as HTMLButtonElement).click();
     await card.updateComplete;
@@ -1093,55 +1084,55 @@ describe("the AMS strip's order", () => {
 
   it("fills the room beside the column, and goes below it where none is left", () => {
     const sheet = styleText();
-    expect(sheet).toMatch(rule("\\.ams-units", "flex-wrap: wrap;"));
-    expect(sheet).toMatch(rule("\\.ams-column", "flex-direction: column;"));
+    expect(sheet).toMatch(cssRule("\\.ams-units", "flex-wrap: wrap;"));
+    expect(sheet).toMatch(cssRule("\\.ams-column", "flex-direction: column;"));
     // Its widest unit decides whether the fill fits beside the column.
-    expect(sheet).toMatch(rule("\\.ams-fill", "flex: 1 1 0%;[^}]*min-width: min-content;[^}]*flex-wrap: wrap;"));
+    expect(sheet).toMatch(cssRule("\\.ams-fill", "flex: 1 1 0%;[^}]*min-width: min-content;[^}]*flex-wrap: wrap;"));
     // 24 px apart (the line in the middle), 36 px kept for the chevron: an
     // AMS HT fits beside an AMS from a card of about 334 px, below a 360 px
     // phone's 344.
-    expect(sheet).toMatch(rule("\\.ams-units", "gap: 21px 24px;"));
-    expect(sheet).toMatch(rule("\\.ams-strip", "padding: 10px 36px 10px 12px;"));
+    expect(sheet).toMatch(cssRule("\\.ams-units", "gap: 21px 24px;"));
+    expect(sheet).toMatch(cssRule("\\.ams-strip", "padding: 10px 36px 10px 12px;"));
     // An AMS HT's head: its second line, the humidity (14 px + 4ch), 6 px,
     // the temperature (14 px + 4.5ch).
-    expect(sheet).toMatch(rule("\\.ams-fill\\.with-ht \\.ams-head", "min-width: calc\\(34px \\+ 8\\.5ch\\);"));
+    expect(sheet).toMatch(cssRule("\\.ams-fill\\.with-ht \\.ams-head", "min-width: calc\\(34px \\+ 8\\.5ch\\);"));
   });
 
   it("sets the units apart: a line between the AMS units, a fading one beside the column, a line above what went below it", () => {
     const sheet = styleText();
-    expect(sheet).toMatch(rule("\\.ams-column", "gap: 0;"));
-    expect(sheet).toMatch(rule("\\.ams-column > \\.ams-group \\+ \\.ams-group", "border-top: 1px solid var\\(--bb-line\\);[^}]*margin-top: 10px;[^}]*padding-top: 10px;"));
+    expect(sheet).toMatch(cssRule("\\.ams-column", "gap: 0;"));
+    expect(sheet).toMatch(cssRule("\\.ams-column > \\.ams-group \\+ \\.ams-group", "border-top: 1px solid var\\(--bb-line\\);[^}]*margin-top: 10px;[^}]*padding-top: 10px;"));
     // Beside the column: a line in the middle of the gap, fading out at
     // both ends. Below it: a line in the middle of the row gap. The units'
     // box clips what lies left of or above it -- the line a fill does not
     // need where it starts a row or stands in the first -- but not a
     // spool's ring (2 px out, 2 px off).
-    expect(sheet).toMatch(rule("\\.ams-units", "clip-path: inset\\(-6px -24px -24px -6px\\);"));
+    expect(sheet).toMatch(cssRule("\\.ams-units", "clip-path: inset\\(-6px -24px -24px -6px\\);"));
     expect(sheet).toMatch(
-      rule("\\.ams-fill::before", "left: -12px;[^}]*width: 1px;[^}]*background: linear-gradient\\(to bottom, transparent, var\\(--bb-line\\) 25%, var\\(--bb-line\\) 75%, transparent\\);"),
+      cssRule("\\.ams-fill::before", "left: -12px;[^}]*width: 1px;[^}]*background: linear-gradient\\(to bottom, transparent, var\\(--bb-line\\) 25%, var\\(--bb-line\\) 75%, transparent\\);"),
     );
-    expect(sheet).toMatch(rule("\\.ams-fill::after", "top: -11px;[^}]*height: 1px;[^}]*background: var\\(--bb-line\\);"));
+    expect(sheet).toMatch(cssRule("\\.ams-fill::after", "top: -11px;[^}]*height: 1px;[^}]*background: var\\(--bb-line\\);"));
     // Beside AMS units, the AMS HT units' rows as far apart as theirs, so
     // they stand level -- without a line.
     expect(sheet).toMatch(/\.ams-fill\.with-ht\s*\{\s*row-gap: 21px;\s*\}/);
     // The unit's name a size above the figures below it.
-    expect(sheet).toMatch(rule("\\.ams-name", "font-size: 13px;"));
+    expect(sheet).toMatch(cssRule("\\.ams-name", "font-size: 13px;"));
   });
 
   it("lets a head's lines wrap on a card under 200 px, clear of the chevron", () => {
     const tiny = atRule("@container (max-width: 200px)");
-    expect(tiny).toMatch(rule("\\.ams-line,\\s*\\.ams-env", "height: auto;[^}]*flex-wrap: wrap;"));
+    expect(tiny).toMatch(cssRule("\\.ams-line,\\s*\\.ams-env", "height: auto;[^}]*flex-wrap: wrap;"));
     // No AMS HT's width there: the unit is as wide as the card has room.
-    expect(tiny).toMatch(rule("\\.ams-fill\\.with-ht \\.ams-head", "min-width: 0;"));
+    expect(tiny).toMatch(cssRule("\\.ams-fill\\.with-ht \\.ams-head", "min-width: 0;"));
   });
 
   it("keeps a unit's width when its humidity or temperature changes", () => {
     // Else a unit beside the column could go below it at 10 % and back at 9 %:
     // room for 99 % and 88 °C.
     const sheet = styleText();
-    expect(sheet).toMatch(rule("\\.ams-env > span", "font-variant-numeric: tabular-nums;"));
-    expect(sheet).toMatch(rule("\\.ams-hum", "min-width: calc\\(14px \\+ 4ch\\);"));
-    expect(sheet).toMatch(rule("\\.ams-temp", "min-width: calc\\(14px \\+ 4\\.5ch\\);"));
+    expect(sheet).toMatch(cssRule("\\.ams-env > span", "font-variant-numeric: tabular-nums;"));
+    expect(sheet).toMatch(cssRule("\\.ams-hum", "min-width: calc\\(14px \\+ 4ch\\);"));
+    expect(sheet).toMatch(cssRule("\\.ams-temp", "min-width: calc\\(14px \\+ 4\\.5ch\\);"));
   });
 });
 
@@ -1219,11 +1210,11 @@ describe("the AMS strip's heads", () => {
 
   it("gives every line one height, so a row's colours stand level", () => {
     const sheet = styleText();
-    expect(sheet).toMatch(rule("\\.ams-line,\\s*\\.ams-env", "height: 15px;"));
+    expect(sheet).toMatch(cssRule("\\.ams-line,\\s*\\.ams-env", "height: 15px;"));
     // The L and R of two external spools: as high as the second line.
-    expect(sheet).toMatch(rule("\\.slot-side", "height: 13px;[^}]*line-height: 13px;"));
+    expect(sheet).toMatch(cssRule("\\.slot-side", "height: 13px;[^}]*line-height: 13px;"));
     // The chip a shade darker than the strip it sits on.
-    expect(sheet).toMatch(rule("\\.ams-strip \\.unit-model,\\s*\\.ams-strip \\.ams-nozzle", "background: var\\(--bb-tint-2\\);"));
+    expect(sheet).toMatch(cssRule("\\.ams-strip \\.unit-model,\\s*\\.ams-strip \\.ams-nozzle", "background: var\\(--bb-tint-2\\);"));
   });
 });
 

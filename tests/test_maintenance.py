@@ -29,7 +29,6 @@ from tests.conftest import (
 )
 
 
-
 def _maintenance(hass: HomeAssistant, entry: Any) -> Any:
     return state_of(hass, "sensor", printer_uid(entry, "maintenance"))
 

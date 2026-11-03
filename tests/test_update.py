@@ -149,7 +149,6 @@ async def test_the_release_notes(
     assert notes == {"bambuddy": "Printer access per group.", "firmware": "Improved first layer inspection."}
 
 
-
 async def test_the_updates_say_what_they_update(hass: HomeAssistant, bambuddy_api: SimpleNamespace) -> None:
     """Home Assistant's list of updates shows the title beside the device: BamBuddy's own, a printer's firmware."""
     entry = await set_up(hass, X1C)

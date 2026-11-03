@@ -3,62 +3,36 @@
 import { afterEach, describe, expect, it } from "vitest";
 
 import "../src/index";
-import { h2d, makeHass, mountCard, x1c, type FakeCard, type FakeDevice, type FakeHass, type FakeHassOptions } from "./fixtures";
-import { atRule, find, findAll, NBSP, root, settle, showView, styleText, text } from "./helpers";
+import {
+  assign,
+  geeetech,
+  h2d,
+  listed,
+  makeHass,
+  mountCard,
+  mountFor,
+  withoutChip,
+  x1c,
+  type FakeCard,
+  type FakeDevice,
+  type FakeHass,
+  type FakeHassOptions,
+} from "./fixtures";
+import { atRule, declarations, find, findAll, NBSP, root, settle, showView, styleText, text } from "./helpers";
+import { ICONS } from "../src/icons";
 import { en } from "../src/translations/en";
 
 afterEach(() => {
   document.body.innerHTML = "";
 });
 
-/** BamBuddy's Geeetech spool, as the slot sensor's attribute names it. */
-export const GEEETECH = {
-  id: 1,
-  name: "Geeetech PLA Basic",
-  brand: "Geeetech",
-  material: "PLA",
-  subtype: "Basic",
-  color_name: "Apple Green",
-  rgba: "B6D648FF",
-  extra_colors: [],
-  remaining_g: 886,
-  remaining_pct: 89,
-  label_weight: 1000,
-  storage_location: null,
-  rfid: false,
-  assigned_color: "FFFFFFFF",
-  assigned_type: "PLA",
-  spool_types: ["PLA"],
-};
-
-/** The X1C's active slot 2 without a chip (a third-party spool the print feeds). */
-export function withoutChip(devices: FakeDevice[], entityId = "sensor.dev-x1c_ams_0_slot_2"): FakeDevice[] {
-  for (const device of devices) {
-    for (const entity of device.entities) {
-      if (entity.entityId === entityId) entity.attributes = { ...entity.attributes, rfid: false };
-    }
-  }
-  return devices;
-}
-
-/** The slot sensor `entityId` gets the inventory's attributes. */
-export function assign(devices: FakeDevice[], entityId: string, spool: Record<string, unknown> | null, assignable = true): FakeDevice[] {
-  for (const device of devices) {
-    for (const entity of device.entities) {
-      if (entity.entityId === entityId) {
-        entity.attributes = { ...entity.attributes, inventory_assignable: assignable, ...(spool ? { inventory_spool: spool } : {}) };
-      }
-    }
-  }
-  return devices;
-}
+const GEEETECH = geeetech();
 
 const X1C_SLOT_3 = "sensor.dev-x1c_ams_0_slot_3";
 const X1C_SLOT_4 = "sensor.dev-x1c_ams_0_slot_4";
 
-async function mount(devices: FakeDevice[], printer: string, options: Partial<FakeHassOptions> = {}): Promise<FakeCard> {
-  return mountCard(makeHass({ devices, language: "de", ...options }), { printer });
-}
+const mount = async (devices: FakeDevice[], printer: string, options: Partial<FakeHassOptions> = {}): Promise<FakeCard> =>
+  (await mountFor(devices, printer, {}, { language: "de", ...options })).card;
 
 const subLines = (row: Element | null | undefined): string[] => [...(row?.querySelectorAll(".slot-sub") ?? [])].map(text);
 
@@ -374,39 +348,6 @@ describe("the pencil of an empty or busy slot", () => {
 
 // --- The inventory tab -------------------------------------------------------
 
-interface Listed {
-  id: number;
-  name: string;
-  brand?: string;
-  material: string;
-  color_name?: string;
-  rgba?: string;
-  extra_colors?: string[];
-  remaining_g?: number;
-  remaining_pct?: number;
-  storage_location?: string | null;
-  place?: Record<string, unknown> | null;
-  fits?: string | null;
-  printing?: string;
-  type?: string;
-}
-
-const listed = (spool: Listed): Record<string, unknown> => ({
-  brand: spool.name.split(" ")[0],
-  subtype: null,
-  color_name: "Black",
-  rgba: "000000FF",
-  extra_colors: [],
-  remaining_g: 500,
-  remaining_pct: 50,
-  storage_location: null,
-  rfid: false,
-  place: null,
-  fits: null,
-  type: spool.material.toUpperCase(),
-  ...spool,
-});
-
 const FOUR = [
   { id: 1, name: "Geeetech PLA Basic", material: "PLA", color_name: "Apple Green", rgba: "B6D648FF", remaining_g: 886, remaining_pct: 89, place: { this_slot: true } },
   { id: 2, name: "Bambu PLA Basic", material: "PLA", place: { printer_id: 1, printer_name: "Workshop", ams_id: 0, tray_id: 0, ams_label: null, same_printer: true } },
@@ -462,7 +403,7 @@ async function openInventory(spools = FOUR, options: OpenOptions = {}): Promise<
 }
 
 type Calls = { service: string; data?: Record<string, unknown>; returnResponse?: boolean }[];
-const callsOf = (card: FakeCard): Calls => (card.hass as unknown as { calls: Calls }).calls;
+const callsOf = (card: FakeCard): Calls => (card.hass as FakeHass).calls;
 const rows = (card: FakeCard): HTMLElement[] => findAll(card, "dialog .inv-row");
 const rowName = (row: Element): string => text(row.querySelector(".inv-name"));
 const where = (row: Element | undefined): string => text(row?.querySelector(".inv-where"));
@@ -570,7 +511,7 @@ describe("the inventory tab", () => {
     const card = await openInventory([...FOUR, listed({ id: 9, name: "Bambu Lab ABS", material: "ABS", fits: "by_chip", place: { printer_id: 1, printer_name: "Workshop", ams_id: 0, tray_id: 0, ams_label: null, same_printer: true } })]);
     const row = rowNamed(card, "Bambu Lab ABS");
     expect(row.getAttribute("aria-disabled")).toBe("true");
-    expect([...row.querySelectorAll(".inv-where")].map(text)).toEqual(["Zugewiesen: AMS A, Fach 1", "Per Chip mit diesem Fach verknüpft"]);
+    expect([...row.querySelectorAll(".inv-where")].map(text)).toEqual(["Zugewiesen: AMS A, Fach 1", "Per Chip mit seinem Fach verknüpft"]);
   });
 
   it("locks a spool in a slot of another printer that prints", async () => {
@@ -677,12 +618,31 @@ describe("the inventory tab", () => {
     await settle(card);
     expect(dialogButton(card, "Zuweisen")?.disabled).toBe(false);
     expect(find(card, "dialog .dlg-need")).toBeNull();
-    expect(find(card, "dialog .dlg-warn")).toBeNull();
-    // Another material: it switches mid-print.
+    // The same material: the spool's colour and profile still change mid-print.
+    expect(findAll(card, "dialog .dlg-actions .dlg-warn").map(text)).toEqual([
+      "Workshop druckt gerade aus diesem Fach. Zuweisen stellt es mitten im Druck um.",
+    ]);
+    // Another material: it switches mid-print -- that line alone.
     rowNamed(card, "eSUN PETG").click();
     await settle(card);
     expect(dialogButton(card, "Zuweisen")?.disabled).toBe(false);
-    expect(text(find(card, "dialog .dlg-actions .dlg-warn"))).toBe("Workshop druckt gerade aus diesem Fach (PLA). Zuweisen stellt es mitten im Druck auf PETG um.");
+    expect(findAll(card, "dialog .dlg-actions .dlg-warn").map(text)).toEqual([
+      "Workshop druckt gerade aus diesem Fach (PLA). Zuweisen stellt es mitten im Druck auf PETG um.",
+    ]);
+  });
+
+  it("warns of no mid-print change for the slot's own spool", async () => {
+    const card = await openInventory(FOUR, { slot: 1, devices: withoutChip(assign(x1c(), "sensor.dev-x1c_ams_0_slot_2", GEEETECH, true)) });
+    rowNamed(card, "Geeetech PLA Basic").click();
+    await settle(card);
+    expect(find(card, "dialog .dlg-warn")).toBeNull();
+  });
+
+  it("warns of no mid-print change where no print feeds the slot", async () => {
+    const card = await openInventory(FOUR, { slot: 1, assigned: null, devices: withoutChip(assign(x1c({ status: "paused", stage: "paused_by_user" }), "sensor.dev-x1c_ams_0_slot_2", null, true)) });
+    rowNamed(card, "Bambu PLA Basic").click();
+    await settle(card);
+    expect(find(card, "dialog .dlg-warn")).toBeNull();
   });
 
   /** The X1C with its slot 4 empty and open to assigning. */
@@ -1000,7 +960,7 @@ describe("after the live check", () => {
 
   it("writes color as the card does", () => {
     expect(en.inv_note_change).toBe("Another color or another type (PETG instead of PLA, say) ends the spool's assignment.");
-    expect(en.inv_search).toBe("Search (name, color, no.)");
+    expect(en.inv_search).toBe("Name, color, location, no.");
   });
 });
 
@@ -1077,6 +1037,20 @@ describe("storage locations", () => {
 describe("room for the spool list", () => {
   const FIVE = [...FOUR, listed({ id: 5, name: "Polymaker PLA Matte", material: "PLA" })];
 
+  it("marks the search field with a magnifier and names what it searches", async () => {
+    const card = await openInventory(FIVE, { folded: true });
+    const field = find(card, "dialog .inv-search-row .inv-search-box") as HTMLElement;
+    const glass = field.querySelector(".inv-search-icon");
+    expect(glass?.getAttribute("aria-hidden")).toBe("true");
+    expect(glass?.querySelector("path")?.getAttribute("d")).toBe(ICONS.magnify);
+    const search = field.querySelector("input") as HTMLInputElement;
+    expect(search.placeholder).toBe("Name, Farbe, Ort, Nr.");
+    expect(search.getAttribute("aria-label")).toBe("Name, Farbe, Ort, Nr.");
+    // The text starts after the magnifier, which stays out of the taps' way.
+    expect(declarations(".inv-search-box .inv-search", styleText())).toContain("padding-inline-start: 36px");
+    expect(declarations(".inv-search-icon", styleText())).toEqual(expect.arrayContaining(["position: absolute", "pointer-events: none"]));
+  });
+
   it("folds the filters behind a button beside the search", async () => {
     const card = await openInventory(FIVE, { folded: true });
     expect(find(card, "dialog .inv-filters")).toBeNull();
@@ -1085,7 +1059,7 @@ describe("room for the spool list", () => {
     expect(button.getAttribute("title")).toBe("Filter");
     expect(button.getAttribute("aria-expanded")).toBe("false");
     expect(button.nextElementSibling?.classList.contains("inv-scan")).toBe(true);
-    expect(button.previousElementSibling?.id).toBe("inv-search");
+    expect(button.previousElementSibling?.querySelector("input")?.id).toBe("inv-search");
 
     button.click();
     await settle(card);
@@ -1128,5 +1102,13 @@ describe("room for the spool list", () => {
     const card = await openSlot3(GEEETECH, true);
     expect(find(card, "dialog .inv-card")).not.toBeNull();
     expect(find(card, "dialog .inv-unassign")).toBeNull();
+  });
+});
+
+describe("the inventory's styles", () => {
+  it("take the card's accent tokens, each with its fallback", () => {
+    const css = styleText();
+    const lines = css.split("\n").filter((line) => !/^\s*--bb-(accent|on-accent):/.test(line));
+    expect(lines.filter((line) => /var\(--primary-color\)|var\(--text-primary-color/.test(line))).toEqual([]);
   });
 });

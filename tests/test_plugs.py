@@ -21,13 +21,13 @@ import pytest
 
 from custom_components.bambuddy.api import (
     BamBuddyApiError,
-    BamBuddyAuthError,
     BamBuddyConnectionError,
     BamBuddyError,
     BamBuddyPermissionError,
 )
 from custom_components.bambuddy.const import DOMAIN
-from custom_components.bambuddy.coordinator import BamBuddyPlugCoordinator, find_device
+from custom_components.bambuddy.coordinator import find_device
+from custom_components.bambuddy.plug_coordinator import BamBuddyPlugCoordinator
 from custom_components.bambuddy.diagnostics import async_get_config_entry_diagnostics, async_get_device_diagnostics
 from custom_components.bambuddy import plug_identity
 from custom_components.bambuddy.plugs import Plug
@@ -51,12 +51,7 @@ from tests.conftest import (
     setup_integration,
     state_at,
 )
-from tests.test_init import _remove_device
-
-
-def with_plugs(api: SimpleNamespace) -> None:
-    """BamBuddy with the plugs of tests/fixtures/smart_plugs.json."""
-    api.get_smart_plugs.return_value = load_fixture("smart_plugs.json")
+from tests.helpers import plug_info, plug_list, remove_device, with_plugs
 
 
 def plugs_of(hass: HomeAssistant, entry_id: str) -> BamBuddyPlugCoordinator:
@@ -138,7 +133,7 @@ async def test_plug_devices_stay_while_listed(hass: HomeAssistant, bambuddy_api:
     with_plugs(bambuddy_api)
     entry = make_entry(hass, X1C)
     devices = dr.async_get(hass)
-    kept = plug_identity.device_identifier(entry.entry_id, plug_identity.identities(TEST_SECRET, [_info(3)], {})[3])
+    kept = plug_identity.device_identifier(entry.entry_id, plug_identity.identities(TEST_SECRET, [plug_info(3)], {})[3])
     gone = (DOMAIN, f"{entry.entry_id}_plug_42_0")
     for identifier in (kept, gone):
         devices.async_get_or_create(config_entry_id=entry.entry_id, identifiers={identifier})
@@ -154,16 +149,12 @@ async def test_plug_devices_stay_while_listed(hass: HomeAssistant, bambuddy_api:
     assert find_device(hass, entry.entry_id, gone) is None
 
 
-def _info(plug_id: int) -> dict[str, object]:
-    return next(dict(plug) for plug in load_fixture("smart_plugs.json") if plug["id"] == plug_id)
-
-
 async def test_a_plugs_entities_are_named_by_what_it_switches(hass: HomeAssistant, bambuddy_api: SimpleNamespace) -> None:
     """The entity IDs carry six characters of what the plug switches -- not
     BamBuddy's number, which another server or a new plug may give again."""
     with_plugs(bambuddy_api)
     entry = await set_up(hass, X1C)
-    digest = plug_digest("tasmota", str(_info(3)["ip_address"]).strip().lower())
+    digest = plug_digest("tasmota", str(plug_info(3)["ip_address"]).strip().lower())
 
     assert entity_id(hass, "switch", plug_unique_id(hass, entry.entry_id, 3, "power")) == f"switch.bambuddy_smart_plug_{digest}"
     assert entity_id(hass, "sensor", plug_unique_id(hass, entry.entry_id, 3, "power")) == f"sensor.bambuddy_smart_plug_{digest}_power"
@@ -221,7 +212,7 @@ async def test_the_same_plug_in_two_entries(hass: HomeAssistant, bambuddy_api: S
     )
     second.add_to_hass(hass)
     await setup_integration(hass, second)
-    digest = plug_digest("tasmota", str(_info(3)["ip_address"]).strip().lower())
+    digest = plug_digest("tasmota", str(plug_info(3)["ip_address"]).strip().lower())
 
     assert entity_id(hass, "switch", plug_unique_id(hass, first.entry_id, 3, "power")) == f"switch.bambuddy_smart_plug_{digest}"
     assert entity_id(hass, "switch", plug_unique_id(hass, second.entry_id, 3, "power")) == f"switch.bambuddy_smart_plug_{digest}_2"
@@ -270,7 +261,7 @@ def _entity_id(hass: HomeAssistant, domain: str, entry_id: str, plug_id: int, ke
 
 def _digest(plug_id: int) -> str:
     """The six characters a fixture plug's entity IDs carry."""
-    info = _info(plug_id)
+    info = plug_info(plug_id)
     return plug_digest(str(info["plug_type"]), plug_identity.source_candidates(info)[0])
 
 
@@ -570,7 +561,7 @@ async def test_a_plugs_device_cannot_be_deleted_while_bambuddy_links_it(
     device = find_device(hass, entry.entry_id, plug_identifier_of(hass, entry.entry_id, 3))
     assert device is not None
 
-    response = await _remove_device(hass, hass_ws_client, entry, device)
+    response = await remove_device(hass, hass_ws_client, entry, device)
     assert not response["success"]
     assert "still links" in response["error"]["message"]
 
@@ -709,7 +700,7 @@ async def test_a_plugs_diagnostics_show_its_identity_only(hass: HomeAssistant, b
     assert plug["identity"] == {"digest": identity.digest, "record_known": True, "known_by": "source", "rank": 0}
     # A REST plug is known by its BamBuddy record: by design, not for a failure.
     assert diagnostics["plugs"]["4"]["identity"]["known_by"] == "record"
-    assert str(_info(3)["ip_address"]) not in dumped
+    assert str(plug_info(3)["ip_address"]) not in dumped
     assert identity.key[:16] not in dumped
     assert TEST_SECRET.hex() not in dumped
 
@@ -755,11 +746,6 @@ async def test_a_watched_plugs_state_is_named_as_its_device(hass: HomeAssistant,
 # --- Following BamBuddy: what a plug switches, and its record ------------------
 
 
-def _listed(**changes: dict[str, Any]) -> list[dict[str, Any]]:
-    """BamBuddy's plug list, some plugs changed (by number as text)."""
-    return [{**plug, **changes.get(str(plug["id"]), {})} for plug in load_fixture("smart_plugs.json")]
-
-
 async def _reloads_after_a_minute(hass: HomeAssistant, freezer: FrozenDateTimeFactory, minutes: int = 1) -> int:
     """How often the entry was asked to reload while the plug list was read again."""
     with patch.object(hass.config_entries, "async_schedule_reload") as reload:
@@ -773,7 +759,7 @@ async def test_a_source_change_reloads(hass: HomeAssistant, bambuddy_api: Simple
     """Another Tasmota for plug 3 in BamBuddy: another device to switch."""
     with_plugs(bambuddy_api)
     await set_up(hass, X1C)
-    bambuddy_api.get_smart_plugs.return_value = _listed(**{"3": {"ip_address": "192.0.2.199"}})
+    bambuddy_api.get_smart_plugs.return_value = plug_list(**{"3": {"ip_address": "192.0.2.199"}})
 
     assert await _reloads_after_a_minute(hass, freezer) == 1
 
@@ -781,8 +767,8 @@ async def test_a_source_change_reloads(hass: HomeAssistant, bambuddy_api: Simple
 async def test_a_swap_reloads_once(hass: HomeAssistant, bambuddy_api: SimpleNamespace, freezer: FrozenDateTimeFactory) -> None:
     with_plugs(bambuddy_api)
     await set_up(hass, X1C, A1_MINI)
-    three, eight = _info(3)["ip_address"], _info(8)["ip_address"]
-    bambuddy_api.get_smart_plugs.return_value = _listed(**{"3": {"ip_address": eight}, "8": {"ip_address": three}})
+    three, eight = plug_info(3)["ip_address"], plug_info(8)["ip_address"]
+    bambuddy_api.get_smart_plugs.return_value = plug_list(**{"3": {"ip_address": eight}, "8": {"ip_address": three}})
 
     assert await _reloads_after_a_minute(hass, freezer) == 1
 
@@ -793,7 +779,7 @@ async def test_a_plug_created_again_with_its_number_reloads(
     """Deleted and created again in BamBuddy, which gave it the same number."""
     with_plugs(bambuddy_api)
     await set_up(hass, X1C)
-    bambuddy_api.get_smart_plugs.return_value = _listed(**{"3": {"created_at": "2026-10-20T09:00:00"}})
+    bambuddy_api.get_smart_plugs.return_value = plug_list(**{"3": {"created_at": "2026-10-20T09:00:00"}})
 
     assert await _reloads_after_a_minute(hass, freezer) == 1
 
@@ -801,7 +787,7 @@ async def test_a_plug_created_again_with_its_number_reloads(
 async def test_a_rename_reloads_nothing(hass: HomeAssistant, bambuddy_api: SimpleNamespace, freezer: FrozenDateTimeFactory) -> None:
     with_plugs(bambuddy_api)
     entry = await set_up(hass, X1C)
-    bambuddy_api.get_smart_plugs.return_value = _listed(**{"3": {"name": "Renamed"}})
+    bambuddy_api.get_smart_plugs.return_value = plug_list(**{"3": {"name": "Renamed"}})
 
     assert await _reloads_after_a_minute(hass, freezer) == 0
     device = find_device(hass, entry.entry_id, plug_identifier_of(hass, entry.entry_id, 3))
@@ -825,7 +811,7 @@ async def test_rest_urls_hidden_change_nothing(hass: HomeAssistant, bambuddy_api
     """BamBuddy 1.3.0 hides a REST plug's URLs from API keys: the plug stays."""
     with_plugs(bambuddy_api)
     await set_up(hass, X1C)
-    bambuddy_api.get_smart_plugs.return_value = _listed(**{"4": {"rest_on_url": None, "rest_off_url": None}})
+    bambuddy_api.get_smart_plugs.return_value = plug_list(**{"4": {"rest_on_url": None, "rest_off_url": None}})
 
     assert await _reloads_after_a_minute(hass, freezer) == 0
 
@@ -836,14 +822,14 @@ async def test_a_lower_plug_linked_later_takes_rank_0(
     """Plug 3 linked to the printer later, on the Tasmota plug 8 already
     switches: the lower number comes first -- one reload, no unique ID
     twice, and plug 8's IDs end in _2 from then on."""
-    shared = _info(8)["ip_address"]
+    shared = plug_info(8)["ip_address"]
     plug_3 = {"ip_address": shared, "controls_printer_power": False}
-    bambuddy_api.get_smart_plugs.return_value = _listed(**{"8": {"printer_id": X1C}, "3": {**plug_3, "printer_id": None}})
+    bambuddy_api.get_smart_plugs.return_value = plug_list(**{"8": {"printer_id": X1C}, "3": {**plug_3, "printer_id": None}})
     entry = await set_up(hass, X1C)
     digest = plug_digest("tasmota", str(shared).strip().lower())
     assert _entity_id(hass, "switch", entry.entry_id, 8, "power") == f"switch.bambuddy_smart_plug_{digest}"
 
-    bambuddy_api.get_smart_plugs.return_value = _listed(**{"8": {"printer_id": X1C}, "3": {**plug_3, "printer_id": X1C}})
+    bambuddy_api.get_smart_plugs.return_value = plug_list(**{"8": {"printer_id": X1C}, "3": {**plug_3, "printer_id": X1C}})
     with patch.object(hass.config_entries, "async_schedule_reload", wraps=hass.config_entries.async_schedule_reload) as reload:
         await next_refresh(hass, freezer, 61)
         await hass.async_block_till_done()
@@ -859,12 +845,12 @@ async def test_a_read_that_reloads_adds_nothing(
 ) -> None:
     """Until the reload comes, no plug gets new entities: the new plug's
     would take a unique ID another still holds."""
-    shared = _info(8)["ip_address"]
+    shared = plug_info(8)["ip_address"]
     plug_3 = {"ip_address": shared, "controls_printer_power": False}
-    bambuddy_api.get_smart_plugs.return_value = _listed(**{"8": {"printer_id": X1C}, "3": {**plug_3, "printer_id": None}})
-    entry = await set_up(hass, X1C)
+    bambuddy_api.get_smart_plugs.return_value = plug_list(**{"8": {"printer_id": X1C}, "3": {**plug_3, "printer_id": None}})
+    await set_up(hass, X1C)
 
-    bambuddy_api.get_smart_plugs.return_value = _listed(**{"8": {"printer_id": X1C}, "3": {**plug_3, "printer_id": X1C}})
+    bambuddy_api.get_smart_plugs.return_value = plug_list(**{"8": {"printer_id": X1C}, "3": {**plug_3, "printer_id": X1C}})
     assert await _reloads_after_a_minute(hass, freezer) == 1
 
     assert "does not generate unique IDs" not in caplog.text
@@ -873,7 +859,7 @@ async def test_a_read_that_reloads_adds_nothing(
 def _new_plug(api: SimpleNamespace, **changes: Any) -> dict[str, Any]:
     """A plug BamBuddy links to the X1C later: an accessory on its own Tasmota."""
     api.plug_statuses["11"] = json.loads(json.dumps(api.plug_statuses["3"]))
-    return {**_info(3), "id": 11, "name": "Later", "ip_address": "192.0.2.111", "controls_printer_power": False, **changes}
+    return {**plug_info(3), "id": 11, "name": "Later", "ip_address": "192.0.2.111", "controls_printer_power": False, **changes}
 
 
 async def test_a_new_plug_is_added_without_a_reload(hass: HomeAssistant, bambuddy_api: SimpleNamespace, freezer: FrozenDateTimeFactory) -> None:

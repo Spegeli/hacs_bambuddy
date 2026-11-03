@@ -24,10 +24,9 @@ filterwarnings = [
 #
 # No python_version: mypy checks for the Python it runs on, 3.14, which the
 # Home Assistant it checks against needs -- its own source does not parse
-# as 3.13. The
-# code must still run on 3.13, the Python of the 2025.5 floor: CI compiles
-# it with 3.13, and CONTRIBUTING.md ("Home Assistant 2025.5 is the floor")
-# names the rules the compile cannot check.
+# as 3.13. The code must still run on 3.13, the Python of the 2025.5 floor:
+# CI compiles it with 3.13, and CONTRIBUTING.md ("Home Assistant 2025.5 is
+# the floor") names the rules the compile cannot check.
 #
 # modules + mypy_path add the scripts in .github/scripts alongside the
 # integration: mypy refuses to mix `packages`/`modules` with `files` in one
@@ -35,8 +34,9 @@ filterwarnings = [
 # they join as the top-level modules `release`, `ha_version` and
 # `bambu_filaments`, found via mypy_path since `.github/scripts` is not
 # itself a package (the workflows run them by path, never import them -- see
-# their own docstrings). `release` and `ha_version` must also run on 3.12 (the release's key job and the hassfest job use the
-# runner's own Python), one more reason they stay plain stdlib.
+# their own docstrings). `release` and `ha_version` must also run on 3.12
+# (the release's key job and the hassfest job use the runner's own Python),
+# one more reason they stay plain stdlib.
 [tool.mypy]
 packages = ["custom_components.bambuddy"]
 modules = ["release", "ha_version", "bambu_filaments"]

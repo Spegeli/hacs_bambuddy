@@ -6,7 +6,6 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Iterator
 import copy
-import json
 import logging
 from types import SimpleNamespace
 from typing import Any
@@ -44,6 +43,7 @@ from tests.conftest import (
     setup_integration,
     state_of,
 )
+from tests.helpers import FakeSocket, settle
 
 
 def _reads(bambuddy_api: SimpleNamespace, printer_id: int) -> int:
@@ -62,12 +62,6 @@ def _held_back(bambuddy_api: SimpleNamespace) -> asyncio.Event:
 
     bambuddy_api.get_status.side_effect = slow
     return release
-
-
-async def _later(hass: HomeAssistant, freezer: FrozenDateTimeFactory, seconds: float) -> None:
-    freezer.tick(seconds)
-    async_fire_time_changed(hass)
-    await hass.async_block_till_done(wait_background_tasks=True)
 
 
 # --- A push reads the printer ---------------------------------------------------
@@ -102,10 +96,10 @@ async def test_a_flood_of_pushes_reads_once_a_second(
     await hass.async_block_till_done(wait_background_tasks=True)
     assert {printer: _reads(bambuddy_api, printer) - before[printer] for printer in printers} == dict.fromkeys(printers, 1)
 
-    await _later(hass, freezer, 1.0)
+    await next_refresh(hass, freezer, 1.0)
     assert {printer: _reads(bambuddy_api, printer) - before[printer] for printer in printers} == dict.fromkeys(printers, 2)
 
-    await _later(hass, freezer, 5.0)
+    await next_refresh(hass, freezer, 5.0)
     assert {printer: _reads(bambuddy_api, printer) - before[printer] for printer in printers} == dict.fromkeys(printers, 2)
 
 
@@ -251,57 +245,11 @@ async def test_a_push_during_a_command_keeps_the_command_guard(hass: HomeAssista
 # --- The live connection -----------------------------------------------------------
 
 
-class FakeSocket:
-    """aiohttp's client socket as far as the live connection reads it: a
-    message, or the end (a close code; 1006 after a heartbeat failure)."""
-
-    def __init__(self) -> None:
-        self._queue: asyncio.Queue[aiohttp.WSMessage] = asyncio.Queue()
-        self.closed = False
-        self.close_code: int | None = None
-        self.closes = 0
-
-    def push(self, body: Any) -> None:
-        text = body if isinstance(body, str) else json.dumps(body)
-        self._queue.put_nowait(aiohttp.WSMessage(aiohttp.WSMsgType.TEXT, text, None))
-
-    def send(self, kind: aiohttp.WSMsgType, data: Any = None) -> None:
-        self._queue.put_nowait(aiohttp.WSMessage(kind, data, None))
-
-    def end(self, code: int = 1000) -> None:
-        self.send(aiohttp.WSMsgType.CLOSE, code)
-
-    def __aiter__(self) -> FakeSocket:
-        return self
-
-    async def __anext__(self) -> aiohttp.WSMessage:
-        message = await self._queue.get()
-        if message.type is aiohttp.WSMsgType.CLOSE:
-            self.closed, self.close_code = True, message.data
-            raise StopAsyncIteration
-        if message.type is aiohttp.WSMsgType.ERROR:
-            self.closed, self.close_code = True, 1006
-        return message
-
-    async def close(self) -> bool:
-        self.closes += 1
-        self.closed = True
-        return True
-
-
-async def _settle(hass: HomeAssistant) -> None:
-    """Lets the connection's task run while its socket stays open -- no
-    wait for background tasks: an open socket's never ends."""
-    for _ in range(20):
-        await hass.async_block_till_done()
-        await asyncio.sleep(0)
-
-
 async def _later_open(hass: HomeAssistant, freezer: FrozenDateTimeFactory, seconds: float) -> None:
     """Past the next attempt, whose socket stays open."""
     freezer.tick(seconds)
     async_fire_time_changed(hass)
-    await _settle(hass)
+    await settle(hass)
 
 
 async def _connected(
@@ -324,8 +272,9 @@ def steady_waits() -> Iterator[None]:
         yield
 
 
+@pytest.mark.usefixtures("steady_waits")
 async def test_the_live_connection_takes_a_token_and_connects(
-    hass: HomeAssistant, bambuddy_api: SimpleNamespace, freezer: FrozenDateTimeFactory, steady_waits: None
+    hass: HomeAssistant, bambuddy_api: SimpleNamespace, freezer: FrozenDateTimeFactory
 ) -> None:
     entry, socket = await _connected(hass, bambuddy_api, freezer)
     live = entry.runtime_data.live
@@ -339,8 +288,9 @@ async def test_the_live_connection_takes_a_token_and_connects(
     assert not live.connected
 
 
+@pytest.mark.usefixtures("steady_waits")
 async def test_a_status_push_reads_that_printer(
-    hass: HomeAssistant, bambuddy_api: SimpleNamespace, freezer: FrozenDateTimeFactory, steady_waits: None
+    hass: HomeAssistant, bambuddy_api: SimpleNamespace, freezer: FrozenDateTimeFactory
 ) -> None:
     """A change of a printer of this entry reads it; another printer's, a
     message of another kind and anything unreadable are counted, nothing more."""
@@ -371,8 +321,9 @@ async def test_a_status_push_reads_that_printer(
     assert _reads(bambuddy_api, X1C) == before + 2
 
 
+@pytest.mark.usefixtures("steady_waits")
 async def test_spool_events_read_the_inventory(
-    hass: HomeAssistant, bambuddy_api: SimpleNamespace, freezer: FrozenDateTimeFactory, steady_waits: None
+    hass: HomeAssistant, bambuddy_api: SimpleNamespace, freezer: FrozenDateTimeFactory
 ) -> None:
     """A spool assigned, linked by its chip or changed in the inventory reads
     the inventory -- whichever printer it names, or none."""
@@ -389,8 +340,9 @@ async def test_spool_events_read_the_inventory(
     assert (live["messages"], live["other_printers"], live["ignored"]) == (3, 0, 0)
 
 
+@pytest.mark.usefixtures("steady_waits")
 async def test_a_closed_socket_reconnects_with_a_new_token(
-    hass: HomeAssistant, bambuddy_api: SimpleNamespace, freezer: FrozenDateTimeFactory, steady_waits: None
+    hass: HomeAssistant, bambuddy_api: SimpleNamespace, freezer: FrozenDateTimeFactory
 ) -> None:
     """BamBuddy closed it (4401: the key changed) or aiohttp's heartbeat
     found it dead: a new token, a new socket -- no new key asked for."""
@@ -414,8 +366,9 @@ async def test_a_closed_socket_reconnects_with_a_new_token(
     assert hass.config_entries.flow.async_progress() == []
 
 
+@pytest.mark.usefixtures("steady_waits")
 async def test_the_waits_grow_and_settle(
-    hass: HomeAssistant, bambuddy_api: SimpleNamespace, freezer: FrozenDateTimeFactory, steady_waits: None
+    hass: HomeAssistant, bambuddy_api: SimpleNamespace, freezer: FrozenDateTimeFactory
 ) -> None:
     """No socket: the next attempt after 1, 2, 4 … s, at most 60; after a
     connection that held a minute, after a second again -- one that held
@@ -424,9 +377,9 @@ async def test_the_waits_grow_and_settle(
     attempts = bambuddy_api.get_ws_token.await_count
 
     for wait in (1, 2, 4, 8, 16, 32, 60, 60):
-        await _later(hass, freezer, wait - 0.8)
+        await next_refresh(hass, freezer, wait - 0.8)
         assert bambuddy_api.get_ws_token.await_count == attempts, wait
-        await _later(hass, freezer, 0.9)
+        await next_refresh(hass, freezer, 0.9)
         attempts += 1
         assert bambuddy_api.get_ws_token.await_count == attempts, wait
 
@@ -440,7 +393,7 @@ async def test_the_waits_grow_and_settle(
     bambuddy_api.open_socket.side_effect = BamBuddyConnectionError("WebSocket: refused")
     socket.end()
     await hass.async_block_till_done(wait_background_tasks=True)
-    await _later(hass, freezer, 1.1)
+    await next_refresh(hass, freezer, 1.1)
     assert bambuddy_api.get_ws_token.await_count == attempts + 1
     attempts += 1
 
@@ -454,9 +407,9 @@ async def test_the_waits_grow_and_settle(
     bambuddy_api.open_socket.side_effect = BamBuddyConnectionError("WebSocket: refused")
     socket.end()
     await hass.async_block_till_done(wait_background_tasks=True)
-    await _later(hass, freezer, 3.0)
+    await next_refresh(hass, freezer, 3.0)
     assert bambuddy_api.get_ws_token.await_count == attempts
-    await _later(hass, freezer, 1.2)
+    await next_refresh(hass, freezer, 1.2)
     assert bambuddy_api.get_ws_token.await_count == attempts + 1
 
 
@@ -467,12 +420,12 @@ async def test_the_waits_grow_and_settle(
         (BamBuddyPermissionError(403, "HTTP 403", "GET /ws"), "HTTP 403"),
     ],
 )
+@pytest.mark.usefixtures("steady_waits")
 async def test_a_socket_the_proxy_refuses_retries_quietly(
     hass: HomeAssistant,
     bambuddy_api: SimpleNamespace,
     freezer: FrozenDateTimeFactory,
     caplog: pytest.LogCaptureFixture,
-    steady_waits: None,
     error: BamBuddyApiError,
     kind: str,
 ) -> None:
@@ -484,7 +437,7 @@ async def test_a_socket_the_proxy_refuses_retries_quietly(
         entry = await set_up(hass, X1C)
         reads = _reads(bambuddy_api, X1C)
         for wait in (1.1, 2.1, 4.1):
-            await _later(hass, freezer, wait)
+            await next_refresh(hass, freezer, wait)
         await next_refresh(hass, freezer)
 
     assert entry.runtime_data.live.diagnostics()["last_error"] == kind
@@ -493,8 +446,9 @@ async def test_a_socket_the_proxy_refuses_retries_quietly(
     assert caplog.text.count(kind) == 1
 
 
+@pytest.mark.usefixtures("steady_waits")
 async def test_an_unknown_key_asks_the_key_guard_once(
-    hass: HomeAssistant, bambuddy_api: SimpleNamespace, freezer: FrozenDateTimeFactory, steady_waits: None
+    hass: HomeAssistant, bambuddy_api: SimpleNamespace, freezer: FrozenDateTimeFactory
 ) -> None:
     """BamBuddy does not know the key (401): the guard checks it and decides
     on a new one -- once, not at every attempt. A token BamBuddy keeps from
@@ -504,18 +458,19 @@ async def test_an_unknown_key_asks_the_key_guard_once(
     with patch.object(KeyGuard, "async_read_refused") as refused:
         entry = await set_up(hass, X1C)
         for wait in (1.1, 2.1):
-            await _later(hass, freezer, wait)
+            await next_refresh(hass, freezer, wait)
         assert refused.call_count == 1
         bambuddy_api.get_ws_token.side_effect = BamBuddyPermissionError(403, "nope", "POST /auth/ws-token")
         for wait in (4.1, 8.1):
-            await _later(hass, freezer, wait)
+            await next_refresh(hass, freezer, wait)
         assert refused.call_count == 1
     bambuddy_api.open_socket.assert_not_awaited()
     assert entry.runtime_data.live.diagnostics()["last_error"] == "HTTP 403"
 
 
+@pytest.mark.usefixtures("steady_waits")
 async def test_unload_ends_the_socket(
-    hass: HomeAssistant, bambuddy_api: SimpleNamespace, freezer: FrozenDateTimeFactory, steady_waits: None
+    hass: HomeAssistant, bambuddy_api: SimpleNamespace, freezer: FrozenDateTimeFactory
 ) -> None:
     entry, socket = await _connected(hass, bambuddy_api, freezer)
     tokens = bambuddy_api.get_ws_token.await_count
@@ -526,12 +481,13 @@ async def test_unload_ends_the_socket(
     bambuddy_api.open_socket.side_effect = BamBuddyConnectionError("WebSocket: refused")
 
     assert socket.closes >= 1
-    await _later(hass, freezer, 120)
+    await next_refresh(hass, freezer, 120)
     assert bambuddy_api.get_ws_token.await_count == tokens
 
 
+@pytest.mark.usefixtures("steady_waits")
 async def test_no_attempt_once_home_assistant_stops(
-    hass: HomeAssistant, bambuddy_api: SimpleNamespace, freezer: FrozenDateTimeFactory, steady_waits: None
+    hass: HomeAssistant, bambuddy_api: SimpleNamespace, freezer: FrozenDateTimeFactory
 ) -> None:
     entry, socket = await _connected(hass, bambuddy_api, freezer)
     live = entry.runtime_data.live
@@ -542,12 +498,13 @@ async def test_no_attempt_once_home_assistant_stops(
         await hass.async_block_till_done(wait_background_tasks=True)
         # No timer either: nobody would cancel it any more.
         assert live._later is None
-        await _later(hass, freezer, 120)
+        await next_refresh(hass, freezer, 120)
         assert bambuddy_api.get_ws_token.await_count == tokens
 
 
+@pytest.mark.usefixtures("steady_waits")
 async def test_no_attempt_starts_while_home_assistant_stops(
-    hass: HomeAssistant, bambuddy_api: SimpleNamespace, steady_waits: None
+    hass: HomeAssistant, bambuddy_api: SimpleNamespace
 ) -> None:
     entry = await set_up(hass, X1C)
     tokens = bambuddy_api.get_ws_token.await_count
@@ -559,12 +516,12 @@ async def test_no_attempt_starts_while_home_assistant_stops(
     assert bambuddy_api.get_ws_token.await_count == tokens
 
 
+@pytest.mark.usefixtures("steady_waits")
 async def test_an_unforeseen_failure_stays_in_the_connection(
     hass: HomeAssistant,
     bambuddy_api: SimpleNamespace,
     freezer: FrozenDateTimeFactory,
     caplog: pytest.LogCaptureFixture,
-    steady_waits: None,
 ) -> None:
     """Nothing leaves the connection's task -- Home Assistant would log its
     text, and an error's text may carry the URL with the token: only its
@@ -574,7 +531,7 @@ async def test_an_unforeseen_failure_stays_in_the_connection(
     entry = await set_up(hass, X1C)
     tokens = bambuddy_api.get_ws_token.await_count
 
-    await _later(hass, freezer, 1.1)
+    await next_refresh(hass, freezer, 1.1)
 
     assert entry.runtime_data.live.diagnostics()["last_error"] == "ValueError"
     assert bambuddy_api.get_ws_token.await_count == tokens + 1
@@ -617,9 +574,9 @@ async def test_a_wider_gap_spaces_the_pushed_reads(
     assert _reads(bambuddy_api, X1C) == before + 1
     for seconds in (1, 2):
         printer.async_pushed()
-        await _later(hass, freezer, seconds)
+        await next_refresh(hass, freezer, seconds)
         assert _reads(bambuddy_api, X1C) == before + 1
-    await _later(hass, freezer, 2.1)
+    await next_refresh(hass, freezer, 2.1)
     assert _reads(bambuddy_api, X1C) == before + 2
 
 
@@ -636,14 +593,14 @@ async def test_a_new_gap_rearms_a_waiting_read(
 
     printer.async_pushed()
     printer.push_gap = 1
-    await _later(hass, freezer, 1.1)
+    await next_refresh(hass, freezer, 1.1)
     assert _reads(bambuddy_api, X1C) == before + 1
 
     printer.async_pushed()
     printer.push_gap = 5
-    await _later(hass, freezer, 1.1)
+    await next_refresh(hass, freezer, 1.1)
     assert _reads(bambuddy_api, X1C) == before + 1
-    await _later(hass, freezer, 4.0)
+    await next_refresh(hass, freezer, 4.0)
     assert _reads(bambuddy_api, X1C) == before + 2
 
 
@@ -674,14 +631,15 @@ async def test_live_updates_off_at_setup_open_nothing(
     entry = make_entry(hass, X1C, live_updates=False)
     await setup_integration(hass, entry)
 
-    await _later(hass, freezer, 120)
+    await next_refresh(hass, freezer, 120)
 
     bambuddy_api.get_ws_token.assert_not_awaited()
     assert entry.runtime_data.live.diagnostics()["enabled"] is False
 
 
+@pytest.mark.usefixtures("steady_waits")
 async def test_saving_live_updates_off_ends_the_socket_without_a_reload(
-    hass: HomeAssistant, bambuddy_api: SimpleNamespace, freezer: FrozenDateTimeFactory, steady_waits: None
+    hass: HomeAssistant, bambuddy_api: SimpleNamespace, freezer: FrozenDateTimeFactory
 ) -> None:
     entry, socket = await _connected(hass, bambuddy_api, freezer)
     runtime = entry.runtime_data
@@ -704,7 +662,7 @@ async def test_saving_live_updates_on_connects_at_once(hass: HomeAssistant, bamb
     bambuddy_api.open_socket.return_value = FakeSocket()
 
     hass.config_entries.async_update_entry(entry, options={**entry.options, "live_updates": True})
-    await _settle(hass)
+    await settle(hass)
 
     assert entry.runtime_data is runtime
     assert runtime.live.connected
@@ -723,8 +681,9 @@ async def test_saving_a_gap_reaches_every_printer(hass: HomeAssistant, bambuddy_
     assert {printer.push_gap for printer in runtime.printers.values()} == {5}
 
 
+@pytest.mark.usefixtures("steady_waits")
 async def test_two_quick_saves_end_in_the_last_state(
-    hass: HomeAssistant, bambuddy_api: SimpleNamespace, freezer: FrozenDateTimeFactory, steady_waits: None
+    hass: HomeAssistant, bambuddy_api: SimpleNamespace, freezer: FrozenDateTimeFactory
 ) -> None:
     """Off and on again in two saves without a pause: two listener runs,
     one socket in the end."""
@@ -734,7 +693,7 @@ async def test_two_quick_saves_end_in_the_last_state(
 
     hass.config_entries.async_update_entry(entry, options={**entry.options, "live_updates": False})
     hass.config_entries.async_update_entry(entry, options={**entry.options, "live_updates": True})
-    await _settle(hass)
+    await settle(hass)
 
     live = entry.runtime_data.live
     assert socket.closes == 1
@@ -783,8 +742,9 @@ def _tokens(bambuddy_api: SimpleNamespace) -> int:
     return int(bambuddy_api.get_ws_token.await_count)
 
 
+@pytest.mark.usefixtures("steady_waits")
 async def test_switching_off_ends_the_socket_and_every_attempt(
-    hass: HomeAssistant, bambuddy_api: SimpleNamespace, freezer: FrozenDateTimeFactory, steady_waits: None
+    hass: HomeAssistant, bambuddy_api: SimpleNamespace, freezer: FrozenDateTimeFactory
 ) -> None:
     entry, socket = await _connected(hass, bambuddy_api, freezer)
     live = entry.runtime_data.live
@@ -797,12 +757,13 @@ async def test_switching_off_ends_the_socket_and_every_attempt(
     assert not live.connected
     assert live._later is None
     assert live.diagnostics()["enabled"] is False
-    await _later(hass, freezer, 120)
+    await next_refresh(hass, freezer, 120)
     assert _tokens(bambuddy_api) == tokens
 
 
+@pytest.mark.usefixtures("steady_waits")
 async def test_switching_on_again_connects_at_once(
-    hass: HomeAssistant, bambuddy_api: SimpleNamespace, freezer: FrozenDateTimeFactory, steady_waits: None
+    hass: HomeAssistant, bambuddy_api: SimpleNamespace, freezer: FrozenDateTimeFactory
 ) -> None:
     entry, _socket = await _connected(hass, bambuddy_api, freezer)
     live = entry.runtime_data.live
@@ -813,27 +774,29 @@ async def test_switching_on_again_connects_at_once(
     bambuddy_api.open_socket.return_value = second
 
     live.async_set_enabled(True)
-    await _settle(hass)
+    await settle(hass)
 
     assert _tokens(bambuddy_api) == tokens + 1
     assert live.connected
     assert live.diagnostics()["enabled"] is True
 
 
+@pytest.mark.usefixtures("steady_waits")
 async def test_switching_on_twice_makes_one_attempt(
-    hass: HomeAssistant, bambuddy_api: SimpleNamespace, freezer: FrozenDateTimeFactory, steady_waits: None
+    hass: HomeAssistant, bambuddy_api: SimpleNamespace, freezer: FrozenDateTimeFactory
 ) -> None:
     entry, _socket = await _connected(hass, bambuddy_api, freezer)
     tokens = _tokens(bambuddy_api)
 
     entry.runtime_data.live.async_set_enabled(True)
-    await _settle(hass)
+    await settle(hass)
 
     assert _tokens(bambuddy_api) == tokens
 
 
+@pytest.mark.usefixtures("steady_waits")
 async def test_off_and_on_within_the_close_leave_one_socket(
-    hass: HomeAssistant, bambuddy_api: SimpleNamespace, freezer: FrozenDateTimeFactory, steady_waits: None
+    hass: HomeAssistant, bambuddy_api: SimpleNamespace, freezer: FrozenDateTimeFactory
 ) -> None:
     """Switched off, and on again while the old socket still closes: the
     old attempt touches nothing once it ends -- the new socket stays the
@@ -851,10 +814,10 @@ async def test_off_and_on_within_the_close_leave_one_socket(
     # Two saves in a row: the new socket opens before the old task ends.
     live.async_set_enabled(False)
     live.async_set_enabled(True)
-    await _settle(hass)
+    await settle(hass)
     assert first.closes == 1
     first.release.set()
-    await _settle(hass)
+    await settle(hass)
 
     assert live.connected
     assert live._socket is second
@@ -866,13 +829,14 @@ async def test_off_and_on_within_the_close_leave_one_socket(
     bambuddy_api.open_socket.side_effect = BamBuddyConnectionError("WebSocket: refused")
     second.end()
     await hass.async_block_till_done(wait_background_tasks=True)
-    await _later(hass, freezer, 1.1)
+    await next_refresh(hass, freezer, 1.1)
     assert _tokens(bambuddy_api) == tokens + 1
 
 
 @pytest.mark.parametrize("stage", ["get_ws_token", "open_socket"])
+@pytest.mark.usefixtures("steady_waits")
 async def test_off_during_an_attempt_leaves_nothing(
-    hass: HomeAssistant, bambuddy_api: SimpleNamespace, freezer: FrozenDateTimeFactory, steady_waits: None, stage: str
+    hass: HomeAssistant, bambuddy_api: SimpleNamespace, freezer: FrozenDateTimeFactory, stage: str
 ) -> None:
     """Switched off while it waits for the token or the handshake: the
     attempt ends, no next one is planned."""
@@ -885,26 +849,27 @@ async def test_off_during_an_attempt_leaves_nothing(
 
     getattr(bambuddy_api, stage).side_effect = waiting
     live.async_retry_now()
-    await _settle(hass)
+    await settle(hass)
     tokens = _tokens(bambuddy_api)
 
     live.async_set_enabled(False)
-    await _settle(hass)
+    await settle(hass)
 
     assert live._task is not None and live._task.done()
     assert live._later is None
-    await _later(hass, freezer, 120)
+    await next_refresh(hass, freezer, 120)
     assert _tokens(bambuddy_api) == tokens
 
 
+@pytest.mark.usefixtures("steady_waits")
 async def test_off_then_unload_leaves_no_task(
-    hass: HomeAssistant, bambuddy_api: SimpleNamespace, freezer: FrozenDateTimeFactory, steady_waits: None
+    hass: HomeAssistant, bambuddy_api: SimpleNamespace, freezer: FrozenDateTimeFactory
 ) -> None:
     entry, _socket = await _connected(hass, bambuddy_api, freezer)
     live = entry.runtime_data.live
 
     live.async_set_enabled(False)
-    await _settle(hass)
+    await settle(hass)
     assert live._task is not None and live._task.done()
 
     async with asyncio.timeout(5):
@@ -912,8 +877,9 @@ async def test_off_then_unload_leaves_no_task(
         await hass.async_block_till_done(wait_background_tasks=True)
 
 
+@pytest.mark.usefixtures("steady_waits")
 async def test_retry_now_connects_a_waiting_connection(
-    hass: HomeAssistant, bambuddy_api: SimpleNamespace, freezer: FrozenDateTimeFactory, steady_waits: None
+    hass: HomeAssistant, bambuddy_api: SimpleNamespace, freezer: FrozenDateTimeFactory
 ) -> None:
     """The connection waits for its next attempt (up to a minute): a test
     that just opened a socket wakes it -- not while one runs, not when off."""
@@ -925,17 +891,17 @@ async def test_retry_now_connects_a_waiting_connection(
     bambuddy_api.open_socket.return_value = socket
 
     live.async_retry_now()
-    await _settle(hass)
+    await settle(hass)
     assert live.connected
     tokens = _tokens(bambuddy_api)
     live.async_retry_now()
-    await _settle(hass)
+    await settle(hass)
     assert _tokens(bambuddy_api) == tokens
 
     live.async_set_enabled(False)
-    await _settle(hass)
+    await settle(hass)
     live.async_retry_now()
-    await _settle(hass)
+    await settle(hass)
     assert _tokens(bambuddy_api) == tokens
     assert not live.connected
 

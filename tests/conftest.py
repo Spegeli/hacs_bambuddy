@@ -249,12 +249,6 @@ def make_entry(hass: HomeAssistant, *printer_ids: int, **options: Any) -> MockCo
     return entry
 
 
-@pytest.fixture
-def config_entry(hass: HomeAssistant) -> MockConfigEntry:
-    """An entry with the printing X1C."""
-    return make_entry(hass, X1C)
-
-
 async def setup_integration(hass: HomeAssistant, entry: MockConfigEntry) -> None:
     """Set `entry` up and wait until it is loaded."""
     assert await hass.config_entries.async_setup(entry.entry_id)
@@ -277,6 +271,18 @@ async def next_refresh(hass: HomeAssistant, freezer: FrozenDateTimeFactory, seco
     async_fire_time_changed(hass)
     # The coordinators refresh in background tasks.
     await hass.async_block_till_done(wait_background_tasks=True)
+
+
+async def past_minutes(hass: HomeAssistant, freezer: FrozenDateTimeFactory, polls: int) -> None:
+    """`polls` of the printers' polls of 11 s one after another: past the
+    minute's details read (6), the system information's 5 minutes (30)."""
+    for _ in range(polls):
+        await next_refresh(hass, freezer)
+
+
+async def past_the_minute(hass: HomeAssistant, freezer: FrozenDateTimeFactory) -> None:
+    """Past the printers' minute: their details, print hours and names read again."""
+    await past_minutes(hass, freezer, 6)
 
 
 def entity_id(hass: HomeAssistant, platform: str, unique_id: str) -> str:

@@ -38,8 +38,8 @@ from tests.conftest import (
     entity_id,
     load_fixture,
     make_entry,
-    next_refresh,
     no_entity,
+    past_the_minute,
     printer_serial,
     printer_uid,
     set_up,
@@ -670,7 +670,9 @@ async def test_a_stream_at_a_new_rate_waits_for_the_cameras_own(
     camera._no_streams.clear()  # type: ignore[union-attr]
 
     ending = hass.async_create_task(camera._end_other_rate(15))  # type: ignore[union-attr]
-    await asyncio.sleep(0.05)
+    # Its waits run: still nothing stopped while a stream of its own runs.
+    for _ in range(5):
+        await asyncio.sleep(0)
     bambuddy_api.stop_camera.assert_not_awaited()
     camera._streams = 0  # type: ignore[union-attr]
     camera._no_streams.set()  # type: ignore[union-attr]
@@ -690,8 +692,7 @@ async def test_an_external_camera_switched_on_later(
     bambuddy_api.get_printer.side_effect = lambda printer_id: {**printers[printer_id], **_EXTERNAL}
 
     with patch.object(hass.config_entries, "async_schedule_reload") as reload:
-        for _ in range(6):
-            await next_refresh(hass, freezer)
+        await past_the_minute(hass, freezer)
 
     number = state_of(hass, "number", printer_uid(entry, "camera_fps"))
     assert (number.state, number.attributes["max"]) == ("15", 15)

@@ -5,30 +5,38 @@ import { afterEach, describe, expect, it } from "vitest";
 
 import "../src/index";
 import { ICONS } from "../src/icons";
-import { a1mini, h2d, makeHass, mountCard, offlineP1s, plugDevice, readOnlyX1c, x1c, type FakeCard, type FakeDevice, type FakeHassOptions, type PlugSpec } from "./fixtures";
+import {
+  a1mini,
+  h2d,
+  IDLE,
+  idleX1c,
+  makeHass,
+  mountCard,
+  mountFor,
+  offlineP1s,
+  plugDevice,
+  readOnlyX1c,
+  x1c,
+  x1cWithPlugs,
+  type FakeCard,
+  type FakeDevice,
+  type FakeHassOptions,
+} from "./fixtures";
 import { button, find, findAll, NBSP, press, root, settle, showView, styleText, text } from "./helpers";
 
 afterEach(() => {
   document.body.innerHTML = "";
 });
 
-const IDLE = { status: "idle", stage: "idle", progress: 0, nozzles: [[30, 0]] as [number, number][] };
-
-function x1cPlugs(printer: Partial<Parameters<typeof x1c>[0]>, ...plugs: Omit<PlugSpec, "printer">[]): FakeDevice[] {
-  const devices = x1c(printer);
-  return [...devices, ...plugs.map((spec) => plugDevice({ printer: devices[0] as FakeDevice, ...spec }))];
-}
-
-async function mount(devices: FakeDevice[], printer: string, config: Record<string, unknown> = {}, options: Partial<FakeHassOptions> = {}): Promise<FakeCard> {
-  return mountCard(makeHass({ devices, ...options }), { printer, ...config });
-}
+const mount = async (devices: FakeDevice[], printer: string, config: Record<string, unknown> = {}, options: Partial<FakeHassOptions> = {}): Promise<FakeCard> =>
+  (await mountFor(devices, printer, config, options)).card;
 
 const rows = (card: FakeCard): string[] => findAll(card, ".power .p-row:not(.p-auto)").map(text);
 
 describe("the printer's plug, as BamBuddy picks it", () => {
   it("is the plug the integration marks, not the first by name: its tag, its switch-off row", async () => {
     const card = await mount(
-      x1cPlugs(IDLE, { id: 2, name: "Abluft", watts: 12, main: false }, { id: 1, name: "Tasmota Drucker", watts: 180, main: true, autoOff: { armed: true, phase: "idle" } }),
+      x1cWithPlugs(IDLE, { id: 2, name: "Abluft", watts: 12, main: false }, { id: 1, name: "Tasmota Drucker", watts: 180, main: true, autoOff: { armed: true, phase: "idle" } }),
       "dev-x1c",
     );
     expect(rows(card).map((row) => row.split(" On")[0])).toEqual(["Tasmota Drucker Printer", "Abluft"]);
@@ -62,7 +70,7 @@ describe("a printer that is offline", () => {
 });
 
 describe("a plug that does not report its state", () => {
-  const unknownPlug = (): FakeDevice[] => x1cPlugs(IDLE, { id: 3, name: "Tasmota", state: "unknown" });
+  const unknownPlug = (): FakeDevice[] => x1cWithPlugs(IDLE, { id: 3, name: "Tasmota", state: "unknown" });
 
   it("turns on without a question, asks before off, and names the plug on both", async () => {
     const hass = makeHass({ devices: unknownPlug() });
@@ -109,7 +117,7 @@ describe("the switch-off after the print", () => {
   });
 
   it("lowers its threshold in steps, down to the number's lowest", async () => {
-    const hass = makeHass({ devices: x1cPlugs(IDLE, { id: 3, name: "Tasmota", autoOff: { armed: true, phase: "idle", temperature: 50 } }) });
+    const hass = makeHass({ devices: x1cWithPlugs(IDLE, { id: 3, name: "Tasmota", autoOff: { armed: true, phase: "idle", temperature: 50 } }) });
     const card = await mountCard(hass, { printer: "dev-x1c" });
     (find(card, ".power .p-open") as HTMLButtonElement).click();
     await settle(card);
@@ -127,20 +135,13 @@ describe("the switch-off after the print", () => {
 });
 
 describe("a slot's tools", () => {
-  const idle = (): FakeDevice[] => {
-    const all = x1c({ status: "idle", stage: "idle" });
-    for (const entity of (all[1] as FakeDevice).entities) {
-      if ("attributes" in entity && entity.attributes) entity.attributes = { ...entity.attributes, active: false };
-    }
-    return all;
-  };
   const editRow = async (card: FakeCard, row: number): Promise<void> => {
     (findAll(card, ".slot")[row]?.querySelector(".btn.edit") as HTMLButtonElement).click();
     await settle(card);
   };
 
   it("offers no reset for a slot nobody described: there is nothing to reset", async () => {
-    const card = await mount(idle(), "dev-x1c");
+    const card = await mount(idleX1c(), "dev-x1c");
     await showView(card, "Filament");
     await editRow(card, 3);
     expect(findAll(card, "dialog .btn").map(text)).not.toContain("Reset slot");
@@ -168,7 +169,7 @@ describe("a slot's tools", () => {
       if (call.service === "get_k_profiles") throw new Error("no answer");
       return undefined;
     };
-    const hass = makeHass({ devices: idle(), callService: failing });
+    const hass = makeHass({ devices: idleX1c(), callService: failing });
     const card = await mountCard(hass, { printer: "dev-x1c" });
     await showView(card, "Filament");
     await editRow(card, 2);
@@ -183,7 +184,7 @@ describe("a slot's tools", () => {
   it("says why the printer may have listed no K profile", async () => {
     const none = async (call: { service: string }): Promise<unknown> =>
       call.service === "get_k_profiles" ? { response: { nozzle_diameter: "0.4", current: -1, profiles: [] } } : undefined;
-    const card = await mount(idle(), "dev-x1c", {}, { callService: none });
+    const card = await mount(idleX1c(), "dev-x1c", {}, { callService: none });
     await showView(card, "Filament");
     await editRow(card, 2);
     expect(text(find(card, "dialog #k-hint"))).toBe(
@@ -204,7 +205,7 @@ describe("a slot's tools", () => {
     expect(text(find(card, "dialog .k-hint"))).toBe("The printer did not list its K profiles: the spool keeps its own.");
     expect([...(find<HTMLSelectElement>(card, "dialog select#fil-k") as HTMLSelectElement).options].map((option) => option.text)[0]).toBe("Keep the spool's own");
 
-    const blank = await mount(idle(), "dev-x1c", {}, { callService: failing });
+    const blank = await mount(idleX1c(), "dev-x1c", {}, { callService: failing });
     await showView(blank, "Filament");
     await editRow(blank, 3);
     const select = find<HTMLSelectElement>(blank, "dialog select#fil-k") as HTMLSelectElement;
@@ -305,7 +306,7 @@ describe("the printer's own plug while the printer is offline", () => {
 describe("a plug's question comes back to its own button", () => {
   it("Keep it on brings the focus back to the plug's Turn off", async () => {
     const card = await mount(
-      x1cPlugs(IDLE, { id: 3, name: "Tasmota", state: "unknown" }, { id: 4, name: "Abluft", state: "unknown", powersPrinter: false }),
+      x1cWithPlugs(IDLE, { id: 3, name: "Tasmota", state: "unknown" }, { id: 4, name: "Abluft", state: "unknown", powersPrinter: false }),
       "dev-x1c",
       { header_chips: ["power"] },
     );
@@ -324,7 +325,7 @@ describe("a plug's question comes back to its own button", () => {
 
   it("shows the toggle busy while the off its question sent runs", async () => {
     let finish: (value: unknown) => void = () => undefined;
-    const card = await mount(x1cPlugs(IDLE, { id: 3, name: "Tasmota", state: "on" }), "dev-x1c", {}, { callService: () => new Promise((resolve) => (finish = resolve)) });
+    const card = await mount(x1cWithPlugs(IDLE, { id: 3, name: "Tasmota", state: "on" }), "dev-x1c", {}, { callService: () => new Promise((resolve) => (finish = resolve)) });
     (find(card, ".power [role=switch]") as HTMLButtonElement).click();
     await settle(card);
     button(card, "Switch off").click();

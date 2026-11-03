@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { findPrinter, isPrinter, printerDevices, shownUnits } from "../src/discovery";
+import { findPrinter, hasPrintStatus, printerDevices, shownUnits } from "../src/discovery";
 import type { PrinterRefs } from "../src/types";
 import { a1mini, amsDevice, h2d, instanceDevice, makeHass, offlineP1s, readOnlyX1c, x1c, type FakeDevice } from "./fixtures";
 
@@ -195,11 +195,11 @@ describe("which devices are printers", () => {
   const hass = makeHass({ devices: [...x1c(), ...h2d(), instanceDevice] });
 
   it("knows a printer by its print status sensor", () => {
-    expect(isPrinter(hass, "dev-x1c")).toBe(true);
-    expect(isPrinter(hass, "dev-x1c-ams-0")).toBe(false);
-    expect(isPrinter(hass, "dev-instance")).toBe(false);
-    expect(isPrinter(hass, null)).toBe(false);
-    expect(isPrinter(hass, "dev-unknown")).toBe(false);
+    expect(hasPrintStatus(hass, "dev-x1c")).toBe(true);
+    expect(hasPrintStatus(hass, "dev-x1c-ams-0")).toBe(false);
+    expect(hasPrintStatus(hass, "dev-instance")).toBe(false);
+    expect(hasPrintStatus(hass, null)).toBe(false);
+    expect(hasPrintStatus(hass, "dev-unknown")).toBe(false);
   });
 
   it("lists the printers in the device registry's order", () => {

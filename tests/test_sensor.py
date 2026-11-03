@@ -28,6 +28,7 @@ from tests.conftest import (
     make_entry,
     next_refresh,
     no_entity,
+    past_the_minute,
     printer_key,
     printer_uid,
     set_up,
@@ -479,8 +480,7 @@ async def test_the_end_time_follows_an_estimate_that_stands_still(
     assert state_of(hass, "sensor", end_time).state == "2026-10-16T12:37:00+00:00"
 
     # Under 2 minutes behind: held.
-    for _ in range(6):
-        await next_refresh(hass, freezer)
+    await past_the_minute(hass, freezer)
     assert state_of(hass, "sensor", end_time).state == "2026-10-16T12:37:00+00:00"
     # 2 minutes behind with the same estimate: it moves with the clock.
     for _ in range(2):
@@ -599,8 +599,7 @@ async def test_print_hours_bambuddy_cannot_give(
     entry = await set_up(hass, X1C)
     bambuddy_api.get_runtime.side_effect = BamBuddyApiError(404, "Not Found")
 
-    for _ in range(6):
-        await next_refresh(hass, freezer)
+    await past_the_minute(hass, freezer)
 
     assert state_of(hass, "sensor", printer_uid(entry, "print_hours")).state == "559.5"
     assert state_of(hass, "sensor", printer_uid(entry, "status")).state == "printing"
@@ -612,7 +611,6 @@ async def test_the_status_tells_bambuddys_name(hass: HomeAssistant, bambuddy_api
     entry = await set_up(hass, X1C)
 
     assert state_of(hass, "sensor", printer_uid(entry, "status")).attributes["bambuddy_name"] == "Workshop"
-
 
 
 async def test_a_printer_without_a_port_is_never_on_a_cable(
@@ -632,7 +630,6 @@ async def test_print_hours_may_go_down(hass: HomeAssistant, bambuddy_api: Simple
     entry = await set_up(hass, X1C)
 
     assert state_of(hass, "sensor", printer_uid(entry, "print_hours")).attributes["state_class"] == "total"
-
 
 
 async def test_a_silent_unit_of_a_printer_without_a_model_gets_no_climate_sensors(
@@ -709,7 +706,6 @@ async def test_a_named_unit_of_a_printer_without_a_model_gets_its_climate_sensor
     entry = await set_up(hass, A1_MINI)
 
     assert len(_ams_climate(hass, entry.entry_id)) == 2
-
 
 
 async def test_a_trigger_on_the_print_status_reads_the_poll_new(

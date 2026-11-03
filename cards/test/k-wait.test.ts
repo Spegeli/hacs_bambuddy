@@ -5,8 +5,19 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import "../src/index";
-import { a1mini, h2d, makeHass, mountCard, x1c, type FakeCard, type FakeDevice, type FakeHassOptions } from "./fixtures";
-import { find, findAll, NBSP, press, settle, showView, styleText, text } from "./helpers";
+import {
+  a1mini,
+  h2d,
+  idleX1c,
+  makeHass,
+  mountCard,
+  mountFor,
+  x1c,
+  type FakeCard,
+  type FakeDevice,
+  type FakeHassOptions,
+} from "./fixtures";
+import { declarations, find, findAll, NBSP, press, settle, showView, styleText, text } from "./helpers";
 
 const PROFILES = {
   nozzle_diameter: 0.4,
@@ -20,18 +31,9 @@ const PROFILES = {
 const NONE = { nozzle_diameter: 0.4, current: -1, profiles: [], answered: true };
 const SILENT = { nozzle_diameter: 0.4, current: -1, profiles: [], answered: false };
 
-/** The X1C idle: every slot may be set. */
-const idle = (): FakeDevice[] => {
-  const all = x1c({ status: "idle", stage: "idle" });
-  for (const entity of (all[1] as FakeDevice).entities) {
-    if ("attributes" in entity && entity.attributes) entity.attributes = { ...entity.attributes, active: false };
-  }
-  return all;
-};
 
-async function mount(devices: FakeDevice[], printer: string, options: Partial<FakeHassOptions> = {}): Promise<FakeCard> {
-  return mountCard(makeHass({ devices, ...options }), { printer });
-}
+const mount = async (devices: FakeDevice[], printer: string, options: Partial<FakeHassOptions> = {}): Promise<FakeCard> =>
+  (await mountFor(devices, printer, {}, options)).card;
 
 const answering =
   (response: unknown) =>
@@ -63,7 +65,7 @@ afterEach(() => {
 describe("the K field while the printer is asked", () => {
   it("can be chosen at once: the slot's own or the printer's default, beside a spinner", async () => {
     const held = holding();
-    const card = await mount(idle(), "dev-x1c", { callService: held.callService });
+    const card = await mount(idleX1c(), "dev-x1c", { callService: held.callService });
     await showView(card, "Filament");
     await editRow(card, 2);
 
@@ -84,7 +86,7 @@ describe("the K field while the printer is asked", () => {
 
   it("keeps what was chosen while it asked", async () => {
     const held = holding();
-    const card = await mount(idle(), "dev-x1c", { callService: held.callService });
+    const card = await mount(idleX1c(), "dev-x1c", { callService: held.callService });
     await showView(card, "Filament");
     await editRow(card, 2);
     kSelect(card).value = "-1";
@@ -98,7 +100,7 @@ describe("the K field while the printer is asked", () => {
 
   it("says after 5 seconds, in orange, that BamBuddy asks up to three times", async () => {
     const held = holding();
-    const card = await mount(idle(), "dev-x1c", { callService: held.callService });
+    const card = await mount(idleX1c(), "dev-x1c", { callService: held.callService });
     await showView(card, "Filament");
     vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
     (findAll(card, ".slot")[2]?.querySelector(".btn.edit") as HTMLButtonElement).click();
@@ -116,14 +118,14 @@ describe("the K field while the printer is asked", () => {
 
 describe("the K field after the answer", () => {
   it("says, as information, that the printer has no profiles of its own for its nozzle diameter", async () => {
-    const card = await mount(idle(), "dev-x1c", { callService: answering(NONE) });
+    const card = await mount(idleX1c(), "dev-x1c", { callService: answering(NONE) });
     await showView(card, "Filament");
     await editRow(card, 2);
     expect(find(card, "dialog #k-hint .dlg-note.info")).not.toBeNull();
     expect(text(hint(card))).toBe(
       `No K profiles of your own are saved on the printer for the 0.4${NBSP}mm nozzle diameter. Profiles of your own, for example from the flow dynamics calibration in Bambu Studio or from BamBuddy, show here. Until then the printer uses its default.`,
     );
-    const de = await mountCard(makeHass({ devices: idle(), language: "de", callService: answering({ ...NONE, nozzle_diameter: 0.6 }) }), { printer: "dev-x1c" });
+    const de = await mountCard(makeHass({ devices: idleX1c(), language: "de", callService: answering({ ...NONE, nozzle_diameter: 0.6 }) }), { printer: "dev-x1c" });
     await showView(de, "Filament");
     await editRow(de, 2);
     expect(text(hint(de))).toBe(
@@ -132,12 +134,12 @@ describe("the K field after the answer", () => {
   });
 
   it("warns when the printer did not answer, and how to ask again", async () => {
-    const card = await mount(idle(), "dev-x1c", { callService: answering(SILENT) });
+    const card = await mount(idleX1c(), "dev-x1c", { callService: answering(SILENT) });
     await showView(card, "Filament");
     await editRow(card, 2);
     expect(find(card, "dialog #k-hint .dlg-note.warning")).not.toBeNull();
     expect(text(hint(card))).toBe("The printer did not answer in time. To ask again, close the dialog and open it once more.");
-    const de = await mountCard(makeHass({ devices: idle(), language: "de", callService: answering(SILENT) }), { printer: "dev-x1c" });
+    const de = await mountCard(makeHass({ devices: idleX1c(), language: "de", callService: answering(SILENT) }), { printer: "dev-x1c" });
     await showView(de, "Filament");
     await editRow(de, 2);
     expect(text(hint(de))).toBe("Der Drucker hat nicht rechtzeitig geantwortet. Um neu zu fragen, schließe den Dialog und öffne ihn noch einmal.");
@@ -148,13 +150,13 @@ describe("the nozzle under the slot dialog's title", () => {
   const line = (card: FakeCard): string[] => findAll(card, "dialog .nozzle-line > span").map(text);
 
   it("names the one nozzle of a printer with one: diameter and type", async () => {
-    const card = await mount(idle(), "dev-x1c", { callService: answering(PROFILES) });
+    const card = await mount(idleX1c(), "dev-x1c", { callService: answering(PROFILES) });
     await showView(card, "Filament");
     await editRow(card, 2);
     expect(line(card)).toEqual([`Nozzle: 0.4${NBSP}mm · Hardened steel`]);
     expect(find(card, "dialog .nozzle-line .icon")).not.toBeNull();
     // Also in a chip spool's dialog.
-    const chip = await mount(idle(), "dev-x1c");
+    const chip = await mount(idleX1c(), "dev-x1c");
     await showView(chip, "Filament");
     await editRow(chip, 0);
     expect(line(chip)).toEqual([`Nozzle: 0.4${NBSP}mm · Hardened steel`]);
@@ -225,12 +227,12 @@ describe("the K field, every path", () => {
   };
 
   it("writes its orange as the card's other warnings: readable on a light dialog", () => {
-    expect(styleText()).toMatch(/\.k-wait\.slow\s*\{[^}]*color: color-mix\(in srgb, var\(--bb-warn\) 55%, var\(--bb-text\)\);/);
+    expect(declarations(".k-wait.slow", styleText())).toContain("color: color-mix(in srgb, var(--bb-warn) 55%, var(--bb-text))");
   });
 
   it("turns orange 5 s after this open, not an earlier one's, also after the card was put back", async () => {
     const held = holding();
-    const card = await mount(idle(), "dev-x1c", { callService: held.callService });
+    const card = await mount(idleX1c(), "dev-x1c", { callService: held.callService });
     await showView(card, "Filament");
     vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
     await open(card);
@@ -251,7 +253,7 @@ describe("the K field, every path", () => {
 
   it("turns orange in a dialog a question parked meanwhile", async () => {
     const held = holding();
-    const card = await mount(idle(), "dev-x1c", { callService: held.callService });
+    const card = await mount(idleX1c(), "dev-x1c", { callService: held.callService });
     await showView(card, "Filament");
     vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
     await open(card);
@@ -264,7 +266,7 @@ describe("the K field, every path", () => {
   it("keeps the answer of this open, not a late one of an earlier open", async () => {
     const answers: ((value: unknown) => void)[] = [];
     const callService = async (call: { service: string }) => (call.service === "get_k_profiles" ? new Promise((resolve) => answers.push(resolve)) : undefined);
-    const card = await mount(idle(), "dev-x1c", { callService });
+    const card = await mount(idleX1c(), "dev-x1c", { callService });
     await showView(card, "Filament");
     await editRow(card, 2);
     (findAll<HTMLButtonElement>(card, "dialog .dlg-actions .btn").find((item) => text(item) === "Cancel") as HTMLButtonElement).click();
@@ -280,7 +282,7 @@ describe("the K field, every path", () => {
 
   it("falls back to the default where the slot's own, chosen while asked, turns out to be none", async () => {
     const held = holding();
-    const card = await mount(idle(), "dev-x1c", { callService: held.callService });
+    const card = await mount(idleX1c(), "dev-x1c", { callService: held.callService });
     await showView(card, "Filament");
     await editRow(card, 2);
     kSelect(card).value = "keep";
@@ -294,7 +296,7 @@ describe("the K field, every path", () => {
 
   it("sets the printer's default chosen while it asked", async () => {
     const held = holding();
-    const hass = makeHass({ devices: idle(), callService: held.callService });
+    const hass = makeHass({ devices: idleX1c(), callService: held.callService });
     const card = await mountCard(hass, { printer: "dev-x1c" });
     await showView(card, "Filament");
     await editRow(card, 2);
@@ -307,7 +309,7 @@ describe("the K field, every path", () => {
 
   it("says its waiting in German", async () => {
     const held = holding();
-    const card = await mountCard(makeHass({ devices: idle(), language: "de", callService: held.callService }), { printer: "dev-x1c" });
+    const card = await mountCard(makeHass({ devices: idleX1c(), language: "de", callService: held.callService }), { printer: "dev-x1c" });
     await showView(card, "Filament");
     vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
     await open(card);
@@ -348,16 +350,16 @@ describe("the nozzle line, every side", () => {
 
 describe("the slot dialog's layout", () => {
   it("keeps two lines for the waiting note, so the dialog does not move when it turns orange", () => {
-    expect(styleText()).toMatch(/\.k-wait\s*\{[^}]*min-height: 36px;/);
+    expect(declarations(".k-wait", styleText())).toContain("min-height: 36px");
   });
 
   it("puts a wrapped nozzle line's icon at its first line, as the notes do", () => {
-    expect(styleText()).toMatch(/\.nozzle-line > span\s*\{[^}]*align-items: flex-start;/);
-    expect(styleText()).toMatch(/\.nozzle-line \.icon\s*\{[^}]*margin-top: 1px;/);
+    expect(declarations(".nozzle-line > span", styleText())).toContain("align-items: flex-start");
+    expect(declarations(".nozzle-line .icon", styleText())).toContain("margin-top: 1px");
   });
 
   it("breaks a title word longer than the dialog", () => {
-    expect(styleText()).toMatch(/\.dlg-body h2\s*\{[^}]*overflow-wrap: anywhere;/);
+    expect(declarations(".dlg-body h2", styleText())).toContain("overflow-wrap: anywhere");
   });
 });
 

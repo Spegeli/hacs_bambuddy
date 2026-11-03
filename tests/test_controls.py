@@ -271,6 +271,7 @@ async def test_the_airduct_mode(
     with pytest.raises(ServiceValidationError) as raised:
         await _call(hass, "select", "select_option", entity, option="cooling")
     assert raised.value.translation_key == "chamber_heating"
+    assert not raised.value.translation_placeholders
     bambuddy_api.set_airduct_mode.assert_not_awaited()
     await _call(hass, "select", "select_option", entity, option="heating")
     bambuddy_api.set_airduct_mode.assert_awaited_once_with(H2D, "heating")
@@ -568,7 +569,7 @@ async def test_the_build_plate_detection_is_named_as_in_bambu_studio(
     assert (h2d.translation_key, h2d.entity_id) == ("build_plate_detection", "switch.h2d_0948ad000000004_build_plate_detection")
 
 
-async def test_the_single_detectors_of_an_h2d(
+async def test_the_separate_detectors_of_an_h2d(
     hass: HomeAssistant, bambuddy_api: SimpleNamespace, freezer: FrozenDateTimeFactory
 ) -> None:
     entry = await set_up(hass, H2D)
@@ -581,7 +582,6 @@ async def test_the_single_detectors_of_an_h2d(
 
     bambuddy_api.set_print_option.assert_awaited_once_with(H2D, "clump_detector", True)
     assert no_entity(hass, "switch", printer_uid(entry, "ai_monitoring", H2D))
-
 
 
 # Its ventilation runs the auxiliary fan, with the kit the exhaust fan too.
@@ -619,7 +619,6 @@ async def test_fans_the_stock_printer_lacks_start_disabled(
         assert (entity.disabled_by is not None) == (key in disabled), key
 
 
-
 async def test_the_laser_airduct_mode_is_shown_not_offered(
     hass: HomeAssistant, bambuddy_api: SimpleNamespace, freezer: FrozenDateTimeFactory
 ) -> None:
@@ -640,7 +639,6 @@ async def test_the_laser_airduct_mode_is_shown_not_offered(
     bambuddy_api.statuses[H2D]["airduct_mode"] = 1
     await next_refresh(hass, freezer)
     assert state_at(hass, entity).attributes["options"] == ["cooling", "heating"]
-
 
 
 async def test_a_printer_without_a_chamber_has_a_light(hass: HomeAssistant, bambuddy_api: SimpleNamespace) -> None:

@@ -5,19 +5,32 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import "../src/index";
 import { changedConfig, configForm, editorData, settingsOf, validateConfig } from "../src/forms";
-import { h2d, makeHass, MAINTENANCE_TASKS, maintenanceSpec, mountCard, p1s, plugDevice, unreachable, x1c, type FakeCard, type FakeDevice, type FakeHass, type PlugSpec, type PrinterSpec } from "./fixtures";
-import { find, findAll, NBSP, styleText, text, update } from "./helpers";
+import {
+  h2d,
+  IDLE,
+  MAINTENANCE_TASKS,
+  maintenanceSpec,
+  makeHass,
+  mountFor,
+  p1s,
+  unreachable,
+  x1c,
+  x1cWithPlugs,
+  type FakeCard,
+  type FakeDevice,
+  type FakeHass,
+  type PlugSpec,
+  type PrinterSpec,
+} from "./fixtures";
+import { declarations, find, findAll, NBSP, shownText, styleText, text, update } from "./helpers";
 
 interface Mounted {
   card: FakeCard;
   hass: FakeHass;
 }
 
-async function mount(devices: FakeDevice[], printer: string, config: Record<string, unknown> = {}, language = "en"): Promise<Mounted> {
-  const hass = makeHass({ devices, language });
-  const card = await mountCard(hass, { printer, ...config });
-  return { card, hass };
-}
+const mount = (devices: FakeDevice[], printer: string, config: Record<string, unknown> = {}, language = "en"): Promise<Mounted> =>
+  mountFor(devices, printer, config, { language });
 
 const ALL = { door: "on" as const, storage: "off" as const, maintenance: maintenanceSpec() };
 const EVERY_CHIP = ["network", "hms", "firmware", "maintenance", "door", "storage", "drying", "power"];
@@ -28,23 +41,12 @@ const pill = (card: FakeCard, kind: string): HTMLElement => {
   return found;
 };
 const tooltip = (card: FakeCard, kind: string): string | null => pill(card, kind).getAttribute("title");
-/** A chip's text as it shows: without what only a screen reader hears. */
-const visible = (element: Element): string => {
-  const copy = element.cloneNode(true) as Element;
-  copy.querySelectorAll(".sr-only").forEach((hidden) => hidden.remove());
-  return text(copy);
-};
 const spoken = (element: Element): string => text(element.querySelector(".sr-only"));
 const named = (card: FakeCard, kind: string): string | null => pill(card, kind).getAttribute("aria-label");
 
 /** The X1C and its plugs (the printer's own by default). */
-function x1cWith(printer: Partial<PrinterSpec> = {}, ...plugs: Omit<PlugSpec, "printer">[]): FakeDevice[] {
-  const devices = x1c(printer);
-  const device = devices[0] as FakeDevice;
-  const specs = plugs.length ? plugs : [{ id: 3, name: "Tasmota", watts: 182.4, today: 1.27 }];
-  return [...devices, ...specs.map((spec) => plugDevice({ printer: device, ...spec }))];
-}
-const IDLE: Partial<PrinterSpec> = { status: "idle", stage: "idle", progress: 0, nozzles: [[30, 0]] };
+const x1cWith = (printer: Partial<PrinterSpec> = {}, ...plugs: Omit<PlugSpec, "printer">[]): FakeDevice[] =>
+  x1cWithPlugs(printer, ...(plugs.length ? plugs : [{ id: 3, name: "Tasmota", watts: 182.4, today: 1.27 }]));
 const ACCESSORY = { id: 4, name: "Exhaust fan", powersPrinter: false, watts: 12 };
 
 const TIME = `3${NBSP}h${NBSP}20${NBSP}min`;
@@ -152,12 +154,12 @@ describe("compact chips", () => {
 
   it("show icon and value: OK, counts, the new firmware, the network as it was", async () => {
     const { card } = await mount(x1c(ALL), "dev-x1c", compact);
-    expect(visible(pill(card, "network"))).toBe(`−52${NBSP}dBm`);
-    expect(visible(pill(card, "hms"))).toBe("OK");
-    expect(visible(pill(card, "firmware"))).toBe("01.09.00.00");
-    expect(visible(pill(card, "maintenance"))).toBe("3");
+    expect(shownText(pill(card, "network"))).toBe(`−52${NBSP}dBm`);
+    expect(shownText(pill(card, "hms"))).toBe("OK");
+    expect(shownText(pill(card, "firmware"))).toBe("01.09.00.00");
+    expect(shownText(pill(card, "maintenance"))).toBe("3");
     const garage = await mount(p1s(), "dev-p1s", { compact_chips: true });
-    expect(visible(pill(garage.card, "hms"))).toBe("3");
+    expect(shownText(pill(garage.card, "hms"))).toBe("3");
   });
 
   it("keep the full text as tooltip and name", async () => {
@@ -172,7 +174,7 @@ describe("compact chips", () => {
   it("show the door and missing storage as their icon alone", async () => {
     const { card } = await mount(x1c(ALL), "dev-x1c", compact);
     for (const kind of ["door", "storage"]) {
-      expect(visible(pill(card, kind)), kind).toBe("");
+      expect(shownText(pill(card, kind)), kind).toBe("");
       expect(pill(card, kind).querySelector(".icon"), kind).not.toBeNull();
     }
     expect(named(card, "door")).toBe("Door open");
@@ -181,20 +183,20 @@ describe("compact chips", () => {
 
   it("show the drying time, with how many units dry", async () => {
     const { card, hass } = await mount(h2d(), "dev-h2d", { compact_chips: true, header_chips: ["drying"] });
-    expect(visible(pill(card, "dry-chip"))).toBe(TIME);
+    expect(shownText(pill(card, "dry-chip"))).toBe(TIME);
     const both = hass.withState("binary_sensor.dev-h2d_ams_128_drying", "on").withState("sensor.dev-h2d_ams_128_drying_remaining_time", "320");
     await update(card, both);
-    expect(visible(pill(card, "dry-chip"))).toBe(`2× ${BOTH}`);
+    expect(shownText(pill(card, "dry-chip"))).toBe(`2× ${BOTH}`);
     expect(tooltip(card, "dry-chip")).toBe(`2 AMS units drying, all done in ${BOTH}`);
     // Without a time: what dries.
     await update(card, both.withState("sensor.dev-h2d_ams_0_drying_remaining_time", "unknown").withState("sensor.dev-h2d_ams_128_drying_remaining_time", "unknown"));
-    expect(visible(pill(card, "dry-chip"))).toBe("2 AMS drying");
+    expect(shownText(pill(card, "dry-chip"))).toBe("2 AMS drying");
   });
 
   it("show the plug's power or its state in a word", async () => {
     const chip = async (devices: FakeDevice[], language = "en"): Promise<[string, string | null]> => {
       const { card } = await mount(devices, "dev-x1c", { compact_chips: true, header_chips: ["power"] }, language);
-      return [visible(pill(card, "power-chip")), tooltip(card, "power-chip")];
+      return [shownText(pill(card, "power-chip")), tooltip(card, "power-chip")];
     };
     expect(await chip(x1cWith())).toEqual([`182${NBSP}W`, `182${NBSP}W – plug “Tasmota”`]);
     expect(await chip(x1cWith({}, { id: 3, name: "T", state: "off" }))).toEqual(["Off", "Power off – plug “T”"]);
@@ -265,12 +267,12 @@ describe("compact chips in every state, with their full words for screen readers
 
   it("give the chip row's announcements the full text", async () => {
     const { card } = await mount(x1c(ALL), "dev-x1c", compact);
-    expect([visible(pill(card, "hms")), spoken(pill(card, "hms"))]).toEqual(["OK", "HMS OK – no messages"]);
-    expect([visible(pill(card, "maintenance")), spoken(pill(card, "maintenance"))]).toEqual(["3", "Maintenance: 3 due – 2 overdue, 1 due soon"]);
-    expect(visible(pill(card, "firmware"))).toBe("01.09.00.00");
+    expect([shownText(pill(card, "hms")), spoken(pill(card, "hms"))]).toEqual(["OK", "HMS OK – no messages"]);
+    expect([shownText(pill(card, "maintenance")), spoken(pill(card, "maintenance"))]).toEqual(["3", "Maintenance: 3 due – 2 overdue, 1 due soon"]);
+    expect(shownText(pill(card, "firmware"))).toBe("01.09.00.00");
     expect(spoken(pill(card, "firmware"))).toMatch(/^Update 01\.09\.00\.00 available, firmware .+ installed$/);
-    expect([visible(pill(card, "door")), spoken(pill(card, "door"))]).toEqual(["", "Door open"]);
-    expect([visible(pill(card, "storage")), spoken(pill(card, "storage"))]).toEqual(["", "No SD card – BamBuddy cannot send prints to the printer"]);
+    expect([shownText(pill(card, "door")), spoken(pill(card, "door"))]).toEqual(["", "Door open"]);
+    expect([shownText(pill(card, "storage")), spoken(pill(card, "storage"))]).toEqual(["", "No SD card – BamBuddy cannot send prints to the printer"]);
     // What shows is not read twice.
     expect(pill(card, "hms").querySelector("span:not(.sr-only)")?.getAttribute("aria-hidden")).toBe("true");
     // Full chips need none: what they show starts their name.
@@ -283,24 +285,24 @@ describe("compact chips in every state, with their full words for screen readers
     expect([pill(card, "door").classList.contains("icon-only"), pill(card, "storage").classList.contains("icon-only")]).toEqual([true, true]);
     expect([tooltip(card, "door"), tooltip(card, "storage")]).toEqual(["Door open", "No SD card – BamBuddy cannot send prints to the printer"]);
     expect(pill(card, "hms").classList.contains("icon-only")).toBe(false);
-    expect(styleText()).toMatch(/\.pill\.icon-only\s*\{[^}]*padding: 0 9px;/);
+    expect(declarations(".pill.icon-only", styleText())).toContain("padding: 0 9px");
   });
 
   it("show the firmware's version offline and when up to date, and keep Update in a bare update's name", async () => {
     const offline = await mount(x1c({ online: false }), "dev-x1c", { compact_chips: true });
-    expect([visible(pill(offline.card, "firmware")), pill(offline.card, "firmware").classList.contains("tone-warn")]).toEqual(["01.09.00.00", true]);
+    expect([shownText(pill(offline.card, "firmware")), pill(offline.card, "firmware").classList.contains("tone-warn")]).toEqual(["01.09.00.00", true]);
     const current = await mount(h2d(), "dev-h2d", { compact_chips: true });
-    expect(visible(pill(current.card, "firmware"))).toBe("01.02.00.00");
+    expect(shownText(pill(current.card, "firmware"))).toBe("01.02.00.00");
     const bare = await mount(x1c({ firmware: { installed: null, latest: "01.09.00.00", state: "on" } }), "dev-x1c", { compact_chips: true });
-    expect([visible(pill(bare.card, "firmware")), named(bare.card, "firmware")]).toEqual(["01.09.00.00", "Update 01.09.00.00"]);
+    expect([shownText(pill(bare.card, "firmware")), named(bare.card, "firmware")]).toEqual(["01.09.00.00", "Update 01.09.00.00"]);
   });
 
   it("say maintenance OK, and power in German and without data from BamBuddy", async () => {
     const { card, hass } = await mount(x1c(ALL), "dev-x1c", { compact_chips: true, header_chips: ["maintenance"] });
     await update(card, hass.withState("sensor.x1c_maintenance", "ok", { tasks: [], can_mark_done: true }));
-    expect(visible(pill(card, "maintenance"))).toBe("OK");
+    expect(shownText(pill(card, "maintenance"))).toBe("OK");
     const chip = async (devices: FakeDevice[], language = "de"): Promise<string> =>
-      visible(pill((await mount(devices, "dev-x1c", { compact_chips: true, header_chips: ["power"] }, language)).card, "power-chip"));
+      shownText(pill((await mount(devices, "dev-x1c", { compact_chips: true, header_chips: ["power"] }, language)).card, "power-chip"));
     expect(await chip(x1cWith({}, { id: 3, name: "T", today: undefined, watts: undefined }))).toBe("An");
     expect(await chip(x1cWith(IDLE, { id: 3, name: "T", watts: 6, autoOff: { armed: true, phase: "waiting" } }))).toBe("Wartet");
     expect(await chip(x1cWith({}, { id: 7, name: "MQTT", kind: "state", state: "unknown" }))).toBe("Unbekannt");

@@ -147,6 +147,17 @@ _RAISED = (
     # A button's refusal by the printer's state: both of its texts.
     re.compile(r'refusal_fn=lambda data: "([a-z0-9_]+)" if [^\n]* else "([a-z0-9_]+)"'),
 )
+# A table of refusals (`_..._REFUSALS`): a set of keys, or the keys as a
+# dictionary's values.
+_REFUSAL_TABLE = re.compile(r"_[A-Z_]*REFUSALS\b[^=\n]*=\s*(?:frozenset\()?\{([^}]*)\}")
+
+
+def _table_keys(source: str) -> set[str]:
+    keys: set[str] = set()
+    for body in _REFUSAL_TABLE.findall(source):
+        values = re.findall(r':\s*"([a-z0-9_]+)"', body)
+        keys |= set(values) if values else set(re.findall(r'"([a-z0-9_]+)"', body))
+    return keys
 
 
 def test_every_exception_text_is_one_the_code_raises():
@@ -158,7 +169,7 @@ def test_every_exception_text_is_one_the_code_raises():
         for pattern in _RAISED
         for found in pattern.findall(module.read_text(encoding="utf-8"))
         for key in ((found,) if isinstance(found, str) else found)
-    }
+    } | {key for module in INTEGRATION.glob("*.py") for key in _table_keys(module.read_text(encoding="utf-8"))}
     assert raised
     assert raised == set(_load("strings.json")["exceptions"])
 

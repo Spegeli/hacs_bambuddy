@@ -14,8 +14,8 @@ import {
   toneOf,
 } from "../src/format";
 import { makeHass, x1c } from "./fixtures";
+import { NBSP } from "./helpers";
 
-const NBSP = " ";
 
 describe("numbers", () => {
   it("follow Home Assistant's number format setting", () => {
