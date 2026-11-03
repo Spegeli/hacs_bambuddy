@@ -37,6 +37,7 @@ import {
   heaters,
   note,
   offlineText,
+  printerTitle,
   radioKeys,
   radioLeave,
   radioStop,
@@ -56,8 +57,7 @@ import {
 } from "./parts";
 import { chamberActivity } from "./heating";
 import { offlinePower, powerSection } from "./power";
-import { printerTitle } from "./header";
-import type { Heater, StatusBlock } from "./types";
+import type { FanKey, Heater, StatusBlock } from "./types";
 
 /** The plate to clear before BamBuddy starts the next queued print; the
  * button that confirms it where the card may control the printer -- else
@@ -244,7 +244,7 @@ function fanPercent(ctx: CardContext, entityId: string): number | undefined {
 function fans(ctx: CardContext): TemplateResult | typeof nothing {
   const { hass, refs } = ctx;
   // A fan Home Assistant only restored: the integration no longer creates it.
-  const items: [key: string, entityId: string, percent: number | undefined][] = refs.fans
+  const items: [key: FanKey | "hotend", entityId: string, percent: number | undefined][] = refs.fans
     .filter((fan) => stateOf(hass, fan.entityId)?.attributes["restored"] !== true)
     .map((fan) => [fan.key, fan.entityId, fanPercent(ctx, fan.entityId)]);
   if (refs.hotendFan) items.push(["hotend", refs.hotendFan, numericState(hass, refs.hotendFan)]);
@@ -253,8 +253,8 @@ function fans(ctx: CardContext): TemplateResult | typeof nothing {
   // both start alike, and the entity's names the chip.
   return html`<div class="fans" role="group" aria-label=${t(hass, "fans")}>
     ${items.map(([key, entityId, percent]) => {
-      const short = t(hass, `fan_${key}` as TextKey);
-      const full = entityName(ctx, entityId, `fan_${key}_name` as TextKey);
+      const short = t(hass, `fan_${key}`);
+      const full = entityName(ctx, entityId, `fan_${key}_name`);
       const value = percent === undefined ? "—" : percent > 0 ? formatPercent(hass, percent) : t(hass, "fan_off");
       const content = html`${icon("fan")}<span class="fan-label short">${short}</span><span class="fan-label full">${full}</span><span class="fan-value">${value}</span>`;
       // Hide controls: no tap -- the fan's dialog sets its speed. The hotend
@@ -283,7 +283,7 @@ const slotType = (slot: Slot, external: boolean): string =>
  * and R of two external spools --, so a row's colours stand level. */
 function amsStrip(ctx: CardContext): TemplateResult | typeof nothing {
   const { hass, refs } = ctx;
-  const dual = refs.externalSpools.length === 2;
+  const twoSpools = refs.externalSpools.length === 2;
   // The sides from all spools, what shows from those shown.
   const spools = shownExternalSpools(ctx);
   const groups = [
@@ -317,7 +317,7 @@ function amsStrip(ctx: CardContext): TemplateResult | typeof nothing {
             slots: spools,
             fill: true,
             ht: false,
-            sides: dual,
+            sides: twoSpools,
           },
         ]
       : []),
@@ -326,13 +326,13 @@ function amsStrip(ctx: CardContext): TemplateResult | typeof nothing {
   const column = groups.filter((group) => !group.fill);
   const fill = groups.filter((group) => group.fill);
   // Two external spools: left and right, in that order.
-  const sides = dual ? [t(hass, "side_left_short"), t(hass, "side_right_short")] : [];
+  const sides = twoSpools ? [t(hass, "side_left_short"), t(hass, "side_right_short")] : [];
   const sideOf = (entityId: string): string | undefined => sides[refs.externalSpools.indexOf(entityId)];
   // A screen reader hears what the strip shows -- each slot as its title
   // says it, the one in use named -- and where a tap goes.
   const spoken = (entityId: string): string => {
     const slot = slotOf(hass, entityId);
-    const side = dual ? refs.externalSpools.indexOf(entityId) : -1;
+    const side = twoSpools ? refs.externalSpools.indexOf(entityId) : -1;
     return `${side >= 0 ? `${sideName(hass, side)}: ` : ""}${slotTitle(hass, slot)}${slot.active ? ` · ${t(hass, "in_use")}` : ""}`;
   };
   const said = [...column, ...fill].map((group) =>
@@ -406,8 +406,9 @@ function speedParts(text: string): [name: string, detail?: string] {
  * may control it, else as it is. */
 function speedControl(ctx: CardContext): TemplateResult | typeof nothing {
   const { hass, refs, status } = ctx;
-  const state = stateOf(hass, refs.speed);
-  if (!state || !ctx.online || !BUSY.has(status)) return nothing;
+  const speed = refs.speed;
+  const state = stateOf(hass, speed);
+  if (!speed || !state || !ctx.online || !BUSY.has(status)) return nothing;
   if (!ctx.canControl) {
     return html`<div class="speed">
       <span class="speed-label">${icon("speed")}${t(hass, "speed")}</span>
@@ -416,7 +417,8 @@ function speedControl(ctx: CardContext): TemplateResult | typeof nothing {
   }
   const options = listedOptions(state, SPEEDS, true);
   const pending = ctx.isPending("speed");
-  const stop = radioStop(options, state.state);
+  const chosen = ctx.chosenOption(speed) ?? state.state;
+  const stop = radioStop(options, chosen);
   return html`<div class="speed">
     <span class="speed-label">${icon("speed")}${t(hass, "speed")}</span>
     <div class="seg speeds" role="radiogroup" aria-label=${t(hass, "speed")} @keydown=${radioKeys} @focusout=${radioLeave}>
@@ -425,13 +427,13 @@ function speedControl(ctx: CardContext): TemplateResult | typeof nothing {
         const [name, detail] = speedParts(full);
         return html`<button
           role="radio"
-          aria-checked=${option === state.state ? "true" : "false"}
+          aria-checked=${option === chosen ? "true" : "false"}
           tabindex=${index === stop ? 0 : -1}
           aria-label=${full}
           title=${full}
           aria-disabled=${pending ? "true" : nothing}
           ?disabled=${state.state === "unavailable"}
-          @click=${() => ctx.run("speed", "select", "select_option", { entity_id: refs.speed, option })}
+          @click=${() => ctx.selectOption(speed, option, "speed")}
         >
           <span class="opt">${name}</span> ${detail ? html`<span class="opt-sub">${detail}</span>` : nothing}
         </button>`;
@@ -453,7 +455,7 @@ function nothingLoaded(ctx: CardContext): boolean {
 function controls(ctx: CardContext): TemplateResult | typeof nothing {
   const { hass, refs, status } = ctx;
   if (!ctx.online || !BUSY.has(status)) return nothing;
-  // Hide controls shows nothing.
+  // Without control (a key that may not, or Hide controls): nothing.
   if (!ctx.canControl) return nothing;
   const paused = status === "paused";
   const buttons = [
@@ -510,10 +512,20 @@ function block(ctx: CardContext, name: StatusBlock): TemplateResult | typeof not
   if (name === "controls") return html`${developerHint(ctx)}${controls(ctx)}`;
   if (name === "power") return ctx.unreachable ? nothing : powerSection(ctx);
   if (!ctx.online) return nothing;
-  if (name === "temperatures") return temperatures(ctx);
-  if (name === "fans") return fans(ctx);
-  if (name === "ams") return amsStrip(ctx);
-  return speedControl(ctx);
+  switch (name) {
+    case "temperatures":
+      return temperatures(ctx);
+    case "fans":
+      return fans(ctx);
+    case "ams":
+      return amsStrip(ctx);
+    case "speed":
+      return speedControl(ctx);
+    default: {
+      const unknown: never = name;
+      return unknown;
+    }
+  }
 }
 
 /** Whether a section shows now: the plugs whenever their block draws (also

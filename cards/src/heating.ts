@@ -11,7 +11,7 @@ import { html, nothing, type TemplateResult } from "lit";
 import { formatPercent, formatTemperature, formatTemperatureOf, fromCelsius, listedOptions, numericState, stateOf, targetFloor, temperatureUnit } from "./format";
 import { icon, type IconName } from "./icons";
 import { t, type TextKey } from "./i18n";
-import { actionButton, activeNozzleIndex, heaters, note, radioKeys, radioLeave, radioStop, type CardContext, type HeaterKind } from "./parts";
+import { actionButton, activeNozzleIndex, heaters, note, radioKeys, radioLeave, radioOptions, radioStop, type CardContext, type HeaterKind } from "./parts";
 
 /** One tap on a stepper. */
 const TARGET_STEP = 5;
@@ -66,7 +66,7 @@ function heatName(ctx: CardContext, row: Row, on: boolean): TemplateResult {
   const current = numericState(hass, row.sensor);
   return html`<div class="heat-name ${on ? "on" : ""}">
     <span class="heat-label"
-      >${icon(row.kind as IconName)}<span class="heat-title"
+      >${icon(row.kind)}<span class="heat-title"
         ><span class="heat-text">${row.label}</span> ${row.active ? html`<span class="heat-tag">${t(hass, "nozzle_active")}</span>` : nothing}</span
       ></span
     >
@@ -144,7 +144,7 @@ function heaterRow(ctx: CardContext, row: Row, options: { disabled: boolean; off
 /** A row's power symbol: a switch, on in the tone of what it does (heat
  * orange, ventilation blue), off neutral. Where it cannot be used its place
  * stays, so the steppers of the block stand one under the other. */
-export function powerCell(options: {
+function powerCell(options: {
   label: string;
   on: boolean;
   tone: "heat" | "vent";
@@ -168,7 +168,7 @@ export function powerCell(options: {
  * set the fans (the integration's VENT_START). */
 const VENT_START = 60;
 const VENT_STEP = 10;
-const KEEP_WARM: readonly string[] = ["cooling", "heating"];
+const KEEP_WARM_OPTIONS: readonly string[] = ["cooling", "heating"];
 
 /** The fans the ventilation runs, as the row's subtitle. */
 const VENT_FANS: Readonly<Record<string, TextKey>> = {
@@ -210,7 +210,7 @@ export function chamberActivity(ctx: CardContext): { kind: "warm" } | { kind: "v
 /** What locks what: the chamber heated locks the ventilation, the
  * ventilation the chamber; a print or a filament change keeps the mode it
  * set. A locked part that is on keeps its way off. */
-export function locks(ctx: CardContext): Locks {
+function locks(ctx: CardContext): Locks {
   const { hass, refs } = ctx;
   const airduct = stateOf(hass, refs.airduct)?.state;
   const warm = keepsWarm(ctx);
@@ -258,7 +258,7 @@ function keepWarmRow(ctx: CardContext, lock: Locks): TemplateResult | typeof not
   if (ctx.viewOnly) {
     return html`<div class="heat-row view keep-warm">${name}<span class="heat-target ${on ? "" : "off"}">${t(hass, on ? "on" : "heater_off")}</span></div>`;
   }
-  const options = listedOptions(state, KEEP_WARM, false).filter((option) => KEEP_WARM.includes(option));
+  const options = listedOptions(state, KEEP_WARM_OPTIONS, false).filter((option) => KEEP_WARM_OPTIONS.includes(option));
   const waiting = !ctx.online || ctx.busy || ctx.changing || state.state === "unavailable";
   // Locked by the ventilation, it keeps only the way off.
   const blocked = (option: string): boolean => waiting || (lock.chamber !== undefined && option === "heating");
@@ -270,18 +270,15 @@ function keepWarmRow(ctx: CardContext, lock: Locks): TemplateResult | typeof not
   return html`<div class="heat-row keep-warm">
     ${name}
     <div class="seg" role="radiogroup" aria-label=${group} @keydown=${radioKeys} @focusout=${radioLeave}>
-      ${options.map(
-        (option, index) => html`<button
-          role="radio"
-          aria-checked=${option === state.state ? "true" : "false"}
-          tabindex=${index === stop ? 0 : -1}
-          aria-disabled=${pending ? "true" : nothing}
-          ?disabled=${blocked(option)}
-          @click=${() => ctx.run("airduct", "select", "select_option", { entity_id: refs.airduct, option })}
-        >
-          ${t(hass, option === "heating" ? "on" : "heater_off")}
-        </button>`,
-      )}
+      ${radioOptions({
+        options,
+        current: state.state,
+        stop,
+        pending,
+        disabled: blocked,
+        onPick: (option) => void ctx.run("airduct", "select", "select_option", { entity_id: refs.airduct, option }),
+        content: (option) => t(hass, option === "heating" ? "on" : "heater_off"),
+      })}
     </div>
     <span class="heat-off-space" aria-hidden="true"></span>
   </div>`;
@@ -368,14 +365,13 @@ function ventilationPart(ctx: CardContext, lock: Locks): TemplateResult | typeof
 /** The section, where the printer has a target the card can set. */
 export function heatingSection(ctx: CardContext): TemplateResult | typeof nothing {
   const { hass, refs } = ctx;
-  const heaters = rows(ctx);
-  if (!heaters.length) return nothing;
+  const heaterRows = rows(ctx);
+  if (!heaterRows.length) return nothing;
   const disabled = !ctx.online;
   // A heater's off would end a print: only without one -- but the
   // chamber's, which ends none (the job may set it again). It waits during a
   // filament change, which cooling would break.
-  const offered = !ctx.busy && !ctx.viewOnly;
-  const offFor = (row: Row): boolean => (offered || (row.kind === "chamber" && !ctx.viewOnly));
+  const offFor = (row: Row): boolean => !ctx.busy || row.kind === "chamber";
   const airduct = refs.airduct !== undefined || refs.ventilation !== undefined;
   const lock = airduct ? locks(ctx) : {};
   return html`<section class="heating" aria-labelledby="heat-title">
@@ -383,7 +379,7 @@ export function heatingSection(ctx: CardContext): TemplateResult | typeof nothin
       <span class="section-label" id="heat-title">${icon("heat")}${t(hass, "heating")}</span>
     </div>
     <div class="heat-rows">
-      ${heaters.map((row) =>
+      ${heaterRows.map((row) =>
         ctx.viewOnly ? heaterState(ctx, row) : heaterRow(ctx, row, { disabled, offered: offFor(row), locked: row.kind === "chamber" && lock.chamber !== undefined }),
       )}${keepWarmRow(ctx, lock)}
     </div>

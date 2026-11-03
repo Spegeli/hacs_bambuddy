@@ -10,7 +10,7 @@ import { html, nothing, type TemplateResult } from "lit";
 import { hasValue } from "./format";
 import { icon } from "./icons";
 import { t, type TextKey } from "./i18n";
-import { entityName, type CardContext } from "./parts";
+import { entityName, switchButton, type CardContext } from "./parts";
 import type { DetectorKey } from "./types";
 
 /** What a detection watches for, where its name does not say: the X1
@@ -21,7 +21,7 @@ function subLine(ctx: CardContext, key: DetectorKey): string | undefined {
 
 function detectionRow(ctx: CardContext, key: DetectorKey, entityId: string): TemplateResult {
   const { hass } = ctx;
-  const label = entityName(ctx, entityId, `detection_${key}` as TextKey);
+  const label = entityName(ctx, entityId, `detection_${key}`);
   const sub = subLine(ctx, key);
   const subId = `det-sub-${key}`;
   const text = html`<span class="det-text">
@@ -36,27 +36,15 @@ function detectionRow(ctx: CardContext, key: DetectorKey, entityId: string): Tem
   const pending = ctx.isPending(`switch_${entityId}`);
   return html`<div class="det-row">
     ${text}
-    <button
-      class="det-switch"
-      role="switch"
-      aria-label=${label}
-      aria-describedby=${sub ? subId : nothing}
-      aria-checked=${on ? "true" : "false"}
-      aria-busy=${pending ? "true" : "false"}
-      aria-disabled=${pending ? "true" : nothing}
-      ?disabled=${!ctx.online}
-      @click=${() => ctx.toggleSwitch(entityId)}
-    >
-      <span class="toggle" aria-hidden="true"><span class="knob"></span></span>
-    </button>
+    ${switchButton({ label, on, pending, onClick: () => ctx.toggleSwitch(entityId), ...(sub ? { describedBy: subId } : {}), disabled: !ctx.online })}
   </div>`;
 }
 
-/** The section, where the printer has a detection switch. */
 /** The detections the printer runs at a sensitivity -- its camera's; the
  * build plate and the first layer are on or off only. */
 const SENSITIVE: ReadonlySet<string> = new Set(["ai_monitoring", "spaghetti_detection", "pileup_detection", "clumping_detection", "air_printing_detection"]);
 
+/** The section, where the printer has a detection switch. */
 export function detectionSection(ctx: CardContext): TemplateResult | typeof nothing {
   const { hass, refs } = ctx;
   if (!refs.detectors.length) return nothing;

@@ -2,7 +2,7 @@
 // with a preview and, from Home Assistant 2026.6 on, as a suggestion for
 // the entities of a BamBuddy printer and of the devices under it (its AMS
 // units, its smart plugs). A module loaded twice defines nothing twice.
-import { isPrinter, PLATFORM } from "./discovery";
+import { hasPrintStatus, PLATFORM } from "./discovery";
 import type { Hass } from "./types";
 
 // Home Assistant's frontend (2025.5 on) replaces window.customElements with a
@@ -59,8 +59,8 @@ export function suggestCard(hass: Hass, entityId: string, tag: string): Suggesti
   const entry = hass.entities[entityId];
   if (!entry || entry.platform !== PLATFORM || !entry.device_id) return null;
   const device = hass.devices[entry.device_id];
-  const printer = isPrinter(hass, entry.device_id) ? entry.device_id : device?.via_device_id;
-  if (!printer || !isPrinter(hass, printer)) return null;
+  const printer = hasPrintStatus(hass, entry.device_id) ? entry.device_id : device?.via_device_id;
+  if (!printer || !hasPrintStatus(hass, printer)) return null;
   return { config: { type: `custom:${tag}`, printer } };
 }
 

@@ -11,7 +11,7 @@ import { detectionSection } from "./detection";
 import { heatingSection } from "./heating";
 import { type IconName } from "./icons";
 import { t, type TextKey } from "./i18n";
-import { actionButton, activeNozzleIndex, developerHint, hottestNozzle, note, NOZZLE_SIDES, radioKeys, radioLeave, radioStop, type CardContext } from "./parts";
+import { actionButton, activeNozzleIndex, developerHint, hottestNozzle, note, NOZZLE_SIDES, radioKeys, radioLeave, radioOptions, radioStop, type CardContext } from "./parts";
 import type { ControlSection, Heater, PrinterRefs } from "./types";
 
 // As BamBuddy's own: 50 mm to get the head or the bed out of the way.
@@ -21,7 +21,8 @@ export type Step = (typeof STEPS)[number];
 /** The filament length one tap extrudes or retracts. */
 const EXTRUDE_LENGTH = 10;
 
-/** Below this, in °C, the printer refuses to extrude. */
+/** Below this, in °C, the printer refuses to extrude (the integration's
+ * MIN_EXTRUDE_TEMPERATURE says the same). */
 const MIN_EXTRUDE_TEMPERATURE = 170;
 
 /** The printers whose Z moves the nozzle, not the bed (bed slingers: the
@@ -45,18 +46,15 @@ function activeNozzle(ctx: CardContext, disabled: boolean): TemplateResult | typ
   return html`<div class="nozzle-row">
     <span class="step-label">${t(hass, "active_nozzle")}</span>
     <div class="seg" role="radiogroup" aria-label=${t(hass, "active_nozzle")} @keydown=${radioKeys} @focusout=${radioLeave}>
-      ${options.map(
-        (option, index) => html`<button
-          role="radio"
-          aria-checked=${option === state.state ? "true" : "false"}
-          tabindex=${index === stop ? 0 : -1}
-          aria-disabled=${pending ? "true" : nothing}
-          ?disabled=${disabled || state.state === "unavailable"}
-          @click=${() => ctx.run("active_nozzle", "select", "select_option", { entity_id: refs.activeNozzle, option })}
-        >
-          ${formatState(hass, refs.activeNozzle, option)}
-        </button>`,
-      )}
+      ${radioOptions({
+        options,
+        current: state.state,
+        stop,
+        pending,
+        disabled: () => disabled || state.state === "unavailable",
+        onPick: (option) => void ctx.run("active_nozzle", "select", "select_option", { entity_id: refs.activeNozzle, option }),
+        content: (option) => formatState(hass, refs.activeNozzle, option) ?? "",
+      })}
     </div>
   </div>`;
 }
@@ -159,7 +157,7 @@ function motionSection(ctx: CardContext, step: Step, setStep: (step: Step) => vo
             (value) => html`<button
               role="radio"
               aria-checked=${value === step ? "true" : "false"}
-              tabindex=${value === step ? 0 : -1}
+              tabindex=${STEPS.indexOf(value) === radioStop(STEPS, step) ? 0 : -1}
               ?disabled=${disabled}
               @click=${() => setStep(value)}
             >
@@ -188,14 +186,26 @@ function motionSection(ctx: CardContext, step: Step, setStep: (step: Step) => vo
 /** Whether a section has something to show: heating a heater whose target
  * the card can set, the print options a detection switch; moving always --
  * but with Hide controls (`viewOnly`), which shows states only. */
-export function sectionShown(refs: PrinterRefs, name: ControlSection, viewOnly = false): boolean {
+export function sectionShown(refs: PrinterRefs, name: ControlSection, readOnly = false): boolean {
   if (name === "heating") return [...refs.nozzles, refs.bed, refs.chamber].some((heater) => heater.target !== undefined);
-  if (name === "motion") return !viewOnly;
+  if (name === "motion") return !readOnly;
   return refs.detectors.length > 0;
 }
 
 export function controlView(ctx: CardContext, step: Step, setStep: (step: Step) => void): TemplateResult {
-  const section = (name: ControlSection): TemplateResult | typeof nothing =>
-    name === "heating" ? heatingSection(ctx) : name === "options" ? detectionSection(ctx) : ctx.viewOnly ? nothing : motionSection(ctx, step, setStep);
+  const section = (name: ControlSection): TemplateResult | typeof nothing => {
+    switch (name) {
+      case "heating":
+        return heatingSection(ctx);
+      case "options":
+        return detectionSection(ctx);
+      case "motion":
+        return ctx.viewOnly ? nothing : motionSection(ctx, step, setStep);
+      default: {
+        const unknown: never = name;
+        return unknown;
+      }
+    }
+  };
   return html`${developerHint(ctx)}${ctx.settings.sections.map(section)}`;
 }

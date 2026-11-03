@@ -4,9 +4,9 @@
 // tappable piece is a button, so it works by keyboard.
 import { html, nothing, type TemplateResult } from "lit";
 
-import { filamentColor, formatNumber, formatPercent, formatState, hasValue, needsOutline, numericState, stateOf } from "./format";
+import { filamentColor, formatGrams, formatPercent, formatState, hasValue, needsOutline, numericState, stateOf, textOrUndefined } from "./format";
 import { icon, type IconName } from "./icons";
-import { placesOf, type SpoolPlace } from "./actions";
+import { placesOf, spoolBasics, type SpoolPlace } from "./actions";
 import { LANGUAGES, t, type TextKey } from "./i18n";
 import type { Settings } from "./forms";
 import type { AmsRefs, Hass, HassEntityState, Heater, PrinterRefs, View } from "./types";
@@ -88,7 +88,7 @@ export interface CardContext {
   /** Opens the dialog that sets a slot's material and colour, titled so;
    * `inventoryOnly`: the slot is empty, or a chip spool the running print
    * feeds -- only its inventory spool is offered. */
-  setFilament: (slot: Slot, title: string, inventoryOnly?: boolean) => void;
+  openFilament: (slot: Slot, title: string, inventoryOnly?: boolean) => void;
   /** Opens the list of the running print's objects to skip some. */
   skip: () => void;
   /** A heater's target as the card shows it: the one being set, else its state. */
@@ -101,6 +101,10 @@ export interface CardContext {
   switchOn: (entityId: string) => boolean;
   /** Turns a switch on or off; the new state shows at once. */
   toggleSwitch: (entityId: string) => void;
+  /** A select's option as the card shows it: the one just tapped, else its own. */
+  chosenOption: (entityId: string) => string | undefined;
+  /** Picks a select's option (`key`: what is pending meanwhile); it shows at once. */
+  selectOption: (entityId: string, option: string, key: string) => void;
   /** The print options are open: folded at first. */
   optionsOpen: boolean;
   toggleOptions: () => void;
@@ -149,16 +153,84 @@ export function actionButton(options: {
   </button>`;
 }
 
+/** A select's options as radios: the current one checked, the tab stop
+ * on it, all held while its command is on its way. */
+export function radioOptions(options: {
+  options: readonly string[];
+  current: string;
+  stop: number;
+  pending: boolean;
+  disabled: (option: string) => boolean;
+  onPick: (option: string) => void;
+  content: (option: string) => TemplateResult | string;
+}): TemplateResult[] {
+  const { current, stop, pending, disabled, onPick, content } = options;
+  return options.options.map(
+    (option, index) => html`<button
+      role="radio"
+      aria-checked=${option === current ? "true" : "false"}
+      tabindex=${index === stop ? 0 : -1}
+      aria-disabled=${pending ? "true" : nothing}
+      ?disabled=${disabled(option)}
+      @click=${() => onPick(option)}
+    >
+      ${content(option)}
+    </button>`,
+  );
+}
+
+/** A switch drawn as a toggle: its name, on or off, busy while its command
+ * is on its way. `guardPending`: a tap meanwhile does nothing. */
+export function switchButton(options: {
+  label: string;
+  on: boolean;
+  pending: boolean;
+  onClick: () => void;
+  describedBy?: string;
+  disabled?: boolean;
+  guardPending?: boolean;
+}): TemplateResult {
+  const { label, on, pending, onClick, describedBy, disabled = false, guardPending = false } = options;
+  return html`<button
+    class="det-switch"
+    role="switch"
+    aria-label=${label}
+    aria-describedby=${describedBy ?? nothing}
+    aria-checked=${on ? "true" : "false"}
+    aria-busy=${pending ? "true" : "false"}
+    aria-disabled=${pending ? "true" : nothing}
+    ?disabled=${disabled}
+    @click=${guardPending && pending ? nothing : onClick}
+  >
+    <span class="toggle" aria-hidden="true"><span class="knob"></span></span>
+  </button>`;
+}
+
+/** A switch's state in words: on, off, else unknown. */
+export const stateWord = (hass: Hass, state: string | undefined): string => t(hass, state === "on" ? "on" : state === "off" ? "off" : "unknown");
+
+/** Where a key of a roving focus moves: the arrows of its axes one on (or
+ * back), Home and End to the ends, wrapping around; undefined for a key
+ * that moves nothing. */
+export function nextIndex(key: string, index: number, length: number, axes: "vertical" | "horizontal" | "both"): number | undefined {
+  const vertical = axes !== "horizontal";
+  const horizontal = axes !== "vertical";
+  const on = (vertical && key === "ArrowDown") || (horizontal && key === "ArrowRight");
+  const back = (vertical && key === "ArrowUp") || (horizontal && key === "ArrowLeft");
+  const to = key === "Home" ? 0 : key === "End" ? length - 1 : on ? index + 1 : back ? index - 1 : undefined;
+  return to === undefined ? undefined : (to + length) % length;
+}
+
 /** The arrow keys, Home and End move the focus through a group of radios
  * and choose nothing: in the card a choice sends a command. Space or Enter
  * -- a click -- chooses. */
 export function radioKeys(event: KeyboardEvent): void {
   const radios = [...(event.currentTarget as HTMLElement).querySelectorAll<HTMLElement>("[role=radio]")];
   const index = radios.indexOf(event.target as HTMLElement);
-  const moves: Record<string, number> = { ArrowRight: index + 1, ArrowDown: index + 1, ArrowLeft: index - 1, ArrowUp: index - 1, Home: 0, End: radios.length - 1 };
-  if (index < 0 || !(event.key in moves)) return;
+  const to = nextIndex(event.key, index, radios.length, "both");
+  if (index < 0 || to === undefined) return;
   event.preventDefault();
-  const next = radios[((moves[event.key] as number) + radios.length) % radios.length];
+  const next = radios[to];
   // Tab leaves the group from where the focus is.
   for (const radio of radios) radio.tabIndex = radio === next ? 0 : -1;
   next?.focus();
@@ -325,16 +397,18 @@ export const NOZZLE_SIDES = ["left", "right"];
 export const sideName = (hass: Hass, index: number): string => t(hass, index === 0 ? "left" : "right");
 
 export const AMS_HT = "AMS HT";
+export const AMS_2_PRO = "AMS 2 Pro";
+export const AMS_LITE = "AMS Lite";
 
-/** The model a unit's chip names: where its name does not say it, and on
- * every AMS where the printer has AMS units of two models -- "AMS A" beside
- * "AMS B" (AMS 2 Pro) says it is the first AMS. "AMS HT A" says its own. */
 /** A compact chip's words: the short ones on screen, the full ones for a
  * screen reader -- the chip row announces a change by its text, which may
  * pass over the button's name. An icon-only chip has no short words. */
 export const compactWords = (short: string | undefined, full: string): TemplateResult =>
   html`${short === undefined ? nothing : html`<span aria-hidden="true">${short}</span>`}<span class="sr-only">${full}</span>`;
 
+/** The model a unit's chip names: where its name does not say it, and on
+ * every AMS where the printer has AMS units of two models -- "AMS A" beside
+ * "AMS B" (AMS 2 Pro) says it is the first AMS. "AMS HT A" says its own. */
 export function unitModel(ams: AmsRefs[], unit: AmsRefs): string | undefined {
   // An A2L's AMS Lite is named so: its name says it.
   if (!unit.model || unit.name === unit.model) return undefined;
@@ -420,31 +494,22 @@ export function inventorySpool(value: unknown): InventorySpool | undefined {
   if (typeof value !== "object" || value === null) return undefined;
   const spool = value as Record<string, unknown>;
   if (typeof spool["id"] !== "number" || typeof spool["name"] !== "string") return undefined;
-  const text = (item: unknown): string | undefined => (typeof item === "string" && item ? item : undefined);
-  const grams = spool["remaining_g"];
-  const pct = spool["remaining_pct"];
   return {
     id: spool["id"],
     name: spool["name"],
-    ...(text(spool["color_name"]) ? { colorName: text(spool["color_name"]) } : {}),
-    ...(text(spool["rgba"]) ? { rgba: text(spool["rgba"]) } : {}),
-    extraColors: Array.isArray(spool["extra_colors"]) ? spool["extra_colors"].filter((item): item is string => typeof item === "string") : [],
-    remainingG: typeof grams === "number" ? grams : 0,
-    ...(typeof pct === "number" ? { remainingPct: pct } : {}),
-    ...(text(spool["storage_location"]) ? { storage: text(spool["storage_location"]) } : {}),
-    rfid: spool["rfid"] === true,
+    ...spoolBasics(spool),
     alsoAssigned: placesOf(spool["also_assigned"]),
-    assignedColor: text(spool["assigned_color"]) ?? "",
-    assignedType: text(spool["assigned_type"]) ?? "",
+    assignedColor: textOrUndefined(spool["assigned_color"]) ?? "",
+    assignedType: textOrUndefined(spool["assigned_type"]) ?? "",
     spoolTypes: Array.isArray(spool["spool_types"]) ? spool["spool_types"].filter((item): item is string => typeof item === "string") : [],
   };
 }
 
+type Colored = Pick<InventorySpool, "rgba" | "extraColors">;
+type Lined = Pick<InventorySpool, "id" | "colorName" | "remainingG" | "remainingPct">;
+
 /** An inventory spool's colours: its own first, then a multicolour
  * spool's others ("#RRGGBB"). */
-type Colored = Pick<InventorySpool, "rgba" | "extraColors">;
-type Lined = Pick<InventorySpool, "id" | "colorName" | "remainingG" | "remainingPct"> & { storage?: string | undefined };
-
 export function spoolColors(spool: Colored): string[] {
   const own = spool.rgba && /^[0-9a-f]{6}/i.test(spool.rgba) ? [`#${spool.rgba.slice(0, 6).toUpperCase()}`] : [];
   const more = spool.extraColors.filter((item) => /^[0-9a-f]{6}$/i.test(item)).map((item) => `#${item.toUpperCase()}`);
@@ -464,9 +529,9 @@ export function spoolDot(spool: Colored): TemplateResult {
   return html`<span class="spool-dot ${outline ? "outline" : ""}" style="--dot: ${fill}" data-colors=${colors.length} aria-hidden="true"></span>`;
 }
 
-/** What is left of an inventory spool: "89 % · 886 g". */
+/** A listed spool's line: "colour · 886 g (89 %) · No. 7". */
 export function spoolLine(hass: Hass, spool: Lined): string {
-  const grams = `${formatNumber(hass, spool.remainingG)}\u00a0g`;
+  const grams = formatGrams(hass, spool.remainingG);
   return [
     spool.colorName ?? "",
     spool.remainingPct === undefined ? grams : `${grams} (${formatPercent(hass, spool.remainingPct)})`,
@@ -476,8 +541,9 @@ export function spoolLine(hass: Hass, spool: Lined): string {
     .join(" · ");
 }
 
+/** What is left of a slot's inventory spool: "89 % · 886 g". */
 export function inventoryLine(hass: Hass, spool: InventorySpool): string {
-  const grams = `${formatNumber(hass, spool.remainingG)}\u00a0g`;
+  const grams = formatGrams(hass, spool.remainingG);
   // No line ends in the dot: it stays with what stands before it.
   return spool.remainingPct === undefined ? grams : `${formatPercent(hass, spool.remainingPct)}\u00a0·\u00a0${grams}`;
 }
@@ -556,7 +622,6 @@ export function slotTitle(hass: Hass, slot: Slot): string {
   return `${slot.name || slot.type}${left}`;
 }
 
-
 /** The external spools the card shows: all, unless the card hides them on a
  * printer with an AMS -- then the one the printer feeds from, and those the
  * job on it fed from. */
@@ -565,3 +630,22 @@ export function shownExternalSpools(ctx: CardContext): string[] {
   if (ctx.settings.externalSpool || ctx.ams.length === 0) return refs.externalSpools;
   return refs.externalSpools.filter((entityId) => slotOf(hass, entityId).active || ctx.jobSpools?.has(entityId) === true);
 }
+
+/** A text attribute, where it has one. */
+export const textAttribute = (ctx: CardContext, entityId: string | undefined, name: string): string | undefined =>
+  textOrUndefined(stateOf(ctx.hass, entityId)?.attributes[name]);
+
+/** A device name without the " (model / serial)" the integration puts
+ * after BamBuddy's name: "Workshop (X1C / 00M…)" -> "Workshop". A name
+ * without BamBuddy's, "P1S (01P…)", stays whole: its serial tells it apart. */
+const withoutModel = (name: string): string => /^(.+) \([^()]* \/ [^()]*\)$/.exec(name)?.[1] ?? name;
+
+/** The printer's name in BamBuddy, else its device's -- the name the user
+ * knows, also while BamBuddy does not answer and its name is gone. */
+export const printerTitle = (ctx: CardContext): string => textAttribute(ctx, ctx.refs.status, "bambuddy_name") ?? withoutModel(ctx.refs.name);
+
+/** The orange lines above the buttons, those that apply. */
+export const warnings = (...lines: (string | undefined)[]): { warn?: string[] } => {
+  const shown = lines.filter((line): line is string => line !== undefined);
+  return shown.length ? { warn: shown } : {};
+};

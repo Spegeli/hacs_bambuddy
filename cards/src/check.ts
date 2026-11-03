@@ -92,7 +92,7 @@ function item(ctx: CardContext, check: Check, follows: boolean): TemplateResult 
 }
 
 /** The verdict: BamBuddy's, with how many things need attention. */
-function verdict(hass: Hass, result: CheckResult): { tone: string; text: string } {
+function verdict(hass: Hass, result: CheckResult): { tone: "ok" | "warn" | "err"; text: string } {
   const fails = result.checks.filter((check) => check.status === "fail").length;
   const warns = result.checks.filter((check) => check.status === "warn").length;
   if (result.overall === "problems" || fails > 0) {
@@ -134,6 +134,9 @@ function fold(ctx: CardContext, which: "pass" | "skip", checks: Check[], dialog:
   </div>`;
 }
 
+/** The verdict's icon by its tone. */
+const VERDICT_ICONS: Record<"ok" | "warn" | "err", IconName> = { ok: "check", warn: "warning", err: "error" };
+
 /** The state: running, failed, or the verdict -- in one live region that
  * stays in place, so a screen reader hears the verdict once; the seconds
  * are not read out. */
@@ -152,7 +155,7 @@ function state(ctx: CardContext, dialog: CheckDialog, now: number): TemplateResu
     return html`<div class="dlg-error">${icon("error")}<span>${t(hass, "check_error", { error: dialog.error ?? "" })}</span></div>`;
   }
   const found = verdict(hass, dialog.result);
-  return html`<div class="check-verdict tone-${found.tone}">${icon(found.tone === "ok" ? "check" : found.tone === "warn" ? "warning" : "error")}<span>${found.text}</span></div>`;
+  return html`<div class="check-verdict tone-${found.tone}">${icon(VERDICT_ICONS[found.tone])}<span>${found.text}</span></div>`;
 }
 
 export function checkContent(ctx: CardContext, dialog: CheckDialog, actions: CheckActions, now: number): TemplateResult {

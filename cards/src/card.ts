@@ -4,22 +4,27 @@
 // Assistant hands a card a new hass on every state change in the house.
 import { html, LitElement, nothing, type CSSResultGroup, type PropertyValues, type TemplateResult } from "lit";
 
-import { callAction, errorText, filamentOffer, kProfiles, printObjects, spoolList, type ListedSpool } from "./actions";
+import { callAction, errorText, printObjects } from "./actions";
 import { controlView, sectionShown, type Step } from "./control-view";
-import { dialogView, DRYING, filamentChanges, inPalette, inventoryButtons, KEEP, matchingProfile, ownVendor, type Dialog, type DryingField, type DryingSpool, type FilamentDialog, onInventory } from "./dialogs";
-import { findPrinter, hasControls, isPrinterDevice, notListed, printerDevices, printerOnline, printStatus, shownUnits } from "./discovery";
+import { dialogView, DRYING, type Dialog, type DryingField, type DryingSpool } from "./dialogs";
+import { filamentChanges } from "./filament-dialog";
+import { onInventory } from "./inventory-dialog";
+import { findPrinter, hasControls, hasPrinterIdentifier, notListed, printerDevices, printerOnline, printStatus, shownUnits } from "./discovery";
 import { filamentView } from "./filament-view";
-import { BUSY, FILAMENT_CHANGE, formatNumber, formatPercent, hasValue, numericState, RUNNING, stateOf, textOrUndefined, WITH_JOB } from "./format";
+import { BUSY, FILAMENT_CHANGE, hasValue, RUNNING, stateOf, WITH_JOB } from "./format";
 import { BamBuddyPrinterCardEditor, EDITOR_TAG, loadForm } from "./editor";
 import { DEFAULTS, settingsOf, validateConfig, type Settings } from "./forms";
 import { runCheck, type CheckDialog } from "./check";
-import { pills, printerTitle, subtitle, type Pill } from "./header";
-import { maintenanceOf } from "./maintenance";
+import { chips, subtitle, type DialogChip } from "./header";
 import { icon, printerDrawing, type IconName } from "./icons";
 import { rememberLocale, t, type TextKey } from "./i18n";
-import { asOnline, connection, sample, sampleKey, slotOf, snack, type CardContext, type Slot } from "./parts";
+import { AMS_2_PRO, asOnline, connection, nextIndex, printerTitle, sample, sampleKey, slotOf, snack, type CardContext, type Slot } from "./parts";
 import { defineCard, defineElement } from "./register";
-import { decodePhoto, scanFrames, scanInApp, scanWay, setTorch, startCamera, stopStream, torchOf, type AppScanEnd } from "./scan";
+import { forgetHandoverForTests, ScanSession, withoutScan } from "./scan-session";
+import { Drafts } from "./drafts";
+import { CardMenu } from "./menu";
+import { LiveView, type Fullscreen } from "./live";
+import { FilamentSession } from "./filament-session";
 import { cardPlugs, starting } from "./power";
 import { offlineJob, stateText, statusView } from "./status-view";
 import { cardStyles } from "./styles";
@@ -59,59 +64,10 @@ const ERROR_TIMEOUT = 12_000;
 /** How long "Sent" shows after a command went through. */
 const SENT_TIMEOUT = 3_000;
 
-/** A target is sent this long after the last tap on its stepper. */
-const TARGET_DELAY = 800;
-
-/** How long a sent target shows at most while its entity still reports the
- * old one: BamBuddy reports back within a poll or two. */
-const TARGET_HOLD = 10_000;
-
-/** A target the card shows before its entity does: being tapped, or sent
- * while the entity still reported `sentFrom`. A switch's or the light's:
- * the state tapped last, until the entity reports it. */
-interface Draft {
-  value: number;
-  sentFrom?: string;
-  wish?: "on" | "off";
-  /** The entity reported something else than `sentFrom` since. */
-  moved?: boolean;
-}
+// The redraw of a count while it runs (a plug starting, a connection check).
+const TICK_MS = 1000;
 
 const clamp = (value: number, min: number, max: number): number => Math.min(max, Math.max(min, value));
-
-/** A fan entity: stepped by its percentage, not a number's state. */
-const isFan = (entityId: string): boolean => entityId.startsWith("fan.");
-
-/** How long after a key in the card its place is kept for the keyboard, in ms. */
-const KEYBOARD_PLACE_FOR = 15_000;
-/** The open menu's least room to the screen's edges, in px. */
-const MENU_MARGIN = 8;
-
-/** The groups a press may disable its own button in, nearest first: the
- * keyboard goes to the next button of the nearest one. */
-const FOCUS_GROUPS = [".stepper", ".heat-set", ".heat-row", ".heating"];
-/** How long the browser may take to grant full screen before the window
- * stands in. */
-const FULLSCREEN_WAIT_MS = 1500;
-/** Hidden this long while the browser is asked for full screen, the page is
- * hidden for good: Home Assistant's Android app hides it for up to a tenth
- * of a second while it brings the picture into full screen. */
-const PAGE_HIDDEN_GRACE_MS = 1000;
-/** Each full screen's history entry, told apart from another card's and
- * from one an earlier page load left: history outlives a reload. */
-let fullscreenEntries = 0;
-const FULLSCREEN_PAGE = Date.now().toString(36);
-/** A card taken off the page keeps its live view this long: a dashboard
- * may put it back (a masonry view laying its columns out anew appends each
- * card once it has measured it). */
-const LIVE_GRACE_MS = 2000;
-
-/** The slot dialog's K field says the printer is slow after this long:
- * BamBuddy asks it again then (its 5 s per try). */
-const K_SLOW_MS = 5000;
-
-/** A key pressed in an open dialog: the dialog's, not full screen's. */
-const inOpenDialog = (event: Event): boolean => event.composedPath().some((node) => node instanceof HTMLDialogElement && node.open);
 
 export class BamBuddyPrinterCard extends LitElement {
   static override properties = {
@@ -131,7 +87,6 @@ export class BamBuddyPrinterCard extends LitElement {
     dialog: { state: true },
     menuOpen: { state: true },
     step: { state: true },
-    drafts: { state: true },
     optionsOpen: { state: true },
     amsOpen: { state: true },
   };
@@ -155,36 +110,8 @@ export class BamBuddyPrinterCard extends LitElement {
   private jobSpools: ReadonlySet<string> = new Set();
   /** Off, or the live view full screen: the browser's own, or the window
    * where the browser has none. */
-  protected fullscreen: "off" | "native" | "window" = "off";
-  /** The window's top layer is shown: the popover to hide on leaving. */
-  private popoverShown = false;
-  /** Each request for full screen, so an answer that comes after the
-   * picture was left again does nothing. */
-  private fullscreenAsk = 0;
-  private fullscreenWait?: ReturnType<typeof setTimeout>;
-  /** The browser is asked and has not answered yet. */
-  private fullscreenAsking = false;
-  /** The history entry this full screen pushed: back leaves full screen,
-   * not the dashboard. */
-  private fullscreenEntry = "";
-  /** Off the page with a live view: it ends when this runs out. */
-  private liveGrace?: ReturnType<typeof setTimeout>;
-  /** A spool label's scan: the camera's stream, what reads its picture (and
-   * from which video), the app's scanner; each scan's number, so a camera
-   * that comes after its scan ended goes at once. */
-  private scanStream?: MediaStream;
-  private stopFrames?: () => void;
-  private framesOn?: HTMLVideoElement;
-  /** Ends the camera's "no label" line once no foreign code was seen for a while. */
-  private foreignTimer?: ReturnType<typeof setTimeout>;
-  private stopAppScan?: () => void;
-  private scanRun = 0;
-  /** When the camera area last offered a photo: the camera app may take the page away. */
-  private photoAsked = 0;
-  /** When the page was last hidden: the camera app's trip, before a rebuild. */
-  private hiddenAt = 0;
+  protected fullscreen: Fullscreen = "off";
   protected pageVisible = document.visibilityState !== "hidden";
-  private hiddenWait?: ReturnType<typeof setTimeout>;
   protected streamFailed = false;
   protected brokenCover?: string;
   protected pending: ReadonlySet<string> = new Set();
@@ -194,7 +121,124 @@ export class BamBuddyPrinterCard extends LitElement {
   protected menuOpen = false;
   /** 1 mm: a tap never moves Z far (the bed into the nozzle, or the nozzle into the bed). */
   protected step: Step = 1;
-  protected drafts: ReadonlyMap<string, Draft> = new Map();
+  /** The card's shadow root: Lit renders into one. */
+  private get shadow(): ShadowRoot {
+    return this.renderRoot as ShadowRoot;
+  }
+
+  /** The ⋮ menu, and the keyboard's place kept when a press takes its control away. */
+  private readonly menu = new CardMenu({
+    element: this,
+    root: () => this.shadow,
+    menuOpen: () => this.menuOpen,
+    setMenuOpen: (open) => {
+      this.menuOpen = open;
+    },
+    focusAfterUpdate: (...selectors) => this.focusAfterUpdate(...selectors),
+    markFromMenu: () => {
+      this.dialogFromMenu = true;
+    },
+    setDialog: (dialog) => {
+      this.dialog = dialog;
+    },
+    pending: (key) => this.pending.has(key),
+    run: (key, domain, service, data) => this.run(key, domain, service, data),
+    startCheck: () => this.startCheck(),
+  });
+
+  /** The slot dialog's data: its answers, each into the dialog of its own open. */
+  private readonly filament = new FilamentSession({
+    hass: () => this.hass,
+    refs: () => this.refs,
+    root: () => this.shadow,
+    updateComplete: () => this.updateComplete,
+    dialog: () => this.dialog,
+    setDialog: (dialog) => {
+      this.dialog = dialog;
+    },
+    dialogBack: () => this.dialogBack,
+    setDialogBack: (dialog) => {
+      this.dialogBack = dialog;
+    },
+    parkDialog: () => this.parkDialog(),
+    dropSent: () => this.dropSent(),
+    closeDialog: () => this.closeDialog(),
+    run: (key, domain, service, data) => this.run(key, domain, service, data),
+  });
+
+  /** A spool label's scan, and the slot dialog handed to the next card of
+   * the printer when Home Assistant rebuilds the dashboard. */
+  private readonly scan = new ScanSession({
+    element: this,
+    hass: () => this.hass,
+    refs: () => this.refs,
+    config: () => this.config,
+    settings: () => this.settings,
+    preview: () => this.preview,
+    inEditor: () => this.inEditor,
+    root: () => this.shadow,
+    updateComplete: () => this.updateComplete,
+    focusAfterUpdate: (...selectors) => this.focusAfterUpdate(...selectors),
+    dialog: () => this.dialog,
+    setDialog: (dialog) => {
+      this.dialog = dialog;
+    },
+    view: () => this.view,
+    setView: (view) => {
+      this.view = view;
+    },
+    context: (hass, refs) => this.context(hass, refs),
+    confirmDialog: () => this.confirmDialog(),
+    filament: () => this.filament,
+  });
+
+  /** The live view and its full screen. */
+  private readonly live = new LiveView({
+    element: this,
+    root: () => this.shadow,
+    hass: () => this.hass,
+    refs: () => this.refs,
+    settings: () => this.settings,
+    preview: () => this.preview,
+    coverLarge: () => this.coverLarge,
+    closeCover: () => {
+      this.coverLarge = false;
+      this.coverJob = undefined;
+    },
+    liveWanted: () => this.liveWanted,
+    setLiveWanted: (wanted) => {
+      this.liveWanted = wanted;
+    },
+    fullscreen: () => this.fullscreen,
+    setFullscreen: (mode) => {
+      this.fullscreen = mode;
+    },
+    pageVisible: () => this.pageVisible,
+    setPageVisible: (visible) => {
+      this.pageVisible = visible;
+    },
+    streamFailed: () => this.streamFailed,
+    setStreamFailed: (failed) => {
+      this.streamFailed = failed;
+    },
+    focusAfterUpdate: (...selectors) => this.focusAfterUpdate(...selectors),
+    noteHidden: () => {
+      this.scan.hiddenAt = Date.now();
+    },
+    openFps: () => {
+      this.dialogBack = undefined;
+      this.dialog = { kind: "camera" };
+      this.dialogFromMenu = false;
+    },
+  });
+
+  /** Targets, switches and options tapped: shown before their entities report them. */
+  private readonly drafts = new Drafts({
+    hass: () => this.hass,
+    pending: (key) => this.pending.has(key),
+    run: (key, domain, service, data) => this.run(key, domain, service, data),
+    update: () => this.requestUpdate(),
+  });
   /** The print options: folded until opened, open while the card lives. */
   protected optionsOpen = false;
   /** AMS units folded or unfolded by a tap, by device ID: until the page
@@ -206,28 +250,9 @@ export class BamBuddyPrinterCard extends LitElement {
   private refs?: PrinterRefs;
   private seenEntities?: Hass["entities"];
   private seenDevices?: Hass["devices"];
-  private streamSrc?: string;
-  /** The frame rate the running stream asked for. */
-  private streamFps?: number;
-  /** The stream addresses this page loaded: started again at one of them,
-   * the browser would show the picture it kept of the ended stream and ask
-   * for nothing. A count makes such an address new (Home Assistant ignores
-   * it). */
-  private readonly streamsLoaded = new Set<string>();
-  private streamRun = 0;
-  /** The control the keyboard was on last, and when a key was last pressed
-   * in the card: a keyboard user's place, kept when a press takes the
-   * control away. */
-  private focusedLast?: HTMLElement;
-  private keyedAt = 0;
   private errorTimer?: ReturnType<typeof setTimeout>;
   private sentTimer?: ReturnType<typeof setTimeout>;
   private copiedTimer?: ReturnType<typeof setTimeout>;
-  private kSlowTimer?: ReturnType<typeof setTimeout>;
-  /** The slot dialog's opens, counted: each its own answers. */
-  private asks = 0;
-  private readonly draftTimers = new Map<string, ReturnType<typeof setTimeout>>();
-  private attached = false;
   /** Draws the seconds of a connection check while it runs. */
   private checkTimer?: ReturnType<typeof setInterval>;
   /** Draws the count every second while the printer starts after its plug. */
@@ -254,7 +279,7 @@ export class BamBuddyPrinterCard extends LitElement {
 
   /** Notes the dialog's button that is asking a question, to come back to. */
   private rememberAsker(): void {
-    const active = (this.renderRoot as ShadowRoot).activeElement;
+    const active = this.shadow.activeElement;
     // An answer by its key (two messages may offer the same), else by its name.
     const answer = active?.getAttribute("data-answer");
     const label = active?.getAttribute("aria-label");
@@ -274,8 +299,9 @@ export class BamBuddyPrinterCard extends LitElement {
    * Nothing else: the editor shows the defaults, and a list left out shows
    * a block a later version adds. */
   static getStubConfig(hass?: Hass): Record<string, unknown> {
-    const printers = hass ? printerDevices(hass) : [];
-    const online = printers.find((device) => hass && !OFFLINE.includes(printStatus(hass, device.id) ?? "unavailable"));
+    if (!hass) return {};
+    const printers = printerDevices(hass);
+    const online = printers.find((device) => !OFFLINE.includes(printStatus(hass, device.id) ?? "unavailable"));
     const first = online ?? printers[0];
     return first ? { printer: first.id } : {};
   }
@@ -291,7 +317,7 @@ export class BamBuddyPrinterCard extends LitElement {
     this.refs = undefined;
     // The stream too: it may be another printer's now (the first config
     // comes before the card is drawn).
-    if (this.streamSrc !== undefined) this.stopStream();
+    if (this.live.streamSrc !== undefined) this.live.endLiveStream();
     this.streamFailed = false;
     // A dialog belongs to the printer it was opened for.
     this.dialog = undefined;
@@ -312,92 +338,30 @@ export class BamBuddyPrinterCard extends LitElement {
 
   // --- Life cycle -----------------------------------------------------------
 
-  /** Off the page for good: the live view ends. */
-  private endLiveAway(): void {
-    this.liveGrace = undefined;
-    this.attached = false;
-    this.leaveFullscreen();
-    this.stopStream();
-    this.liveWanted = false;
-  }
-
-  /** Hidden, the stream stops -- and full screen with it. While the browser
-   * is asked for full screen only after a moment: taken out at once, the
-   * picture would leave the page before the Android app's full screen shows
-   * it, and the browser refuses it. Otherwise at once: a phone may run no
-   * timer on a hidden page. */
-  private readonly onVisibility = (): void => {
-    this.stopHiddenWait();
-    if (document.visibilityState !== "hidden") {
-      this.pageVisible = true;
-      return;
-    }
-    this.hiddenAt = Date.now();
-    if (!this.fullscreenAsking) {
-      this.pageHidden();
-      return;
-    }
-    this.hiddenWait = setTimeout(() => {
-      this.hiddenWait = undefined;
-      this.pageHidden();
-    }, PAGE_HIDDEN_GRACE_MS);
-  };
-
-  private pageHidden(): void {
-    this.pageVisible = false;
-    this.stopStream();
-  }
-
-  private stopHiddenWait(): void {
-    clearTimeout(this.hiddenWait);
-    this.hiddenWait = undefined;
-  }
-
-  /** A tap anywhere but in the menu closes it. */
-  private readonly onPointerDown = (event: Event): void => {
-    if (!this.menuOpen) return;
-    const menu = this.renderRoot.querySelector(".menu-wrap");
-    if (menu && !event.composedPath().includes(menu)) this.menuOpen = false;
-  };
-
   override connectedCallback(): void {
     super.connectedCallback();
     // Back within the grace: the live view goes on (in the window, where the
     // move ended the browser's full screen).
-    clearTimeout(this.liveGrace);
-    this.liveGrace = undefined;
-    this.pageVisible = document.visibilityState !== "hidden";
-    this.attached = true;
+    this.live.backOnPage();
     this.inEditor = inCardEditor(this);
     // Back on the page itself (a dashboard only moved it): its dialog is its own.
-    if (handover?.from === this) handover = undefined;
-    this.takeOver();
-    window.addEventListener("resize", this.onResize);
+    this.scan.rejoin();
+    window.addEventListener("resize", this.filament.onResize);
     // Back while a check runs: its seconds count on.
     if (this.dialog?.kind === "check" && this.dialog.running) this.startCheckTimer();
-    document.addEventListener("visibilitychange", this.onVisibility);
-    document.addEventListener("pointerdown", this.onPointerDown);
+    document.addEventListener("visibilitychange", this.live.onVisibility);
+    document.addEventListener("pointerdown", this.menu.onPointerDown);
     this.requestUpdate();
   }
 
   override disconnectedCallback(): void {
-    document.removeEventListener("visibilitychange", this.onVisibility);
+    document.removeEventListener("visibilitychange", this.live.onVisibility);
     // Away, the page's visibility is read anew on the return.
-    this.stopHiddenWait();
-    document.removeEventListener("pointerdown", this.onPointerDown);
+    this.live.stopHiddenWait();
+    document.removeEventListener("pointerdown", this.menu.onPointerDown);
     this.menuOpen = false;
-    // Leaving the page took the picture out of the top layer, and out of
-    // the browser's full screen -- which says so only a frame later, maybe
-    // after a dashboard put the card back: the window stands in now.
-    this.popoverShown = false;
-    if (this.fullscreen === "native") this.fullscreen = "window";
-    if (this.streamSrc || this.liveWanted || this.fullscreen !== "off") {
-      // A dashboard may put the card back at once: the live view waits.
-      clearTimeout(this.liveGrace);
-      this.liveGrace = setTimeout(() => this.endLiveAway(), LIVE_GRACE_MS);
-    } else {
-      this.endLiveAway();
-    }
+    // Leaving the page ends the live view, after a grace where it runs.
+    this.live.leavePage();
     // An error belongs to the moment it happened: none waits for the return.
     clearTimeout(this.errorTimer);
     this.followStarting(false);
@@ -410,20 +374,15 @@ export class BamBuddyPrinterCard extends LitElement {
     // A phone's camera app freezes the page; back, Home Assistant reconnects
     // and rebuilds the dashboard with new cards: the next card of this
     // printer takes the slot dialog on, the photo read here included.
-    const printer = this.config?.printer;
-    const trip = Date.now() - this.photoAsked < PHOTO_TRIP_MS && Date.now() - this.hiddenAt < HIDDEN_TRIP_MS;
-    if (this.dialog?.kind === "filament" && printer && trip && !this.preview && !this.inEditor) {
-      const dialog = this.dialog.scan?.way === "blocked" ? this.dialog : withoutScan(this.dialog);
-      handover = { from: this, printer, page: location.pathname, setup: JSON.stringify(this.config), dialog, view: this.view, at: Date.now() };
-    }
-    window.removeEventListener("resize", this.onResize);
+    this.scan.handOver();
+    window.removeEventListener("resize", this.filament.onResize);
     // A live scan ends with the page: back, the list shows as it was. The
     // photo's area stays: its picker may still answer.
     if (this.dialog?.kind === "filament" && this.dialog.scan && this.dialog.scan.way !== "blocked") this.dialog = withoutScan(this.dialog);
-    this.endCamera();
-    this.endAppScan();
+    this.scan.endCamera();
+    this.scan.endAppScan();
     // A target still being tapped is sent now, not lost.
-    for (const [entityId, draft] of this.drafts) if (draft.sentFrom === undefined) void this.sendTarget(entityId);
+    this.drafts.flush();
     // Out of the page a modal dialog leaves the top layer but stays open:
     // back, it would be drawn inline. Closed this way it fires no close, and
     // the next draw opens it modal again.
@@ -473,40 +432,13 @@ export class BamBuddyPrinterCard extends LitElement {
         this.liveWanted = false;
       }
     }
-    // Full screen ends with the stream (a new frame rate only restarts it):
-    // the camera gone, the live view closed, the page hidden, a broken stream.
-    if ((this.fullscreen !== "off" || this.fullscreenAsking) && !this.streaming()) this.leaveFullscreen();
-    // A stream a state ends goes as one that is closed: its image still
-    // holds the address here, and the browser would keep loading it.
-    if (!this.streaming()) {
-      if (this.streamSrc) this.stopStream();
-    } else {
-      // A new frame rate: the stream starts anew to ask for it.
-      const rate = this.frameRate();
-      if (this.streamSrc && rate !== undefined && rate !== this.streamFps) this.stopStream();
-      if (!this.streamSrc) {
-        this.streamFps = rate;
-        const url = this.streamUrl();
-        this.streamSrc = this.streamsLoaded.has(url) ? `${url}&run=${++this.streamRun}` : url;
-        this.streamsLoaded.add(url);
-      }
-    }
-    // A sent target goes once its entity reports a new state; a toggle once
-    // it reports what was tapped last -- after it moved: a second tap may
-    // wish the state it still shows --, or leaves on and off.
-    for (const [entityId, draft] of this.drafts) {
-      const state = hass.states[entityId]?.state;
-      if (draft.wish) draft.moved ||= state !== draft.sentFrom;
-      const done = draft.wish
-        ? (state !== "on" && state !== "off") || (state === draft.wish && draft.moved === true)
-        : draft.sentFrom !== undefined && this.draftMark(entityId) !== draft.sentFrom;
-      if (done) this.dropDraft(entityId);
-    }
+    this.live.follow();
+    this.drafts.follow(hass);
   }
 
   /** The count's second hand: on while the printer starts, else off. */
   private followStarting(counting: boolean): void {
-    if (counting && !this.startingTimer) this.startingTimer = setInterval(() => this.requestUpdate(), 1000);
+    if (counting && !this.startingTimer) this.startingTimer = setInterval(() => this.requestUpdate(), TICK_MS);
     if (!counting && this.startingTimer) {
       clearInterval(this.startingTimer);
       this.startingTimer = undefined;
@@ -515,23 +447,14 @@ export class BamBuddyPrinterCard extends LitElement {
 
   protected override firstUpdated(changed: PropertyValues): void {
     super.firstUpdated(changed);
-    this.renderRoot.addEventListener("focusin", (event) => {
-      const target = event.composedPath()[0];
-      this.focusedLast = target instanceof HTMLElement ? target : undefined;
-    });
-    this.renderRoot.addEventListener("keydown", () => {
-      this.keyedAt = Date.now();
-    });
+    this.menu.listen(this.shadow);
   }
 
   protected override updated(changed: PropertyValues): void {
     super.updated(changed);
-    this.keepKeyboardPlace();
+    this.menu.keepKeyboardPlace();
     // An opened menu has the focus on its first item, as menus do.
-    if (changed.has("menuOpen") && this.menuOpen) {
-      this.placeMenu();
-      this.menuItems()[0]?.focus();
-    }
+    if (changed.has("menuOpen") && this.menuOpen) this.menu.opened();
     const dialog = this.renderRoot.querySelector("dialog");
     if (dialog && !dialog.open && this.isConnected) {
       if (typeof dialog.showModal === "function") dialog.showModal();
@@ -546,113 +469,13 @@ export class BamBuddyPrinterCard extends LitElement {
     // above it. Measured open: a closed dialog lays out nothing.
     const foot = dialog?.open ? dialog.querySelector<HTMLElement>(".dlg-actions") : null;
     if (dialog && foot) dialog.style.scrollPaddingBottom = `${foot.offsetHeight + 12}px`;
-    this.fitList(dialog);
-    this.followScan();
+    this.filament.fitList(dialog);
+    this.scan.followScan();
     // The window's picture goes to the top layer once it is a popover.
-    const live = this.liveElement();
-    if (this.fullscreen === "window" && !this.popoverShown && live?.hasAttribute("popover")) {
-      try {
-        live.showPopover();
-        this.popoverShown = true;
-      } catch {
-        // Its own layer covers the window all the same.
-      }
-    }
-  }
-
-  /** A press took the keyboard's control away -- a stepper's end, a
-   * heater's off, the plate cleared, a load that starts a
-   * filament change, an HMS answer that closes its dialog: the nearest
-   * group's next button takes the focus, else the selected tab, else the
-   * menu button. Only right after a key in the card, and only while the
-   * focus is still on that control or fell to the page: a mouse's place,
-   * or one elsewhere on the page, is not the card's to take. */
-  private keepKeyboardPlace(): void {
-    // A card taken off the page has no keyboard place to keep.
-    if (!this.isConnected) return;
-    const last = this.focusedLast;
-    if (!last || Date.now() - this.keyedAt > KEYBOARD_PLACE_FOR) return;
-    const inside = (this.renderRoot as ShadowRoot).activeElement;
-    if (inside && inside !== last) return;
-    // Nothing focused in the card: only where the focus fell to the page.
-    const page = document.activeElement;
-    if (!inside && page !== null && page !== document.body && page !== this) return;
-    if (last.isConnected && !(last as HTMLButtonElement).disabled) {
-      // Still there, but moved (a list sorted anew under it): a browser
-      // blurs a node it moves. In an open dialog the page is out of reach,
-      // so the focus can only have fallen there: it goes back.
-      if (!inside && this.renderRoot.querySelector("dialog[open]")) last.focus();
-      return;
-    }
-    this.focusedLast = undefined;
-    const enabled = "button:not([disabled]), input:not([disabled])";
-    const next = last.isConnected ? FOCUS_GROUPS.map((group) => last.closest(group)?.querySelector<HTMLElement>(enabled)).find(Boolean) : undefined;
-    // Behind an open dialog the card is out of reach: its safe button then.
-    const safe = this.renderRoot.querySelector<HTMLElement>("dialog[open] .dlg-actions .safe");
-    (next ?? safe ?? this.renderRoot.querySelector<HTMLElement>('.tabs [aria-selected="true"]') ?? this.renderRoot.querySelector<HTMLElement>(".menu-btn"))?.focus();
-  }
-
-  /** The open menu on the screen: on a narrow card at the screen's left
-   * edge it would open partly off it. `translate`, not `transform`: its
-   * opening animation moves `transform`. */
-  private placeMenu(): void {
-    const menu = this.renderRoot.querySelector<HTMLElement>(".menu");
-    if (!menu) return;
-    menu.style.translate = "";
-    const box = menu.getBoundingClientRect();
-    if (!box.width) return;
-    const shift = Math.max(MENU_MARGIN - box.left, 0) + Math.min(window.innerWidth - MENU_MARGIN - box.right, 0);
-    menu.style.translate = shift ? `${shift}px 0` : "";
+    this.live.showWindow();
   }
 
   // --- Camera ---------------------------------------------------------------
-
-  /** The camera's stream token, while the camera can stream. */
-  private cameraToken(): string | undefined {
-    const camera = this.refs?.camera;
-    if (!this.hass || !camera || !hasValue(this.hass, camera)) return undefined;
-    return textOrUndefined(stateOf(this.hass, camera)?.attributes["access_token"]);
-  }
-
-  /** Whether the live stream runs now. Not after it broke: "Try again"
-   * starts it anew, with the token of that moment. */
-  private streaming(): boolean {
-    if (this.settings.camera === "off" || this.coverLarge || this.preview || !this.attached || !this.pageVisible || this.streamFailed) return false;
-    if (!this.refs || !this.cameraToken()) return false;
-    return this.settings.camera === "always" || this.liveWanted;
-  }
-
-  /** The frames a second the camera's streams ask for; `arriving`: the
-   * ones that arrive while a stream runs. */
-  private frameRate(arriving = false): number | undefined {
-    const rate = this.refs?.camera ? stateOf(this.hass as Hass, this.refs.camera)?.attributes[arriving ? "streamed_frame_rate" : "frame_rate"] : undefined;
-    return typeof rate === "number" ? rate : undefined;
-  }
-
-  /** The live stream through Home Assistant's camera proxy. It is read when
-   * the stream starts and kept while it runs: the token rotates, the
-   * running stream does not need a new one. The rate is for the browser:
-   * a new one is a new address, and the image loads anew. */
-  private streamUrl(): string {
-    const rate = this.streamFps === undefined ? "" : `&fps=${this.streamFps}`;
-    return `/api/camera_proxy_stream/${this.refs?.camera}?token=${encodeURIComponent(this.cameraToken() ?? "")}${rate}`;
-  }
-
-  /** Ends a running stream at once; dropping the image alone can leave the
-   * browser loading it. */
-  private stopStream(): void {
-    for (const image of this.renderRoot.querySelectorAll("img.stream")) image.removeAttribute("src");
-    this.streamSrc = undefined;
-  }
-
-  /** Whether a tap can start the live view now: where it does not show --
-   * on tap until it is opened, always while the large picture stands in
-   * its place. */
-  private liveOffered(online: boolean): boolean {
-    const camera = this.settings.camera;
-    if (camera === "off" || !online || this.preview || this.cameraToken() === undefined) return false;
-    return this.coverLarge || (camera === "tap" && !this.liveWanted);
-  }
 
   /** The job's picture while a job runs or has just ended, as it loaded;
    * none: the printer's drawing. */
@@ -694,15 +517,6 @@ export class BamBuddyPrinterCard extends LitElement {
     });
   }
 
-  /** The keyboard's place goes with the live view: to its close button. */
-  private readonly startLive = (): void => {
-    this.streamFailed = false;
-    this.coverLarge = false;
-    this.coverJob = undefined;
-    if (this.settings.camera === "tap") this.liveWanted = true;
-    this.focusAfterUpdate(".live .live-close", ".live .live-full");
-  };
-
   /** The job's picture large, or small again: the area then shows what it
    * showed before. */
   private readonly toggleCover = (): void => {
@@ -717,176 +531,8 @@ export class BamBuddyPrinterCard extends LitElement {
     this.focusAfterUpdate(".big-cover .cover-close");
   };
 
-  /** Closed, the place goes back to the button that opens it: the picture,
-   * or the control view's camera button -- in the filament view, which has
-   * none, to its tab. */
-  private readonly closeLive = (): void => {
-    this.stopStream();
-    this.liveWanted = false;
-    this.streamFailed = false;
-    this.focusAfterUpdate("button.live-hint", ".btn.live-btn", '.tabs [aria-selected="true"]');
-  };
-
-  private liveElement(): HTMLElement | null {
-    return this.renderRoot.querySelector<HTMLElement>(".live");
-  }
-
-  /** Whether the browser shows this card's picture full screen. Seen from
-   * the card's own shadow root: the document sees only the outermost shadow
-   * host, Home Assistant's own element. */
-  private ownFullscreen(): boolean {
-    const live = this.liveElement();
-    return live !== null && (this.renderRoot as ShadowRoot).fullscreenElement === live;
-  }
-
-  /** The full-screen icon: in, or out again. The browser's full screen is
-   * asked for within the click -- Firefox and Safari allow it only right
-   * after one. The same element grows: no second stream. */
-  private readonly toggleFullscreen = (): void => {
-    if (this.fullscreen !== "off") {
-      this.leaveFullscreen();
-      return;
-    }
-    const live = this.liveElement();
-    if (!live || this.fullscreenAsking) return;
-    this.followFullscreen(true);
-    const ask = ++this.fullscreenAsk;
-    if (document.fullscreenEnabled && typeof live.requestFullscreen === "function") {
-      let asked: Promise<void> | undefined;
-      try {
-        asked = live.requestFullscreen();
-      } catch {
-        asked = undefined;
-      }
-      if (asked && typeof asked.then === "function") {
-        this.fullscreenAsking = true;
-        // Neither granted nor refused in time: the window stands in.
-        this.fullscreenWait = setTimeout(() => this.useWindow(ask), FULLSCREEN_WAIT_MS);
-        asked.then(
-          () => {
-            clearTimeout(this.fullscreenWait);
-            this.fullscreenAsking = false;
-            // Granted after the window stood in, or after the picture was
-            // left again: not wanted.
-            if (this.fullscreen === "window" || ask !== this.fullscreenAsk) document.exitFullscreen().catch(() => undefined);
-          },
-          () => {
-            clearTimeout(this.fullscreenWait);
-            this.fullscreenAsking = false;
-            this.useWindow(ask);
-          },
-        );
-        return;
-      }
-    }
-    this.useWindow(ask);
-  };
-
-  /** Where the browser has no full screen for the picture (an iPhone), or
-   * refuses it: the picture fills the window. */
-  private useWindow(ask: number): void {
-    if (ask !== this.fullscreenAsk) return;
-    this.fullscreenAsking = false;
-    // Taken off the page meanwhile: no window to fill, no history entry.
-    if (this.fullscreen === "off" && this.isConnected) this.enterMode("window");
-  }
-
-  /** In full screen: an entry in the history of its own -- back (a gesture,
-   * the mouse's button, Alt+Left) leaves full screen, not the dashboard. It
-   * carries no address: Home Assistant's router and dialogs read none of it. */
-  private enterMode(mode: "native" | "window"): void {
-    this.fullscreen = mode;
-    this.fullscreenEntry = `${FULLSCREEN_PAGE}-${++fullscreenEntries}`;
-    history.pushState({ bambuddyFullscreen: this.fullscreenEntry }, "");
-    window.addEventListener("popstate", this.onPopState);
-    this.focusAfterUpdate(".live .live-full");
-  }
-
-  /** Back went past this full screen's entry. One that lands on it -- a
-   * dialog's entry above it gone -- keeps full screen. */
-  private readonly onPopState = (): void => {
-    if (this.ownEntryIsCurrent()) return;
-    this.leaveFullscreen(true);
-  };
-
-  private ownEntryIsCurrent(): boolean {
-    return (history.state as { bambuddyFullscreen?: string } | null)?.bambuddyFullscreen === this.fullscreenEntry;
-  }
-
-  /** The browser's full screen came or went: by the card, Esc, or the
-   * system's back. */
-  private readonly onFullscreenChange = (): void => {
-    if (this.ownFullscreen()) {
-      if (this.fullscreen === "off") this.enterMode("native");
-      return;
-    }
-    if (this.fullscreen === "native") this.leaveFullscreen();
-  };
-
-  /** In full screen nothing behind the picture is reachable: Tab stays on
-   * its icon. */
-  private readonly onFullscreenKey = (event: KeyboardEvent): void => {
-    if (event.key === "Escape") {
-      // The browser's full screen has its own Esc; one that closes a dialog
-      // is the dialog's.
-      if (this.fullscreen !== "window" || inOpenDialog(event)) return;
-      this.leaveFullscreen();
-      return;
-    }
-    if (event.key !== "Tab" || this.fullscreen === "off" || inOpenDialog(event)) return;
-    event.preventDefault();
-    this.renderRoot.querySelector<HTMLElement>(".live .live-full")?.focus();
-  };
-
-  /** Listens while the live view is full screen (or on its way), and no longer. */
-  private followFullscreen(on: boolean): void {
-    if (on) {
-      document.addEventListener("fullscreenchange", this.onFullscreenChange);
-      document.addEventListener("keydown", this.onFullscreenKey);
-    } else {
-      document.removeEventListener("fullscreenchange", this.onFullscreenChange);
-      document.removeEventListener("keydown", this.onFullscreenKey);
-    }
-  }
-
-  /** `fromHistory`: back took the entry already. */
-  private leaveFullscreen(fromHistory = false): void {
-    window.removeEventListener("popstate", this.onPopState);
-    // Its entry goes too -- only while it is the current one: another (a
-    // dialog's, a page's) is not the card's to take.
-    if (!fromHistory && this.fullscreen !== "off" && this.ownEntryIsCurrent()) history.back();
-    this.fullscreen = "off";
-    this.fullscreenAsk += 1;
-    this.fullscreenAsking = false;
-    clearTimeout(this.fullscreenWait);
-    this.followFullscreen(false);
-    if (this.popoverShown) {
-      this.popoverShown = false;
-      try {
-        this.liveElement()?.hidePopover();
-      } catch {
-        // Gone from the top layer already.
-      }
-    }
-    if (this.ownFullscreen()) document.exitFullscreen().catch(() => undefined);
-    // The focus goes back to the card's icon only from inside the picture:
-    // one elsewhere is not the card's to take.
-    if (this.liveElement()?.matches(":focus-within")) {
-      this.focusAfterUpdate(".live .live-full", ".live.failed .btn", "button.live-hint", '.tabs [aria-selected="true"]');
-    }
-  }
-
-  private readonly streamBroke = (): void => {
-    this.stopStream();
-    this.streamFailed = true;
-  };
-
   private readonly setStep = (step: Step): void => {
     this.step = step;
-  };
-
-  private readonly retryLive = (): void => {
-    this.streamFailed = false;
   };
 
   // --- Actions --------------------------------------------------------------
@@ -895,7 +541,7 @@ export class BamBuddyPrinterCard extends LitElement {
   private async run(key: string, domain: string, service: string, data: Record<string, unknown>): Promise<boolean> {
     const hass = this.hass;
     if (!hass || this.pending.has(key)) return false;
-    const pressed = (this.renderRoot as ShadowRoot).activeElement as HTMLButtonElement | null;
+    const pressed = this.shadow.activeElement as HTMLButtonElement | null;
     this.pending = new Set([...this.pending, key]);
     if (pressed && this.dialog) {
       // In a dialog, a button its own command disables keeps no focus: the
@@ -915,99 +561,6 @@ export class BamBuddyPrinterCard extends LitElement {
       return false;
     } finally {
       this.pending = new Set([...this.pending].filter((item) => item !== key));
-    }
-  }
-
-  // --- Heater targets -------------------------------------------------------
-
-  private targetOf(entityId: string): number | undefined {
-    return this.drafts.get(entityId)?.value ?? this.reported(entityId);
-  }
-
-  /** A heater's target, or a fan's percentage (0 while it is off). */
-  private reported(entityId: string): number | undefined {
-    const hass = this.hass as Hass;
-    if (!isFan(entityId)) return numericState(hass, entityId);
-    const state = hass.states[entityId];
-    if (!state || state.state === "unavailable" || state.state === "unknown") return undefined;
-    const percentage = state.attributes["percentage"];
-    return typeof percentage === "number" ? percentage : 0;
-  }
-
-  /** What tells that an entity reported anew: a fan's percentage (its state
-   * stays "on" between speeds), else its state. */
-  private draftMark(entityId: string): string {
-    const state = (this.hass as Hass).states[entityId];
-    return isFan(entityId) ? String(state?.attributes["percentage"] ?? 0) : (state?.state ?? "");
-  }
-
-  private setDraft(entityId: string, draft: Draft): void {
-    this.drafts = new Map([...this.drafts, [entityId, draft]]);
-  }
-
-  private dropDraft(entityId: string): void {
-    clearTimeout(this.draftTimers.get(entityId));
-    this.draftTimers.delete(entityId);
-    const next = new Map(this.drafts);
-    next.delete(entityId);
-    this.drafts = next;
-  }
-
-  private later(entityId: string, delay: number, then: () => void): void {
-    clearTimeout(this.draftTimers.get(entityId));
-    this.draftTimers.set(entityId, setTimeout(then, delay));
-  }
-
-  /** A tap on a stepper: shown at once, sent when the taps stop. */
-  private stepTarget(entityId: string, value: number): void {
-    this.setDraft(entityId, { value });
-    this.later(entityId, TARGET_DELAY, () => void this.sendTarget(entityId));
-  }
-
-  private async sendTarget(entityId: string): Promise<void> {
-    const draft = this.drafts.get(entityId) as Draft;
-    const key = `target_${entityId}`;
-    // The previous target of this heater is still on its way: this one follows.
-    if (this.pending.has(key)) {
-      this.later(entityId, TARGET_DELAY, () => void this.sendTarget(entityId));
-      return;
-    }
-    this.setDraft(entityId, { value: draft.value, sentFrom: this.draftMark(entityId) });
-    this.later(entityId, TARGET_HOLD, () => this.dropDraft(entityId));
-    const sent = isFan(entityId)
-      ? await this.run(key, "fan", "set_percentage", { entity_id: entityId, percentage: draft.value })
-      : await this.run(key, "number", "set_value", { entity_id: entityId, value: draft.value });
-    // A tap made while this target was on its way is kept and sent.
-    if (!sent && this.drafts.get(entityId)?.sentFrom !== undefined) this.dropDraft(entityId);
-  }
-
-  // --- Switches -------------------------------------------------------------
-
-  /** A switch that has a state, as the card shows it. */
-  private switchOn(entityId: string): boolean {
-    const draft = this.drafts.get(entityId);
-    return draft ? draft.value === 1 : (stateOf(this.hass as Hass, entityId) as HassEntityState).state === "on";
-  }
-
-  /** A tap on a switch -- or the chamber light: the new state shows until
-   * the entity reports one, 10 s at most; a command that fails shows the
-   * old one again. */
-  private async toggleSwitch(entityId: string, domain = "switch", key = `switch_${entityId}`): Promise<void> {
-    // A tap while the last one is sent: nothing (it would flip the draft back).
-    if (this.pending.has(key)) return;
-    const on = !this.switchOn(entityId);
-    const from = (stateOf(this.hass as Hass, entityId) as HassEntityState).state;
-    this.setDraft(entityId, { value: on ? 1 : 0, sentFrom: from, wish: on ? "on" : "off" });
-    this.later(entityId, TARGET_HOLD, () => this.dropDraft(entityId));
-    const sent = await this.run(key, domain, on ? "turn_on" : "turn_off", { entity_id: entityId });
-    if (!sent) this.dropDraft(entityId);
-  }
-
-  /** A power symbol's on or off: sent at once. */
-  private setTargets(targets: [string, number][]): void {
-    for (const [entityId, value] of targets) {
-      this.setDraft(entityId, { value });
-      void this.sendTarget(entityId);
     }
   }
 
@@ -1052,7 +605,7 @@ export class BamBuddyPrinterCard extends LitElement {
    * spools want different temperatures, the dialog names them. */
   private openDrying(unit: AmsRefs): void {
     const hass = this.hass as Hass;
-    const maxTemperature = unit.model === "AMS 2 Pro" ? DRYING.maxTemperatureAms2Pro : DRYING.maxTemperature;
+    const maxTemperature = unit.model === AMS_2_PRO ? DRYING.maxTemperatureAms2Pro : DRYING.maxTemperature;
     const loaded = unit.slots.map((entityId) => slotOf(hass, entityId)).filter((slot) => !slot.empty && !slot.unknown);
     const recommended = (slot: Slot, name: string): number | undefined => {
       const value = (stateOf(hass, slot.entityId) as HassEntityState).attributes[name];
@@ -1106,437 +659,6 @@ export class BamBuddyPrinterCard extends LitElement {
     this.dialog = { ...dialog, chosen: chosen.sort((a, b) => order.indexOf(a) - order.indexOf(b)) };
   }
 
-  /** The dialog that sets a slot's filament: its own kept where it has
-   * one, its colour chosen -- also one outside the palette. */
-  private openFilament(slot: Slot, title: string, inventoryOnly = false): void {
-    const hass = this.hass as Hass;
-    const refs = this.refs as PrinterRefs;
-    // A slot with a filament always has a name: its state at least.
-    const keep = slot.type ? slot.name : undefined;
-    const current = slot.color?.toUpperCase();
-    const opened: FilamentDialog = {
-      kind: "filament",
-      entityId: slot.entityId,
-      title,
-      ...(keep ? { keep, vendor: KEEP } : {}),
-      ...(current ? { current, color: current, ...(inPalette(current) ? {} : { custom: current }) } : {}),
-      rfid: slot.rfid,
-      ...(slot.empty ? { empty: true } : {}),
-      ams: !refs.externalSpools.includes(slot.entityId),
-      active: slot.active,
-      ...(slot.rfid ? { spool: [slot.name, slot.remaining === undefined ? "" : formatPercent(hass, slot.remaining)].filter(Boolean).join(" · ") } : {}),
-      ...(slot.rfid || inventoryOnly ? {} : { kprofiles: "loading" as const, offer: "loading" as const }),
-      ...(inventoryOnly ? { inventoryOnly: true, tab: "inventory" as const } : {}),
-      ask: ++this.asks,
-    };
-    this.dialog = opened;
-    clearTimeout(this.kSlowTimer);
-    if (inventoryOnly && slot.assignable) this.startSpools(opened);
-    if (!slot.rfid && !inventoryOnly) {
-      const ask = opened.ask as number;
-      void this.loadOffer(slot.entityId, ask);
-      void this.loadKProfiles(slot.entityId, ask);
-      this.kSlowTimer = setTimeout(() => this.markKSlow(slot.entityId, ask), K_SLOW_MS);
-    }
-  }
-
-  /** The inventory's spools for the slot dialog's slot, asked once per open. */
-  private startSpools(dialog: FilamentDialog): void {
-    const ask = dialog.ask as number;
-    if (this.isAsk(this.dialog, dialog.entityId, ask)) this.dialog = { ...this.dialog, spools: "loading" };
-    void this.loadSpools(dialog.entityId, ask);
-  }
-
-  private async loadSpools(entityId: string, ask: number): Promise<void> {
-    // Asked once more on its own, as BamBuddy's own page does: a moment's
-    // hiccup then never shows.
-    let found: FilamentDialog["spools"] = "failed";
-    for (let attempt = 0; attempt < 2 && found === "failed"; attempt += 1) {
-      try {
-        found = (await spoolList(this.hass as Hass, entityId)) ?? "failed";
-      } catch {
-        found = "failed";
-      }
-    }
-    const placed = (open: FilamentDialog): FilamentDialog => {
-      const list = typeof found === "object" ? found : undefined;
-      const chosen = open.chosenSpool ?? list?.assigned;
-      return { ...open, spools: found, ...(chosen !== undefined ? { chosenSpool: chosen } : {}) };
-    };
-    // Also into the dialog a question parked meanwhile.
-    const dialog = this.dialog;
-    if (this.isAsk(dialog, entityId, ask)) {
-      this.dialog = placed(dialog);
-      // The slot's own spool in the list's view: it may sit far down.
-      void this.updateComplete.then(() => this.renderRoot.querySelector<HTMLElement>('dialog .inv-row[aria-checked="true"]')?.scrollIntoView?.({ block: "nearest" }));
-    }
-    const back = this.dialogBack;
-    if (this.isAsk(back, entityId, ask)) this.dialogBack = placed(back);
-  }
-
-  /** The printer has not answered for a while: the K field says BamBuddy
-   * asks again -- also in a dialog a question parked meanwhile. */
-  private markKSlow(entityId: string, ask: number): void {
-    const slow = (open: FilamentDialog): FilamentDialog => (open.kprofiles === "loading" ? { ...open, kSlow: true } : open);
-    const dialog = this.dialog;
-    if (this.isAsk(dialog, entityId, ask)) this.dialog = slow(dialog);
-    const back = this.dialogBack;
-    if (this.isAsk(back, entityId, ask)) this.dialogBack = slow(back);
-  }
-
-  /** The slot dialog of this open: a late answer to an earlier one stays out. */
-  private isAsk(dialog: Dialog | undefined, entityId: string, ask: number): dialog is FilamentDialog {
-    return dialog?.kind === "filament" && dialog.entityId === entityId && dialog.ask === ask;
-  }
-
-  /** What Bambu Studio offers the open filament dialog's slot: the slot's
-   * own profile placed under its vendor once it comes. */
-  private async loadOffer(entityId: string, ask: number): Promise<void> {
-    let found: FilamentDialog["offer"];
-    try {
-      found = (await filamentOffer(this.hass as Hass, entityId)) ?? "failed";
-    } catch {
-      found = "failed";
-    }
-    const placed = (open: FilamentDialog): FilamentDialog => {
-      const next = { ...open, offer: found };
-      const own = ownVendor(next);
-      return open.vendor === KEEP && own !== undefined ? { ...next, vendor: own, filament: KEEP } : next;
-    };
-    // Also into the dialog a question parked meanwhile (reset, then Cancel).
-    const dialog = this.dialog;
-    if (this.isAsk(dialog, entityId, ask)) this.dialog = placed(dialog);
-    const back = this.dialogBack;
-    if (this.isAsk(back, entityId, ask)) this.dialogBack = placed(back);
-  }
-
-  /** The printer's K profiles for the open filament dialog's slot: none
-   * where the printer gives none, or the call fails. */
-  private async loadKProfiles(entityId: string, ask: number): Promise<void> {
-    let found: FilamentDialog["kprofiles"];
-    try {
-      found = await kProfiles(this.hass as Hass, entityId);
-    } catch {
-      found = "failed";
-    }
-    // A new filament chosen while the list came takes its first matching
-    // profile now, as it would have then.
-    const listed = (open: FilamentDialog): FilamentDialog => {
-      const next = { ...open, kprofiles: found };
-      return open.filament !== undefined && open.filament !== KEEP && open.kprofile === undefined ? { ...next, kprofile: matchingProfile(next) } : next;
-    };
-    // Also into the dialog a question parked meanwhile (reset, then Cancel).
-    const dialog = this.dialog;
-    if (this.isAsk(dialog, entityId, ask)) this.dialog = listed(dialog);
-    const back = this.dialogBack;
-    if (this.isAsk(back, entityId, ask)) this.dialogBack = listed(back);
-  }
-
-  /** The filament dialog's slot cleared, after a question that comes back
-   * to the dialog on Cancel. */
-  private resetSlot(): void {
-    const dialog = this.dialog;
-    if (dialog?.kind !== "filament") return;
-    const hass = this.hass as Hass;
-    this.parkDialog();
-    this.dropSent();
-    // The slot a paused print feeds from: said.
-    const status = stateOf(hass, (this.refs as PrinterRefs).status)?.state;
-    const external = !dialog.ams;
-    // An external spool is no slot.
-    const text = t(hass, external ? "reset_text_spool" : "reset_text");
-    const inUse = t(hass, external ? "reset_in_use_spool" : "reset_in_use");
-    this.dialog = {
-      kind: "confirm",
-      title: t(hass, external ? "reset_title_spool" : "reset_title"),
-      text: dialog.active && status === "paused" ? `${text} ${inUse}` : text,
-      confirm: t(hass, "reset_confirm"),
-      danger: true,
-      action: ["bambuddy", "reset_slot", { entity_id: dialog.entityId }],
-      key: `reset_${dialog.entityId}`,
-    };
-  }
-
-  /** The AMS reads the filament dialog's spool's chip again. */
-  private refreshRfid(): void {
-    const dialog = this.dialog;
-    if (dialog?.kind !== "filament") return;
-    this.closeDialog();
-    void this.run(`rfid_${dialog.entityId}`, "bambuddy", "refresh_rfid", { entity_id: dialog.entityId });
-  }
-
-  /** Changes the open filament dialog. */
-  private editFilament(change: Partial<FilamentDialog>): void {
-    this.dialog = { ...(this.dialog as FilamentDialog), ...change };
-  }
-
-  /** A colour from the picker: one of the palette's checks its swatch,
-   * another becomes the colour outside it. */
-  private pickColor(value: string): void {
-    const color = value.toUpperCase();
-    this.editFilament({ color, ...(inPalette(color) ? {} : { custom: color }) });
-  }
-
-  private readonly onResize = (): void => {
-    if (this.dialog?.kind === "filament") this.fitList(this.renderRoot.querySelector("dialog"));
-  };
-
-  /** The inventory's list takes the room the dialog leaves, down to its
-   * least. Where what stands around it leaves less (notes, warnings, the
-   * filters open, a small screen), the dialog scrolls as a whole instead:
-   * else the list's end would sit under the button row, out of reach. */
-  private fitList(dialog: HTMLDialogElement | null): void {
-    const body = dialog?.querySelector<HTMLElement>(".dlg-body");
-    const list = body?.querySelector<HTMLElement>(".inv-list");
-    if (!body) return;
-    if (!list) {
-      body.classList.remove("inv-short");
-      return;
-    }
-    if (!body.classList.contains("inv-short")) {
-      // The list at its least, and the panel around it squeezed below what it
-      // holds: what it holds would run under the button row.
-      const panel = list.closest<HTMLElement>(".inv-panel");
-      if (panel && panel.scrollHeight > panel.clientHeight + 1) body.classList.add("inv-short");
-      return;
-    }
-    // Scrolling as a whole, the body is as tall as what it holds: back once
-    // that fits with the list at its least.
-    const least = parseFloat(getComputedStyle(list).minHeight) || 0;
-    if (body.scrollHeight - list.offsetHeight + least <= window.innerHeight - DIALOG_MARGIN) body.classList.remove("inv-short");
-  }
-
-  /** The scan the slot dialog runs, while its inventory shows. */
-  private runningScan(): FilamentDialog["scan"] {
-    const dialog = this.dialog;
-    return dialog?.kind === "filament" && this.hass && onInventory(this.hass, dialog) ? dialog.scan : undefined;
-  }
-
-  /** The camera and the app's scanner follow the dialog: whatever ends the
-   * scan -- a scan, Close camera, the dialog closed, the other tab, another
-   * dialog -- ends them here, in one place. */
-  private followScan(): void {
-    const scan = this.runningScan();
-    // The slot left the inventory (a reload, the printer away): the scan
-    // goes with it, or its camera area would stay with no picture.
-    if (!scan && this.dialog?.kind === "filament" && this.dialog.scan) this.dialog = withoutScan(this.dialog);
-    if (scan?.way !== "app") this.endAppScan();
-    if (scan?.way !== "live") {
-      this.endCamera();
-      return;
-    }
-    const video = this.renderRoot.querySelector<HTMLVideoElement>("dialog .inv-camera video");
-    if (!video || !this.scanStream) return;
-    if (video.srcObject !== this.scanStream) {
-      video.srcObject = this.scanStream;
-      void video.play().catch(() => undefined);
-    }
-    if (this.framesOn !== video) {
-      this.stopFrames?.();
-      this.framesOn = video;
-      this.stopFrames = scanFrames(video, (id) => this.applyScan(id), () => this.foreignSeen());
-    }
-  }
-
-  /** A QR code that is no spool label is in the picture: the help line says
-   * so until none was seen for FOREIGN_FOR_MS. */
-  private foreignSeen(): void {
-    const dialog = this.dialog;
-    if (dialog?.kind !== "filament" || dialog.scan?.way !== "live") return;
-    if (!dialog.scan.foreign) this.dialog = { ...dialog, scan: { ...dialog.scan, foreign: true, foreignSaid: true } };
-    clearTimeout(this.foreignTimer);
-    this.foreignTimer = setTimeout(() => {
-      this.foreignTimer = undefined;
-      const now = this.dialog;
-      if (now?.kind !== "filament" || !now.scan?.foreign) return;
-      const { foreign: _foreign, ...scan } = now.scan;
-      this.dialog = { ...now, scan };
-    }, FOREIGN_FOR_MS);
-  }
-
-  private endCamera(): void {
-    clearTimeout(this.foreignTimer);
-    this.foreignTimer = undefined;
-    this.stopFrames?.();
-    this.stopFrames = undefined;
-    this.framesOn = undefined;
-    stopStream(this.scanStream);
-    this.scanStream = undefined;
-  }
-
-  private endAppScan(): void {
-    const stop = this.stopAppScan;
-    this.stopAppScan = undefined;
-    stop?.();
-  }
-
-  private startScan(): void {
-    const dialog = this.dialog;
-    const hass = this.hass;
-    if (dialog?.kind !== "filament" || !hass) return;
-    const run = ++this.scanRun;
-    const way = scanWay(hass);
-    // The camera area as high as what it stands in for: the dialog keeps its size.
-    const height = this.renderRoot.querySelector<HTMLElement>("dialog #inv-panel")?.offsetHeight || undefined;
-    const { scanned: _scanned, scanUnknown: _unknown, ...rest } = dialog;
-    if (way === "app") {
-      this.dialog = { ...rest, scan: { way: "app" } };
-      const texts = {
-        title: t(hass, "inv_scan_app_title"),
-        description: t(hass, "inv_scan_help"),
-        manual: t(hass, "inv_scan_manual"),
-        notLabel: t(hass, "inv_scan_not_label"),
-      };
-      this.stopAppScan = scanInApp(hass, texts, (end) => this.appScanEnded(end));
-      return;
-    }
-    if (way === "insecure") {
-      this.photoAsked = Date.now();
-      this.dialog = { ...rest, scan: { way: "blocked", reason: "insecure", ...(height ? { height } : {}) } };
-      this.focusAfterUpdate("dialog .inv-photo input");
-      return;
-    }
-    this.dialog = { ...rest, scan: { way: "live", ...(height ? { height } : {}) } };
-    // The pressed button is gone with the list: the keyboard goes on in the camera area.
-    this.focusAfterUpdate("dialog .inv-camera-close");
-    void startCamera().then((found) => {
-      const current = this.dialog;
-      if (run !== this.scanRun || this.runningScan()?.way !== "live" || current?.kind !== "filament" || !current.scan) {
-        if (typeof found !== "string") stopStream(found);
-        return;
-      }
-      if (typeof found === "string") {
-        this.photoAsked = Date.now();
-        this.dialog = { ...current, scan: { ...current.scan, way: "blocked", reason: found } };
-        this.focusAfterUpdate("dialog .inv-photo input");
-        return;
-      }
-      this.scanStream = found;
-      this.dialog = { ...current, scan: { ...current.scan, streaming: true, ...(torchOf(found) ? { torch: "off" as const } : {}) } };
-    });
-  }
-
-  private appScanEnded(end: AppScanEnd): void {
-    this.stopAppScan = undefined;
-    const dialog = this.dialog;
-    if (dialog?.kind !== "filament" || dialog.scan?.way !== "app") return;
-    this.dialog = withoutScan(dialog);
-    if (end.kind === "spool") this.applyScan(end.id);
-    else if (end.kind === "manual") this.focusAfterUpdate("dialog #inv-search");
-  }
-
-  /** A spool label read (variant B): the filters back to all, the search
-   * names the spool, which is chosen where it fits. A number the list
-   * lacks is said, the list left as it was. */
-  private applyScan(id: number): void {
-    const dialog = this.dialog;
-    if (dialog?.kind !== "filament") return;
-    const list = typeof dialog.spools === "object" ? dialog.spools : undefined;
-    const spool = list?.spools.find((item) => item.id === id);
-    const { scan: _scan, scanned: _scanned, scanUnknown: _unknown, chosenSpool: _chosen, ...rest } = dialog;
-    if (!spool) {
-      // A search an earlier scan set goes: it named that scan's spool. One
-      // the user typed stays, as the filters do.
-      const { search: _search, searchByScan: _byScan, ...kept } = rest;
-      this.dialog = rest.searchByScan ? { ...kept, scanUnknown: id } : { ...rest, scanUnknown: id };
-      this.focusAfterUpdate("dialog .inv-scan");
-      return;
-    }
-    const { vendorFilter: _vendor, materialFilter: _material, locationFilter: _location, ...open } = rest;
-    this.dialog = {
-      ...open,
-      search: t(this.hass, "inv_scan_search", { id }),
-      searchByScan: true,
-      scanned: id,
-      ...(spool.fits === undefined ? { chosenSpool: id } : {}),
-    };
-    if (this.settings.assignScanned && this.assignsAtOnce(spool)) {
-      this.confirmDialog();
-      return;
-    }
-    void this.updateComplete.then(() => this.renderRoot.querySelector<HTMLElement>("dialog .inv-row")?.scrollIntoView?.({ block: "nearest" }));
-    this.focusAfterUpdate('dialog .inv-row[aria-checked="true"]', "dialog .inv-scan");
-  }
-
-  /** Whether a scanned spool goes in without Assign (the option
-   * assign_scanned_spool): Assign would take it, nothing warns, the slot is
-   * not the one a running print feeds, and the spool sits in no other slot. */
-  private assignsAtOnce(spool: ListedSpool): boolean {
-    const dialog = this.dialog;
-    const hass = this.hass;
-    if (dialog?.kind !== "filament" || !hass || !this.refs) return false;
-    const ctx = this.context(hass, this.refs);
-    const buttons = inventoryButtons(ctx, dialog);
-    const elsewhere = (spool.place !== undefined && !spool.place.here) || spool.also.length > 0;
-    return buttons.ready && !buttons.warn?.length && !(ctx.running && slotOf(hass, dialog.entityId).active) && !elsewhere;
-  }
-
-  private takePhoto(file: File): void {
-    this.photoAsked = Date.now();
-    void decodePhoto(file).then((found) => this.photoRead(found));
-  }
-
-  /** A photo read: its spool, or what it lacked. One this card read after
-   * Home Assistant replaced it goes to the card that took its dialog on. */
-  private photoRead(found: number | "no_code" | "not_label"): void {
-    const left = handover;
-    if (!this.isConnected && left?.from === this) {
-      left.photo = found;
-      if (left.card) {
-        handover = undefined;
-        left.card.photoRead(found);
-      }
-      return;
-    }
-    const dialog = this.dialog;
-    if (dialog?.kind !== "filament" || dialog.scan?.way !== "blocked") return;
-    if (typeof found === "number") this.applyScan(found);
-    else this.dialog = { ...dialog, scan: { ...dialog.scan, reason: found, tries: (dialog.scan.tries ?? 0) + 1 } };
-  }
-
-  /** The slot dialog of a card of this printer Home Assistant just replaced. */
-  private takeOver(): void {
-    const left = handover;
-    if (!left || left.card || left.from === this || this.dialog || this.preview || this.inEditor) return;
-    // The same card again: the same printer, set-up and page.
-    if (left.printer !== this.config?.printer || left.setup !== JSON.stringify(this.config) || left.page !== location.pathname) return;
-    if (Date.now() - left.at > HANDOVER_MS) {
-      handover = undefined;
-      return;
-    }
-    left.card = this;
-    // A fresh ask: what the old card was still waiting for answers it, not this one.
-    const ask = ++this.asks;
-    const dialog: FilamentDialog = { ...left.dialog, ask };
-    this.dialog = dialog;
-    this.view = left.view;
-    this.photoAsked = Date.now();
-    // A second rebuild (a flapping connection) hands it on again.
-    this.hiddenAt = Date.now();
-    if (dialog.offer === "loading") void this.loadOffer(dialog.entityId, ask);
-    if (dialog.kprofiles === "loading") {
-      void this.loadKProfiles(dialog.entityId, ask);
-      clearTimeout(this.kSlowTimer);
-      this.kSlowTimer = setTimeout(() => this.markKSlow(dialog.entityId, ask), K_SLOW_MS);
-    }
-    if (dialog.spools === "loading") void this.loadSpools(dialog.entityId, ask);
-    const photo = left.photo;
-    if (photo === undefined) return;
-    handover = undefined;
-    void this.updateComplete.then(() => this.photoRead(photo));
-  }
-
-  private toggleTorch(): void {
-    const dialog = this.dialog;
-    const track = this.scanStream ? torchOf(this.scanStream) : undefined;
-    if (dialog?.kind !== "filament" || !dialog.scan?.torch || !track) return;
-    const on = dialog.scan.torch === "off";
-    void setTorch(track, on).then((done) => {
-      const now = this.dialog;
-      if (done && now?.kind === "filament" && now.scan?.torch) this.dialog = { ...now, scan: { ...now.scan, torch: on ? "on" : "off" } };
-    });
-  }
-
   /** Ends the dialog. It closes before it goes: the browser then gives the
    * focus back to the button that opened it, where a dialog just removed
    * leaves it nowhere. One the menu opened gives it to the three dots. */
@@ -1558,7 +680,7 @@ export class BamBuddyPrinterCard extends LitElement {
     this.dialogFromMenu = false;
     const element = this.renderRoot.querySelector("dialog");
     if (element?.open) element.close();
-    if (fromMenu) this.focusMenuButton();
+    if (fromMenu) this.menu.focusMenuButton();
   };
 
   /** Copies a text; "Copied" shows in the printer information for a moment.
@@ -1580,7 +702,7 @@ export class BamBuddyPrinterCard extends LitElement {
   private readonly confirmDialog = (): void => {
     const dialog = this.dialog;
     if (dialog?.kind === "check") {
-      void this.runCheck();
+      void this.startCheck();
       return;
     }
     // A question from the filament dialog or the HMS messages ends it: the
@@ -1627,24 +749,7 @@ export class BamBuddyPrinterCard extends LitElement {
     confirm: this.confirmDialog,
     setDrying: (field: DryingField, value: number) => this.setDrying(field, value),
     toggleObject: (id: number) => this.toggleObject(id),
-    // Another vendor: its filament still to choose -- the slot's own again
-    // under the slot's vendor; the K profile goes back to the slot's.
-    setVendor: (vendor: string) => {
-      const dialog = this.dialog as FilamentDialog;
-      const own = vendor !== KEEP && dialog.keep !== undefined && ownVendor(dialog) === vendor;
-      this.editFilament({ vendor, filament: own ? KEEP : undefined, kprofile: undefined });
-    },
-    // A new filament takes its first K profile, else the printer's default,
-    // as Bambu Studio offers them; back to the slot's own, its K profile stays.
-    setFilament: (filament: string) => {
-      const dialog = { ...(this.dialog as FilamentDialog), filament };
-      this.editFilament({ filament, kprofile: filament === KEEP ? undefined : matchingProfile(dialog) });
-    },
-    setKProfile: (kprofile: string) => this.editFilament({ kprofile }),
-    resetSlot: () => this.resetSlot(),
-    refreshRfid: () => this.refreshRfid(),
-    setColor: (color: string) => this.editFilament({ color }),
-    pickColor: (color: string) => this.pickColor(color),
+    ...this.filament.actions,
     copy: (text: string) => void this.copy(text),
     confirmTask: (id: number | undefined) => this.confirmTask(id),
     cancel: (event: Event) => {
@@ -1658,55 +763,7 @@ export class BamBuddyPrinterCard extends LitElement {
       this.confirmTask(undefined);
     },
     markDone: (id: number, name: string) => void this.markDone(id, name),
-    setTab: (tab: "set" | "inventory") => {
-      const dialog = this.dialog;
-      if (dialog?.kind !== "filament" || dialog.tab === tab) return;
-      this.dialog = { ...withoutScan(dialog), tab };
-      if (tab === "inventory" && dialog.spools === undefined) this.startSpools(dialog);
-    },
-    chooseSpool: (id: number) => {
-      const dialog = this.dialog;
-      if (dialog?.kind === "filament") this.dialog = { ...dialog, chosenSpool: id };
-    },
-    filterSpools: (field: "vendor" | "material" | "location", value: string) => {
-      const dialog = this.dialog;
-      if (dialog?.kind !== "filament") return;
-      const { vendorFilter: _vendor, materialFilter: _material, locationFilter: _location, scanned: _scanned, scanUnknown: _unknown, ...rest } = dialog;
-      const vendorFilter = field === "vendor" ? value : dialog.vendorFilter;
-      const materialFilter = field === "material" ? value : dialog.materialFilter;
-      const locationFilter = field === "location" ? value : dialog.locationFilter;
-      this.dialog = {
-        ...rest,
-        ...(vendorFilter ? { vendorFilter } : {}),
-        ...(materialFilter ? { materialFilter } : {}),
-        ...(locationFilter ? { locationFilter } : {}),
-      };
-    },
-    searchSpools: (text: string) => {
-      const dialog = this.dialog;
-      if (dialog?.kind !== "filament") return;
-      const { scanned: _scanned, scanUnknown: _unknown, searchByScan: _byScan, ...rest } = dialog;
-      this.dialog = { ...rest, search: text };
-    },
-    startScan: () => this.startScan(),
-    toggleFilters: () => {
-      const dialog = this.dialog;
-      if (dialog?.kind === "filament") this.dialog = { ...dialog, filtersOpen: !dialog.filtersOpen };
-    },
-    closeScan: () => {
-      const dialog = this.dialog;
-      if (dialog?.kind !== "filament") return;
-      this.dialog = withoutScan(dialog);
-      this.focusAfterUpdate("dialog .inv-scan");
-    },
-    takePhoto: (file: File) => this.takePhoto(file),
-    toggleTorch: () => this.toggleTorch(),
-    unassign: () => {
-      const dialog = this.dialog;
-      if (dialog?.kind !== "filament") return;
-      this.closeDialog();
-      void this.run(`filament_${dialog.entityId}`, "bambuddy", "unassign_spool", { entity_id: dialog.entityId });
-    },
+    ...this.scan.actions,
     toggleFold: (which: "pass" | "skip") => {
       const dialog = this.dialog;
       if (dialog?.kind !== "check") return;
@@ -1764,7 +821,7 @@ export class BamBuddyPrinterCard extends LitElement {
   /** Runs BamBuddy's connection check; the dialog counts the seconds until
    * it answers. An answer for a dialog closed or run again meanwhile is
    * dropped. */
-  private async runCheck(): Promise<void> {
+  private async startCheck(): Promise<void> {
     const hass = this.hass as Hass;
     const deviceId = (this.refs as PrinterRefs).deviceId;
     const opened: CheckDialog = { kind: "check", running: true, started: Date.now() };
@@ -1785,118 +842,12 @@ export class BamBuddyPrinterCard extends LitElement {
 
   private startCheckTimer(): void {
     this.stopCheckTimer();
-    this.checkTimer = setInterval(() => this.requestUpdate(), 1000);
+    this.checkTimer = setInterval(() => this.requestUpdate(), TICK_MS);
   }
 
   private stopCheckTimer(): void {
     clearInterval(this.checkTimer);
     this.checkTimer = undefined;
-  }
-
-  // --- Menu -------------------------------------------------------------------
-
-  private menuItems(): HTMLButtonElement[] {
-    return [...this.renderRoot.querySelectorAll<HTMLButtonElement>(".menu [role=menuitem]")];
-  }
-
-  private readonly toggleMenu = (): void => {
-    this.menuOpen = !this.menuOpen;
-  };
-
-  private focusMenuButton(): void {
-    this.focusAfterUpdate(".menu-btn");
-  }
-
-  private closeMenu(focusTrigger: boolean): void {
-    this.menuOpen = false;
-    if (focusTrigger) this.focusMenuButton();
-  }
-
-  /** The arrow down on the three dots opens the menu, as on any menu button. */
-  private readonly triggerKeys = (event: KeyboardEvent): void => {
-    if (event.key !== "ArrowDown") return;
-    event.preventDefault();
-    this.menuOpen = true;
-  };
-
-  /** Up, down, Home and End move through the items; Escape closes and goes
-   * back to the three dots, Tab closes and moves on. */
-  private readonly menuKeys = (event: KeyboardEvent): void => {
-    if (event.key === "Escape") {
-      event.preventDefault();
-      event.stopPropagation();
-      this.closeMenu(true);
-      return;
-    }
-    if (event.key === "Tab") {
-      this.menuOpen = false;
-      return;
-    }
-    const items = this.menuItems().filter((item) => !item.disabled);
-    const index = items.indexOf((this.renderRoot as ShadowRoot).activeElement as HTMLButtonElement);
-    const moves: Record<string, number> = { ArrowDown: index + 1, ArrowUp: index - 1, Home: 0, End: items.length - 1 };
-    if (!(event.key in moves)) return;
-    event.preventDefault();
-    items[((moves[event.key] as number) + items.length) % items.length]?.focus();
-  };
-
-  /** Home Assistant's device page, the way its own frontend navigates. */
-  private editDevice(deviceId: string): void {
-    history.pushState(null, "", `/config/devices/device/${deviceId}`);
-    window.dispatchEvent(new CustomEvent("location-changed", { detail: { replace: false } }));
-  }
-
-  /** The menu: the device page (for an administrator: the config panel is
-   * theirs alone), the printer information, the maintenance list, a refresh
-   * and the connection check. After an item the
-   * focus is back on the three dots; a dialog takes it until it closes. */
-  private menu(ctx: CardContext): TemplateResult {
-    const { hass, refs } = ctx;
-    const item = (iconName: IconName, label: TextKey, action: () => void, disabled = false, opensDialog = false): TemplateResult =>
-      html`<button
-        role="menuitem"
-        tabindex="-1"
-        aria-haspopup=${opensDialog ? "dialog" : nothing}
-        ?disabled=${disabled}
-        @click=${() => {
-          this.closeMenu(!opensDialog);
-          if (opensDialog) this.dialogFromMenu = true;
-          action();
-        }}
-      >
-        ${icon(iconName)}<span>${t(hass, label)}</span>
-      </button>`;
-    const refresh = refs.refresh;
-    return html`<span class="menu-wrap">
-      <button
-        class="icon-btn menu-btn"
-        aria-label=${t(hass, "more")}
-        title=${t(hass, "more")}
-        aria-haspopup="menu"
-        aria-expanded=${this.menuOpen ? "true" : "false"}
-        aria-controls="bb-menu"
-        @click=${this.toggleMenu}
-        @keydown=${this.triggerKeys}
-      >
-        ${icon("dotsVertical")}
-      </button>
-      ${this.menuOpen
-        ? html`<div class="menu" id="bb-menu" role="menu" aria-label=${t(hass, "more")} @keydown=${this.menuKeys}>
-            ${hass.user?.is_admin ? item("openInNew", "menu_device_page", () => this.editDevice(refs.deviceId)) : nothing}
-            ${item("infoOutline", "menu_info", () => { this.dialog = { kind: "info" }; }, false, true)}
-            ${maintenanceOf(ctx) ? item("wrench", "menu_maintenance", () => { this.dialog = { kind: "maintenance" }; }, false, true) : nothing}
-            ${refresh
-              ? item(
-                  "refresh",
-                  "menu_refresh",
-                  () => void this.run("refresh", "button", "press", { entity_id: refresh }),
-                  stateOf(hass, refresh)?.state === "unavailable" || this.pending.has("refresh"),
-                )
-              : nothing}
-            ${item("lan", "check_connection", () => void this.runCheck(), ctx.unreachable, true)}
-          </div>`
-        : nothing}
-    </span>`;
   }
 
   // --- Rendering ------------------------------------------------------------
@@ -1934,7 +885,7 @@ export class BamBuddyPrinterCard extends LitElement {
       controlTab: settings.controlTab && permitted && settings.sections.some((section) => sectionShown(refs, section, settings.readOnly)),
       filamentTab: settings.filamentTab && (units > 0 || refs.externalSpools.length > 0),
       jobSpools: this.jobSpools,
-      ...(this.liveOffered(online) ? { startLive: this.startLive } : {}),
+      ...(this.live.liveOffered(online) ? { startLive: this.live.startLive } : {}),
       isPending: (key) => this.pending.has(key),
       run: (key, domain, service, data) => void this.run(key, domain, service, data),
       confirm: (confirmation) => {
@@ -1944,13 +895,15 @@ export class BamBuddyPrinterCard extends LitElement {
         this.dialog = { kind: "confirm", ...confirmation };
       },
       dry: (unit) => this.openDrying(unit),
-      setFilament: (slot, title, inventoryOnly) => this.openFilament(slot, title, inventoryOnly),
+      openFilament: (slot, title, inventoryOnly) => this.filament.openFilament(slot, title, inventoryOnly),
       skip: () => void this.openSkip(),
-      targetOf: (entityId) => this.targetOf(entityId),
-      stepTarget: (entityId, value) => this.stepTarget(entityId, value),
-      setTargets: (targets) => this.setTargets(targets),
-      switchOn: (entityId) => this.switchOn(entityId),
-      toggleSwitch: (entityId) => void this.toggleSwitch(entityId),
+      targetOf: (entityId) => this.drafts.targetOf(entityId),
+      stepTarget: (entityId, value) => this.drafts.stepTarget(entityId, value),
+      setTargets: (targets) => this.drafts.setTargets(targets),
+      switchOn: (entityId) => this.drafts.switchOn(entityId),
+      toggleSwitch: (entityId) => void this.drafts.toggleSwitch(entityId),
+      chosenOption: (entityId) => this.drafts.chosenOption(entityId),
+      selectOption: (entityId, option, key) => void this.drafts.selectOption(entityId, option, key),
       optionsOpen: this.optionsOpen,
       toggleOptions: () => {
         this.optionsOpen = !this.optionsOpen;
@@ -1965,7 +918,7 @@ export class BamBuddyPrinterCard extends LitElement {
       },
       checkConnection: () => {
         this.dialogFromMenu = false;
-        void this.runCheck();
+        void this.startCheck();
       },
       openAutoOff: () => {
         // The row that opened them: its label changes with the settings.
@@ -1988,13 +941,13 @@ export class BamBuddyPrinterCard extends LitElement {
     const { hass, refs } = ctx;
     const light = refs.light ? stateOf(hass, refs.light) : undefined;
     // What was tapped, until the light reports it (as a switch does).
-    const lightOn = refs.light && light ? this.switchOn(refs.light) : false;
+    const lightOn = refs.light && light ? this.drafts.switchOn(refs.light) : false;
     // A printer without a chamber: its light is a light.
     const lightKey: TextKey = refs.plainLight ? "light_plain" : "light";
     const title = printerTitle(ctx);
     const subline = subtitle(ctx);
-    const open = (pill: Pill): void => {
-      this.dialog = { kind: pill };
+    const open = (chip: DialogChip): void => {
+      this.dialog = { kind: chip };
       this.dialogFromMenu = false;
     };
     return html`<div class="head">
@@ -2012,7 +965,7 @@ export class BamBuddyPrinterCard extends LitElement {
             aria-busy=${this.pending.has("light") ? "true" : "false"}
             aria-disabled=${this.pending.has("light") ? "true" : nothing}
             ?disabled=${!ctx.online || light?.state === "unavailable"}
-            @click=${() => void this.toggleSwitch(refs.light as string, "light", "light")}
+            @click=${() => void this.drafts.toggleSwitch(refs.light as string, "light", "light")}
           >
             ${icon(lightOn ? "lightOn" : "lightOff")}
           </button>`
@@ -2025,9 +978,9 @@ export class BamBuddyPrinterCard extends LitElement {
               >${icon(lightOn ? "lightOn" : "lightOff")}</span
             >`
           : nothing}
-      ${this.menu(ctx)}
+      ${this.menu.render(ctx)}
     </div>
-    ${pills(ctx, open)}`;
+    ${chips(ctx, open)}`;
   }
 
   /** The tabs; `shown` is the view drawn -- Status where the chosen one is
@@ -2038,15 +991,15 @@ export class BamBuddyPrinterCard extends LitElement {
     const select = (view: View): void => {
       this.view = view;
     };
-    const step = (event: KeyboardEvent): void => {
+    const keys = (event: KeyboardEvent): void => {
       const index = views.indexOf(shown);
-      const moves: Record<string, number> = { ArrowRight: index + 1, ArrowLeft: index - 1, Home: 0, End: views.length - 1 };
-      if (!(event.key in moves)) return;
+      const to = nextIndex(event.key, index, views.length, "horizontal");
+      if (to === undefined) return;
       event.preventDefault();
-      select(views[((moves[event.key] as number) + views.length) % views.length] as View);
+      select(views[to] as View);
       void this.updateComplete.then(() => this.renderRoot.querySelector<HTMLElement>('.tabs [aria-selected="true"]')?.focus());
     };
-    return html`<div class="tabs" role="tablist" aria-label=${t(hass, "aria_views")} @keydown=${step}>
+    return html`<div class="tabs" role="tablist" aria-label=${t(hass, "aria_views")} @keydown=${keys}>
       ${views.map(
         (view) => html`<button
           role="tab"
@@ -2122,63 +1075,7 @@ export class BamBuddyPrinterCard extends LitElement {
         </div>
       </div>`;
     }
-    const closable = this.settings.camera === "tap";
-    const close = closable
-      ? html`<button class="icon-btn live-close" aria-label=${t(hass, "live_stop")} title=${t(hass, "live_stop")} @click=${this.closeLive}>
-          ${icon("close")}
-        </button>`
-      : nothing;
-    if (this.streamFailed && (this.liveWanted || this.settings.camera === "always")) {
-      return html`<div class="live failed" role="status">
-        ${icon("videoOff")}<span>${t(hass, "camera_failed")}</span>
-        <button class="btn" @click=${this.retryLive}>${t(hass, "retry")}</button>
-        <div class="live-tools">${close}</div>
-      </div>`;
-    }
-    if (!this.streamSrc) return nothing;
-    // A setting of Home Assistant's, not the printer's; not in a view-only
-    // card. It is always available: unavailable, it is one the camera no
-    // longer has.
-    const fpsNumber = this.refs?.cameraFps;
-    const fpsState = fpsNumber ? hass.states[fpsNumber] : undefined;
-    const settings =
-      fpsState && fpsState.state !== "unavailable" && !this.settings.readOnly
-        ? html`<button
-            class="icon-btn live-fps-open"
-            aria-label=${t(hass, "fps_open")}
-            title=${t(hass, "fps_open")}
-            aria-haspopup="dialog"
-            @click=${() => {
-              this.dialogBack = undefined;
-              this.dialog = { kind: "camera" };
-              this.dialogFromMenu = false;
-            }}
-          >
-            ${icon("cog")}
-          </button>`
-        : nothing;
-    // What arrives, once the integration has counted it; a dash until then.
-    const rate = this.frameRate(true);
-    // Tenths below 1 (a slow chamber image), in the user's language.
-    const fps = rate === undefined ? undefined : formatNumber(hass, rate, 1);
-    const fpsLabel = fps === undefined ? t(hass, "fps_measuring") : t(hass, "fps_aria", { fps });
-    const full = this.fullscreen !== "off";
-    const fullLabel = t(hass, full ? "fullscreen_close" : "fullscreen_open");
-    // Full screen takes the picture out of the card: the holder keeps its
-    // place, so the page behind does not jump.
-    // The window's picture goes to the top layer where the browser has one.
-    const popover = this.fullscreen === "window" && typeof HTMLElement.prototype.showPopover === "function" ? "manual" : nothing;
-    return html`${full ? html`<div class="live-holder"></div>` : nothing}<div class="live ${full ? "full" : ""}" popover=${popover}>
-      <img class="stream" src=${this.streamSrc} alt=${t(hass, "live")} @error=${this.streamBroke} />
-      <div class="live-tags">
-        <span class="live-badge">${t(hass, "live_badge")}</span>
-        <span class="live-badge live-fps" role="img" aria-label=${fpsLabel} title=${fpsLabel}>${t(hass, "fps_value", { fps: fps ?? "–" })}</span>
-      </div>
-      <div class="live-tools">${settings}${close}</div>
-      <button class="icon-btn live-full" aria-label=${fullLabel} title=${fullLabel} @click=${this.toggleFullscreen}>
-        ${icon(full ? "fullscreenExit" : "fullscreen")}
-      </button>
-    </div>`;
+    return this.live.panel();
   }
 
   private errorLine(): TemplateResult | typeof nothing {
@@ -2201,7 +1098,7 @@ export class BamBuddyPrinterCard extends LitElement {
     const refs = this.refs;
     if (!refs) {
       const device = config.printer ? hass.devices[config.printer] : undefined;
-      const reason: TextKey = !config.printer ? "no_printer" : !device ? "not_found" : isPrinterDevice(device) ? "waiting_for_printer" : "not_a_printer";
+      const reason: TextKey = !config.printer ? "no_printer" : !device ? "not_found" : hasPrinterIdentifier(device) ? "waiting_for_printer" : "not_a_printer";
       return html`<ha-card><div class="message">${t(hass, reason)}</div></ha-card>`;
     }
     const ctx = this.context(hass, refs);
@@ -2245,41 +1142,5 @@ defineCard(TAG, BamBuddyPrinterCard, {
   description: () => t(undefined, "picker_description"),
 });
 
-/** The dialog without its scan: the list shows again. */
-function withoutScan(dialog: FilamentDialog): FilamentDialog {
-  const { scan: _scan, ...rest } = dialog;
-  return rest;
-}
-
-/** How long after the camera area offered a photo a replaced card hands its
- * dialog on, and how long the handed dialog waits for its new card. */
-const PHOTO_TRIP_MS = 5 * 60_000;
-const HANDOVER_MS = 30_000;
-/** The page hidden this long before at most: the rebuild follows the return. */
-const HIDDEN_TRIP_MS = 60_000;
-
-/** The room a dialog leaves on the screen, above and below (styles: 100dvh - 48px). */
-const DIALOG_MARGIN = 48;
-
-/** A slot dialog on its way from a card Home Assistant replaced to the new one. */
-interface Handover {
-  from: unknown;
-  printer: string;
-  /** The page and the card's set-up it was handed from. */
-  page: string;
-  setup: string;
-  dialog: FilamentDialog;
-  view: View;
-  at: number;
-  card?: BamBuddyPrinterCard;
-  photo?: number | "no_code" | "not_label";
-}
-let handover: Handover | undefined;
-
-/** Tests start without a dialog on its way. */
-export function forgetHandoverForTests(): void {
-    handover = undefined;
-}
-
-/** How long the camera's "no label" line stays after the last foreign code. */
-const FOREIGN_FOR_MS = 3_000;
+// The tests reach it through the card's module, as before.
+export { forgetHandoverForTests };

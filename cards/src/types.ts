@@ -277,7 +277,6 @@ export interface PrinterRefs {
   watched: string[];
 }
 
-
 declare global {
   interface Window {
     /** The frontend's receiver of the companion app's messages. */

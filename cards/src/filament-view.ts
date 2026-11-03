@@ -8,38 +8,32 @@
 import { html, nothing, type TemplateResult } from "lit";
 
 import { formatDuration, formatPercent, formatTemperature, formatTemperatureOf, hasValue, minutesOf, numericState, stateOf } from "./format";
-import { printerTitle } from "./header";
 import { icon } from "./icons";
 import { t, type TextKey } from "./i18n";
-import {
-  actionButton,
-  AMS_HT,
-  amsActivity,
-  callout,
-  developerHint,
-  emptyText,
-  inventoryLine,
-  note,
-  resumeButton,
-  shownExternalSpools,
-  sideName,
-  slotOf,
-  slotPlace,
-  swatch,
-  unitModel,
-  unitNozzle,
-  type CardContext,
-  type Slot,
-} from "./parts";
+import { actionButton, AMS_2_PRO, AMS_HT, amsActivity, callout, developerHint, emptyText, inventoryLine, note, printerTitle, resumeButton, shownExternalSpools, sideName, slotOf, slotPlace, stateWord, swatch, switchButton, unitModel, unitNozzle, type CardContext, type Slot } from "./parts";
 import type { AmsRefs } from "./types";
 
-/** The load questions for the left and the right external spool. */
-const EXTERNAL_LOADS: TextKey[] = ["load_title_left", "load_title_right"];
-/** The set-filament dialog's titles for the left and the right external spool. */
-const EXTERNAL_TITLES: TextKey[] = ["filament_title_left", "filament_title_right"];
-
-/** The pencils of the left and the right external spool: each names its spool. */
-const EXTERNAL_EDITS: TextKey[] = ["edit_external_left", "edit_external_right"];
+/** The texts of a printer's one external spool, and of its left and its
+ * right one where it has two: the slot dialog's title, the load question,
+ * the load button, the place, the pencil. */
+interface SpoolTexts {
+  title: TextKey;
+  load: TextKey;
+  loadName: TextKey;
+  place: TextKey;
+  edit: TextKey;
+}
+const ONE_SPOOL: SpoolTexts = {
+  title: "filament_title_external",
+  load: "load_title_external",
+  loadName: "load_from_external",
+  place: "external",
+  edit: "edit_external",
+};
+const SIDE_SPOOLS: readonly [SpoolTexts & { nozzle: "left" }, SpoolTexts & { nozzle: "right" }] = [
+  { title: "filament_title_left", load: "load_title_left", loadName: "load_from_left", place: "external_left_place", edit: "edit_external_left", nozzle: "left" },
+  { title: "filament_title_right", load: "load_title_right", loadName: "load_from_right", place: "external_right_place", edit: "edit_external_right", nozzle: "right" },
+];
 
 /** A pencil beside every filled slot: a spool without a chip
  * gets its material, colour and K profile set by hand, a Bambu spool its
@@ -48,11 +42,10 @@ const EXTERNAL_EDITS: TextKey[] = ["edit_external_left", "edit_external_right"];
  * and a chip spool the print feeds, get one for their inventory spool:
  * shown, or to assign. */
 function editButton(ctx: CardContext, slot: Slot, title: string, label: string): TemplateResult | typeof nothing {
-  // An empty slot, or a chip spool the running print feeds (nothing to set,
-  // its tools wait for the print): only its inventory spool -- shown, or to assign.
   const inventoryOnly = !slot.present || (ctx.running && slot.active && slot.rfid);
-  // A chip spool's: BamBuddy links it itself, and its tools wait for the print.
-  if (!ctx.canControl || !ctx.online || (inventoryOnly && (slot.rfid || (!slot.inventory && !slot.assignable)))) return nothing;
+  // There, a chip spool (BamBuddy links it itself), or no inventory spool to show nor to assign: no pencil.
+  const nothingToOffer = slot.rfid || (!slot.inventory && !slot.assignable);
+  if (!ctx.canControl || !ctx.online || (inventoryOnly && nothingToOffer)) return nothing;
   return actionButton({
     label,
     iconName: "pencil",
@@ -61,7 +54,7 @@ function editButton(ctx: CardContext, slot: Slot, title: string, label: string):
     className: "edit",
     disabled: ctx.changing,
     pending: ctx.isPending(`filament_${slot.entityId}`),
-    onClick: () => ctx.setFilament(slot, title, inventoryOnly),
+    onClick: () => ctx.openFilament(slot, title, inventoryOnly),
   });
 }
 
@@ -71,7 +64,8 @@ function slotRow(
   options: {
     canAct: boolean;
     canLoad: boolean;
-    title: string;
+    /** The title of the slot's dialog. */
+    dialogTitle: string;
     side?: string;
     editLabel?: string;
     nozzle?: "left" | "right";
@@ -170,22 +164,23 @@ function slotRow(
           : nothing}
       </span>
     </button>
-    ${editButton(ctx, slot, options.title, options.editLabel ?? t(hass, "set_filament"))} ${action}
+    ${editButton(ctx, slot, options.dialogTitle, options.editLabel ?? t(hass, "set_filament"))} ${action}
   </div>`;
 }
 
-const DRYING_MODELS = ["AMS 2 Pro", "AMS HT"];
+const DRYING_MODELS = [AMS_2_PRO, AMS_HT];
 
 function dryingRow(ctx: CardContext, unit: AmsRefs): TemplateResult | typeof nothing {
   const { hass } = ctx;
   // Only the AMS 2 Pro and the AMS HT have a heater.
   if (!unit.drying || !DRYING_MODELS.includes(unit.model)) return nothing;
-  const on = stateOf(hass, unit.drying)?.state === "on";
+  const drying = stateOf(hass, unit.drying);
+  const on = drying?.state === "on";
   const left = minutesOf(hass, unit.dryingRemaining);
   // The time stays on one line: "3 h 20 min" never breaks inside.
   const time = left ? formatDuration(hass, left).replace(/ /g, "\u00a0") : undefined;
   // The temperature it dries at, where the integration knows it.
-  const target = stateOf(hass, unit.drying)?.attributes["target_temperature"];
+  const target = drying?.attributes["target_temperature"];
   const at = on && typeof target === "number" && target > 0 ? formatTemperature(hass, target) : undefined;
   // Without a state -- the printer offline, say -- whether it dries is not known.
   const text = !hasValue(hass, unit.drying)
@@ -202,7 +197,7 @@ function dryingRow(ctx: CardContext, unit: AmsRefs): TemplateResult | typeof not
   const key = `dry_${unit.deviceId}`;
   // Where the printer dries only from its own screen (a P1S), or its
   // firmware does not let BamBuddy start it: no buttons, a word where.
-  const remote = stateOf(hass, unit.drying)?.attributes["remote_start"] !== false;
+  const remote = drying?.attributes["remote_start"] !== false;
   // Stopping asks first, as starting does: the time left is lost.
   const stop = (): void =>
     ctx.confirm({
@@ -285,7 +280,7 @@ function unitSection(ctx: CardContext, unit: AmsRefs, canAct: boolean): Template
               return slotRow(ctx, slotOf(hass, entityId), {
                 canAct,
                 canLoad: !ht,
-                title: t(hass, "filament_title", { slot: place }),
+                dialogTitle: t(hass, "filament_title", { slot: place }),
                 loadTitle: (filament) => t(hass, "load_title_from", { filament, place }),
                 loadName: t(hass, "load_from", { place }),
                 place,
@@ -336,22 +331,10 @@ function backupRow(ctx: CardContext): TemplateResult | typeof nothing {
   const disabled = !ctx.online || state.state === "unavailable";
   let control: TemplateResult;
   if (!ctx.canControl) {
-    control = html`<span class="det-state">${t(hass, state.state === "on" ? "on" : state.state === "off" ? "off" : "unknown")}</span>`;
+    control = html`<span class="det-state">${stateWord(hass, state.state)}</span>`;
   } else if (known) {
     const on = ctx.switchOn(entityId);
-    control = html`<button
-      class="det-switch"
-      role="switch"
-      aria-label=${label}
-      aria-describedby="backup-sub"
-      aria-checked=${on ? "true" : "false"}
-      aria-busy=${pending ? "true" : "false"}
-      aria-disabled=${pending ? "true" : nothing}
-      ?disabled=${disabled}
-      @click=${() => ctx.toggleSwitch(entityId)}
-    >
-      <span class="toggle" aria-hidden="true"><span class="knob"></span></span>
-    </button>`;
+    control = switchButton({ label, on, pending, onClick: () => ctx.toggleSwitch(entityId), describedBy: "backup-sub", disabled });
   } else {
     // Unknown, as it is; the two actions below set it -- then BamBuddy knows it.
     control = html`<span class="det-state">${t(hass, "unknown")}</span>
@@ -387,7 +370,7 @@ export function filamentView(ctx: CardContext): TemplateResult {
           ? [ctx.status === "paused" ? "changing_paused" : "changing_reason", "info"]
           : undefined;
   const canAct = ctx.canControl && ctx.online && !ctx.running && !ctx.changing;
-  const dual = refs.externalSpools.length > 1;
+  const twoSpools = refs.externalSpools.length === 2;
   // The sides from all spools, what shows from those shown.
   const spools = shownExternalSpools(ctx);
   const activity = amsActivity(ctx);
@@ -405,16 +388,18 @@ export function filamentView(ctx: CardContext): TemplateResult {
           <div class="slots">
             ${spools.map((entityId) => {
               const index = refs.externalSpools.indexOf(entityId);
+              const side = twoSpools ? SIDE_SPOOLS[index === 0 ? 0 : 1] : undefined;
+              const texts = side ?? ONE_SPOOL;
               return slotRow(ctx, slotOf(hass, entityId), {
                 canAct,
                 canLoad: true,
-                title: t(hass, (dual ? EXTERNAL_TITLES[index] : "filament_title_external") as TextKey),
-                loadTitle: (filament) => t(hass, (dual ? EXTERNAL_LOADS[index] : "load_title_external") as TextKey, { filament }),
-                loadName: t(hass, dual ? (index === 0 ? "load_from_left" : "load_from_right") : "load_from_external"),
-                place: t(hass, dual ? (index === 0 ? "external_left_place" : "external_right_place") : "external"),
-                editLabel: t(hass, (dual ? EXTERNAL_EDITS[index] : "edit_external") as TextKey),
-                ...(dual ? { nozzle: index === 0 ? ("left" as const) : ("right" as const) } : {}),
-                ...(dual ? { side: sideName(hass, index) } : {}),
+                dialogTitle: t(hass, texts.title),
+                loadTitle: (filament) => t(hass, texts.load, { filament }),
+                loadName: t(hass, texts.loadName),
+                place: t(hass, texts.place),
+                editLabel: t(hass, texts.edit),
+                ...(side ? { nozzle: side.nozzle } : {}),
+                ...(side ? { side: sideName(hass, index) } : {}),
               });
             })}
           </div>

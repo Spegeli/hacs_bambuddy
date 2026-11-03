@@ -43,11 +43,6 @@ export function temperatureUnit(hass: Hass, entityId: string | undefined): strin
 export const fromCelsius = (celsius: number, unit: string): number =>
   Math.round(unit === "°F" ? celsius * 1.8 + 32 : unit === "K" ? celsius + 273.15 : celsius);
 
-/** A temperature entity's figure in °C: a heater's sensor and its number
- * may show different units (Home Assistant keeps a registered sensor in its
- * unit when the unit system changes). */
-export const toCelsius = (value: number, unit: string): number => (unit === "°F" ? (value - 32) / 1.8 : unit === "K" ? value - 273.15 : value);
-
 /** The lowest value a heater's target takes: off (0 °C, 32 °F). */
 export function targetFloor(hass: Hass, entityId: string | undefined): number {
   const min = stateOf(hass, entityId)?.attributes["min"];
@@ -55,6 +50,9 @@ export function targetFloor(hass: Hass, entityId: string | undefined): number {
 }
 
 /** A value that is a text with something in it, else undefined. */
+/** Grams: "886\u00a0g". */
+export const formatGrams = (hass: Hass, grams: number): string => `${formatNumber(hass, grams)}\u00a0g`;
+
 export const textOrUndefined = (value: unknown): string | undefined => (typeof value === "string" && value ? value : undefined);
 
 /** A select's options as its state lists them, else the card's own; an

@@ -2780,8 +2780,6 @@ export const cardStyles = css`
   .inv-search {
     width: 100%;
     box-sizing: border-box;
-  }
-  .inv-search {
     font: inherit;
     padding: 8px 10px;
     border-radius: 8px;
@@ -2795,9 +2793,30 @@ export const cardStyles = css`
     gap: 8px;
     align-items: stretch;
   }
-  .inv-search-row .inv-search {
+  /* The search field with its magnifier inside, before the text. */
+  .inv-search-box {
+    position: relative;
+    display: flex;
     flex: 1;
     min-width: 0;
+  }
+  .inv-search-box .inv-search {
+    flex: 1;
+    min-width: 0;
+    padding-inline-start: 36px;
+  }
+  .inv-search-icon {
+    position: absolute;
+    inset-inline-start: 10px;
+    top: 50%;
+    translate: 0 -50%;
+    display: flex;
+    color: var(--bb-muted);
+    pointer-events: none;
+  }
+  .inv-search-icon .icon {
+    width: 20px;
+    height: 20px;
   }
   .inv-scan,
   .inv-filter {
@@ -2834,8 +2853,8 @@ export const cardStyles = css`
     padding: 0 4px;
     box-sizing: border-box;
     border-radius: 9px;
-    background: var(--primary-color);
-    color: var(--text-primary-color, #fff);
+    background: var(--bb-accent);
+    color: var(--bb-on-accent);
     font-size: 12px;
     line-height: 18px;
     text-align: center;
@@ -2847,7 +2866,7 @@ export const cardStyles = css`
     padding: 6px 0;
     border: 0;
     background: none;
-    color: var(--primary-color);
+    color: var(--bb-accent);
     font: inherit;
     font-size: 14px;
     cursor: pointer;

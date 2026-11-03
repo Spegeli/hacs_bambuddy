@@ -1,5 +1,6 @@
 // Calls to Home Assistant's actions, and the reason one failed in the
 // viewer's language: the integration's own text where it raised one.
+import { textOrUndefined } from "./format";
 import { t } from "./i18n";
 import type { ActionError, Hass } from "./types";
 
@@ -132,9 +133,9 @@ export interface ListedSpool {
   place?: SpoolPlace;
   /** Its further slots: BamBuddy can hold a spool in two. */
   also: SpoolPlace[];
-  /** Why the slot cannot take it; none where it can. */
-  /** BamBuddy links a Bambu spool by its chip itself ("by_chip"); a spool
-   * in a slot of another printer that prints is locked ("printing"). */
+  /** Why the slot cannot take it; none where it can. BamBuddy links a
+   * Bambu spool by its chip itself ("by_chip"); a spool in a slot of another
+   * printer that prints is locked ("printing"). */
   fits?: "not_for_ams" | "not_for_nozzle" | "not_for_printer" | "by_chip" | "printing";
   /** The printer that prints, for "printing". */
   printing?: string;
@@ -171,34 +172,53 @@ export function placeOf(value: unknown): SpoolPlace | undefined {
 export const placesOf = (value: unknown): SpoolPlace[] =>
   (Array.isArray(value) ? value : []).map(placeOf).filter((place): place is SpoolPlace => place !== undefined && !place.here);
 
+/** What a spool of BamBuddy's inventory says the same way in the action's
+ * answer and in a slot sensor's `inventory_spool`: its colour, what is left
+ * and where it is stored, its chip. */
+export function spoolBasics(record: Record<string, unknown>): {
+  colorName?: string;
+  rgba?: string;
+  extraColors: string[];
+  remainingG: number;
+  remainingPct?: number;
+  storage?: string;
+  rfid: boolean;
+} {
+  const pct = record["remaining_pct"];
+  const grams = record["remaining_g"];
+  const colorName = textOrUndefined(record["color_name"]);
+  const rgba = textOrUndefined(record["rgba"]);
+  const storage = textOrUndefined(record["storage_location"]);
+  return {
+    ...(colorName ? { colorName } : {}),
+    ...(rgba ? { rgba } : {}),
+    extraColors: Array.isArray(record["extra_colors"]) ? record["extra_colors"].filter((color): color is string => typeof color === "string") : [],
+    remainingG: typeof grams === "number" ? grams : 0,
+    ...(typeof pct === "number" ? { remainingPct: pct } : {}),
+    ...(storage ? { storage } : {}),
+    rfid: record["rfid"] === true,
+  };
+}
+
 /** The integration's get_spools action, called for its response: the
  * inventory's spools for a slot. An answer without a list is none. */
 export async function spoolList(hass: Hass, entityId: string): Promise<SpoolList | undefined> {
   const response = await responseOf(hass, "get_spools", { entity_id: entityId });
   if (!Array.isArray(response["spools"])) return undefined;
-  const text = (value: unknown): string | undefined => (typeof value === "string" && value ? value : undefined);
   const spools = entriesOf(response["spools"], "id", "number").map((item): ListedSpool => {
     const place = placeOf(item["place"]);
     const fits = item["fits"];
-    const pct = item["remaining_pct"];
-    const grams = item["remaining_g"];
     return {
       id: item["id"] as number,
-      name: text(item["name"]) ?? String(item["id"]),
-      brand: text(item["brand"]) ?? "",
-      material: text(item["material"]) ?? "",
-      ...(text(item["color_name"]) ? { colorName: text(item["color_name"]) } : {}),
-      ...(text(item["rgba"]) ? { rgba: text(item["rgba"]) } : {}),
-      extraColors: Array.isArray(item["extra_colors"]) ? item["extra_colors"].filter((color): color is string => typeof color === "string") : [],
-      remainingG: typeof grams === "number" ? grams : 0,
-      ...(typeof pct === "number" ? { remainingPct: pct } : {}),
-      ...(text(item["storage_location"]) ? { storage: text(item["storage_location"]) } : {}),
-      rfid: item["rfid"] === true,
+      name: textOrUndefined(item["name"]) ?? String(item["id"]),
+      brand: textOrUndefined(item["brand"]) ?? "",
+      material: textOrUndefined(item["material"]) ?? "",
+      ...spoolBasics(item),
       ...(place ? { place } : {}),
       also: placesOf(item["also"]),
       ...(typeof fits === "string" && FITS.has(fits) ? { fits: fits as ListedSpool["fits"] } : {}),
-      ...(text(item["printing"]) ? { printing: text(item["printing"]) } : {}),
-      ...(text(item["type"]) ? { type: text(item["type"]) } : {}),
+      ...(textOrUndefined(item["printing"]) ? { printing: textOrUndefined(item["printing"]) } : {}),
+      ...(textOrUndefined(item["type"]) ? { type: textOrUndefined(item["type"]) } : {}),
     };
   });
   const assigned = response["assigned"];

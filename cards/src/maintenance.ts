@@ -90,11 +90,11 @@ export function maintenanceOf(ctx: CardContext): Maintenance | undefined {
   };
 }
 
-const toneOf = (task: MaintenanceTask): string => (task.due ? "err" : task.dueSoon ? "warn" : "ok");
+const taskTone = (task: MaintenanceTask): string => (task.due ? "err" : task.dueSoon ? "warn" : "ok");
 
 /** The chip: "Maintenance OK", or how many tasks are due or due soon -- red
  * with one overdue, as BamBuddy's own. A tap opens the dialog. */
-export function maintenancePill(ctx: CardContext, open: () => void): TemplateResult | typeof nothing {
+export function maintenanceChip(ctx: CardContext, open: () => void): TemplateResult | typeof nothing {
   const { hass } = ctx;
   const maintenance = maintenanceOf(ctx);
   if (!maintenance) return nothing;
@@ -149,7 +149,7 @@ function taskRow(ctx: CardContext, task: MaintenanceTask, dialog: MaintenanceDia
   const used = task.interval > 0 ? Math.min(1, Math.max(0, (task.interval - task.left) / task.interval)) : 1;
   const pending = dialog.marking?.includes(task.id) ?? false;
   const confirming = dialog.confirming === task.id;
-  return html`<div class="maint-row tone-${toneOf(task)}">
+  return html`<div class="maint-row tone-${taskTone(task)}">
     <div class="maint-text">
       <span class="maint-name">${name}</span>
       <span class="maint-when">${whenText(ctx, task)}</span>

@@ -116,23 +116,31 @@ export const DEFAULTS: Settings = {
   compactChips: false,
 };
 
-export const settingsOf = (config: CardConfig): Settings => ({
-  camera: config.camera ?? DEFAULTS.camera,
-  blocks: config.status_blocks ?? DEFAULTS.blocks,
-  chips: config.header_chips ?? DEFAULTS.chips,
-  startView: config.start_view ?? DEFAULTS.startView,
-  controlTab: config.show_control_tab ?? DEFAULTS.controlTab,
-  sections: config.control_sections ?? DEFAULTS.sections,
-  readOnly: config.read_only ?? DEFAULTS.readOnly,
-  filamentTab: config.show_filament_tab ?? DEFAULTS.filamentTab,
-  amsFolding: config.ams_folding ?? DEFAULTS.amsFolding,
-  externalSpool: config.show_external_spool ?? DEFAULTS.externalSpool,
-  assignScanned: config.assign_scanned_spool ?? DEFAULTS.assignScanned,
-  showAutoOff: config.show_auto_off ?? DEFAULTS.showAutoOff,
-  compactChips: config.compact_chips ?? DEFAULTS.compactChips,
-});
+/** Each setting's option key in the card's configuration. */
+const KEYS: { readonly [S in keyof Settings]: keyof CardConfig } = {
+  camera: "camera",
+  blocks: "status_blocks",
+  chips: "header_chips",
+  startView: "start_view",
+  controlTab: "show_control_tab",
+  sections: "control_sections",
+  readOnly: "read_only",
+  filamentTab: "show_filament_tab",
+  amsFolding: "ams_folding",
+  externalSpool: "show_external_spool",
+  assignScanned: "assign_scanned_spool",
+  showAutoOff: "show_auto_off",
+  compactChips: "compact_chips",
+};
+const SETTINGS = Object.keys(KEYS) as (keyof Settings)[];
+
+export const settingsOf = (config: CardConfig): Settings =>
+  Object.fromEntries(SETTINGS.map((setting) => [setting, config[KEYS[setting]] ?? DEFAULTS[setting]])) as unknown as Settings;
 
 // --- Editor -----------------------------------------------------------------
+
+/** Every option's default, by its key. */
+const DEFAULT_DATA: Readonly<Record<string, unknown>> = Object.fromEntries(SETTINGS.map((setting) => [KEYS[setting], DEFAULTS[setting]]));
 
 /** What the editor shows: every option's default where the configuration
  * has none, so its lists and dropdowns show what the card shows. Copies:
@@ -141,23 +149,6 @@ export const editorData = (config: CardConfig): Record<string, unknown> => ({
   ...Object.fromEntries(Object.entries(DEFAULT_DATA).map(([key, value]) => [key, Array.isArray(value) ? [...(value as unknown[])] : value])),
   ...config,
 });
-
-/** Every option's default, by its key. */
-const DEFAULT_DATA: Readonly<Record<string, unknown>> = {
-  camera: DEFAULTS.camera,
-  status_blocks: DEFAULTS.blocks,
-  header_chips: DEFAULTS.chips,
-  start_view: DEFAULTS.startView,
-  show_control_tab: DEFAULTS.controlTab,
-  control_sections: DEFAULTS.sections,
-  read_only: DEFAULTS.readOnly,
-  show_filament_tab: DEFAULTS.filamentTab,
-  ams_folding: DEFAULTS.amsFolding,
-  show_external_spool: DEFAULTS.externalSpool,
-  assign_scanned_spool: DEFAULTS.assignScanned,
-  show_auto_off: DEFAULTS.showAutoOff,
-  compact_chips: DEFAULTS.compactChips,
-};
 
 /** The configuration after a change in the editor: an option whose value
  * now differs from what the editor showed takes it -- one emptied, or set
