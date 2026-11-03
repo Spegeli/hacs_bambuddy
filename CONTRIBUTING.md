@@ -97,13 +97,21 @@ The card's modules, in `cards/src/`:
 | Module | What it holds |
 |---|---|
 | `card.ts` | The element: the three tabs, opening the dialogs and calling the actions; the editor's preview |
+| `drafts.ts` | Targets, switches and the print speed tapped: shown before their entities report them, a stepper's taps sent once they stop |
+| `menu.ts` | The ⋮ menu, and the keyboard's place kept when a press takes its control away |
+| `filament-session.ts` | The slot dialog's data: what it opens with and the answers it waits for (Bambu Studio's offer, the K profiles, the inventory's spools), each into the dialog of its own open |
+| `live.ts` | The live view: the camera's stream through Home Assistant's proxy, and the picture full screen (the browser's own, or the window where it has none) |
 | `status-view.ts`, `control-view.ts`, `filament-view.ts` | The three tabs; `filament-view.ts` also places each slot's ✏️ |
 | `heating.ts` | Heating and ventilating |
 | `detection.ts` | The print options |
 | `power.ts` | Smart plugs and the switch-off after the print |
 | `maintenance.ts`, `check.ts` | Maintenance; the connection check |
-| `header.ts` | The head: name, chips, menu, the printer information |
-| `dialogs.ts` | Every dialog, the slot's with its tab From the inventory included |
+| `header.ts` | The head: name and chips, and what the printer's dialogs read of the printer |
+| `dialogs.ts` | Every dialog's element and button row; the confirmation, drying, the objects to skip, the camera's frame rate |
+| `filament-dialog.ts` | The slot dialog's way of setting a filament: vendor and filament, colour, K profile, the slot's tools, the nozzle that feeds it |
+| `inventory-dialog.ts` | The slot dialog's tab From the inventory: the spool assigned, the list with its filters and search, the scan's camera area, what Assign warns of |
+| `printer-dialogs.ts` | What the chips and the menu open about the printer: the HMS messages, the storage, the firmware, the printer information |
+| `scan-session.ts` | A label scan in the slot dialog as it runs (the camera, the app's scanner, a photo), and the dialog handed to the new card of the printer when Home Assistant rebuilds the dashboard after the camera app |
 | `scan.ts` | Scanning a BamBuddy spool label in the tab From the inventory: the Home Assistant app's own scanner, the browser's camera or a photo; reading the QR code (the browser's own reader where it has one, else jsQR) |
 | `actions.ts` | Calling the actions and reading their responses (`get_spools`, `get_filaments`, `get_k_profiles` …); failures in the viewer's language |
 | `parts.ts` | Shared pieces; a slot as its sensor tells it, its inventory spool included |
@@ -137,7 +145,7 @@ The integration lives in `custom_components/bambuddy/`; the dashboard card's sou
 | `cards.py` | Serves the dashboard card's bundle and adds it to every dashboard |
 | `config_flow.py` | Setup (address, API key, certificate check, printers), reauthentication, reconfiguration (a new address, its printers matched by serial number), and the options (Configure): Manage printers (add and remove them) and Settings (the live updates, with a test of the connection) |
 | `const.py` | Domain, config keys, the permissions the key needs (`REQUIRED_SCOPES`) and those it may have (`OPTIONAL_PERMISSIONS`), intervals, the live updates' defaults, the minimum BamBuddy version, print speed modes |
-| `coordinator.py` | One coordinator per printer (`/printers/{id}/status` every 10 seconds, when BamBuddy's live connection tells of a change, and twice after a command; print hours, BamBuddy's name and details and the AMS units' names in BamBuddy (`/printers/{id}/ams-labels`) once a minute, and the device names after them; its maintenance every 10 minutes and after a print), the instance's (`/archives/stats` every minute, `/system/info` every 5 minutes), the update checks' (`/updates/check`, `/firmware/updates` every 6 hours) and the smart plugs' (the list every minute, each plug's state every 15 seconds) |
+| `coordinator.py` | One coordinator per printer (`/printers/{id}/status` every 10 seconds, when BamBuddy's live connection tells of a change, and twice after a command; print hours, BamBuddy's name and details and the AMS units' names in BamBuddy (`/printers/{id}/ams-labels`) once a minute, and the device names after them; its maintenance every 10 minutes and after a print), the instance's (`/archives/stats` every minute, `/system/info` every 5 minutes) and the update checks' (`/updates/check`, `/firmware/updates` every 6 hours) |
 | `diagnostics.py` | Entry and device diagnostics: redacted (`TO_REDACT`), smart plugs only by an allowlist of fields, the spool inventory as counts and numbers only |
 | `entity.py` | Device infos; the base entities — availability, unique IDs and entity IDs; `async_run_command`, how a command reaches a printer |
 | `fan.py` | Part cooling, auxiliary (on the X2D the left one), chamber or exhaust, and left (on the X2D right) auxiliary fan, in tens; the ventilation of a printer with an airduct (the airduct on cooling and the fans that bring the air through, `models.ventilation_fans`) |
@@ -155,17 +163,21 @@ The integration lives in `custom_components/bambuddy/`; the dashboard card's sou
 | `manifest.json` | The integration's manifest: keys in alphabetical order after `domain` and `name`, no package under `requirements` that Home Assistant ships (hassfest refuses it); its `version` is set by Create Release, never by hand |
 | `models.py` | What BamBuddy's printer status means, independent of entities: print status and stage, what each model has, AMS units and slots, names and keys |
 | `number.py` | Target temperatures; the camera's frame rate; the switch-off's temperature |
+| `plug_coordinator.py` | The smart plugs' coordinator: BamBuddy's list every minute, each plug's state every 15 seconds; a plug moved to another printer or changed in role reloads the entry |
 | `plug_history.py` | The statistics of a smart plug's entities that went, in the integration's own store: an entity ID no entity has taken again for 10 days loses its long-term statistics (its recorded states are the recorder's); a plug swapped, created again or switched back meanwhile keeps its history |
 | `plug_identity.py` | How a smart plug is known: its entities by what it switches (an HMAC of the Tasmota's address, the Home Assistant entity or the MQTT topic with the path BamBuddy reads there, keyed with a secret of this installation; a REST plug by its record), its device by BamBuddy's number and when BamBuddy created it |
 | `plugs.py` | A smart plug BamBuddy links to a printer: its kind (switch, script, monitor), its role, its device name |
 | `rekey.py` | An AMS unit that got its serial: its device and entities move from its place to it in the setup, the stand-in entity IDs are renamed |
 | `renames.py` | The renamed AMS entity IDs in the integration's own store, and their notice under Repairs, one per printer |
 | `repairs.py` | The repairs: removing a printer BamBuddy no longer lists; confirming the AMS entity IDs that followed their unit's serial |
+| `schema.py` | `form_schema`, the schema of a form, for the config flow and the repairs |
 | `select.py` | Print speed, airduct mode, active nozzle |
 | `sensor.py` | BamBuddy's figures; per printer status, job, temperatures, filament, maintenance and diagnostics; per AMS unit slots (with the inventory spool BamBuddy assigns them), humidity, temperature and drying time; a plug's power and energy |
 | `services.py`, `services.yaml` | The actions — among them `assign_spool`, `unassign_spool` and `get_spools`, which judge a spool against the slot and the other printers before BamBuddy is asked |
+| `storage.py` | `async_load_once`: the integration's own stores (the plugs' secret and history, the renamed AMS entity IDs), each loaded once a run under a lock |
 | `strings.json`, `translations/` | UI strings, two languages (see [Translations](#translations)) |
 | `switch.py` | AMS filament backup (with an AMS unit, also one plugged in later), AI detection; a plug's switch; the switch-off after the print and its *Repeat after every print* |
+| `timers.py` | `async_call_later_until_stop`: a timer Home Assistant's stop ends (its own `async_call_later` keeps running then) — the reads after a command, the live connection's next attempt |
 | `update.py` | New BamBuddy releases and printer firmware |
 
 ## Things that are easy to get wrong
