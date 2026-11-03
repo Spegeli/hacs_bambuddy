@@ -35,19 +35,22 @@ from homeassistant.helpers.update_coordinator import CoordinatorEntity
 from homeassistant.util import dt as dt_util
 
 from .const import DOMAIN
-from .inventory import inventory_attributes
-from .coordinator import BamBuddyConfigEntry, BamBuddyInstanceCoordinator, BamBuddyPlugCoordinator, BamBuddyPrinterCoordinator
+from .coordinator import BamBuddyConfigEntry, BamBuddyInstanceCoordinator, BamBuddyPrinterCoordinator
+from .plug_coordinator import BamBuddyPlugCoordinator
 from .entity import (
     BamBuddyAmsEntity,
     BamBuddyDescribedEntity,
     BamBuddyInstanceEntity,
-    BamBuddyPlugEntity,
+    BamBuddyReachablePlugEntity,
     async_add_ams_entities,
     async_add_plug_entities,
 )
+from .inventory import inventory_attributes
 from .models import (
     ACTIVE_STATES,
+    AMS_HT_FIRST_ID,
     AMS_STATUSES,
+    EXTERNAL_AMS,
     EXTERNAL_LEFT,
     EXTERNAL_RIGHT,
     PRINT_STATUSES,
@@ -62,6 +65,7 @@ from .models import (
     hms_answers,
     maintenance_state,
     maintenance_task,
+    nozzle_side,
     nozzle_type,
     print_stage,
     print_status,
@@ -70,6 +74,7 @@ from .models import (
     tray_empty,
     tray_id,
     tray_label,
+    unit_extruder,
 )
 from .plugs import Plug
 
@@ -202,8 +207,10 @@ def _active_slot(data: PrinterData) -> tuple[dict[str, Any], int, int] | None:
     """The slot the printer feeds from: its tray, its slot number and
     BamBuddy's global id of it."""
     loaded = active_tray(data)
-    found = find_tray(data, loaded) if loaded is not None else None
-    return None if found is None or loaded is None else (found[0], found[1], loaded)
+    if loaded is None:
+        return None
+    found = find_tray(data, loaded)
+    return None if found is None else (found[0], found[1], loaded)
 
 
 def _active_filament(data: PrinterData) -> str:
@@ -219,7 +226,7 @@ def _active_filament_attributes(data: PrinterData) -> dict[str, Any]:
     return slot_attributes(tray, place, loaded, loaded)
 
 
-def _find_spool(data: PrinterData, tray: int | None) -> dict[str, Any] | None:
+def _external_spool(data: PrinterData, tray: int | None) -> dict[str, Any] | None:
     """An external spool by BamBuddy's id (254 left, 255 right on two-nozzle
     printers); None: the only one."""
     spools = data.external_spools
@@ -228,17 +235,17 @@ def _find_spool(data: PrinterData, tray: int | None) -> dict[str, Any] | None:
     return next((spool for spool in spools if spool.get("id") == tray), None)
 
 
-def _spool(tray: int | None) -> Callable[[PrinterData], StateType]:
+def _external_spool_state(tray: int | None) -> Callable[[PrinterData], StateType]:
     def value(data: PrinterData) -> StateType:
-        spool = _find_spool(data, tray)
+        spool = _external_spool(data, tray)
         return slot_state(spool) if spool is not None else None
 
     return value
 
 
-def _spool_attributes(tray: int | None) -> Callable[[PrinterData], dict[str, Any]]:
+def _external_spool_attributes(tray: int | None) -> Callable[[PrinterData], dict[str, Any]]:
     def attributes(data: PrinterData) -> dict[str, Any]:
-        spool = _find_spool(data, tray)
+        spool = _external_spool(data, tray)
         if spool is None:
             return {}
         number = 2 if spool.get("id") == EXTERNAL_RIGHT else 1
@@ -391,15 +398,15 @@ PRINTER_SENSORS: tuple[BamBuddyPrinterSensorDescription, ...] = (
     ),
     BamBuddyPrinterSensorDescription(
         key="external_spool", translation_key="external_spool", exists_fn=_single,
-        value_fn=_spool(None), attr_fn=_spool_attributes(None),
+        value_fn=_external_spool_state(None), attr_fn=_external_spool_attributes(None),
     ),
     BamBuddyPrinterSensorDescription(
         key="external_spool", translation_key="left_external_spool", exists_fn=_dual,
-        value_fn=_spool(EXTERNAL_LEFT), attr_fn=_spool_attributes(EXTERNAL_LEFT),
+        value_fn=_external_spool_state(EXTERNAL_LEFT), attr_fn=_external_spool_attributes(EXTERNAL_LEFT),
     ),
     BamBuddyPrinterSensorDescription(
         key="external_spool_2", translation_key="right_external_spool", exists_fn=_dual,
-        value_fn=_spool(EXTERNAL_RIGHT), attr_fn=_spool_attributes(EXTERNAL_RIGHT),
+        value_fn=_external_spool_state(EXTERNAL_RIGHT), attr_fn=_external_spool_attributes(EXTERNAL_RIGHT),
     ),
     # BamBuddy's `nozzles`: 0 the only or the right nozzle, 1 the left one.
     # Known as the temperatures are: "nozzle" the only or the left one,
@@ -440,7 +447,7 @@ def _has_climate(unit: dict[str, Any], printer: PrinterData) -> bool:
     if printer.model.strip():
         return True
     unit_id = unit.get("id", 0)
-    return bool(unit.get("module_type")) or (isinstance(unit_id, int) and unit_id >= 128)
+    return bool(unit.get("module_type")) or (isinstance(unit_id, int) and unit_id >= AMS_HT_FIRST_ID)
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -528,7 +535,6 @@ class BamBuddyInstanceSensor(BamBuddyInstanceEntity, SensorEntity):
 # The slot attributes from BamBuddy's inventory; the external spools in its
 # numbers (AMS 255, tray 0 left or the only one, 1 right).
 _INVENTORY_ATTRIBUTES = ("inventory_spool", "inventory_assignable")
-EXTERNAL_AMS_ID = 255
 _EXTERNAL_TRAYS = {"external_spool": 0, "external_spool_2": 1}
 
 
@@ -579,7 +585,7 @@ class BamBuddyPrinterSensor(BamBuddyDescribedEntity, SensorEntity):
         tray = _EXTERNAL_TRAYS.get(self.entity_description.key)
         if tray is None:
             return attributes
-        spool = inventory_attributes(self.coordinator.config_entry.runtime_data.inventory, self.coordinator.printer_id, EXTERNAL_AMS_ID, tray)
+        spool = inventory_attributes(self.coordinator.config_entry.runtime_data.inventory, self.coordinator.printer_id, EXTERNAL_AMS, tray)
         return {**(attributes or {}), **spool} if spool else attributes
 
 
@@ -676,11 +682,10 @@ class BamBuddyAmsSlotSensor(BamBuddyAmsEntity, SensorEntity):
         if tray is None:
             return None
         attributes = slot_attributes(tray, self.slot + 1, tray_id(self.ams_id, self.slot), active_tray(self.data))
-        fed = (self.data.status.get("ams_extruder_map") or {}).get(str(self.ams_id))
+        fed = unit_extruder(self.data, self.ams_id)
         if self.data.is_dual_nozzle and fed is not None:
-            # The nozzle the unit feeds: BamBuddy's 0 right, 1 left;
-            # a unit on the filament track switch reaches both and has none.
-            attributes["nozzle"] = "left" if str(fed) == "1" else "right"
+            # The nozzle the unit feeds; a unit on the filament track switch reaches both and has none.
+            attributes["nozzle"] = nozzle_side(fed)
         # BamBuddy's inventory knows a slot by the unit's id and the place in it.
         attributes.update(inventory_attributes(self.coordinator.config_entry.runtime_data.inventory, self.coordinator.printer_id, self.ams_id, self.slot))
         return attributes
@@ -746,7 +751,7 @@ def _add_plug_sensors(coordinator: BamBuddyPlugCoordinator, async_add_entities: 
     async_add_plug_entities(coordinator, async_add_entities, create)
 
 
-class BamBuddyPlugSensor(BamBuddyPlugEntity, SensorEntity):
+class BamBuddyPlugSensor(BamBuddyReachablePlugEntity, SensorEntity):
     """Power in W, energy in kWh, as the plug reports them to BamBuddy."""
 
     entity_description: PlugSensorDescription
@@ -754,10 +759,6 @@ class BamBuddyPlugSensor(BamBuddyPlugEntity, SensorEntity):
     def __init__(self, coordinator: BamBuddyPlugCoordinator, plug: Plug, description: PlugSensorDescription) -> None:
         self.entity_description = description
         super().__init__(coordinator, plug, description.key)
-
-    @property
-    def available(self) -> bool:
-        return super().available and self.plug is not None and self.plug.reachable
 
     @property
     def native_value(self) -> float | None:

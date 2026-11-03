@@ -24,6 +24,7 @@ from . import filaments
 from .api import BamBuddyClient, BamBuddyError
 from .const import DOMAIN, INVENTORY_INTERVAL, INVENTORY_PUSH_COOLDOWN
 from .filament_types import printer_filament_type
+from .models import is_int, is_number
 
 if TYPE_CHECKING:
     from .coordinator import BamBuddyConfigEntry
@@ -100,8 +101,13 @@ class Placed:
     color: str = ""
     type: str = ""
 
+    @property
+    def slot(self) -> tuple[int, int, int]:
+        """The slot: printer, AMS and tray as BamBuddy numbers them."""
+        return self.printer_id, self.ams_id, self.tray_id
 
-@dataclass
+
+@dataclass(frozen=True)
 class InventoryData:
     """What the last good read found. `shown`: Spoolman off and the slots readable."""
 
@@ -109,15 +115,18 @@ class InventoryData:
     spools: dict[int, Spool] = field(default_factory=dict)
     placed: list[Placed] = field(default_factory=list)
 
-    def at(self, printer_id: int, ams_id: int, tray_id: int) -> Spool | None:
-        for row in self.placed:
-            if (row.printer_id, row.ams_id, row.tray_id) == (printer_id, ams_id, tray_id):
-                return self.spools.get(row.spool_id)
-        return None
+    def row_at(self, slot: tuple[int, int, int]) -> Placed | None:
+        """The assignment of a slot (printer, AMS, tray), if any."""
+        return next((row for row in self.placed if row.slot == slot), None)
 
-    def places_of(self, spool_id: int) -> list[Placed]:
-        """Where a spool sits: BamBuddy 1.2.5.7 may hold one in two slots."""
-        return [row for row in self.placed if row.spool_id == spool_id]
+    def at(self, printer_id: int, ams_id: int, tray_id: int) -> Spool | None:
+        row = self.row_at((printer_id, ams_id, tray_id))
+        return None if row is None else self.spools.get(row.spool_id)
+
+    def places_of(self, spool_id: int, besides: tuple[int, int, int] | None = None) -> list[Placed]:
+        """Where a spool sits -- BamBuddy 1.2.5.7 may hold one in two slots --,
+        but in the slot `besides`."""
+        return [row for row in self.placed if row.spool_id == spool_id and row.slot != besides]
 
 
 NOT_SHOWN = InventoryData(shown=False)
@@ -130,7 +139,7 @@ def _text(value: Any) -> str | None:
 def spool_of(row: Any) -> Spool | None:
     """A SpoolResponse, or None for anything that is not a live spool (an
     archived one: BamBuddy 1.2.5.7 keeps those in their slots)."""
-    if not isinstance(row, dict) or not isinstance(row.get("id"), int) or isinstance(row.get("id"), bool):
+    if not isinstance(row, dict) or not is_int(row.get("id")):
         return None
     if row.get("archived_at"):
         return None
@@ -146,8 +155,8 @@ def spool_of(row: Any) -> Spool | None:
         color_name=_text(row.get("color_name")),
         rgba=_text(row.get("rgba")),
         extra_colors=colors,
-        label_weight=label if isinstance(label, int) and not isinstance(label, bool) else 0,
-        weight_used=float(used) if isinstance(used, (int, float)) and not isinstance(used, bool) else 0.0,
+        label_weight=label if is_int(label) else 0,
+        weight_used=float(used) if is_number(used) else 0.0,
         storage_location=_text(row.get("storage_location")),
         slicer_filament=_text(row.get("slicer_filament")),
         rfid=bool(row.get("tag_uid") or row.get("tray_uuid")),
@@ -157,7 +166,7 @@ def spool_of(row: Any) -> Spool | None:
 
 
 def _int(value: Any) -> int | None:
-    return value if isinstance(value, int) and not isinstance(value, bool) else None
+    return value if is_int(value) else None
 
 
 def inventory_of(spools: list[Any], assignments: list[Any]) -> InventoryData:
@@ -328,15 +337,14 @@ def inventory_attributes(coordinator: BamBuddyInventoryCoordinator | None, print
     if data is None or not data.shown or coordinator is None:
         return {}
     attributes: dict[str, Any] = {"inventory_assignable": coordinator.assignable}
-    spool = data.at(printer_id, ams_id, tray_id)
-    row = next((row for row in data.placed if (row.printer_id, row.ams_id, row.tray_id) == (printer_id, ams_id, tray_id)), None)
+    row = data.row_at((printer_id, ams_id, tray_id))
+    spool = None if row is None else data.spools.get(row.spool_id)
     if spool is not None and row is not None:
         # The spool's other slots: BamBuddy can hold one in two (its "Show all spools",
         # a chip read in another printer).
         also = [
-            {**place_json(row), "same_printer": row.printer_id == printer_id}
-            for row in data.places_of(spool.id)
-            if (row.printer_id, row.ams_id, row.tray_id) != (printer_id, ams_id, tray_id)
+            {**place_json(other), "same_printer": other.printer_id == printer_id}
+            for other in data.places_of(spool.id, besides=row.slot)
         ]
         attributes["inventory_spool"] = {
             **spool.attributes(),

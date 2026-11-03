@@ -4,9 +4,10 @@ slots, and what each printer model has."""
 from __future__ import annotations
 
 import re
+from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from typing import Any
+from typing import Any, TypeGuard
 
 from awesomeversion import AwesomeVersion, AwesomeVersionException
 from homeassistant.util import slugify
@@ -189,6 +190,12 @@ _HEATER_MAX: dict[str, dict[str, int]] = {
 EXTERNAL_LEFT = 254
 EXTERNAL_RIGHT = 255
 NOTHING_LOADED = 255
+# BamBuddy's AMS id of the external spools.
+EXTERNAL_AMS = 255
+# The first unit id of an AMS HT (128-135).
+AMS_HT_FIRST_ID = 128
+# BamBuddy's airduct modes; the laser mode (the H2 series' laser module) only the printer sets.
+AIRDUCT_MODES = {0: "cooling", 1: "heating", 2: "laser"}
 
 
 def maintenance_state(data: PrinterData) -> str | None:
@@ -256,10 +263,10 @@ def _older(found: Any, version: str) -> bool:
 # detector a printer lacks as on.
 _X1_SERIES = frozenset({"X1", "X1C", "X1E"})
 _H2D = frozenset({"H2D"})
-_SINGLE_DETECTORS = frozenset({"P2S", "X2D", "H2D PRO", "H2S", "H2C"})
+_SEPARATE_DETECTORS = frozenset({"P2S", "X2D", "H2D PRO", "H2S", "H2C"})
 _AIR_PRINTING = frozenset({"H2D PRO", "H2C"})
 # Before it, the H2D had the X1's single AI monitoring switch.
-_H2D_SINGLE_DETECTORS = "01.01.02.08"
+_H2D_SEPARATE_DETECTORS_FIRMWARE = "01.01.02.08"
 
 
 def model_key(model: str | None) -> str:
@@ -301,7 +308,7 @@ def ventilation_fans(data: PrinterData) -> tuple[VentFan, ...]:
 
 def _speed(data: PrinterData, fan: VentFan) -> int:
     value = data.status.get(fan.field)
-    return round_ten(value) if isinstance(value, int | float) and not isinstance(value, bool) else 0
+    return round_ten(value) if is_number(value) else 0
 
 
 def ventilation_speed(data: PrinterData) -> int:
@@ -311,16 +318,33 @@ def ventilation_speed(data: PrinterData) -> int:
 
 def ventilating(data: PrinterData) -> bool:
     """The airduct on cooling and a ventilation fan running."""
-    return data.status.get("airduct_mode") == 0 and ventilation_speed(data) > 0
+    return data.airduct == "cooling" and ventilation_speed(data) > 0
+
+
+def unit_extruder(data: PrinterData, ams_id: int) -> Any:
+    """The extruder BamBuddy maps an AMS unit to (`ams_extruder_map`): 0 the
+    right nozzle, 1 the left; None for a unit on the filament track switch,
+    which reaches both."""
+    return (data.status.get("ams_extruder_map") or {}).get(str(ams_id))
+
+
+def nozzle_side(extruder: Any) -> str:
+    """BamBuddy's extruder by its side: 1 is the left nozzle, 0 the right."""
+    return "left" if str(extruder) == "1" else "right"
 
 
 def chamber_heats(data: PrinterData) -> bool:
     """The chamber is heated: a target above 0 where BamBuddy reports a
     heater, else (the P2S) the airduct on heating, which keeps the warmth."""
     if data.status.get("supports_chamber_heater"):
-        target = data.temperatures.get("chamber_target")
-        return isinstance(target, int | float) and not isinstance(target, bool) and target > 0
-    return data.has_airduct() and data.status.get("airduct_mode") == 1
+        return chamber_target_set(data)
+    return data.has_airduct() and data.airduct == "heating"
+
+
+def chamber_target_set(data: PrinterData) -> bool:
+    """The chamber heater has a target above 0."""
+    target = data.temperatures.get("chamber_target")
+    return is_number(target) and target > 0
 
 
 def round_ten(value: float) -> int:
@@ -382,8 +406,8 @@ def camera_max_fps(info: dict[str, Any]) -> int:
 
 @dataclass(frozen=True)
 class PrinterData:
-    """A printer as BamBuddy describes it (`info`, read at setup) and its
-    live status."""
+    """A printer as BamBuddy describes it (`info`: its details, read at
+    setup and kept current once a minute) and its live status."""
 
     info: dict[str, Any]
     status: dict[str, Any]
@@ -429,6 +453,11 @@ class PrinterData:
         """Two hotends: BamBuddy reports a second nozzle temperature, or
         counted two nozzles."""
         return "nozzle_2" in self.temperatures or self.info.get("nozzle_count") == 2
+
+    @property
+    def airduct(self) -> str | None:
+        """The airduct's mode by name (`AIRDUCT_MODES`); None without one."""
+        return by_code(AIRDUCT_MODES, self.status.get("airduct_mode"))
 
     @property
     def job_running(self) -> bool:
@@ -477,7 +506,7 @@ class PrinterData:
         """On a cable: BamBuddy's flag (-90 dBm on the models of its list), where the printer has a port."""
         return self.has_ethernet() and bool(self.status.get("wired_network"))
 
-    def has_sd_card(self) -> bool:
+    def has_storage(self) -> bool:
         """Every printer has a slot for its storage: microSD, or USB."""
         return bool(model_key(self.model))
 
@@ -523,9 +552,6 @@ class PrinterData:
 
     def stock_chamber_fan(self) -> bool:
         return self.has_chamber_fan() and model_key(self.model) not in _NO_STOCK_CHAMBER_FAN
-
-    def is_a1_family(self) -> bool:
-        return model_key(self.model) in _A1_FAMILY
 
     def dries_on_screen_only(self) -> bool:
         return model_key(self.model) in _SCREEN_DRYING
@@ -620,7 +646,7 @@ def ams_type_by_place(unit: dict[str, Any]) -> bool:
     """Whether a unit's place tells its type without BamBuddy's module type:
     an AMS HT (ids 128-135), the A2L's AMS Lite (place 6)."""
     unit_id = unit.get("id", 0)
-    return isinstance(unit_id, int) and (unit_id >= 128 or unit_id == 6)
+    return isinstance(unit_id, int) and (unit_id >= AMS_HT_FIRST_ID or unit_id == 6)
 
 
 def ams_label(unit_id: int) -> str:
@@ -629,7 +655,7 @@ def ams_label(unit_id: int) -> str:
     (BamBuddy's amsHelpers.ts): an AMS at place 0 is AMS A beside it."""
     if unit_id == 6:
         return "AMS Lite"
-    kind = "AMS HT" if unit_id >= 128 else "AMS"
+    kind = "AMS HT" if unit_id >= AMS_HT_FIRST_ID else "AMS"
     return f"{kind} {chr(ord('A') + ams_number(unit_id) - 1)}"
 
 
@@ -640,7 +666,7 @@ AMS_MODELS = ("AMS", "AMS 2 Pro", "AMS HT", "AMS Lite")
 def ams_letter(unit_id: int) -> str | None:
     """A place's letter as on the printer (`ams_label`), in small: a-d, AMS
     HT a-h; none for the A2L's AMS Lite."""
-    return None if unit_id == 6 else chr(ord("a") + ams_number(unit_id) - 1)
+    return None if unit_id == 6 else ams_label(unit_id)[-1].lower()
 
 
 def ams_object_id(model: str, printer_key: str, unit_id: int, serial: str | None, key: str) -> str:
@@ -670,16 +696,16 @@ def detectors(data: PrinterData) -> list[str]:
     them. An H2D of unknown firmware counts as a current one."""
     model = model_key(data.model)
     firmware = data.status.get("firmware_version")
-    old_h2d = model in _H2D and _older(firmware, _H2D_SINGLE_DETECTORS)
-    single = model in _SINGLE_DETECTORS or (model in _H2D and not old_h2d)
+    old_h2d = model in _H2D and _older(firmware, _H2D_SEPARATE_DETECTORS_FIRMWARE)
+    separate = model in _SEPARATE_DETECTORS or (model in _H2D and not old_h2d)
     found = []
     if model in _X1_SERIES or old_h2d:
         found.append("printing_monitor")
     if model in _X1_SERIES:
         found.append("first_layer_inspector")
-    if model in _X1_SERIES | _A1_FAMILY | _SINGLE_DETECTORS | _H2D:
+    if model in _X1_SERIES | _A1_FAMILY | _SEPARATE_DETECTORS | _H2D:
         found.append("buildplate_marker_detector")
-    if single:
+    if separate:
         found += ["spaghetti_detector", "pileup_detector", "clump_detector"]
     if model in _AIR_PRINTING or (model in _H2D and not old_h2d):
         found.append("airprint_detector")
@@ -736,11 +762,26 @@ _CHANGE_STEPS = {2: "heating", 3: "feeding", 4: "retracting", 6: "verifying", 7:
 _AMS_MAIN = {0: "idle", 2: "reading_rfid", 3: "assist", 4: "calibrating"}
 
 
+def is_number(value: Any) -> TypeGuard[int | float]:
+    """A number in BamBuddy's answer -- a JSON true or false is none."""
+    return isinstance(value, int | float) and not isinstance(value, bool)
+
+
+def is_int(value: Any) -> TypeGuard[int]:
+    """A whole number in BamBuddy's answer -- a JSON true or false is none."""
+    return isinstance(value, int) and not isinstance(value, bool)
+
+
+def by_code(table: Mapping[Any, str], value: Any) -> str | None:
+    """A text for one of BamBuddy's codes: its entry in `table`, none for a code it lacks."""
+    return table.get(value)
+
+
 def ams_status(status: dict[str, Any]) -> str | None:
     main = status.get("ams_status_main")
     if main == 1:
-        return _CHANGE_STEPS.get(status.get("ams_status_sub"), "changing_filament")  # type: ignore[arg-type]
-    return _AMS_MAIN.get(main)  # type: ignore[arg-type]
+        return by_code(_CHANGE_STEPS, status.get("ams_status_sub")) or "changing_filament"
+    return by_code(_AMS_MAIN, main)
 
 
 _NOZZLE_MATERIALS = {"00": "stainless_steel", "01": "hardened_steel", "05": "tungsten_carbide"}
@@ -768,7 +809,7 @@ def ams_model(unit: dict[str, Any], printer: PrinterData) -> str:
     through the hub is never mixed with an AMS Lite)."""
     module = unit.get("module_type") or ""
     unit_id = unit.get("id", 0)
-    if module == "n3s" or (isinstance(unit_id, int) and unit_id >= 128):
+    if module == "n3s" or (isinstance(unit_id, int) and unit_id >= AMS_HT_FIRST_ID):
         return "AMS HT"
     if module == "n3f":
         return "AMS 2 Pro"
@@ -811,7 +852,7 @@ def can_dry(unit: dict[str, Any], printer: PrinterData) -> bool:
 def ams_number(unit_id: int) -> int:
     """The unit's place among its kind, from 1: AMS 1-4, AMS HT 1-8, an
     A2L's AMS Lite (BamBuddy's id 6) as 1."""
-    if unit_id >= 128:
+    if unit_id >= AMS_HT_FIRST_ID:
         return unit_id - 127
     if unit_id == 6:
         return 1
@@ -822,7 +863,7 @@ def tray_id(unit_id: int, slot: int) -> int:
     """BamBuddy's global id of an AMS slot, as `tray_now` and ams/load use
     it: 0-15 for AMS units 0-3, 24-27 for an A2L's AMS Lite, the unit id for
     an AMS HT."""
-    if unit_id >= 128:
+    if unit_id >= AMS_HT_FIRST_ID:
         return unit_id
     if unit_id == 6:
         return 24 + slot

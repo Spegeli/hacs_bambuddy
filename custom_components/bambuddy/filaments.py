@@ -120,16 +120,23 @@ def _every_model(diameter: str) -> tuple[str, ...]:
     return tuple(sorted(every, key=lambda fid: _rank(FILAMENTS[fid])))
 
 
-def _offered_ids(slot: Slot) -> Sequence[str]:
+def _printer_entry(slot: Slot) -> dict[str, Any] | None:
+    """The list's entry for the slot's model and nozzle diameter; None for a
+    printer of no known model."""
     printer = _PRINTERS.get(slot.model) if slot.model else None
-    if printer is not None:
-        return tuple(printer.get(slot.diameter, {}).get("ids", []))
+    return None if printer is None else printer.get(slot.diameter, {})
+
+
+def _offered_ids(slot: Slot) -> Sequence[str]:
+    entry = _printer_entry(slot)
+    if entry is not None:
+        return tuple(entry.get("ids", []))
     return _every_model(slot.diameter)
 
 
 def _not_on(slot: Slot) -> dict[str, list[str]]:
-    printer = _PRINTERS.get(slot.model) if slot.model else None
-    return dict(printer.get(slot.diameter, {}).get("not_on", {})) if printer else {}
+    entry = _printer_entry(slot)
+    return dict(entry.get("not_on", {})) if entry is not None else {}
 
 
 def _flow(code: str | None) -> str | None:

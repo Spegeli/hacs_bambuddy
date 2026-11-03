@@ -18,7 +18,7 @@ from .entity import printer_object_id
 from .rekey import free_entity_id
 
 if TYPE_CHECKING:
-    from .coordinator import BamBuddyConfigEntry, BamBuddyPrinterCoordinator
+    from .coordinator import BamBuddyPrinterCoordinator
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -28,7 +28,7 @@ _MOVES = (("left_aux_fan", "left_auxiliary_fan", "right_auxiliary_fan"), ("aux_f
 
 @callback
 def async_rename_x2d_fans(
-    hass: HomeAssistant, entry: BamBuddyConfigEntry, printers: dict[int, BamBuddyPrinterCoordinator]
+    hass: HomeAssistant, printers: dict[int, BamBuddyPrinterCoordinator]
 ) -> None:
     """Give every X2D's two auxiliary fans the IDs of their sides."""
     registry = er.async_get(hass)

@@ -43,8 +43,10 @@ REQUIRED_SCOPES: dict[str, frozenset[str]] = {
 # connection (websocket:connect) and BamBuddy's spool inventory -- shown with
 # the three reads, assigned with inventory:update (Manage Inventory, #21). None
 # of them is needed: a key without one gets no reauth and no repair.
+# Manage Inventory: spools may be assigned to slots.
+MANAGE_INVENTORY = "inventory:update"
 OPTIONAL_PERMISSIONS = frozenset(
-    {"websocket:connect", "inventory:read", "inventory:view_assignments", "filaments:read", "inventory:update"}
+    {"websocket:connect", "inventory:read", "inventory:view_assignments", "filaments:read", MANAGE_INVENTORY}
 )
 
 # How often the running entry checks its key; how soon again after no answer.
@@ -78,9 +80,10 @@ MAINTENANCE_INTERVAL = 600.0
 # How long an AMS unit without a serial number waits for one: BamBuddy
 # reports it a moment after it connects.
 AMS_SERIAL_WAIT = 60.0
-# How often an AMS unit whose serial newly arrived is held for a reload in
-# one Home Assistant run before it gets its entities as a new device.
-HOLD_LIMIT = 3
+# How often one Home Assistant run reloads the entry for a printer's part that came after
+# the setup: an AMS unit whose serial newly arrived (held, then a new device), or a chamber
+# temperature or heater BamBuddy reports late.
+RELOADS_PER_RUN = 3
 # BamBuddy only publishes a command; the printer reports back about a
 # second later.
 REFRESH_AFTER_COMMAND = 1.5

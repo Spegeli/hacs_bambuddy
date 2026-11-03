@@ -51,7 +51,6 @@ from .coordinator import (
     BamBuddyConfigEntry,
     BamBuddyData,
     BamBuddyInstanceCoordinator,
-    BamBuddyPlugCoordinator,
     BamBuddyPrinterCoordinator,
     BamBuddyUpdateCoordinator,
     async_raise_missing_issue,
@@ -65,15 +64,17 @@ from .coordinator import (
     missing_issue,
     names_issue,
     printer_identifier,
+    stored_name,
 )
-from .entity import instance_device_info, plug_device_info, printer_device_info, switch_off_unique_id
+from .entity import instance_device_info, plug_device_info, printer_device_info, switch_off_prefix, switch_off_unique_id
 from .inventory import BamBuddyInventoryCoordinator
 from .key import KeyCheck, KeyGuard
 from .live import BamBuddyLive, live_settings
 from .models import ams_key, display_model, find_printers, model_changed, stored_key, stored_printer, too_old
-from .plug_identity import parse_unique_id
+from .plug_identity import device_prefix, parse_unique_id
 from . import plug_history, plug_identity, renames
 from .fan_ids import async_rename_x2d_fans
+from .plug_coordinator import BamBuddyPlugCoordinator
 from .rekey import async_rekey_ams_units
 from .services import async_setup_services
 
@@ -170,11 +171,11 @@ async def async_setup_entry(hass: HomeAssistant, entry: BamBuddyConfigEntry) -> 
     # store is read first: a list that cannot be kept moves nothing.
     stored = entry.options.get(CONF_PRINTERS, [])
     await renames.async_keep(hass, entry.entry_id, {stored_key(printer) for printer in stored})
-    renamed = async_rekey_ams_units(hass, entry, printers)
+    renamed = async_rekey_ams_units(hass, printers)
     # And the X2D's auxiliary fans: their IDs after their side.
-    async_rename_x2d_fans(hass, entry, printers)
+    async_rename_x2d_fans(hass, printers)
     grown = {key for key, pairs in renamed.items() if await renames.async_add(hass, entry.entry_id, key, pairs)}
-    names = {stored_key(printer): _device_name(hass, entry, printer) for printer in absent}
+    names = {stored_key(printer): stored_name(hass, entry.entry_id, printer) for printer in absent}
     names.update({coordinator.key: coordinator.printer_name for coordinator in printers.values()})
     noticed = await renames.async_raise(hass, entry, names, grown)
     missing = {missing_issue(entry.entry_id, stored_key(printer)) for printer in absent}
@@ -247,8 +248,7 @@ async def _async_read_printers(
             # By the name its device has now: BamBuddy may have renamed it since
             # the last start. Stored under it, the repair's dialog and the
             # actions' refusals say it too.
-            device = find_device(hass, entry.entry_id, printer_identifier(entry.entry_id, stored_key(printer)))
-            name = device.name if device is not None and device.name else printer[CONF_PRINTER_NAME]
+            name = stored_name(hass, entry.entry_id, printer)
             current.append({**printer, CONF_PRINTER_NAME: name})
             absent.append(printer)
             async_raise_missing_issue(hass, entry.entry_id, stored_key(printer), name)
@@ -339,18 +339,13 @@ def _remove_spare_switch_offs(hass: HomeAssistant, entry: ConfigEntry, plugs: Ba
                 registry.async_remove(entity_id)
 
 
-def _device_name(hass: HomeAssistant, entry: ConfigEntry, printer: dict[str, Any]) -> str:
-    """A stored printer's name: its device's of now, else the stored one."""
-    device = find_device(hass, entry.entry_id, printer_identifier(entry.entry_id, stored_key(printer)))
-    return device.name if device is not None and device.name else str(printer[CONF_PRINTER_NAME])
-
-
 def _delete_issues(hass: HomeAssistant, entry: ConfigEntry, keep: set[str] | None = None) -> None:
     """The entry's "printer missing", names and renamed AMS entity IDs
     notices, but those still true."""
     prefixes = issue_prefixes(entry.entry_id)
+    keep = keep or set()
     for domain, issue_id in list(ir.async_get(hass).issues):
-        if domain == DOMAIN and issue_id.startswith(prefixes) and issue_id not in (keep or set()):
+        if domain == DOMAIN and issue_id.startswith(prefixes) and issue_id not in keep:
             ir.async_delete_issue(hass, DOMAIN, issue_id)
 
 
@@ -368,7 +363,7 @@ def _follow_plug_identities(hass: HomeAssistant, entry: ConfigEntry, plugs: BamB
     linked = {plug_id: plug for plug_id, plug in (plugs.data or {}).items() if plugs.identity(plug_id) is not None}
     planned: dict[int, str] = {}
     for plug_id, plug in linked.items():
-        printer = plugs.printers.get(plug.printer_id or -1)
+        printer = plugs.printer_of(plug)
         identifier = plugs.identifier(plug_id)
         if identifier is None:
             continue
@@ -387,7 +382,7 @@ def _follow_plug_identities(hass: HomeAssistant, entry: ConfigEntry, plugs: BamB
         if (parsed := parse_unique_id(entry_id, unique_id)) is not None:
             owner = by_source.get(parsed[:2])
             target = planned[owner] if owner is not None else None
-        elif unique_id.startswith(switch_off := f"{entry_id}_switchoff_"):
+        elif unique_id.startswith(switch_off := switch_off_prefix(entry_id)):
             # A printer without an own plug keeps its switch-off for `_remove_spare_switch_offs`.
             target = next((device for key, device in switch_offs.items() if unique_id.startswith(f"{switch_off}{key}_")), entity.device_id)
         else:
@@ -399,7 +394,7 @@ def _follow_plug_identities(hass: HomeAssistant, entry: ConfigEntry, plugs: BamB
             entities.async_update_entity(entity.entity_id, device_id=target)
     kept = set(planned.values())
     for device in dr.async_entries_for_config_entry(devices, entry_id):
-        is_plug = any(domain == DOMAIN and name.startswith(f"{entry_id}_plug_") for domain, name in device.identifiers)
+        is_plug = any(domain == DOMAIN and name.startswith(device_prefix(entry_id)) for domain, name in device.identifiers)
         if is_plug and device.id not in kept:
             removed.extend(entity.entity_id for entity in er.async_entries_for_device(entities, device.id, include_disabled_entities=True))
             devices.async_remove_device(device.id)
@@ -413,7 +408,7 @@ def _remove_stale_devices(hass: HomeAssistant, entry: ConfigEntry) -> None:
         printer_identifier(entry.entry_id, stored_key(printer))[1] for printer in entry.options.get(CONF_PRINTERS, [])
     }
     registry = dr.async_get(hass)
-    plug_prefix = f"{entry.entry_id}_plug_"
+    plug_prefix = device_prefix(entry.entry_id)
     for device in dr.async_entries_for_config_entry(registry, entry.entry_id):
         names = {identifier for domain, identifier in device.identifiers if domain == DOMAIN}
         if entry.entry_id in names:

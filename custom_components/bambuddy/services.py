@@ -8,10 +8,12 @@ The dashboard card calls them too."""
 from __future__ import annotations
 
 from collections.abc import Callable, Coroutine, Iterator
+import contextlib
+from dataclasses import dataclass
 from functools import partial
 import re
 import time
-from typing import Any
+from typing import Any, Literal
 
 import voluptuous as vol
 
@@ -32,15 +34,16 @@ from .api import (
 )
 from .const import CONF_PRINTER_NAME, CONF_PRINTERS, DOMAIN, K_PROFILES_KEEP, K_PROFILES_NO_ANSWER
 from .coordinator import BamBuddyConfigEntry, BamBuddyPrinterCoordinator, printer_identifier
-from .api import timed_out
-from .entity import async_run_command, refuse as _refuse
+from .entity import async_run_command, command_error, connection_error, refuse as _refuse
 from .filament_types import printer_filament_type
 from .inventory import BamBuddyInventoryCoordinator, InventoryData, Placed, Spool, place_json, spool_fit
 from .models import (
+    AMS_HT_FIRST_ID,
     DRYING_MAX,
+    EXTERNAL_AMS,
     EXTERNAL_LEFT,
-    JOB_STATES,
     EXTERNAL_RIGHT,
+    JOB_STATES,
     PRINTING_STATES,
     PrinterData,
     active_tray,
@@ -55,12 +58,14 @@ from .models import (
     hms_code,
     is_drying,
     model_key,
+    nozzle_side,
     short_name,
     spool_present,
     stored_key,
     tray_empty,
     tray_id,
     tray_label,
+    unit_extruder,
 )
 
 ATTR_DEVICE_ID = "device_id"
@@ -77,8 +82,6 @@ ATTR_CODE = "code"
 ATTR_K_PROFILE = "k_profile"
 ATTR_ACTION = "action"
 ATTR_SPOOL_ID = "spool_id"
-# BamBuddy's AMS id of the external spools.
-_EXTERNAL_AMS = 255
 # BamBuddy's text for the printer's reason 6, "already drying"
 # (drying_preflight.DRY_SF_REASON_MESSAGES, 1.2.5.7).
 _ALREADY_DRYING = "AMS is already drying"
@@ -87,7 +90,7 @@ _PRINTER_BUSY = "Printer is busy"
 
 # The firmware refuses to extrude below this nozzle temperature.
 MIN_EXTRUDE_TEMPERATURE = 170
-# <printer>_ams<unit>_slot_<n>, or <printer>_external_spool[_2].
+# p<printer key>_ams<AMS key>_slot_<n>, or p<printer key>_external_spool[_2].
 _SLOT_IN_UNIQUE_ID = re.compile(r"p([^_]+)_(?:ams([^_]+)_slot_(\d+)|external_spool(_2)?)")
 
 
@@ -193,7 +196,7 @@ def _ams(hass: HomeAssistant, device_id: str) -> tuple[BamBuddyPrinterCoordinato
     if device is not None:
         for coordinator in _coordinators(hass):
             # A unit the printer does not report now (unplugged): its device stays.
-            prefix = coordinator.ams_identifier("")[1]
+            prefix = coordinator.ams_identifier_prefix()
             if any(domain == DOMAIN and name.startswith(prefix) for domain, name in device.identifiers):
                 raise _refuse("ams_not_reported", printer=short_name(coordinator.info))
     raise _refuse("not_an_ams")
@@ -213,11 +216,10 @@ def _place(hass: HomeAssistant, entity_id: str) -> tuple[BamBuddyPrinterCoordina
             if entity.config_entry_id != entry_id or match is None or match.group(1) != coordinator.key:
                 continue
             _, ams, slot, right = match.groups()
-            printer = coordinator
             if ams is not None:
                 unit, index = _unit_place(coordinator, ams), int(slot) - 1
-                return printer, unit, index, tray_id(unit, index)
-            return printer, _EXTERNAL_AMS, 1 if right else 0, EXTERNAL_RIGHT if right else EXTERNAL_LEFT
+                return coordinator, unit, index, tray_id(unit, index)
+            return coordinator, EXTERNAL_AMS, 1 if right else 0, EXTERNAL_RIGHT if right else EXTERNAL_LEFT
         # A slot of a printer BamBuddy does not list now: its repair says why.
         for entry in hass.config_entries.async_loaded_entries(DOMAIN):
             match = _SLOT_IN_UNIQUE_ID.fullmatch(entity.unique_id.removeprefix(f"{entry.entry_id}_"))
@@ -239,7 +241,7 @@ def _unit_place(coordinator: BamBuddyPrinterCoordinator, key: str) -> int:
     return int(key) if key.isdigit() else 0
 
 
-def _slot(hass: HomeAssistant, entity_id: str) -> tuple[BamBuddyPrinterCoordinator, int]:
+def _filled_slot(hass: HomeAssistant, entity_id: str) -> tuple[BamBuddyPrinterCoordinator, int]:
     """The printer and BamBuddy's tray id of a slot that holds filament."""
     coordinator, _, _, tray = _place(hass, entity_id)
     found = find_tray(coordinator.data, tray)
@@ -294,8 +296,8 @@ async def _extrude(hass: HomeAssistant, call: ServiceCall) -> None:
 
 
 async def _load_filament(hass: HomeAssistant, call: ServiceCall) -> None:
-    coordinator, tray = _slot(hass, call.data[ATTR_ENTITY_ID])
-    if 128 <= tray < 254:
+    coordinator, tray = _filled_slot(hass, call.data[ATTR_ENTITY_ID])
+    if AMS_HT_FIRST_ID <= tray < EXTERNAL_LEFT:
         # BamBuddy cannot load from an AMS HT.
         raise _refuse("ams_ht_load")
     # The Filament Track Switch binds every AMS to a switch inlet: a load must
@@ -336,7 +338,7 @@ async def _set_filament(hass: HomeAssistant, call: ServiceCall) -> None:
     found = find_tray(data, tray)
     current = found[0] if found else {}
     _online(coordinator)
-    if ams != _EXTERNAL_AMS and (found is None or not spool_present(current)):
+    if ams != EXTERNAL_AMS and (found is None or not spool_present(current)):
         raise _refuse("slot_empty")
     if has_rfid(current):
         raise _refuse("rfid_spool")
@@ -344,52 +346,17 @@ async def _set_filament(hass: HomeAssistant, call: ServiceCall) -> None:
         raise _refuse("filament_change", printer=short_name(coordinator.info))
     # The slot a running print feeds is set too, as in BamBuddy: the card warns it changes mid-print.
     if filament_id is not None:
-        why = filaments.refusal(filament_id, _slot_of(data, ams, slot))
-        item = filaments.get(filament_id)
-        if why is not None or item is None:
-            raise _refused_filament(why, item.name if item else filament_id, short_name(coordinator.info))
-        tray_type, name, profile, setting_id, cali_idx = item.type, item.name, item.id, item.setting_id, -1
-        temp_min, temp_max = item.temp_min, item.temp_max
+        filament = _new_filament(coordinator, ams, slot, filament_id)
     else:
-        tray_type = str(current.get("tray_type") or "")
-        if not tray_type:
-            raise _refuse("material_needed")
-        # The slot's own profile goes back with the colour: with none,
-        # BamBuddy would take the generic of its type.
-        profile = str(current.get("tray_info_idx") or "")
-        listed = filaments.get(profile)
-        name = listed.name if listed else tray_label(current)
-        setting_id = listed.setting_id if listed else ""
-        cali = current.get("cali_idx")
-        cali_idx = cali if isinstance(cali, int) else -1
-        temp_min, temp_max = _temperatures(current, tray_type, listed)
-    color = call.data.get(ATTR_COLOR)
-    if color:
-        # Home Assistant's colour picker has no transparency: opaque.
-        hex_color = "{:02X}{:02X}{:02X}FF".format(*color)
-    else:
-        # The slot's own, a translucent filament's transparency kept; a slot
-        # BamBuddy reset is fully transparent black -- the new one is not.
-        kept = str(current.get("tray_color") or "FFFFFF").upper()
-        hex_color = kept if len(kept) == 8 and not kept.endswith("00") else f"{kept[:6]}FF"
+        filament = _kept_filament(current)
+    hex_color = _slot_color(current, call.data.get(ATTR_COLOR))
+    cali_idx = filament.cali_idx
     k_profile: dict[str, Any] = {}
     chosen = call.data.get(ATTR_K_PROFILE)
     if chosen is not None:
         cali_idx = chosen
         if chosen >= 0:
-            # The printer's own calibration: BamBuddy files the slot under its filament.
-            _, profiles, answered = await _k_profiles(coordinator, ams, slot, listed_lately=True)
-            # None listed: it has none (unknown), or it did not answer (ask again).
-            if not profiles and not answered:
-                raise _refuse("k_profiles_no_answer", printer=short_name(coordinator.info))
-            found_profile = next((item for item in profiles if item["index"] == chosen), None)
-            if found_profile is None:
-                raise _refuse("k_profile_unknown", printer=short_name(coordinator.info))
-            k_profile = {
-                "kprofile_filament_id": found_profile["filament_id"] or None,
-                "kprofile_setting_id": found_profile["setting_id"],
-                "k_value": found_profile["k_value"],
-            }
+            k_profile = await _chosen_k_profile(coordinator, ams, slot, chosen)
     await async_run_command(
         coordinator,
         partial(
@@ -397,18 +364,90 @@ async def _set_filament(hass: HomeAssistant, call: ServiceCall) -> None:
             coordinator.printer_id,
             ams,
             slot,
-            tray_type=tray_type,
-            name=name,
+            tray_type=filament.tray_type,
+            name=filament.name,
             color=hex_color,
-            temp_min=temp_min,
-            temp_max=temp_max,
-            tray_info_idx=profile,
-            setting_id=setting_id,
+            temp_min=filament.temp_min,
+            temp_max=filament.temp_max,
+            tray_info_idx=filament.profile,
+            setting_id=filament.setting_id,
             cali_idx=cali_idx,
             nozzle_diameter=_nozzle_diameter(data, ams, slot),
             **k_profile,
         ),
     )
+
+
+@dataclass(frozen=True)
+class _Filament:
+    """What `configure_slot` is told of a slot's filament."""
+
+    tray_type: str
+    name: str
+    profile: str
+    setting_id: str
+    cali_idx: int
+    temp_min: int
+    temp_max: int
+
+
+def _new_filament(coordinator: BamBuddyPrinterCoordinator, ams: int, slot: int, filament_id: str) -> _Filament:
+    """A Bambu Studio profile, as Bambu Studio sends it, with the default K
+    value -- or the refusal of one it would not set here."""
+    why = filaments.refusal(filament_id, _filament_slot(coordinator.data, ams, slot))
+    item = filaments.get(filament_id)
+    if why is not None or item is None:
+        raise _refused_filament(why, item.name if item else filament_id, short_name(coordinator.info))
+    return _Filament(item.type, item.name, item.id, item.setting_id, -1, item.temp_min, item.temp_max)
+
+
+def _kept_filament(current: dict[str, Any]) -> _Filament:
+    """The slot's own filament: its profile goes back with the colour (with
+    none, BamBuddy would take the generic of its type), and its K value."""
+    tray_type = str(current.get("tray_type") or "")
+    if not tray_type:
+        raise _refuse("material_needed")
+    profile = str(current.get("tray_info_idx") or "")
+    listed = filaments.get(profile)
+    cali = current.get("cali_idx")
+    temp_min, temp_max = _temperatures(current, tray_type, listed)
+    return _Filament(
+        tray_type,
+        listed.name if listed else tray_label(current),
+        profile,
+        listed.setting_id if listed else "",
+        cali if isinstance(cali, int) else -1,
+        temp_min,
+        temp_max,
+    )
+
+
+def _slot_color(current: dict[str, Any], color: Any) -> str:
+    """The colour to send: the one asked for, opaque (Home Assistant's colour
+    picker has no transparency); else the slot's own, a translucent
+    filament's transparency kept -- a slot BamBuddy reset is fully
+    transparent black, the new one is not."""
+    if color:
+        return "{:02X}{:02X}{:02X}FF".format(*color)
+    kept = str(current.get("tray_color") or "FFFFFF").upper()
+    return kept if len(kept) == 8 and not kept.endswith("00") else f"{kept[:6]}FF"
+
+
+async def _chosen_k_profile(coordinator: BamBuddyPrinterCoordinator, ams: int, slot: int, chosen: int) -> dict[str, Any]:
+    """The printer's own calibration `chosen`: BamBuddy files the slot under
+    its filament."""
+    _, profiles, answered = await _k_profiles(coordinator, ams, slot, listed_lately=True)
+    # None listed: it has none (unknown), or it did not answer (ask again).
+    if not profiles and not answered:
+        raise _refuse("k_profiles_no_answer", printer=short_name(coordinator.info))
+    found = next((item for item in profiles if item["index"] == chosen), None)
+    if found is None:
+        raise _refuse("k_profile_unknown", printer=short_name(coordinator.info))
+    return {
+        "kprofile_filament_id": found["filament_id"] or None,
+        "kprofile_setting_id": found["setting_id"],
+        "k_value": found["k_value"],
+    }
 
 
 # The clock the time an answer took is read by (tests set it).
@@ -462,7 +501,7 @@ async def _k_profiles(
                 "k_value": k_value,
                 "filament_id": str(item.get("filament_id") or ""),
                 "setting_id": item.get("setting_id") if isinstance(item.get("setting_id"), str) else None,
-                "nozzle": ("right", "left")[nozzle] if data.is_dual_nozzle and nozzle in (0, 1) else None,
+                "nozzle": nozzle_side(nozzle) if data.is_dual_nozzle and nozzle in (0, 1) else None,
             }
         )
     return diameter, profiles, answered
@@ -498,7 +537,7 @@ async def _get_filaments(hass: HomeAssistant, call: ServiceCall) -> ServiceRespo
                 "name": vendor,
                 "filaments": [{"id": item.id, "name": filaments.field_name(item), "type": item.type} for item in items],
             }
-            for vendor, items in filaments.offer(_slot_of(data, ams, slot))
+            for vendor, items in filaments.offer(_filament_slot(data, ams, slot))
         ],
     }
 
@@ -509,7 +548,7 @@ async def _reset_slot(hass: HomeAssistant, call: ServiceCall) -> None:
     coordinator, ams, slot, tray = _place(hass, call.data[ATTR_ENTITY_ID])
     data = coordinator.data
     found = find_tray(data, tray)
-    if data.connected and ams != _EXTERNAL_AMS and (found is None or tray_empty(found[0])):
+    if data.connected and ams != EXTERNAL_AMS and (found is None or tray_empty(found[0])):
         raise _refuse("slot_empty")
     _pause_first(coordinator)
     await async_run_command(coordinator, partial(coordinator.client.reset_slot, coordinator.printer_id, ams, slot))
@@ -519,7 +558,7 @@ async def _refresh_rfid(hass: HomeAssistant, call: ServiceCall) -> None:
     """The AMS reads the spool's chip again: BamBuddy refuses while any
     filament is loaded, and the external spools have no reader."""
     coordinator, ams, slot, tray = _place(hass, call.data[ATTR_ENTITY_ID])
-    if ams == _EXTERNAL_AMS:
+    if ams == EXTERNAL_AMS:
         raise _refuse("rfid_not_external")
     data = coordinator.data
     # A print or a filament change is the reason first; then the slot.
@@ -544,20 +583,21 @@ def _inventory(coordinator: BamBuddyPrinterCoordinator, *, assigning: bool) -> t
     return inventory, data
 
 
-def _inventory_failure(err: BamBuddyError, *, missing: str = "spool_not_found", spool: int = 0) -> HomeAssistantError:
+def _inventory_failure(
+    err: BamBuddyError, *, not_found: Literal["spool_not_found", "no_assignment"] = "spool_not_found", spool: int = 0
+) -> HomeAssistantError:
     """BamBuddy's answer to an inventory write, in words: these routes need
     only optional permissions, so a refusal is no matter for the key's guard."""
     if isinstance(err, (BamBuddyAuthError, BamBuddyPermissionError)):
         return _refuse("inventory_not_allowed")
     if isinstance(err, BamBuddyNotFoundError):
-        return _refuse("no_assignment") if missing == "no_assignment" else _refuse("spool_not_found", spool=str(spool))
+        return _refuse("no_assignment") if not_found == "no_assignment" else _refuse("spool_not_found", spool=str(spool))
     if isinstance(err, BamBuddyApiError) and err.status == 400 and "archived" in err.detail.lower():
         return _refuse("spool_archived")
     if isinstance(err, BamBuddyConnectionError):
         # Timed out: a write may still have reached BamBuddy.
-        return HomeAssistantError(translation_domain=DOMAIN, translation_key="no_answer" if timed_out(err) else "cannot_connect")
-    kind = ServiceValidationError if isinstance(err, BamBuddyApiError) and 400 <= err.status < 500 else HomeAssistantError
-    return kind(translation_domain=DOMAIN, translation_key="command_failed", translation_placeholders={"error": str(err)})
+        return connection_error(err)
+    return command_error(err)
 
 
 async def _fresh_inventory(inventory: BamBuddyInventoryCoordinator) -> InventoryData:
@@ -572,6 +612,10 @@ async def _fresh_inventory(inventory: BamBuddyInventoryCoordinator) -> Inventory
     if not fresh.shown:
         raise _refuse("inventory_not_shown")
     return fresh
+
+
+# A spool that does not fit the slot (`inventory.spool_fit`): its refusal.
+_SPOOL_REFUSALS = {"not_for_ams": "spool_not_for_ams", "not_for_nozzle": "spool_not_for_nozzle", "not_for_printer": "spool_not_for_printer"}
 
 
 async def _assign_spool(hass: HomeAssistant, call: ServiceCall) -> None:
@@ -595,32 +639,25 @@ async def _assign_spool(hass: HomeAssistant, call: ServiceCall) -> None:
         raise _refuse("rfid_spool")
     fresh = await _fresh_inventory(inventory)
     spool = fresh.spools.get(spool_id)
-    fit = spool_fit(spool, _slot_of(data, ams, slot)) if spool is not None else None
-    elsewhere = [row for row in fresh.places_of(spool_id) if (row.printer_id, row.ams_id, row.tray_id) != (coordinator.printer_id, ams, slot)]
+    fit = spool_fit(spool, _filament_slot(data, ams, slot)) if spool is not None else None
+    elsewhere = fresh.places_of(spool_id, besides=(coordinator.printer_id, ams, slot))
     if spool is not None and spool.bambu_chip and elsewhere:
         # Its chip links it to the slot it is read in, and BamBuddy keeps a hand assignment beside that.
         raise _refuse("spool_by_chip")
     printing = await _printing(coordinator, elsewhere)
     if printing:
         raise _refuse("spool_printing", printer=printing[0])
-    if fit == "not_for_ams":
-        raise _refuse("spool_not_for_ams")
-    if fit == "not_for_nozzle":
-        raise _refuse("spool_not_for_nozzle")
-    if fit == "not_for_printer":
-        raise _refuse("spool_not_for_printer")
+    if fit in _SPOOL_REFUSALS:
+        raise _refuse(_SPOOL_REFUSALS[fit])
     printer_id = coordinator.printer_id
 
     async def assign() -> None:
-        others = [row for row in fresh.places_of(spool_id) if (row.printer_id, row.ams_id, row.tray_id) != (printer_id, ams, slot)]
         try:
-            for row in others:
-                try:
+            for row in elsewhere:
+                # Gone since the read: nothing to take out.
+                with contextlib.suppress(BamBuddyNotFoundError):
                     await inventory.client.unassign_spool(row.printer_id, row.ams_id, row.tray_id)
-                except BamBuddyNotFoundError:
-                    # Gone since the read: nothing to take out.
-                    pass
-            await inventory.client.assign_spool(spool_id, printer_id, ams, slot, move=bool(others))
+            await inventory.client.assign_spool(spool_id, printer_id, ams, slot, move=bool(elsewhere))
         except BamBuddyError as err:
             raise _inventory_failure(err, spool=spool_id) from err
         finally:
@@ -642,7 +679,7 @@ async def _unassign_spool(hass: HomeAssistant, call: ServiceCall) -> None:
         try:
             await inventory.client.unassign_spool(printer_id, ams, slot)
         except BamBuddyError as err:
-            raise _inventory_failure(err, missing="no_assignment") from err
+            raise _inventory_failure(err, not_found="no_assignment") from err
         finally:
             await inventory.async_request_refresh()
 
@@ -680,7 +717,7 @@ def _spool_answer(spool: Spool, here: tuple[int, int, int], fresh: InventoryData
     spool whose chip links it to another slot is none to assign, nor one in a
     slot of another printer that prints (`printing` its name)."""
     places = fresh.places_of(spool.id)
-    others = [{**place_json(row), "same_printer": row.printer_id == here[0]} for row in places if (row.printer_id, row.ams_id, row.tray_id) != here]
+    others = [{**place_json(row), "same_printer": row.printer_id == here[0]} for row in fresh.places_of(spool.id, besides=here)]
     at_here = len(others) < len(places)
     place: dict[str, Any] | None = {"this_slot": True} if at_here else (others[0] if others else None)
     also = others if at_here else others[1:]
@@ -700,7 +737,7 @@ async def _get_spools(hass: HomeAssistant, call: ServiceCall) -> ServiceResponse
     fresh = await _fresh_inventory(inventory)
     here = (coordinator.printer_id, ams, slot)
     assigned = fresh.at(*here)
-    target = _slot_of(coordinator.data, ams, slot)
+    target = _filament_slot(coordinator.data, ams, slot)
     order = sorted(
         fresh.spools.values(),
         key=lambda item: (
@@ -714,7 +751,7 @@ async def _get_spools(hass: HomeAssistant, call: ServiceCall) -> ServiceResponse
     spools: list[Any] = []
     read: dict[int, bool] = {}
     for item in order:
-        elsewhere = [row for row in fresh.places_of(item.id) if (row.printer_id, row.ams_id, row.tray_id) != here]
+        elsewhere = fresh.places_of(item.id, besides=here)
         spools.append(_spool_answer(item, here, fresh, target, await _printing(coordinator, elsewhere, read)))
     return {"assigned": assigned.id if assigned else None, "spools": spools}
 
@@ -744,13 +781,13 @@ def _extruder(data: PrinterData, ams: int, slot: int) -> int | None:
     filament track switch reaches both nozzles."""
     if not data.is_dual_nozzle:
         return 0
-    if ams == _EXTERNAL_AMS:
+    if ams == EXTERNAL_AMS:
         return 1 if slot == 0 else 0
-    fed = (data.status.get("ams_extruder_map") or {}).get(str(ams))
+    fed = unit_extruder(data, ams)
     return None if fed is None else int(fed)
 
 
-def _slot_of(data: PrinterData, ams: int, slot: int) -> filaments.Slot:
+def _filament_slot(data: PrinterData, ams: int, slot: int) -> filaments.Slot:
     """What Bambu Studio's offer for a slot depends on: the printer's model,
     the diameter and codes of the nozzles it feeds (both on the filament
     track switch), an AMS slot or an external spool."""
@@ -759,19 +796,17 @@ def _slot_of(data: PrinterData, ams: int, slot: int) -> filaments.Slot:
     extruders = frozenset({0, 1}) if extruder is None else frozenset({extruder})
     nozzles = data.status.get("nozzles") or []
     codes = {index: str(nozzles[index].get("nozzle_type") or "") for index in extruders if index < len(nozzles)}
-    return filaments.Slot(model, filaments.diameter(model, _nozzle_diameter(data, ams, slot)), ams != _EXTERNAL_AMS, extruders, codes)
+    return filaments.Slot(model, filaments.diameter(model, _nozzle_diameter(data, ams, slot)), ams != EXTERNAL_AMS, extruders, codes)
+
+
+# The reasons `filaments.refusal` gives that are refusals of their own name.
+_FILAMENT_REFUSALS = frozenset({"filament_not_for_ams", "filament_not_for_nozzle", "filament_not_left", "filament_not_right"})
 
 
 def _refused_filament(why: str | None, filament: str, printer: str) -> ServiceValidationError:
     """The refusal of a filament Bambu Studio would not set here."""
-    if why == "filament_not_for_ams":
-        return _refuse("filament_not_for_ams", filament=filament)
-    if why == "filament_not_for_nozzle":
-        return _refuse("filament_not_for_nozzle", filament=filament)
-    if why == "filament_not_left":
-        return _refuse("filament_not_left", filament=filament)
-    if why == "filament_not_right":
-        return _refuse("filament_not_right", filament=filament)
+    if why in _FILAMENT_REFUSALS:
+        return _refuse(why, filament=filament)
     return _refuse("filament_not_offered", filament=filament, printer=printer)
 
 

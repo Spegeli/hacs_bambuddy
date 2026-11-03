@@ -22,11 +22,12 @@ from homeassistant.util import dt as dt_util
 
 from .api import BamBuddyAuthError, BamBuddyError, BamBuddyPermissionError
 from .entity import refuse
-from .models import ENDED_STATES, JOB_STATES, PrinterData, drying_minutes, short_name
+from .models import ENDED_STATES, JOB_STATES, PrinterData, drying_minutes, is_number, short_name
 from .plugs import Plug
 
 if TYPE_CHECKING:
-    from .coordinator import BamBuddyConfigEntry, BamBuddyPlugCoordinator, BamBuddyPrinterCoordinator
+    from .coordinator import BamBuddyConfigEntry, BamBuddyPrinterCoordinator
+    from .plug_coordinator import BamBuddyPlugCoordinator
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -67,7 +68,7 @@ def _nozzles(data: PrinterData) -> list[float | None]:
     """Every nozzle's temperature, None where BamBuddy does not know it."""
     temperatures = data.temperatures
     names = ("nozzle", "nozzle_2") if data.is_dual_nozzle else ("nozzle",)
-    return [value if isinstance(value, int | float) and not isinstance(value, bool) else None for value in map(temperatures.get, names)]
+    return [value if is_number(value) else None for value in map(temperatures.get, names)]
 
 
 def _drying(data: PrinterData) -> bool:
@@ -79,7 +80,7 @@ def _heating(data: PrinterData) -> bool:
     """A target set: someone heats the printer (to unload, say)."""
     temperatures = data.temperatures
     return any(
-        isinstance(value, int | float) and not isinstance(value, bool) and value > 0
+        is_number(value) and value > 0
         for value in map(temperatures.get, ("nozzle_target", "nozzle_2_target", "bed_target", "chamber_target"))
     )
 
@@ -321,8 +322,8 @@ class AutoOff:
                 # Not the plug: the next check reads the printer again.
                 _LOGGER.debug("Reading %s before switching its plug off failed: %s", short_name(self.printer.info), err)
                 return
-            now = PrinterData(self.printer.info, status, None, None)
-            if self.phase != "waiting" or not self.armed or blocker(now, self.threshold) is not None:
+            reread = PrinterData(self.printer.info, status, None, None)
+            if self.phase != "waiting" or not self.armed or blocker(reread, self.threshold) is not None:
                 return
             self.plugs.note_command()
             await self.plugs.client.control_plug(plug.id, False)
@@ -338,7 +339,7 @@ class AutoOff:
         finally:
             self.switching = False
             self._notify()
-        temperatures = [value for value in _nozzles(now) if value is not None]
+        temperatures = [value for value in _nozzles(reread) if value is not None]
         _LOGGER.info(
             "Switched the plug %s of %s off after the print: nozzle %s °C, below %s °C",
             plug.name,
@@ -374,7 +375,7 @@ def auto_off_for(entry: BamBuddyConfigEntry, plug: Plug) -> AutoOff | None:
     plugs = runtime.plugs
     if not gets_auto_off(plugs, plug):
         return None
-    printer = plugs.printers.get(plug.printer_id or -1)
+    printer = plugs.printer_of(plug)
     if printer is None:
         return None
     auto_off = runtime.auto_offs.get(plug.id)

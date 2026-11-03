@@ -12,7 +12,7 @@ from urllib.parse import urlsplit, urlunsplit
 
 import aiohttp
 
-from .const import OPTIONAL_PERMISSIONS, REQUIRED_SCOPES
+from .const import MANAGE_INVENTORY, OPTIONAL_PERMISSIONS, REQUIRED_SCOPES
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -22,6 +22,10 @@ _TIMEOUT = aiohttp.ClientTimeout(total=10, connect=5)
 _SNAPSHOT_TIMEOUT = aiohttp.ClientTimeout(total=20, connect=5)
 # For its system information BamBuddy walks through its whole archive.
 _SYSTEM_TIMEOUT = aiohttp.ClientTimeout(total=30, connect=5)
+# For its statistics BamBuddy asks every smart plug for its energy, one after another.
+_STATS_TIMEOUT = aiohttp.ClientTimeout(total=30, connect=5)
+# A camera stream runs as long as someone watches.
+_STREAM_TIMEOUT = aiohttp.ClientTimeout(total=None, connect=5)
 # The first cover of a job can need an FTP download from the printer.
 _COVER_TIMEOUT = aiohttp.ClientTimeout(total=30, connect=5)
 # Without a copy in its archive BamBuddy downloads the whole job first.
@@ -47,7 +51,8 @@ _WS_HEARTBEAT = 30.0
 _WS_TIMEOUT = aiohttp.ClientWSTimeout(ws_receive=None, ws_close=2.0)
 _API_PATH = "/api/v1"
 # A gateway's answers: a proxy without BamBuddy behind it.
-_GATEWAY = (502, 503, 504)
+GATEWAY_STATUSES = (502, 503, 504)
+
 class AddressWithLoginError(ValueError):
     """The address carries a user name or password: BamBuddy takes the API
     key, and the address is the entry's identity -- no secret in it."""
@@ -135,7 +140,7 @@ class KeyScopes(dict[str, bool]):
     @property
     def can_assign_spools(self) -> bool:
         """Manage Inventory: spools of BamBuddy's inventory may be assigned to slots."""
-        return "inventory:update" in self.optional
+        return MANAGE_INVENTORY in self.optional
 
     @property
     def missing(self) -> list[str]:
@@ -227,7 +232,7 @@ class BamBuddyClient:
                     # restarts): the proxy's page, no text of BamBuddy's -- a
                     # 404 too (Traefik: "404 page not found"); BamBuddy's own
                     # 404s always carry its JSON detail.
-                    if response.status in (*_GATEWAY, 404) and detail == f"HTTP {response.status}":
+                    if response.status in (*GATEWAY_STATUSES, 404) and detail == f"HTTP {response.status}":
                         raise BamBuddyConnectionError(f"{method} {path}: HTTP {response.status}")
                     error = _ERRORS.get(response.status, BamBuddyApiError)
                     raise error(response.status, detail, f"{method} {path}")
@@ -292,7 +297,7 @@ class BamBuddyClient:
     async def get_statistics(self, *, patient: bool = True) -> dict[str, Any]:
         """BamBuddy's statistics ask every smart plug for its energy, one
         after another: up to 30 s, 10 s where the setup waits for them."""
-        return await self._object("/archives/stats", timeout=_SYSTEM_TIMEOUT if patient else _TIMEOUT)
+        return await self._object("/archives/stats", timeout=_STATS_TIMEOUT if patient else _TIMEOUT)
 
     async def get_update_check(self) -> dict[str, Any]:
         return await self._object("/updates/check", timeout=_UPDATE_TIMEOUT)
@@ -429,7 +434,7 @@ class BamBuddyClient:
         return self._session.get(
             self.stream_url(printer_id, token, fps),
             ssl=self._ssl,
-            timeout=aiohttp.ClientTimeout(total=None, connect=5),
+            timeout=_STREAM_TIMEOUT,
         )
 
     async def stop_camera(self, printer_id: int) -> bool:

@@ -16,8 +16,9 @@ from homeassistant.helpers.restore_state import RestoredExtraData, RestoreEntity
 from homeassistant.util import dt as dt_util
 
 from .auto_off import AutoOff, auto_off_for
-from .coordinator import BamBuddyConfigEntry, BamBuddyPlugCoordinator, BamBuddyPrinterCoordinator
-from .entity import BamBuddyPlugEntity, BamBuddyToggle, async_add_plug_entities, async_switch_plug, key_by_printer
+from .coordinator import BamBuddyConfigEntry, BamBuddyPrinterCoordinator
+from .plug_coordinator import BamBuddyPlugCoordinator
+from .entity import BamBuddyAutoOffPart, BamBuddyPlugMainEntity, BamBuddyToggle, async_add_plug_entities, async_switch_plug
 from .models import detectors, plate_position_only
 from .plugs import Plug
 
@@ -69,7 +70,7 @@ def _add_filament_backup(coordinator: BamBuddyPrinterCoordinator, async_add_enti
 class BamBuddyFilamentBackup(BamBuddyToggle, SwitchEntity):
     """BamBuddy 1.2.5.7 reads the setting only where the printer reports it
     in `cfg`: not on the A1, the A1 mini and the P1 series (they report it elsewhere; read
-    from BamBuddy 1.3.0 on). Unknown there -- and it still switches."""
+    by BamBuddy's development line, the 1.3 betas). Unknown there -- and it still switches."""
 
     _attr_translation_key = "ams_filament_backup"
     _attr_entity_category = EntityCategory.CONFIG
@@ -130,7 +131,7 @@ def _add_plug_switches(coordinator: BamBuddyPlugCoordinator, async_add_entities:
     async_add_plug_entities(coordinator, async_add_entities, create)
 
 
-class BamBuddyPlugSwitch(BamBuddyPlugEntity, SwitchEntity):
+class BamBuddyPlugSwitch(BamBuddyPlugMainEntity, SwitchEntity):
     """A smart plug on or off, as BamBuddy reads it from the plug. Off cuts
     the power: a plug that powers the printer takes it offline in BamBuddy,
     a print stops -- never refused here (the plug is an emergency stop);
@@ -144,10 +145,6 @@ class BamBuddyPlugSwitch(BamBuddyPlugEntity, SwitchEntity):
         super().__init__(coordinator, plug, "power")
 
     @property
-    def available(self) -> bool:
-        return super().available and self.plug is not None and self.plug.reachable
-
-    @property
     def is_on(self) -> bool | None:
         return self.plug.state if self.plug else None
 
@@ -156,14 +153,6 @@ class BamBuddyPlugSwitch(BamBuddyPlugEntity, SwitchEntity):
         """A REST plug without a status URL says nothing of its state: on and
         off both offered. One BamBuddy cannot reach is unavailable instead."""
         return self.plug is not None and self.plug.reachable and self.plug.state is None
-
-    @property
-    def capability_attributes(self) -> dict[str, Any] | None:
-        return self.plug_role()
-
-    @property
-    def extra_state_attributes(self) -> dict[str, Any]:
-        return self.plug_attributes()
 
     async def async_turn_on(self, **kwargs: Any) -> None:
         await self._switch(True)
@@ -177,16 +166,11 @@ class BamBuddyPlugSwitch(BamBuddyPlugEntity, SwitchEntity):
             await async_switch_plug(self.coordinator, plug, on)
 
 
-class _AutoOffEntity(BamBuddyPlugEntity, RestoreEntity):
+class _AutoOffEntity(BamBuddyAutoOffPart, RestoreEntity):
     """A part of a plug's switch-off after the print: it shows what the
     switch-off holds and keeps it over a restart. Always available: its
     values are Home Assistant's own -- an unavailable one would be saved
     without them and lost at the next start."""
-
-    def __init__(self, coordinator: BamBuddyPlugCoordinator, plug: Plug, key: str, auto_off: AutoOff) -> None:
-        super().__init__(coordinator, plug, key)
-        self.auto_off = auto_off
-        key_by_printer(self, auto_off.printer, key)
 
     @property
     def available(self) -> bool:
@@ -197,7 +181,7 @@ class _AutoOffEntity(BamBuddyPlugEntity, RestoreEntity):
         last = await self.async_get_last_state()
         if last is not None:
             self._restore(last.state, dict(last.attributes))
-        self.async_on_remove(self.auto_off.async_add_listener(self.async_write_ha_state))
+        self._follow_auto_off()
 
     def _restore(self, state: str, attributes: dict[str, Any]) -> None:
         raise NotImplementedError

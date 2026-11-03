@@ -6,8 +6,7 @@ every diagnostics download, and these IDs carry serial numbers -- so every
 setup raises it again until the user confirms it."""
 from __future__ import annotations
 
-import asyncio
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers import issue_registry as ir
@@ -15,6 +14,7 @@ from homeassistant.helpers.storage import Store
 
 from .const import DOMAIN
 from .coordinator import renames_issue
+from .storage import async_load_once
 
 if TYPE_CHECKING:
     from .coordinator import BamBuddyConfigEntry
@@ -29,16 +29,11 @@ type _Renames = dict[str, dict[str, list[list[str]]]]
 
 
 async def _loaded(hass: HomeAssistant) -> tuple[Store[_Renames], _Renames]:
-    domain: dict[str, Any] = hass.data.setdefault(DOMAIN, {})
-    if _LOCK not in domain:
-        domain[_LOCK] = asyncio.Lock()
-    lock: asyncio.Lock = domain[_LOCK]
-    async with lock:
-        if _DATA not in domain:
-            store: Store[_Renames] = Store(hass, STORE_VERSION, STORE_KEY)
-            domain[_DATA] = (store, await store.async_load() or {})
-    loaded: tuple[Store[_Renames], _Renames] = domain[_DATA]
-    return loaded
+    async def load() -> tuple[Store[_Renames], _Renames]:
+        store: Store[_Renames] = Store(hass, STORE_VERSION, STORE_KEY)
+        return store, await store.async_load() or {}
+
+    return await async_load_once(hass, _DATA, _LOCK, load)
 
 
 async def async_add(hass: HomeAssistant, entry_id: str, printer_key: str, pairs: list[tuple[str, str]]) -> bool:

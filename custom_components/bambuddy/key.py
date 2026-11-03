@@ -20,7 +20,7 @@ from homeassistant.helpers.event import async_call_later, async_track_time_inter
 from homeassistant.util import dt as dt_util
 
 from .api import BamBuddyApiError, BamBuddyAuthError, BamBuddyClient, BamBuddyError, BamBuddyPermissionError, KeyScopes
-from .const import DOMAIN, KEY_CHECK_INTERVAL, KEY_RETRY_DELAY
+from .const import DOMAIN, KEY_CHECK_INTERVAL, KEY_RETRY_DELAY, MANAGE_INVENTORY
 
 if TYPE_CHECKING:
     from homeassistant.config_entries import ConfigEntry
@@ -96,7 +96,7 @@ class KeyGuard:
     @property
     def can_assign_spools(self) -> bool:
         """Manage Inventory, as the last answered check said."""
-        return "inventory:update" in self._optional
+        return MANAGE_INVENTORY in self._optional
 
     @property
     def refused(self) -> bool:

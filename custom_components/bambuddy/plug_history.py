@@ -6,9 +6,7 @@ entity has taken for `PLUG_STATISTICS_KEEP` loses its statistics; its
 recorded states are the recorder's (its own days)."""
 from __future__ import annotations
 
-import asyncio
 from collections.abc import Iterable
-from typing import Any
 
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers import entity_registry as er
@@ -17,6 +15,7 @@ from homeassistant.helpers.storage import Store
 from homeassistant.util import dt as dt_util
 
 from .const import DOMAIN, PLUG_STATISTICS_KEEP
+from .storage import async_load_once
 
 STORE_KEY = f"{DOMAIN}.plug_history"
 STORE_VERSION = 1
@@ -29,16 +28,11 @@ type _History = dict[str, dict[str, str]]
 
 
 async def _loaded(hass: HomeAssistant) -> tuple[Store[_History], _History]:
-    domain: dict[str, Any] = hass.data.setdefault(DOMAIN, {})
-    if _LOCK not in domain:
-        domain[_LOCK] = asyncio.Lock()
-    lock: asyncio.Lock = domain[_LOCK]
-    async with lock:
-        if _DATA not in domain:
-            store: Store[_History] = Store(hass, STORE_VERSION, STORE_KEY)
-            domain[_DATA] = (store, await store.async_load() or {})
-    loaded: tuple[Store[_History], _History] = domain[_DATA]
-    return loaded
+    async def load() -> tuple[Store[_History], _History]:
+        store: Store[_History] = Store(hass, STORE_VERSION, STORE_KEY)
+        return store, await store.async_load() or {}
+
+    return await async_load_once(hass, _DATA, _LOCK, load)
 
 
 async def async_vanished(hass: HomeAssistant, entity_ids: Iterable[str]) -> None:

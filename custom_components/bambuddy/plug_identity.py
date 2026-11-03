@@ -9,7 +9,6 @@ What a plug switches never leaves Home Assistant in plain text: the IDs carry
 an HMAC of it, keyed with a secret of this installation."""
 from __future__ import annotations
 
-import asyncio
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -26,7 +25,8 @@ from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.storage import Store
 
 from .const import DOMAIN
-from .plugs import PLUG_TYPES
+from .plugs import PLUG_TYPES, plug_type_of
+from .storage import async_load_once
 
 STORE_KEY = f"{DOMAIN}.plug_secret"
 STORE_VERSION = 1
@@ -50,21 +50,17 @@ _TYPES_BY_MODEL = {model: plug_type for plug_type, model in PLUG_TYPES.items()}
 
 async def async_secret(hass: HomeAssistant) -> bytes:
     """This installation's secret for the plugs' keys, made once."""
-    domain: dict[str, Any] = hass.data.setdefault(DOMAIN, {})
-    if _LOCK not in domain:
-        domain[_LOCK] = asyncio.Lock()
-    lock: asyncio.Lock = domain[_LOCK]
-    async with lock:
-        if _DATA not in domain:
-            store: Store[dict[str, str]] = Store(hass, STORE_VERSION, STORE_KEY, private=True)
-            stored = (await store.async_load() or {}).get("secret")
-            secret = bytes.fromhex(stored) if isinstance(stored, str) and len(stored) == 64 and all(c in hexdigits for c in stored) else None
-            if secret is None:
-                secret = secrets.token_bytes(32)
-                await store.async_save({"secret": secret.hex()})
-            domain[_DATA] = secret
-    found: bytes = domain[_DATA]
-    return found
+
+    async def load() -> bytes:
+        store: Store[dict[str, str]] = Store(hass, STORE_VERSION, STORE_KEY, private=True)
+        stored = (await store.async_load() or {}).get("secret")
+        secret = bytes.fromhex(stored) if isinstance(stored, str) and len(stored) == 64 and all(c in hexdigits for c in stored) else None
+        if secret is None:
+            secret = secrets.token_bytes(32)
+            await store.async_save({"secret": secret.hex()})
+        return secret
+
+    return await async_load_once(hass, _DATA, _LOCK, load)
 
 
 def created_epoch(value: Any) -> int | None:
@@ -96,7 +92,7 @@ def _text(value: Any) -> str | None:
 
 def source_candidates(info: Mapping[str, Any]) -> list[str]:
     """What the plug switches or reads, in one form: none for a REST plug."""
-    plug_type = str(info.get("plug_type") or "tasmota")
+    plug_type = plug_type_of(info)
     if plug_type == "tasmota":
         address = _text(info.get("ip_address"))
         return [_address(address)] if address else []
@@ -191,7 +187,7 @@ def identities(secret: bytes, infos: Iterable[Mapping[str, Any]], known: Mapping
     parts: list[tuple[int, str, int | None, str, str]] = []
     for info in infos:
         plug_id = int(info["id"])
-        plug_type = str(info.get("plug_type") or "tasmota")
+        plug_type = plug_type_of(info)
         before = known.get(plug_id)
         epoch = created_epoch(info.get("created_at"))
         if epoch is None and before is not None:
@@ -207,8 +203,13 @@ def identities(secret: bytes, infos: Iterable[Mapping[str, Any]], known: Mapping
     return found
 
 
+def device_prefix(entry_id: str) -> str:
+    """What the identifiers of all the entry's plug devices begin with."""
+    return f"{entry_id}_plug_"
+
+
 def device_identifier(entry_id: str, identity: PlugIdentity) -> tuple[str, str]:
-    return (DOMAIN, f"{entry_id}_plug_{identity.plug_id}_{identity.device_epoch}")
+    return (DOMAIN, f"{device_prefix(entry_id)}{identity.plug_id}_{identity.device_epoch}")
 
 
 def entity_unique_id(entry_id: str, identity: PlugIdentity, key: str) -> str:
@@ -218,7 +219,7 @@ def entity_unique_id(entry_id: str, identity: PlugIdentity, key: str) -> str:
 def parse_device_identifier(entry_id: str, identifier: str) -> tuple[int, int] | None:
     """(number, epoch) of a plug device's identifier; None for any other
     form, the first betas' `<entry>_plug_<number>` included."""
-    rest = identifier.removeprefix(f"{entry_id}_plug_")
+    rest = identifier.removeprefix(device_prefix(entry_id))
     plug_id, sep, epoch = rest.partition("_")
     if rest == identifier or not sep or not plug_id.isdigit() or not epoch.isdigit():
         return None

@@ -23,17 +23,17 @@ from homeassistant.helpers.restore_state import RestoreEntity
 from .api import BamBuddyClient
 from .auto_off import MAX_TEMPERATURE, MIN_TEMPERATURE, AutoOff, auto_off_for
 from .const import DOMAIN
-from .coordinator import BamBuddyConfigEntry, BamBuddyPlugCoordinator, BamBuddyPrinterCoordinator
+from .coordinator import BamBuddyConfigEntry, BamBuddyPrinterCoordinator
+from .plug_coordinator import BamBuddyPlugCoordinator
 from .entity import (
+    BamBuddyAutoOffPart,
     BamBuddyDescribedEntity,
-    BamBuddyPlugEntity,
     BamBuddyPrinterEntity,
     async_add_plug_entities,
     async_run_command,
-    key_by_printer,
     refuse,
 )
-from .models import CAMERA_FPS_STEP, CAMERA_MIN_FPS, PrinterData, camera_max_fps, heater_max, ventilating
+from .models import CAMERA_FPS_STEP, CAMERA_MIN_FPS, PrinterData, camera_max_fps, heater_max, is_number, ventilating
 from .plugs import Plug
 
 PARALLEL_UPDATES = 1
@@ -151,7 +151,7 @@ class BamBuddyTemperature(BamBuddyDescribedEntity, NumberEntity):
     @property
     def native_value(self) -> float | None:
         value = self.data.temperatures.get(self.entity_description.key)
-        return float(value) if isinstance(value, int | float) and not isinstance(value, bool) else None
+        return float(value) if is_number(value) else None
 
     async def async_set_native_value(self, value: float) -> None:
         coordinator, description, target = self.coordinator, self.entity_description, round(value)
@@ -163,7 +163,7 @@ class BamBuddyTemperature(BamBuddyDescribedEntity, NumberEntity):
             # As Bambu's start G-code: the airduct on heating first -- where a
             # print or a filament change does not keep the mode it set.
             data = coordinator.data
-            if not data.job_running and not data.changing_filament and data.status.get("airduct_mode") != 1:
+            if not data.job_running and not data.changing_filament and data.airduct != "heating":
                 await coordinator.client.set_airduct_mode(coordinator.printer_id, "heating")
             await description.set_fn(coordinator.client, coordinator.printer_id, target)
 
@@ -174,7 +174,7 @@ def _may_heat_chamber(data: PrinterData, name: str) -> None:
     """A chamber target waits while the chamber is ventilated, and goes not
     into a print or a filament change in cooling mode (Bambu Studio: "Chamber
     temperature cannot be changed in cooling mode while printing")."""
-    cooling = data.status.get("airduct_mode") == 0
+    cooling = data.airduct == "cooling"
     if data.job_running:
         if cooling:
             raise refuse("chamber_cooling_print", printer=name)
@@ -182,10 +182,10 @@ def _may_heat_chamber(data: PrinterData, name: str) -> None:
         if cooling:
             raise refuse("filament_change", printer=name)
     elif ventilating(data):
-        raise refuse("ventilation_on", printer=name)
+        raise refuse("ventilation_on")
 
 
-class BamBuddyAutoOffTemperature(BamBuddyPlugEntity, RestoreNumber):
+class BamBuddyAutoOffTemperature(BamBuddyAutoOffPart, RestoreNumber):
     """The switch-off after the print waits until every nozzle is below
     this: 50 °C unless the user sets another."""
 
@@ -199,9 +199,7 @@ class BamBuddyAutoOffTemperature(BamBuddyPlugEntity, RestoreNumber):
     _attr_mode = NumberMode.BOX
 
     def __init__(self, coordinator: BamBuddyPlugCoordinator, plug: Plug, auto_off: AutoOff) -> None:
-        super().__init__(coordinator, plug, "auto_off_temperature")
-        self.auto_off = auto_off
-        key_by_printer(self, auto_off.printer, "auto_off_temperature")
+        super().__init__(coordinator, plug, "auto_off_temperature", auto_off)
 
     @property
     def available(self) -> bool:
@@ -216,7 +214,7 @@ class BamBuddyAutoOffTemperature(BamBuddyPlugEntity, RestoreNumber):
         value = stored.native_value if stored is not None else None
         if value is not None and MIN_TEMPERATURE <= value <= MAX_TEMPERATURE:
             self.auto_off.set_threshold(value)
-        self.async_on_remove(self.auto_off.async_add_listener(self.async_write_ha_state))
+        self._follow_auto_off()
 
     @property
     def native_value(self) -> float:

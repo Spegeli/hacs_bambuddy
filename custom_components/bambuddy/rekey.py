@@ -18,14 +18,14 @@ from homeassistant.helpers import entity_registry as er
 from .models import AMS_MODELS, ams_model, ams_object_id, ams_serial
 
 if TYPE_CHECKING:
-    from .coordinator import BamBuddyConfigEntry, BamBuddyPrinterCoordinator
+    from .coordinator import BamBuddyPrinterCoordinator
 
 _LOGGER = logging.getLogger(__name__)
 
 
 @callback
 def async_rekey_ams_units(
-    hass: HomeAssistant, entry: BamBuddyConfigEntry, printers: dict[int, BamBuddyPrinterCoordinator]
+    hass: HomeAssistant, printers: dict[int, BamBuddyPrinterCoordinator]
 ) -> dict[str, list[tuple[str, str]]]:
     """Move every AMS unit that now reports its serial to it; the renamed
     entity IDs (old, new) by printer key."""

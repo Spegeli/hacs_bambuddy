@@ -37,6 +37,7 @@ from .api import (
     BamBuddyNotFoundError,
     BamBuddyNotJsonError,
     BamBuddyPermissionError,
+    GATEWAY_STATUSES,
     normalise_url,
 )
 from .const import (
@@ -51,16 +52,11 @@ from .const import (
     MIN_BAMBUDDY_VERSION,
     PUSH_GAPS,
 )
-from .coordinator import BamBuddyConfigEntry, create_client, find_device, printer_identifier
+from .coordinator import BamBuddyConfigEntry, create_client, stored_name
 from .key import async_check_key
 from .live import async_test, failure_kind, live_settings
 from .models import find_printers, printer_key, printer_name, stored_key, stored_printer as _stored, too_old
-
-def form_schema(fields: dict[Any, Any]) -> Any:
-    """The schema of a form. Home Assistant 2026.10 types form schemas as
-    probatio schemas; the voluptuous ones built here work the same from
-    2025.5 on, hence `Any`: the one place that says so."""
-    return vol.Schema(fields)
+from .schema import form_schema
 
 
 _KEY = TextSelector(TextSelectorConfig(type=TextSelectorType.PASSWORD))
@@ -179,7 +175,7 @@ async def _validate(hass: HomeAssistant, url: str, api_key: str, verify_ssl: boo
         return _Found({"base": "cannot_connect"}, {}, [])
     except BamBuddyApiError as err:
         # A proxy without BamBuddy behind it answers 502-504: unreachable.
-        if err.status in (502, 503, 504):
+        if err.status in GATEWAY_STATUSES:
             return _Found({"base": "cannot_connect"}, {}, [])
         # An error to the first question: another server at the address.
         if first:
@@ -373,7 +369,7 @@ class BamBuddyConfigFlow(ConfigFlow, domain=DOMAIN):
         """Why a new key: the stored one checked -- it lacks scopes, its
         owner is gone, or BamBuddy does not accept it."""
         entry = self._get_reauth_entry()
-        client = BamBuddyClient(entry.data[CONF_URL], entry.data[CONF_API_KEY], async_get_clientsession(self.hass), verify_ssl=entry.data.get(CONF_VERIFY_SSL, True))
+        client = create_client(self.hass, entry)
         check = await async_check_key(client)
         if check.outcome == "short" and check.scopes is not None:
             self._stored_marks = {f"stored_{scope}": mark for scope, mark in check.scopes.marks().items()}
@@ -483,8 +479,7 @@ class BamBuddyConfigFlow(ConfigFlow, domain=DOMAIN):
         names = []
         for printer, info in zip(self._stored, self._found, strict=True):
             if info is None:
-                device = find_device(self.hass, entry.entry_id, printer_identifier(entry.entry_id, stored_key(printer)))
-                names.append(device.name if device is not None and device.name else str(printer[CONF_PRINTER_NAME]))
+                names.append(stored_name(self.hass, entry.entry_id, printer))
         return names
 
     def _entry_or_gone(self) -> BamBuddyConfigEntry | None:
