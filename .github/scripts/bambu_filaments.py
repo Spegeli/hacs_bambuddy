@@ -31,6 +31,7 @@ with no machine preset of that name.
 from __future__ import annotations
 
 import argparse
+from collections.abc import Callable
 import json
 from pathlib import Path
 import re
@@ -177,13 +178,9 @@ def _vendors(filaments: dict[str, dict[str, Any]]) -> list[str]:
     return first + sorted(present - set(first), key=lambda vendor: vendor.encode("utf-8"))
 
 
-def build(root: Path, commit: str) -> dict[str, Any]:
-    """The list, as filaments.json holds it."""
-    _check_rules(root)
-    version = str(_read(root / "resources" / "profiles" / "BBL.json").get("version") or "")
-    raw = _presets(root, "filament_list")
-    presets = {name: _resolved(raw, name) for name in raw}
-    usable = {
+def _usable(presets: dict[str, dict[str, Any]]) -> dict[str, dict[str, Any]]:
+    """The presets a user can pick: instantiated, with an id, printers and a setting id."""
+    return {
         name: preset
         for name, preset in presets.items()
         if preset.get("instantiation") == "true"
@@ -191,8 +188,10 @@ def build(root: Path, commit: str) -> dict[str, Any]:
         and preset.get("compatible_printers")
         and preset.get("setting_id")
     }
-    by_name = sorted(usable, key=lambda name: name.encode("utf-8"))
 
+
+def _filament_entries(by_name: list[str], usable: dict[str, dict[str, Any]]) -> dict[str, dict[str, Any]]:
+    """One entry per filament id: the first preset by name that carries it; then the extra ones."""
     filaments: dict[str, dict[str, Any]] = {}
     for name in by_name:
         preset = usable[name]
@@ -208,8 +207,11 @@ def build(root: Path, commit: str) -> dict[str, Any]:
             "temp_max": _int(preset.get("nozzle_temperature_range_high")),
         }
     filaments.update(EXTRA_FILAMENTS)
+    return filaments
 
-    # Per printer and diameter: the first preset carrying each id (its printable bits).
+
+def _offered(by_name: list[str], usable: dict[str, dict[str, Any]]) -> dict[tuple[str, str], dict[str, dict[str, Any]]]:
+    """Per printer and diameter: the first preset carrying each id (its printable bits)."""
     offered: dict[tuple[str, str], dict[str, dict[str, Any]]] = {}
     for name in by_name:
         preset = usable[name]
@@ -218,12 +220,17 @@ def build(root: Path, commit: str) -> dict[str, Any]:
             if not match:
                 raise SystemExit(f"{name} names a printer the generator cannot read: {printer!r}")
             offered.setdefault((match["model"], match["diameter"]), {}).setdefault(str(preset["filament_id"]), preset)
+    return offered
 
-    machines_raw = _presets(root, "machine_list")
+
+def _check_machines(offered: dict[tuple[str, str], dict[str, dict[str, Any]]], machines_raw: dict[str, dict[str, Any]]) -> None:
     for model, diameter in offered:
         if f"Bambu Lab {model} {diameter} nozzle" not in machines_raw:
             raise SystemExit(f"Bambu Studio has no machine preset Bambu Lab {model} {diameter} nozzle: its nozzle rules would go unseen")
-    vendors = _vendors(filaments)
+
+
+def _order(filaments: dict[str, dict[str, Any]], vendors: list[str]) -> Callable[[str], tuple[int, int, bytes]]:
+    """The list's order of filaments: by vendor, then type, then name."""
 
     def order(fid: str) -> tuple[int, int, bytes]:
         entry = filaments[fid]
@@ -231,30 +238,54 @@ def build(root: Path, commit: str) -> dict[str, Any]:
         kind = TYPE_ORDER.index(entry["type"]) if entry["type"] in TYPE_ORDER else len(TYPE_ORDER)
         return vendor, kind, str(entry["name"]).encode("utf-8")
 
+    return order
+
+
+def _not_on(ids: dict[str, dict[str, Any]], extruders: list[str], order: Callable[[str], tuple[int, int, bytes]]) -> dict[str, list[str]]:
+    """A two-nozzle printer's filaments each nozzle refuses (the preset's printable bits)."""
+    not_on: dict[str, list[str]] = {}
+    for fid, preset in ids.items():
+        printable = _int(preset.get("filament_printable"))
+        levels = _int(preset.get("filament_extruder_compatibility")) or 0
+        for index, physical in enumerate(extruders):
+            refused = (printable is not None and not (printable >> index) & 1) or (levels >> (3 * index)) & 7 == 1
+            if refused:
+                not_on.setdefault(physical, []).append(fid)
+    return {physical: sorted(found, key=order) for physical, found in sorted(not_on.items())}
+
+
+def _apply_corrections(printers: dict[str, dict[str, Any]], filaments: dict[str, dict[str, Any]], order: Callable[[str], tuple[int, int, bytes]]) -> None:
+    for key, change in MODEL_CORRECTIONS.items():
+        for nozzle in printers.get(key, {}).values():
+            kept = [fid for fid in nozzle["ids"] if fid not in change.get("remove", [])]
+            kept += [fid for fid in change.get("add", []) if fid not in kept and fid in filaments]
+            nozzle["ids"] = sorted(kept, key=order)
+
+
+def build(root: Path, commit: str) -> dict[str, Any]:
+    """The list, as filaments.json holds it."""
+    _check_rules(root)
+    version = str(_read(root / "resources" / "profiles" / "BBL.json").get("version") or "")
+    raw = _presets(root, "filament_list")
+    usable = _usable({name: _resolved(raw, name) for name in raw})
+    by_name = sorted(usable, key=lambda name: name.encode("utf-8"))
+    filaments = _filament_entries(by_name, usable)
+    offered = _offered(by_name, usable)
+    machines_raw = _presets(root, "machine_list")
+    _check_machines(offered, machines_raw)
+    vendors = _vendors(filaments)
+    order = _order(filaments, vendors)
+
     printers: dict[str, dict[str, Any]] = {}
     for (model, diameter), ids in offered.items():
         key = MODEL_KEYS.get(model, model.upper())
         nozzle: dict[str, Any] = {"ids": sorted(ids, key=order)}
         machine = _resolved(machines_raw, f"Bambu Lab {model} {diameter} nozzle")
         extruders = [str(item) for item in machine.get("physical_extruder_map") or []]
-        if len(extruders) > 1:
-            not_on: dict[str, list[str]] = {}
-            for fid, preset in ids.items():
-                printable = _int(preset.get("filament_printable"))
-                levels = _int(preset.get("filament_extruder_compatibility")) or 0
-                for index, physical in enumerate(extruders):
-                    refused = (printable is not None and not (printable >> index) & 1) or (levels >> (3 * index)) & 7 == 1
-                    if refused:
-                        not_on.setdefault(physical, []).append(fid)
-            if not_on:
-                nozzle["not_on"] = {physical: sorted(found, key=order) for physical, found in sorted(not_on.items())}
+        if len(extruders) > 1 and (not_on := _not_on(ids, extruders, order)):
+            nozzle["not_on"] = not_on
         printers.setdefault(key, {})[diameter] = nozzle
-
-    for key, change in MODEL_CORRECTIONS.items():
-        for nozzle in printers.get(key, {}).values():
-            kept = [fid for fid in nozzle["ids"] if fid not in change.get("remove", [])]
-            kept += [fid for fid in change.get("add", []) if fid not in kept and fid in filaments]
-            nozzle["ids"] = sorted(kept, key=order)
+    _apply_corrections(printers, filaments, order)
 
     return {
         "source": {"repository": REPOSITORY, "commit": commit, "profiles": version, "licence": LICENCE},
