@@ -8,17 +8,17 @@
 import { html, nothing, type TemplateResult } from "lit";
 
 import type { PrintObject } from "./actions";
-import { formatTemperature } from "./format";
-import { checkContent, type CheckDialog } from "./check";
+import { formatTemperature, numberAttribute } from "./format";
+import { checkContent, type CheckActions, type CheckDialog } from "./check";
 import { chosenFilament, filamentBody, filamentChanges, keeping, midPrint, noOffer, nothingToSet, nozzleLine, type FilamentDialog } from "./filament-dialog";
 import { canClearHms, hmsAnswered } from "./header";
-import { endsAssignment, inventoryButtons, inventoryCard, inventoryContent, inventoryTabs, onInventory } from "./inventory-dialog";
+import { assignmentEndsWarning, inventoryButtons, inventoryCard, inventoryContent, inventoryTabs, onInventory } from "./inventory-dialog";
 import { autoOffContent, powerContent } from "./power";
 import { firmwareContent, hmsContent, infoContent, storageContent } from "./printer-dialogs";
-import { maintenanceContent, type MaintenanceDialog } from "./maintenance";
+import { maintenanceContent, type MaintenanceActions, type MaintenanceDialog } from "./maintenance";
 import { icon } from "./icons";
 import { t, type TextKey } from "./i18n";
-import { dialogNote, slotOf, stepControl, warnings, type CardContext, type Confirmation } from "./parts";
+import { dialogError, dialogNote, slotOf, stepControl, warnings, type CardContext, type Confirmation } from "./parts";
 import type { AmsRefs, Hass } from "./types";
 
 /** Drying defaults and limits: BamBuddy's range; the AMS 2 Pro heats to 65 °C at most. */
@@ -83,17 +83,28 @@ export type Dialog = ({ kind: "confirm" } & Confirmation) | DryingDialog | SkipD
 
 export type { CheckDialog, MaintenanceDialog };
 
-export interface DialogActions {
+/** What the dialogs call: the card's own, then the slot dialog's
+ * (filament-session.ts), then the label scan's (scan-session.ts); the
+ * maintenance and check dialogs' own members come with their types. */
+export interface DialogActions extends MaintenanceActions, CheckActions {
+  // The card's.
   close: () => void;
   confirm: () => void;
+  /** Takes a drying value; returns the one the dialog holds then. */
+  setDrying: (field: DryingField, value: number) => number;
+  toggleObject: (id: number) => void;
+  /** Copies a text, an IP address say, to the clipboard. */
+  copy: (text: string) => void;
+  /** Now, for the seconds a check runs. */
+  now: () => number;
+  /** Escape: closes the dialog, or first a question inside it. */
+  cancel: (event: Event) => void;
+  // The slot dialog's.
   /** The K profile chosen in the filament dialog. */
   setKProfile: (value: string) => void;
   /** The filament dialog's slot: cleared after a question, its chip read again. */
   resetSlot: () => void;
   refreshRfid: () => void;
-  /** Takes a drying value; returns the one the dialog holds then. */
-  setDrying: (field: DryingField, value: number) => number;
-  toggleObject: (id: number) => void;
   /** The filament dialog's vendor, then its filament (KEEP: the slot's own). */
   setVendor: (vendor: string) => void;
   setFilament: (filament: string) => void;
@@ -101,32 +112,21 @@ export interface DialogActions {
   setColor: (color: string) => void;
   /** A colour from the browser's colour picker, "#rrggbb". */
   pickColor: (color: string) => void;
-  /** Copies a text, an IP address say, to the clipboard. */
-  copy: (text: string) => void;
-  /** The maintenance task whose row asks "Mark as done?", or none. */
-  confirmTask: (id: number | undefined) => void;
-  markDone: (id: number, name: string) => void;
-  /** Opens or folds a folded line of the connection check. */
-  toggleFold: (which: "pass" | "skip") => void;
-  /** Now, for the seconds a check runs. */
-  now: () => number;
-  /** Escape: closes the dialog, or first a question inside it. */
-  cancel: (event: Event) => void;
   /** The slot dialog's way: its filament, or a spool of the inventory. */
   setTab: (tab: "set" | "inventory") => void;
   /** The inventory's list: a spool chosen, a filter set, a search typed. */
   chooseSpool: (id: number) => void;
   filterSpools: (field: "vendor" | "material" | "location", value: string) => void;
   searchSpools: (text: string) => void;
-  /** A spool label's scan: started, the camera closed, a photo taken, the light switched. */
-  startScan: () => void;
   /** The filters below the search, folded and unfolded. */
   toggleFilters: () => void;
+  /** Removes the slot's assignment. */
+  unassign: () => void;
+  // The label scan's: started, the camera closed, a photo taken, the light switched.
+  startScan: () => void;
   closeScan: () => void;
   takePhoto: (file: File) => void;
   toggleTorch: () => void;
-  /** Removes the slot's assignment. */
-  unassign: () => void;
 }
 
 function stepper(
@@ -213,7 +213,7 @@ const everyObject = (dialog: SkipDialog): boolean =>
 function skipContent(hass: Hass, dialog: SkipDialog, actions: DialogActions): TemplateResult {
   let body: TemplateResult;
   if (dialog.loading) body = html`<p role="status">${t(hass, "skip_loading")}</p>`;
-  else if (dialog.error) body = html`<div class="dlg-error" role="alert">${icon("error")}<span>${dialog.error}</span></div>`;
+  else if (dialog.error) body = dialogError(dialog.error);
   else if (!dialog.objects.length) body = html`<p>${t(hass, "skip_none_listed")}</p>`;
   // One object: skipping it is stopping the print -- nothing to tick.
   else if (dialog.objects.length === 1) body = html`<p class="dlg-warn info">${icon("info")}<span>${t(hass, "skip_single")}</span></p>`;
@@ -278,17 +278,19 @@ function buttons(ctx: CardContext, dialog: Dialog): DialogButtons {
       // A Bambu spool, or nothing to set: its tools only.
       if (dialog.rfid || nothingToSet(dialog)) return { keep: t(hass, "dismiss"), danger: false, ready: false };
       // A filament -- the slot's kept, or one chosen -- and a change.
+      const chosen = chosenFilament(dialog);
+      const keeps = keeping(dialog);
       return {
         keep: t(hass, "cancel"),
         confirm: t(hass, "filament_set"),
         danger: false,
-        ready: (keeping(dialog) || chosenFilament(dialog) !== undefined) && Object.keys(filamentChanges(dialog)).length > 0,
+        ready: (keeps || chosen !== undefined) && Object.keys(filamentChanges(dialog)).length > 0,
         // A vendor without its filament, or a colour or K profile for a slot without one: it needs one
         // too -- where Bambu Studio offers one.
-        ...(!noOffer(dialog) && !keeping(dialog) && chosenFilament(dialog) === undefined && (dialog.vendor !== undefined || dialog.color !== undefined || dialog.kprofile !== undefined)
+        ...(!noOffer(dialog) && !keeps && chosen === undefined && (dialog.vendor !== undefined || dialog.color !== undefined || dialog.kprofile !== undefined)
           ? { need: t(hass, "filament_need_filament") }
           : {}),
-        ...warnings(midPrint(ctx, dialog), endsAssignment(ctx, dialog).warn),
+        ...warnings(midPrint(ctx, dialog), assignmentEndsWarning(ctx, dialog)),
       };
     case "hms":
       return { keep: t(hass, "dismiss"), ...(canClearHms(ctx) ? { confirm: t(hass, "hms_clear") } : {}), danger: false, ready: true, quiet: hmsAnswered(ctx) };
@@ -351,13 +353,11 @@ function content(ctx: CardContext, dialog: Dialog, actions: DialogActions): Temp
 function cameraContent(ctx: CardContext): TemplateResult {
   const { hass, refs } = ctx;
   const number = refs.cameraFps as string;
-  const attributes = hass.states[number]?.attributes ?? {};
-  const figure = (value: unknown, fallback: number): number => (typeof value === "number" ? value : fallback);
   const set = ctx.targetOf(number);
   // Limits missing: from 5 to the value it has.
-  const min = figure(attributes["min"], 5);
-  const max = figure(attributes["max"], Math.max(min, set ?? min));
-  const step = figure(attributes["step"], 5);
+  const min = numberAttribute(hass, number, "min") ?? 5;
+  const max = numberAttribute(hass, number, "max") ?? Math.max(min, set ?? min);
+  const step = numberAttribute(hass, number, "step") ?? 5;
   const value = set ?? max;
   return html`<h2 id="dlg-title">${t(hass, "fps_title")}</h2>
     ${stepControl({

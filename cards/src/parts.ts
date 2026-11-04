@@ -55,6 +55,10 @@ export interface CardContext {
   /** No data because BamBuddy no longer lists the printer: the integration
    * names it (it waits under Settings → Repairs). Implies `unreachable`. */
   missing: boolean;
+  /** No data yet, within the card's wait for it: Home Assistant starting,
+   * the entry reloading -- the neutral text instead of the no-data one.
+   * Implies `unreachable`. */
+  waiting: boolean;
   /** A print job is on the printer: moving waits. */
   busy: boolean;
   /** A print runs, not paused: loading and unloading wait too. */
@@ -244,7 +248,8 @@ export function radioLeave(event: FocusEvent): void {
   const group = event.currentTarget as HTMLElement;
   if (event.relatedTarget instanceof Node && group.contains(event.relatedTarget)) return;
   const radios = [...group.querySelectorAll<HTMLElement>("[role=radio]")];
-  const open = radios.filter((radio) => !(radio as HTMLButtonElement).disabled);
+  // A button is locked by `disabled`, a row that is no button by `aria-disabled`.
+  const open = radios.filter((radio) => !(radio as HTMLButtonElement).disabled && radio.getAttribute("aria-disabled") !== "true");
   const checked = (radio: HTMLElement): boolean => radio.getAttribute("aria-checked") === "true";
   const chosen = open.find(checked) ?? open[0] ?? radios.find(checked) ?? radios[0];
   for (const radio of radios) radio.tabIndex = radio === chosen ? 0 : -1;
@@ -258,6 +263,7 @@ export const radioStop = <T>(options: readonly T[], chosen: T): number => Math.m
  * printer is offline -- `offline` says that in the view's words. */
 export function offlineText(ctx: CardContext, offline: TextKey): string {
   if (!ctx.unreachable) return t(ctx.hass, offline);
+  if (ctx.waiting) return t(ctx.hass, "waiting_text");
   const user = ctx.hass.user?.is_admin === false;
   if (ctx.missing) return t(ctx.hass, user ? "missing_text_user" : "missing_text");
   return t(ctx.hass, user ? "unreachable_text_user" : "unreachable_text");
@@ -265,14 +271,14 @@ export function offlineText(ctx: CardContext, offline: TextKey): string {
 
 /** No data from BamBuddy, in a word: it does not answer -- or no longer
  * lists the printer. */
-export const noData = (ctx: CardContext): TextKey => (ctx.missing ? "missing_short" : "unreachable_short");
+export const noData = (ctx: CardContext): TextKey => (ctx.waiting ? "waiting_text" : ctx.missing ? "missing_short" : "unreachable_short");
 
 /** The connection in a word: the printer online, no data from BamBuddy,
  * or the printer offline. */
 export const connection = (ctx: CardContext): TextKey => (ctx.online ? "online" : ctx.unreachable ? noData(ctx) : "offline");
 
 /** The context as if the printer were online: for the preview's examples. */
-export const asOnline = (ctx: CardContext): CardContext => ({ ...ctx, online: true, unreachable: false, missing: false });
+export const asOnline = (ctx: CardContext): CardContext => ({ ...ctx, online: true, unreachable: false, missing: false, waiting: false });
 
 /** When an example shows: during a print -- the print's own parts, or
  * any with the printer online --, once the printer is online, or once
@@ -303,6 +309,13 @@ export function callout(text: string, action: TemplateResult | typeof nothing = 
 /** A note in a dialog: what else to know. */
 export const dialogNote = (text: string, tone: "info" | "warning" = "info", id?: string): TemplateResult =>
   html`<p class="dlg-note ${tone}" id=${id ?? nothing}>${icon(tone)}<span>${text}</span></p>`;
+
+/** An error inside a dialog, said as an alert. */
+export const dialogError = (text: string): TemplateResult => html`<div class="dlg-error" role="alert">${icon("error")}<span>${text}</span></div>`;
+
+/** A line that waits: a spinner and its text (`extra`: the line's own class). */
+export const waitLine = (text: string, extra = ""): TemplateResult =>
+  html`<div class="k-wait ${extra}"><span class="check-spinner" aria-hidden="true"></span><span>${text}</span></div>`;
 
 /** A short confirmation over the card or a dialog -- "Sent", "Copied" --
  * in the wrapper that places it. */
@@ -394,7 +407,10 @@ export function entityName(ctx: CardContext, entityId: string, key: TextKey): st
 export const NOZZLE_SIDES = ["left", "right"];
 
 /** "Left" for the first of two, "Right" for the second. */
-export const sideName = (hass: Hass, index: number): string => t(hass, index === 0 ? "left" : "right");
+/** BamBuddy's extruder by its index on a two-nozzle printer: 0 the left nozzle's place in the card's lists. */
+export const sideAt = (index: number): "left" | "right" => (index === 0 ? "left" : "right");
+
+export const sideName = (hass: Hass, index: number): string => t(hass, sideAt(index));
 
 export const AMS_HT = "AMS HT";
 export const AMS_2_PRO = "AMS 2 Pro";
@@ -490,7 +506,7 @@ export interface Slot {
 
 /** The slot sensor's `inventory_spool`, as the card reads it; undefined
  * for anything else. */
-export function inventorySpool(value: unknown): InventorySpool | undefined {
+function inventorySpool(value: unknown): InventorySpool | undefined {
   if (typeof value !== "object" || value === null) return undefined;
   const spool = value as Record<string, unknown>;
   if (typeof spool["id"] !== "number" || typeof spool["name"] !== "string") return undefined;
@@ -510,7 +526,7 @@ type Lined = Pick<InventorySpool, "id" | "colorName" | "remainingG" | "remaining
 
 /** An inventory spool's colours: its own first, then a multicolour
  * spool's others ("#RRGGBB"). */
-export function spoolColors(spool: Colored): string[] {
+function spoolColors(spool: Colored): string[] {
   const own = spool.rgba && /^[0-9a-f]{6}/i.test(spool.rgba) ? [`#${spool.rgba.slice(0, 6).toUpperCase()}`] : [];
   const more = spool.extraColors.filter((item) => /^[0-9a-f]{6}$/i.test(item)).map((item) => `#${item.toUpperCase()}`);
   return [...own, ...more];
@@ -556,9 +572,13 @@ function slotNumber(hass: Hass, entityId: string, index: number): number {
   return typeof slot === "number" && Number.isInteger(slot) && slot > 0 ? slot : index + 1;
 }
 
-/** A slot's place by the names the dialogs and questions give it: "Slot 2 · AMS A". */
+/** "AMS A" and "AMS HT B" kept on one line in a text: a no-break space before the letter. */
+export const unitLetterTogether = (name: string): string => name.replace(/\bAMS( HT)? ([A-H])\b/g, (_, ht: string | undefined, letter: string) => `AMS${ht ? "\u00a0HT" : ""}\u00a0${letter}`);
+
+/** A slot's place by the names the dialogs and questions give it: "Slot 2 · AMS A"
+ * (a name from BamBuddy's AMS labels as it is). */
 export const slotPlace = (hass: Hass, unit: AmsRefs, entityId: string, index: number): string =>
-  t(hass, "slot_label", { slot: slotNumber(hass, entityId, index), unit: unit.name });
+  t(hass, "slot_label", { slot: slotNumber(hass, entityId, index), unit: unitLetterTogether(unit.name) });
 
 /** A slot sensor's filament: state = its name or "empty"; the attributes
  * say the rest (the integration's slot attributes). Without a state the

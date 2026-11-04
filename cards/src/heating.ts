@@ -4,11 +4,22 @@
 // and the fans that bring the air through) in 10 % steps, and on one without
 // a chamber heater (the P2S) "keep warm" (the airduct on heating). A tap
 // changes the value shown at once; the card sends it when the taps stop (see
-// card.ts, stepTarget), so a few taps are one command. What does not go
+// drafts.ts, stepTarget), so a few taps are one command. What does not go
 // together locks the other (`locks`), never the way off.
 import { html, nothing, type TemplateResult } from "lit";
 
-import { formatPercent, formatTemperature, formatTemperatureOf, fromCelsius, listedOptions, numericState, stateOf, targetFloor, temperatureUnit } from "./format";
+import {
+  formatPercent,
+  formatTemperature,
+  formatTemperatureOf,
+  fromCelsius,
+  listedOptions,
+  numberAttribute,
+  numericState,
+  stateOf,
+  targetFloor,
+  temperatureUnit,
+} from "./format";
 import { icon, type IconName } from "./icons";
 import { t, type TextKey } from "./i18n";
 import { actionButton, activeNozzleIndex, heaters, note, radioKeys, radioLeave, radioOptions, radioStop, type CardContext, type HeaterKind } from "./parts";
@@ -64,15 +75,20 @@ function nozzleStart(ctx: CardContext, row: Row): number {
 function heatName(ctx: CardContext, row: Row, on: boolean): TemplateResult {
   const { hass } = ctx;
   const current = numericState(hass, row.sensor);
-  return html`<div class="heat-name ${on ? "on" : ""}">
-    <span class="heat-label"
-      >${icon(row.kind)}<span class="heat-title"
-        ><span class="heat-text">${row.label}</span> ${row.active ? html`<span class="heat-tag">${t(hass, "nozzle_active")}</span>` : nothing}</span
-      ></span
-    >
-    <span class="heat-now"
-      >${current === undefined ? "—" : t(hass, "heat_now", { value: formatTemperatureOf(hass, row.sensor, current) })}</span
-    >
+  const tag = row.active ? html`<span class="heat-tag">${t(hass, "nozzle_active")}</span>` : nothing;
+  return heatNameCell({
+    iconName: row.kind,
+    title: html`<span class="heat-text">${row.label}</span> ${tag}`,
+    now: current === undefined ? "—" : t(hass, "heat_now", { value: formatTemperatureOf(hass, row.sensor, current) }),
+    on,
+  });
+}
+
+/** A heating row's name cell: its icon and title, and what it reads now. */
+function heatNameCell(cell: { iconName: IconName; title: TemplateResult; now: string | TemplateResult | typeof nothing; on: boolean; extraClass?: string }): TemplateResult {
+  return html`<div class="heat-name ${cell.extraClass ?? ""} ${cell.on ? "on" : ""}">
+    <span class="heat-label">${icon(cell.iconName)}<span class="heat-title">${cell.title}</span></span>
+    <span class="heat-now">${cell.now}</span>
   </div>`;
 }
 
@@ -101,8 +117,7 @@ function heaterRow(ctx: CardContext, row: Row, options: { disabled: boolean; off
   const target = ctx.targetOf(row.target);
   const unit = temperatureUnit(hass, row.target);
   const floor = targetFloor(hass, row.target);
-  const maxAttribute = stateOf(hass, row.target)?.attributes["max"];
-  const max = typeof maxAttribute === "number" ? maxAttribute : fromCelsius(MAX[row.kind], unit);
+  const max = numberAttribute(hass, row.target, "max") ?? fromCelsius(MAX[row.kind], unit);
   const off = target === undefined || target <= floor;
   const start = Math.min(max, fromCelsius(row.kind === "nozzle" ? nozzleStart(ctx, row) : START[row.kind], unit));
   const raised = off ? start : Math.min(max, (target as number) + TARGET_STEP);
@@ -251,10 +266,7 @@ function keepWarmRow(ctx: CardContext, lock: Locks): TemplateResult | typeof not
   if (!state || !keepsWarm(ctx)) return nothing;
   const on = state.state === "heating";
   const label = t(hass, "chamber");
-  const name = html`<div class="heat-name ${on ? "on" : ""}">
-    <span class="heat-label">${icon("chamber")}<span class="heat-title"><span class="heat-text">${label}</span></span></span>
-    <span class="heat-now">${t(hass, "keep_warm")}</span>
-  </div>`;
+  const name = heatNameCell({ iconName: "chamber", title: html`<span class="heat-text">${label}</span>`, now: t(hass, "keep_warm"), on });
   if (ctx.viewOnly) {
     return html`<div class="heat-row view keep-warm">${name}<span class="heat-target ${on ? "" : "off"}">${t(hass, on ? "on" : "heater_off")}</span></div>`;
   }
@@ -307,10 +319,7 @@ function ventilationPart(ctx: CardContext, lock: Locks): TemplateResult | typeof
   const subtitle = VENT_FANS[fansOf(ctx).join(" ")];
   const label = t(hass, "chamber");
   const shown = value === undefined ? "—" : on ? formatPercent(hass, value) : t(hass, "heater_off");
-  const name = html`<div class="heat-name vent ${on ? "on" : ""}">
-    <span class="heat-label">${icon("fan")}<span class="heat-title"><span class="heat-text">${label}</span></span></span>
-    <span class="heat-now">${subtitle ? t(hass, subtitle) : nothing}</span>
-  </div>`;
+  const name = heatNameCell({ iconName: "fan", title: html`<span class="heat-text">${label}</span>`, now: subtitle ? t(hass, subtitle) : nothing, on, extraClass: "vent" });
   const said = html`<span class="sr-only">${t(hass, "vent_said")} </span>`;
   const head = html`<div class="heat-head vent-head">
     <span class="section-label" id="vent-title">${icon("fan")}${t(hass, "ventilation")}</span>

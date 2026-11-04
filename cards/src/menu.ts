@@ -140,8 +140,9 @@ export class CardMenu {
     this.host.setMenuOpen(true);
   };
 
-  /** Up, down, Home and End move through the items; Escape closes and goes
-   * back to the three dots, Tab closes and moves on. */
+  /** Up, down, Home and End move through the items; Escape and Tab close it
+   * and go back to the three dots -- from there Tab moves on in the card's
+   * order (the menu stands after the tabs in the page). */
   private readonly menuKeys = (event: KeyboardEvent): void => {
     if (event.key === "Escape") {
       event.preventDefault();
@@ -150,7 +151,8 @@ export class CardMenu {
       return;
     }
     if (event.key === "Tab") {
-      this.host.setMenuOpen(false);
+      event.preventDefault();
+      this.closeMenu(true);
       return;
     }
     const items = this.menuItems().filter((item) => !item.disabled);

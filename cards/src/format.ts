@@ -8,6 +8,12 @@ const MISSING = new Set(["unavailable", "unknown"]);
 export const stateOf = (hass: Hass, entityId: string | undefined): HassEntityState | undefined =>
   entityId ? hass.states[entityId] : undefined;
 
+/** An entity's number attribute, else undefined. */
+export function numberAttribute(hass: Hass, entityId: string | undefined, name: string): number | undefined {
+  const value = stateOf(hass, entityId)?.attributes[name];
+  return typeof value === "number" ? value : undefined;
+}
+
 /** Whether the entity has a state to show. */
 export function hasValue(hass: Hass, entityId: string | undefined): boolean {
   const state = stateOf(hass, entityId);
@@ -49,10 +55,10 @@ export function targetFloor(hass: Hass, entityId: string | undefined): number {
   return typeof min === "number" ? min : 0;
 }
 
-/** A value that is a text with something in it, else undefined. */
 /** Grams: "886\u00a0g". */
 export const formatGrams = (hass: Hass, grams: number): string => `${formatNumber(hass, grams)}\u00a0g`;
 
+/** A value that is a text with something in it, else undefined. */
 export const textOrUndefined = (value: unknown): string | undefined => (typeof value === "string" && value ? value : undefined);
 
 /** A select's options as its state lists them, else the card's own; an
@@ -117,6 +123,9 @@ export const formatPower = (hass: Hass, watts: number): string =>
 
 /** Energy in kWh, to the watt hour a plug reports it. */
 export const formatEnergy = (hass: Hass, kwh: number): string => `${formatNumber(hass, kwh, 2)}\u00a0kWh`;
+
+/** A duration that never breaks across lines: "2\u00a0h\u00a015\u00a0min". */
+export const formatDurationKept = (hass: Hass, minutes: number): string => formatDuration(hass, minutes).replace(/ /g, "\u00a0");
 
 /** Minutes as "42 min", "2 h", "1 h 23 min", "1 d 4 h". */
 export function formatDuration(hass: Hass, minutes: number): string {

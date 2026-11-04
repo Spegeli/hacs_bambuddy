@@ -9,7 +9,7 @@ const TARGET_DELAY = 800;
 
 /** How long a sent target shows at most while its entity still reports the
  * old one: BamBuddy reports back within a poll or two. */
-export const TARGET_HOLD = 10_000;
+const TARGET_HOLD = 10_000;
 
 /** A target the card shows before its entity does: being tapped, or sent
  * while the entity still reported `sentFrom`. A switch's or the light's:
@@ -27,7 +27,7 @@ const isFan = (entityId: string): boolean => entityId.startsWith("fan.");
 
 /** What the drafts need of the card. */
 export interface DraftHost {
-  hass: () => Hass | undefined;
+  hass: () => Hass;
   /** A command with this key is on its way. */
   pending: (key: string) => boolean;
   /** Sends a command; false where it did not go through. */
@@ -71,7 +71,7 @@ export class Drafts {
 
   /** A heater's target, or a fan's percentage (0 while it is off). */
   private reported(entityId: string): number | undefined {
-    const hass = this.host.hass() as Hass;
+    const hass = this.host.hass();
     if (!isFan(entityId)) return numericState(hass, entityId);
     const state = hass.states[entityId];
     if (!state || state.state === "unavailable" || state.state === "unknown") return undefined;
@@ -82,7 +82,7 @@ export class Drafts {
   /** What tells that an entity reported anew: a fan's percentage (its state
    * stays "on" between speeds), else its state. */
   private draftMark(entityId: string): string {
-    const state = (this.host.hass() as Hass).states[entityId];
+    const state = this.host.hass().states[entityId];
     return isFan(entityId) ? String(state?.attributes["percentage"] ?? 0) : (state?.state ?? "");
   }
 
@@ -131,7 +131,7 @@ export class Drafts {
   /** A switch that has a state, as the card shows it. */
   switchOn(entityId: string): boolean {
     const draft = this.map.get(entityId);
-    return draft ? draft.value === 1 : (stateOf(this.host.hass() as Hass, entityId) as HassEntityState).state === "on";
+    return draft ? draft.value === 1 : (stateOf(this.host.hass(), entityId) as HassEntityState).state === "on";
   }
 
   /** A tap on a switch -- or the chamber light: the new state shows until
@@ -141,7 +141,7 @@ export class Drafts {
     // A tap while the last one is sent: nothing (it would flip the draft back).
     if (this.host.pending(key)) return;
     const on = !this.switchOn(entityId);
-    const from = (stateOf(this.host.hass() as Hass, entityId) as HassEntityState).state;
+    const from = (stateOf(this.host.hass(), entityId) as HassEntityState).state;
     this.setDraft(entityId, { value: on ? 1 : 0, sentFrom: from, wish: on ? "on" : "off" });
     this.later(entityId, TARGET_HOLD, () => this.dropDraft(entityId));
     const sent = await this.host.run(key, domain, on ? "turn_on" : "turn_off", { entity_id: entityId });
@@ -150,7 +150,7 @@ export class Drafts {
 
   /** A select's option as the card shows it: the one just tapped, else its own. */
   chosenOption(entityId: string): string | undefined {
-    return this.map.get(entityId)?.wish ?? stateOf(this.host.hass() as Hass, entityId)?.state;
+    return this.map.get(entityId)?.wish ?? stateOf(this.host.hass(), entityId)?.state;
   }
 
   /** A tap on a select's option (the print speed): it shows at once, until
@@ -159,7 +159,7 @@ export class Drafts {
   async selectOption(entityId: string, option: string, key: string): Promise<void> {
     // A tap while the last one is sent: nothing (it would change the draft under it).
     if (this.host.pending(key)) return;
-    const from = stateOf(this.host.hass() as Hass, entityId)?.state;
+    const from = stateOf(this.host.hass(), entityId)?.state;
     this.setDraft(entityId, { value: 0, ...(from === undefined ? {} : { sentFrom: from }), wish: option });
     this.later(entityId, TARGET_HOLD, () => this.dropDraft(entityId));
     const sent = await this.host.run(key, "select", "select_option", { entity_id: entityId, option });

@@ -79,7 +79,12 @@ export class LiveView {
   private liveGrace?: ReturnType<typeof setTimeout>;
   private hiddenWait?: ReturnType<typeof setTimeout>;
   /** The running stream's address; none while no stream runs. */
-  streamSrc?: string;
+  private streamSrc?: string;
+
+  /** A live picture's address is set: a stream may be open. */
+  get hasStream(): boolean {
+    return this.streamSrc !== undefined;
+  }
   /** The frame rate the running stream asked for. */
   private streamFps?: number;
   /** The stream addresses this page loaded: started again at one of them,

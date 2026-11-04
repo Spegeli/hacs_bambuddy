@@ -4,23 +4,23 @@
 // Assistant hands a card a new hass on every state change in the house.
 import { html, LitElement, nothing, type CSSResultGroup, type PropertyValues, type TemplateResult } from "lit";
 
-import { callAction, errorText, printObjects } from "./actions";
+import { callAction, errorText } from "./actions";
 import { controlView, sectionShown, type Step } from "./control-view";
-import { dialogView, DRYING, type Dialog, type DryingField, type DryingSpool } from "./dialogs";
-import { filamentChanges } from "./filament-dialog";
+import { dialogView, type Dialog, type DialogActions, type DryingField } from "./dialogs";
+import { filamentChanges, filamentKey, withoutScan } from "./filament-dialog";
 import { onInventory } from "./inventory-dialog";
-import { findPrinter, hasControls, hasPrinterIdentifier, notListed, printerDevices, printerOnline, printStatus, shownUnits } from "./discovery";
+import { findPrinter, hasControls, hasPrinterIdentifier, noDataSince, noPrinterData, notListed, printerDevices, printerOnline, printStatus, shownUnits } from "./discovery";
 import { filamentView } from "./filament-view";
 import { BUSY, FILAMENT_CHANGE, hasValue, RUNNING, stateOf, WITH_JOB } from "./format";
 import { BamBuddyPrinterCardEditor, EDITOR_TAG, loadForm } from "./editor";
 import { DEFAULTS, settingsOf, validateConfig, type Settings } from "./forms";
-import { runCheck, type CheckDialog } from "./check";
 import { chips, subtitle, type DialogChip } from "./header";
 import { icon, printerDrawing, type IconName } from "./icons";
 import { rememberLocale, t, type TextKey } from "./i18n";
-import { AMS_2_PRO, asOnline, connection, nextIndex, printerTitle, sample, sampleKey, slotOf, snack, type CardContext, type Slot } from "./parts";
+import { asOnline, connection, nextIndex, printerTitle, sample, sampleKey, slotOf, snack, type CardContext } from "./parts";
 import { defineCard, defineElement } from "./register";
-import { forgetHandoverForTests, ScanSession, withoutScan } from "./scan-session";
+import { ScanSession } from "./scan-session";
+import { DialogFlows } from "./card-dialogs";
 import { Drafts } from "./drafts";
 import { CardMenu } from "./menu";
 import { LiveView, type Fullscreen } from "./live";
@@ -28,7 +28,7 @@ import { FilamentSession } from "./filament-session";
 import { cardPlugs, starting } from "./power";
 import { offlineJob, stateText, statusView } from "./status-view";
 import { cardStyles } from "./styles";
-import type { AmsRefs, CardConfig, Hass, HassEntityState, PrinterRefs, StatusBlock, View } from "./types";
+import type { CardConfig, Hass, PrinterRefs, StatusBlock, View } from "./types";
 
 const TAG = "bambuddy-printer-card";
 
@@ -67,7 +67,13 @@ const SENT_TIMEOUT = 3_000;
 // The redraw of a count while it runs (a plug starting, a connection check).
 const TICK_MS = 1000;
 
-const clamp = (value: number, min: number, max: number): number => Math.min(max, Math.max(min, value));
+/** How long the card waits for the printer's data before it says there is
+ * none: Home Assistant starting or the entry reloading take seconds. */
+const NO_DATA_WAIT_MS = 30_000;
+
+/** An element to focus: a selector, or an element of the open dialog by an
+ * attribute's value. */
+type Target = string | { attribute: string; value: string };
 
 export class BamBuddyPrinterCard extends LitElement {
   static override properties = {
@@ -143,12 +149,12 @@ export class BamBuddyPrinterCard extends LitElement {
     },
     pending: (key) => this.pending.has(key),
     run: (key, domain, service, data) => this.run(key, domain, service, data),
-    startCheck: () => this.startCheck(),
+    startCheck: () => this.flows.startCheck(),
   });
 
   /** The slot dialog's data: its answers, each into the dialog of its own open. */
   private readonly filament = new FilamentSession({
-    hass: () => this.hass,
+    hass: () => this.hass as Hass,
     refs: () => this.refs,
     root: () => this.shadow,
     updateComplete: () => this.updateComplete,
@@ -202,8 +208,7 @@ export class BamBuddyPrinterCard extends LitElement {
     preview: () => this.preview,
     coverLarge: () => this.coverLarge,
     closeCover: () => {
-      this.coverLarge = false;
-      this.coverJob = undefined;
+      this.closeCover();
     },
     liveWanted: () => this.liveWanted,
     setLiveWanted: (wanted) => {
@@ -222,9 +227,7 @@ export class BamBuddyPrinterCard extends LitElement {
       this.streamFailed = failed;
     },
     focusAfterUpdate: (...selectors) => this.focusAfterUpdate(...selectors),
-    noteHidden: () => {
-      this.scan.hiddenAt = Date.now();
-    },
+    noteHidden: () => this.scan.noteHidden(),
     openFps: () => {
       this.dialogBack = undefined;
       this.dialog = { kind: "camera" };
@@ -232,9 +235,23 @@ export class BamBuddyPrinterCard extends LitElement {
     },
   });
 
+  /** The dialogs' own flows (card-dialogs.ts): drying, skipping, the
+   * maintenance tasks, the connection check, "Copied". */
+  private readonly flows = new DialogFlows({
+    hass: () => this.hass as Hass,
+    refs: () => this.refs,
+    dialog: () => this.dialog,
+    setDialog: (dialog) => {
+      this.dialog = dialog;
+    },
+    focusAfterUpdate: (...targets) => this.focusAfterUpdate(...targets),
+    dropSent: () => this.dropSent(),
+    requestUpdate: () => this.requestUpdate(),
+  });
+
   /** Targets, switches and options tapped: shown before their entities report them. */
   private readonly drafts = new Drafts({
-    hass: () => this.hass,
+    hass: () => this.hass as Hass,
     pending: (key) => this.pending.has(key),
     run: (key, domain, service, data) => this.run(key, domain, service, data),
     update: () => this.requestUpdate(),
@@ -252,11 +269,11 @@ export class BamBuddyPrinterCard extends LitElement {
   private seenDevices?: Hass["devices"];
   private errorTimer?: ReturnType<typeof setTimeout>;
   private sentTimer?: ReturnType<typeof setTimeout>;
-  private copiedTimer?: ReturnType<typeof setTimeout>;
-  /** Draws the seconds of a connection check while it runs. */
-  private checkTimer?: ReturnType<typeof setInterval>;
   /** Draws the count every second while the printer starts after its plug. */
   private startingTimer?: ReturnType<typeof setInterval>;
+  /** Since when the printer has had no data, and the redraw at the wait's end. */
+  private noDataFrom?: number;
+  private noDataTimer?: ReturnType<typeof setTimeout>;
   /** In the card editor: its preview shows examples. */
   private inEditor = false;
   /** The open dialog came from the menu: closing it focuses the three dots. */
@@ -264,8 +281,10 @@ export class BamBuddyPrinterCard extends LitElement {
   /** The chip's plugs dialog, or the HMS messages, a question or the
    * switch-off's settings were opened from: they go back to it. */
   private dialogBack: Dialog | undefined = undefined;
-  /** The selector of the button in that dialog that asked the question. */
-  private asker: string | undefined = undefined;
+  /** The button in that dialog that asked the question: a selector, or an
+   * attribute and its value -- a name may hold any character, which no
+   * selector need parse. */
+  private asker: Target | undefined = undefined;
 
   /** A question, or a second dialog, opens over the open one: its Cancel
    * comes back to it, the keyboard's place on the button that asked --
@@ -283,8 +302,7 @@ export class BamBuddyPrinterCard extends LitElement {
     // An answer by its key (two messages may offer the same), else by its name.
     const answer = active?.getAttribute("data-answer");
     const label = active?.getAttribute("aria-label");
-    const quoted = (value: string): string => value.replace(/["\\]/g, "\\$&");
-    this.asker = answer ? `dialog [data-answer="${quoted(answer)}"]` : label ? `dialog [aria-label="${quoted(label)}"]` : undefined;
+    this.asker = answer ? { attribute: "data-answer", value: answer } : label ? { attribute: "aria-label", value: label } : undefined;
   }
 
   /** The visual editor: Home Assistant's form with the card's fields, once
@@ -312,12 +330,13 @@ export class BamBuddyPrinterCard extends LitElement {
     this.view = this.settings.startView;
     this.amsOpen = new Map();
     this.liveWanted = false;
-    this.coverLarge = false;
-    this.coverJob = undefined;
+    this.closeCover();
     this.refs = undefined;
+    this.noDataFrom = undefined;
+    this.stopNoDataTimer();
     // The stream too: it may be another printer's now (the first config
     // comes before the card is drawn).
-    if (this.live.streamSrc !== undefined) this.live.endLiveStream();
+    if (this.live.hasStream) this.live.endLiveStream();
     this.streamFailed = false;
     // A dialog belongs to the printer it was opened for.
     this.dialog = undefined;
@@ -347,8 +366,10 @@ export class BamBuddyPrinterCard extends LitElement {
     // Back on the page itself (a dashboard only moved it): its dialog is its own.
     this.scan.rejoin();
     window.addEventListener("resize", this.filament.onResize);
+    // Back while waiting for the printer's data: the rest of the wait.
+    this.armNoDataTimer();
     // Back while a check runs: its seconds count on.
-    if (this.dialog?.kind === "check" && this.dialog.running) this.startCheckTimer();
+    this.flows.resume();
     document.addEventListener("visibilitychange", this.live.onVisibility);
     document.addEventListener("pointerdown", this.menu.onPointerDown);
     this.requestUpdate();
@@ -360,6 +381,7 @@ export class BamBuddyPrinterCard extends LitElement {
     this.live.stopHiddenWait();
     document.removeEventListener("pointerdown", this.menu.onPointerDown);
     this.menuOpen = false;
+    this.stopNoDataTimer();
     // Leaving the page ends the live view, after a grace where it runs.
     this.live.leavePage();
     // An error belongs to the moment it happened: none waits for the return.
@@ -368,8 +390,7 @@ export class BamBuddyPrinterCard extends LitElement {
     this.error = undefined;
     clearTimeout(this.sentTimer);
     this.sent = false;
-    clearTimeout(this.copiedTimer);
-    this.stopCheckTimer();
+    this.flows.stop();
     if (this.dialog?.kind === "info") this.dialog = { kind: "info" };
     // A phone's camera app freezes the page; back, Home Assistant reconnects
     // and rebuilds the dashboard with new cards: the next card of this
@@ -421,19 +442,49 @@ export class BamBuddyPrinterCard extends LitElement {
       this.refs = findPrinter(hass, this.config.printer);
     }
     this.followJobSpools(hass);
+    this.followNoData(hass);
+    this.scan.dropLeftScan();
     // The large picture goes with its job, and offline: the mode's own
     // then -- nothing on tap, the live view always.
     if (this.coverLarge) {
       const refs = this.refs;
       const gone = !refs || this.preview || !printerOnline(hass, refs) || this.coverUrl(hass, refs) === undefined || this.jobOf(hass, refs) !== this.coverJob;
       if (gone) {
-        this.coverLarge = false;
-        this.coverJob = undefined;
+        this.closeCover();
         this.liveWanted = false;
       }
     }
     this.live.follow();
     this.drafts.follow(hass);
+  }
+
+  /** The wait for the printer's data: noted when it goes, over when it
+   * comes back; a redraw at the wait's end. A printer BamBuddy no longer
+   * lists waits for nothing: the server says why. */
+  private followNoData(hass: Hass): void {
+    const refs = this.refs;
+    if (!refs || !noPrinterData(hass, refs) || notListed(hass, refs)) {
+      this.noDataFrom = undefined;
+      this.stopNoDataTimer();
+      return;
+    }
+    this.noDataFrom ??= noDataSince(hass, refs, Date.now());
+    this.armNoDataTimer();
+  }
+
+  private armNoDataTimer(): void {
+    if (this.noDataTimer || this.noDataFrom === undefined || !this.isConnected) return;
+    const left = this.noDataFrom + NO_DATA_WAIT_MS - Date.now();
+    if (left <= 0) return;
+    this.noDataTimer = setTimeout(() => {
+      this.noDataTimer = undefined;
+      this.requestUpdate();
+    }, left);
+  }
+
+  private stopNoDataTimer(): void {
+    clearTimeout(this.noDataTimer);
+    this.noDataTimer = undefined;
   }
 
   /** The count's second hand: on while the printer starts, else off. */
@@ -507,22 +558,39 @@ export class BamBuddyPrinterCard extends LitElement {
   }
 
   /** Focuses an element of the card once it is drawn: the first of the
-   * selectors that finds one. */
-  private focusAfterUpdate(...selectors: string[]): void {
+   * targets that finds one. */
+  private focusAfterUpdate(...targets: Target[]): void {
     void this.updateComplete.then(() => {
-      for (const selector of selectors) {
-        const element = this.renderRoot.querySelector<HTMLElement>(selector);
+      for (const target of targets) {
+        const element =
+          typeof target === "string"
+            ? this.renderRoot.querySelector<HTMLElement>(target)
+            : [...this.renderRoot.querySelectorAll<HTMLElement>(`dialog [${target.attribute}]`)].find((candidate) => candidate.getAttribute(target.attribute) === target.value);
         if (element) return element.focus();
       }
     });
   }
 
+  /** The job's picture small again, and no job it belongs to. */
+  private closeCover(): void {
+    this.coverLarge = false;
+    this.coverJob = undefined;
+  }
+
+  /** Escape on the large picture, or on the small one while it is large:
+   * small again, as its ✕ does. */
+  private readonly coverKeys = (event: KeyboardEvent): void => {
+    if (event.key !== "Escape" || !this.coverLarge) return;
+    event.preventDefault();
+    event.stopPropagation();
+    this.toggleCover();
+  };
+
   /** The job's picture large, or small again: the area then shows what it
    * showed before. */
   private readonly toggleCover = (): void => {
     if (this.coverLarge) {
-      this.coverLarge = false;
-      this.coverJob = undefined;
+      this.closeCover();
       this.focusAfterUpdate("button.picture-open");
       return;
     }
@@ -599,66 +667,6 @@ export class BamBuddyPrinterCard extends LitElement {
     this.dispatchEvent(new CustomEvent("hass-more-info", { bubbles: true, composed: true, detail: { entityId } }));
   }
 
-  /** The drying dialog, set to what the loaded spools recommend: the
-   * gentlest temperature among them -- hotter can soften a spool -- and the
-   * longest time, within the unit's limits; else 55 °C for 8 h. Where the
-   * spools want different temperatures, the dialog names them. */
-  private openDrying(unit: AmsRefs): void {
-    const hass = this.hass as Hass;
-    const maxTemperature = unit.model === AMS_2_PRO ? DRYING.maxTemperatureAms2Pro : DRYING.maxTemperature;
-    const loaded = unit.slots.map((entityId) => slotOf(hass, entityId)).filter((slot) => !slot.empty && !slot.unknown);
-    const recommended = (slot: Slot, name: string): number | undefined => {
-      const value = (stateOf(hass, slot.entityId) as HassEntityState).attributes[name];
-      return typeof value === "number" && value > 0 ? Math.round(value) : undefined;
-    };
-    // Each material and temperature once, the coolest first.
-    const spools = new Map<string, DryingSpool>();
-    for (const slot of loaded) {
-      const temperature = recommended(slot, "drying_temp");
-      const material = slot.type || slot.name;
-      if (temperature !== undefined) spools.set(`${material} ${temperature}`, { material, temperature });
-    }
-    const listed = [...spools.values()].sort((a, b) => a.temperature - b.temperature);
-    const temperatures = listed.map((spool) => spool.temperature);
-    const durations = loaded.map((slot) => recommended(slot, "drying_time")).filter((value): value is number => value !== undefined);
-    this.dialog = {
-      kind: "drying",
-      unit,
-      temperature: clamp(temperatures[0] ?? DRYING.temperature, DRYING.minTemperature, maxTemperature),
-      duration: clamp(durations.length ? Math.max(...durations) : DRYING.duration, DRYING.minDuration, DRYING.maxDuration),
-      maxTemperature,
-      suggested: temperatures.length > 0 || durations.length > 0,
-      ...(listed.length ? { suggestedFor: [...new Set(listed.map((spool) => spool.material))].join(", ") } : {}),
-      differing: new Set(temperatures).size > 1 ? listed : [],
-    };
-  }
-
-  /** Opens the list of the print's objects; it fills when the integration
-   * answers. An answer for a dialog closed meanwhile is dropped. */
-  private async openSkip(): Promise<void> {
-    const hass = this.hass as Hass;
-    const deviceId = (this.refs as PrinterRefs).deviceId;
-    const opened: Dialog = { kind: "skip", loading: true, objects: [], chosen: [] };
-    this.dialog = opened;
-    let next: Dialog;
-    try {
-      next = { ...opened, loading: false, objects: await printObjects(hass, deviceId) };
-    } catch (error) {
-      const reason = await errorText(hass, error);
-      next = { ...opened, loading: false, error: reason };
-    }
-    if (this.dialog === opened) this.dialog = next;
-  }
-
-  private toggleObject(id: number): void {
-    const dialog = this.dialog;
-    if (dialog?.kind !== "skip") return;
-    const chosen = dialog.chosen.includes(id) ? dialog.chosen.filter((item) => item !== id) : [...dialog.chosen, id];
-    // In the order of the list, as the printer reads it.
-    const order = dialog.objects.map((item) => item.id);
-    this.dialog = { ...dialog, chosen: chosen.sort((a, b) => order.indexOf(a) - order.indexOf(b)) };
-  }
-
   /** Ends the dialog. It closes before it goes: the browser then gives the
    * focus back to the button that opened it, where a dialog just removed
    * leaves it nowhere. One the menu opened gives it to the three dots. */
@@ -675,7 +683,7 @@ export class BamBuddyPrinterCard extends LitElement {
       return;
     }
     const fromMenu = this.dialogFromMenu;
-    this.stopCheckTimer();
+    this.flows.stopCheckTimer();
     this.dialog = undefined;
     this.dialogFromMenu = false;
     const element = this.renderRoot.querySelector("dialog");
@@ -683,26 +691,10 @@ export class BamBuddyPrinterCard extends LitElement {
     if (fromMenu) this.menu.focusMenuButton();
   };
 
-  /** Copies a text; "Copied" shows in the printer information for a moment.
-   * A browser that refuses says nothing: the text is still there to select. */
-  private async copy(text: string): Promise<void> {
-    try {
-      await navigator.clipboard.writeText(text);
-    } catch {
-      return;
-    }
-    if (this.dialog?.kind !== "info") return;
-    this.dialog = { ...this.dialog, copied: true };
-    clearTimeout(this.copiedTimer);
-    this.copiedTimer = setTimeout(() => {
-      if (this.dialog?.kind === "info") this.dialog = { kind: "info" };
-    }, SENT_TIMEOUT);
-  }
-
   private readonly confirmDialog = (): void => {
     const dialog = this.dialog;
     if (dialog?.kind === "check") {
-      void this.startCheck();
+      void this.flows.startCheck();
       return;
     }
     // A question from the filament dialog or the HMS messages ends it: the
@@ -719,10 +711,10 @@ export class BamBuddyPrinterCard extends LitElement {
       void this.run("skip", "bambuddy", "skip_objects", { device_id: this.refs?.deviceId, objects: dialog.chosen });
     } else if (dialog.kind === "filament" && onInventory(this.hass as Hass, dialog)) {
       if (dialog.chosenSpool !== undefined) {
-        void this.run(`filament_${dialog.entityId}`, "bambuddy", "assign_spool", { entity_id: dialog.entityId, spool_id: dialog.chosenSpool });
+        void this.run(filamentKey(dialog.entityId), "bambuddy", "assign_spool", { entity_id: dialog.entityId, spool_id: dialog.chosenSpool });
       }
     } else if (dialog.kind === "filament") {
-      void this.run(`filament_${dialog.entityId}`, "bambuddy", "set_filament", { entity_id: dialog.entityId, ...filamentChanges(dialog) });
+      void this.run(filamentKey(dialog.entityId), "bambuddy", "set_filament", { entity_id: dialog.entityId, ...filamentChanges(dialog) });
     } else if (dialog.kind === "drying") {
       void this.run(`dry_${dialog.unit.deviceId}`, "bambuddy", "start_drying", {
         device_id: dialog.unit.deviceId,
@@ -732,26 +724,14 @@ export class BamBuddyPrinterCard extends LitElement {
     }
   };
 
-  /** Takes a drying value, clamped; an invalid one keeps the last. */
-  private setDrying(field: DryingField, value: number): number {
-    const dialog = this.dialog as Extract<Dialog, { kind: "drying" }>;
-    if (!Number.isFinite(value)) return dialog[field];
-    const next =
-      field === "temperature"
-        ? clamp(Math.round(value), DRYING.minTemperature, dialog.maxTemperature)
-        : clamp(Math.round(value), DRYING.minDuration, DRYING.maxDuration);
-    this.dialog = { ...dialog, [field]: next };
-    return next;
-  }
-
   private readonly dialogActions = {
     close: this.closeDialog,
     confirm: this.confirmDialog,
-    setDrying: (field: DryingField, value: number) => this.setDrying(field, value),
-    toggleObject: (id: number) => this.toggleObject(id),
+    setDrying: (field: DryingField, value: number) => this.flows.setDrying(field, value),
+    toggleObject: (id: number) => this.flows.toggleObject(id),
     ...this.filament.actions,
-    copy: (text: string) => void this.copy(text),
-    confirmTask: (id: number | undefined) => this.confirmTask(id),
+    copy: (text: string) => void this.flows.copy(text),
+    confirmTask: (id: number | undefined) => this.flows.confirmTask(id),
     cancel: (event: Event) => {
       if (this.dialogBack) {
         event.preventDefault();
@@ -760,95 +740,13 @@ export class BamBuddyPrinterCard extends LitElement {
       }
       if (this.dialog?.kind !== "maintenance" || this.dialog.confirming === undefined) return;
       event.preventDefault();
-      this.confirmTask(undefined);
+      this.flows.confirmTask(undefined);
     },
-    markDone: (id: number, name: string) => void this.markDone(id, name),
+    markDone: (id: number, name: string) => void this.flows.markDone(id, name),
     ...this.scan.actions,
-    toggleFold: (which: "pass" | "skip") => {
-      const dialog = this.dialog;
-      if (dialog?.kind !== "check") return;
-      const open = dialog.open ?? [];
-      this.dialog = { ...dialog, open: open.includes(which) ? open.filter((item) => item !== which) : [...open, which] };
-    },
+    toggleFold: (which: "pass" | "skip") => this.flows.toggleFold(which),
     now: () => Date.now(),
-  };
-
-  /** Asks in a task's row whether to mark it done, or takes the question
-   * back. The focus goes with it: to its Cancel, then back to the row's Done. */
-  private confirmTask(id: number | undefined): void {
-    const dialog = this.dialog;
-    if (dialog?.kind !== "maintenance") return;
-    // A task being marked meanwhile keeps waiting, and says how it ended.
-    const marking = dialog.marking !== undefined ? { marking: dialog.marking } : {};
-    this.dialog = id === undefined ? { kind: "maintenance", ...marking } : { kind: "maintenance", ...marking, confirming: id };
-    if (id !== undefined) {
-      this.dropSent();
-      this.focusAfterUpdate(".maint-confirm .btn.plain");
-    } else if (dialog.confirming !== undefined) this.focusAfterUpdate(`.maint-done[data-task="${dialog.confirming}"]`);
-  }
-
-  /** Marks a maintenance task done. The dialog stays open -- a first visit
-   * often marks several --, so a failure is said in it, not under it. */
-  private async markDone(id: number, name: string): Promise<void> {
-    const hass = this.hass as Hass;
-    // Another task may be marked meanwhile: each waits for its own answer.
-    const before = this.dialog?.kind === "maintenance" ? (this.dialog.marking ?? []) : [];
-    this.dialog = { kind: "maintenance", marking: [...before, id] };
-    let error: string | undefined;
-    try {
-      await callAction(hass, "bambuddy", "mark_maintenance_done", { device_id: this.refs?.deviceId, task_id: id });
-    } catch (caught) {
-      error = await errorText(hass, caught);
-    }
-    if (this.dialog?.kind !== "maintenance" || !this.dialog.marking?.includes(id)) return;
-    const asking = this.dialog.confirming;
-    const others = this.dialog.marking.filter((other) => other !== id);
-    // A failure of another task, said meanwhile, stays said.
-    const said = error ?? this.dialog.error;
-    this.dialog = {
-      kind: "maintenance",
-      ...(others.length ? { marking: others } : {}),
-      ...(asking === undefined ? {} : { confirming: asking }),
-      ...(said === undefined ? {} : { error: said }),
-      // Marked: said to a screen reader by the name the row shows.
-      ...(error === undefined ? { marked: name } : {}),
-    };
-    if (asking !== undefined) return;
-    // Its Done waited, disabled; the focus goes back to it now.
-    this.focusAfterUpdate(`.maint-done[data-task="${id}"]`, "dialog .btn.safe");
-  }
-
-  /** Runs BamBuddy's connection check; the dialog counts the seconds until
-   * it answers. An answer for a dialog closed or run again meanwhile is
-   * dropped. */
-  private async startCheck(): Promise<void> {
-    const hass = this.hass as Hass;
-    const deviceId = (this.refs as PrinterRefs).deviceId;
-    const opened: CheckDialog = { kind: "check", running: true, started: Date.now() };
-    this.dialog = opened;
-    this.startCheckTimer();
-    // "Check again" goes while it runs: the focus stays in the dialog.
-    this.focusAfterUpdate("dialog .btn.safe");
-    let next: CheckDialog;
-    try {
-      next = { ...opened, running: false, result: await runCheck(hass, deviceId) };
-    } catch (error) {
-      next = { ...opened, running: false, error: await errorText(hass, error) };
-    }
-    if (this.dialog !== opened) return;
-    this.stopCheckTimer();
-    this.dialog = next;
-  }
-
-  private startCheckTimer(): void {
-    this.stopCheckTimer();
-    this.checkTimer = setInterval(() => this.requestUpdate(), TICK_MS);
-  }
-
-  private stopCheckTimer(): void {
-    clearInterval(this.checkTimer);
-    this.checkTimer = undefined;
-  }
+  } satisfies DialogActions;
 
   // --- Rendering ------------------------------------------------------------
 
@@ -858,10 +756,11 @@ export class BamBuddyPrinterCard extends LitElement {
     const status = online ? reported : "offline";
     // The print status has a state even while the printer is offline: none
     // means the integration has no answer from BamBuddy at all.
-    const unreachable = reported === "unavailable";
+    const unreachable = noPrinterData(hass, refs);
     // No data because BamBuddy no longer lists the printer: the
     // integration says so (it waits under Repairs).
     const missing = unreachable && notListed(hass, refs);
+    const waiting = unreachable && !missing && this.noDataFrom !== undefined && Date.now() - this.noDataFrom < NO_DATA_WAIT_MS;
     const permitted = hasControls(refs);
     const settings = this.settings;
     const canControl = permitted && !settings.readOnly;
@@ -876,6 +775,7 @@ export class BamBuddyPrinterCard extends LitElement {
       online,
       unreachable,
       missing,
+      waiting,
       busy: BUSY.has(status),
       running: RUNNING.has(status),
       changing: online && FILAMENT_CHANGE.has(stateOf(hass, refs.amsStatus)?.state ?? ""),
@@ -894,9 +794,9 @@ export class BamBuddyPrinterCard extends LitElement {
         this.dropSent();
         this.dialog = { kind: "confirm", ...confirmation };
       },
-      dry: (unit) => this.openDrying(unit),
+      dry: (unit) => this.flows.openDrying(unit),
       openFilament: (slot, title, inventoryOnly) => this.filament.openFilament(slot, title, inventoryOnly),
-      skip: () => void this.openSkip(),
+      skip: () => void this.flows.openSkip(),
       targetOf: (entityId) => this.drafts.targetOf(entityId),
       stepTarget: (entityId, value) => this.drafts.stepTarget(entityId, value),
       setTargets: (targets) => this.drafts.setTargets(targets),
@@ -918,7 +818,7 @@ export class BamBuddyPrinterCard extends LitElement {
       },
       checkConnection: () => {
         this.dialogFromMenu = false;
-        void this.startCheck();
+        void this.flows.startCheck();
       },
       openAutoOff: () => {
         // The row that opened them: its label changes with the settings.
@@ -1007,10 +907,10 @@ export class BamBuddyPrinterCard extends LitElement {
           aria-selected=${view === shown ? "true" : "false"}
           aria-controls=${PANEL}
           tabindex=${view === shown ? 0 : -1}
-          title=${t(hass, `tab_${view}` as TextKey)}
+          title=${t(hass, `tab_${view}`)}
           @click=${() => select(view)}
         >
-          <span class="tab-icon" aria-hidden="true">${icon(TAB_ICONS[view])}</span><span class="tab-text">${t(hass, `tab_${view}` as TextKey)}</span>
+          <span class="tab-icon" aria-hidden="true">${icon(TAB_ICONS[view])}</span><span class="tab-text">${t(hass, `tab_${view}`)}</span>
         </button>`,
       )}
     </div>`;
@@ -1046,6 +946,7 @@ export class BamBuddyPrinterCard extends LitElement {
             title=${t(hass, opened ? "cover_close" : "cover_open")}
             aria-pressed=${opened ? "true" : "false"}
             @click=${this.toggleCover}
+            @keydown=${this.coverKeys}
           >
             ${content}
           </button>`
@@ -1060,7 +961,7 @@ export class BamBuddyPrinterCard extends LitElement {
     const hass = this.hass as Hass;
     const coverUrl = this.coverLarge && this.refs ? this.coverUrl(hass, this.refs) : undefined;
     if (coverUrl !== undefined) {
-      return html`<div class="big-cover">
+      return html`<div class="big-cover" @keydown=${this.coverKeys}>
         <img
           src=${coverUrl}
           alt=""
@@ -1141,6 +1042,3 @@ defineCard(TAG, BamBuddyPrinterCard, {
   name: () => t(undefined, "picker_name"),
   description: () => t(undefined, "picker_description"),
 });
-
-// The tests reach it through the card's module, as before.
-export { forgetHandoverForTests };

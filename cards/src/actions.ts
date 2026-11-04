@@ -151,7 +151,7 @@ export interface SpoolList {
 
 const FITS = new Set(["not_for_ams", "not_for_nozzle", "not_for_printer", "by_chip", "printing"]);
 
-export function placeOf(value: unknown): SpoolPlace | undefined {
+function placeOf(value: unknown): SpoolPlace | undefined {
   if (typeof value !== "object" || value === null) return undefined;
   const place = value as Record<string, unknown>;
   if (place["this_slot"] === true) return { here: true };

@@ -23,7 +23,7 @@ import {
 } from "./header";
 import { icon } from "./icons";
 import { t, type TextKey } from "./i18n";
-import { actionButton, connection, dialogNote, noData, snack, stopQuestion, textAttribute, type CardContext } from "./parts";
+import { actionButton, connection, dialogNote, noData, sideAt, snack, stopQuestion, textAttribute, type CardContext } from "./parts";
 
 /** Bambu Lab's wiki on HMS messages: BamBuddy links every message there
  * (a page per code would need Bambu's own table). */
@@ -73,7 +73,7 @@ export function hmsContent(ctx: CardContext): TemplateResult {
               return html`<div class="hms-item sev-${SEVERITIES[severity].tone}">
                 ${icon(SEVERITIES[severity].icon)}
                 <div class="hms-body">
-                  ${description ? html`<span class="sr-only">${t(hass, `hms_${severity}` as TextKey)}: </span>` : nothing}<span class="hms-text" id="hms-text-${index}">${description ?? t(hass, "hms_no_text", { severity: t(hass, `hms_${severity}` as TextKey) })}</span>
+                  ${description ? html`<span class="sr-only">${t(hass, `hms_${severity}`)}: </span>` : nothing}<span class="hms-text" id="hms-text-${index}">${description ?? t(hass, "hms_no_text", { severity: t(hass, `hms_${severity}`) })}</span>
                   ${code ? html`<span class="hms-code">${code}</span>` : nothing}
                   ${hmsAnswers(ctx, error, `hms-text-${index}`)}
                 </div>
@@ -157,8 +157,8 @@ function nozzleRow(ctx: CardContext): TemplateResult | typeof nothing {
   return specRow(
     t(hass, "info_nozzles"),
     html`${lines.map(([index, parts]) => {
-      const name = t(hass, index === 0 ? "nozzle_left" : "nozzle_right");
-      const short = t(hass, index === 0 ? "side_left_short" : "side_right_short");
+      const name = t(hass, `nozzle_${sideAt(index)}`);
+      const short = t(hass, `side_${sideAt(index)}_short`);
       return html`<span
         ><span class="spec-side" title=${name}>${icon("nozzle")}<span aria-hidden="true">${short}:</span><span class="sr-only">${name}:</span></span>
         ${parts}</span

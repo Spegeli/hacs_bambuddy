@@ -5,11 +5,11 @@ import { html, nothing, type TemplateResult } from "lit";
 
 import type { ListedSpool, SpoolList, SpoolPlace } from "./actions";
 import type { DialogActions, DialogButtons } from "./dialogs";
-import { chosenFilament, selectValue, type FilamentDialog } from "./filament-dialog";
-import { rgbOf } from "./format";
+import { chosenFilament, selectValue, type FilamentDialog, type ScanReason } from "./filament-dialog";
+import { numberAttribute, rgbOf } from "./format";
 import { icon } from "./icons";
 import { t, type TextKey } from "./i18n";
-import { AMS_HT, AMS_LITE, dialogNote, nextIndex, printerTitle, radioLeave, slotOf, spoolDot, spoolLine, warnings, type CardContext, type InventorySpool, type Slot } from "./parts";
+import { AMS_HT, AMS_LITE, dialogNote, nextIndex, printerTitle, radioLeave, slotOf, spoolDot, spoolLine, waitLine, warnings, type CardContext, type InventorySpool, type Slot, unitLetterTogether } from "./parts";
 import type { Hass } from "./types";
 
 const TABS = ["set", "inventory"] as const;
@@ -70,14 +70,20 @@ export function inventoryCard(ctx: CardContext, spool: InventorySpool, unassign?
   </div>`;
 }
 
-/** The inventory's way: the spools to choose from, where they may be assigned. */
+/** The inventory tab's panel while its list loads or failed. */
+const invPanel = (content: TemplateResult): TemplateResult => html`<div id="inv-panel" role="tabpanel" aria-labelledby="inv-tab-inventory">${content}</div>`;
+
+/** Why a scan read no spool, in words. */
+const scanReasonText = (hass: Hass, scan: { reason?: ScanReason }): string => t(hass, `inv_scan_${scan.reason ?? "failed"}`);
+
 /** Filters and the search show from this many spools on. */
 const SEARCH_FROM = 5;
 
 /** BamBuddy's AMS letters: unit 0-3 AMS A-D, 128-135 AMS HT A-H, 6 the AMS Lite. */
 function unitName(amsId: number): string {
   if (amsId === 6) return AMS_LITE;
-  return amsId >= 128 ? `AMS HT ${String.fromCharCode(65 + amsId - 128)}` : `AMS ${String.fromCharCode(65 + amsId)}`;
+  // A no-break space: "AMS A" never breaks across lines.
+  return amsId >= 128 ? `AMS\u00a0HT\u00a0${String.fromCharCode(65 + amsId - 128)}` : `AMS\u00a0${String.fromCharCode(65 + amsId)}`;
 }
 
 /** BamBuddy's global id of a slot, as the slot sensors carry it. */
@@ -99,7 +105,7 @@ function whereOf(ctx: CardContext, place: Exclude<SpoolPlace, { here: true }>): 
     if (place.amsId === 255) {
       const sides = refs.externalSpools.length > 1;
       const side = !sides ? "" : place.trayId === 1 ? "_right" : "_left";
-      return { line: t(hass, `inv_ext${side}` as TextKey), at: t(hass, `inv_other_ext${side}` as TextKey), from: t(hass, `inv_from_ext${side}` as TextKey) };
+      return { line: t(hass, `inv_ext${side}`), at: t(hass, `inv_other_ext${side}`), from: t(hass, `inv_from_ext${side}`) };
     }
     // The unit's name as the card shows it, its slot by the sensor's number.
     const tray = globalTray(place.amsId, place.trayId);
@@ -107,10 +113,9 @@ function whereOf(ctx: CardContext, place: Exclude<SpoolPlace, { here: true }>): 
     let slot: number | undefined = place.amsId >= 128 ? undefined : place.trayId + 1;
     for (const ams of refs.ams) {
       for (const entityId of ams.slots) {
-        const attributes = ctx.hass.states[entityId]?.attributes ?? {};
-        if (attributes["tray_id"] !== tray) continue;
-        unit = place.amsLabel ?? ams.name;
-        slot = ams.model === AMS_HT ? undefined : typeof attributes["slot"] === "number" ? attributes["slot"] : slot;
+        if (hass.states[entityId]?.attributes["tray_id"] !== tray) continue;
+        unit = place.amsLabel ?? unitLetterTogether(ams.name);
+        slot = ams.model === AMS_HT ? undefined : (numberAttribute(hass, entityId, "slot") ?? slot);
       }
     }
     const short = slot === undefined ? unit : t(hass, "inv_other_slot", { unit, slot });
@@ -340,7 +345,7 @@ function cameraArea(hass: Hass, dialog: FilamentDialog, actions: DialogActions):
           </div>
           <p class="inv-camera-help">${t(hass, scan.foreign ? "inv_scan_not_label" : "inv_scan_help")}</p>`
       : html`<div class="inv-camera-blocked">
-          <p class="inv-camera-reason">${t(hass, `inv_scan_${scan.reason ?? "failed"}` as TextKey)}</p>
+          <p class="inv-camera-reason">${scanReasonText(hass, scan)}</p>
           <label class="btn tonal inv-photo"
             >${icon("camera")}<span>${t(hass, "inv_scan_photo")}</span
             ><input type="file" accept="image/*" capture="environment" @change=${photo}
@@ -370,7 +375,7 @@ function scanSays(hass: Hass, dialog: FilamentDialog): string {
     return scan.streaming && !scan.foreignSaid ? t(hass, "inv_scan_on") : "";
   }
   // A zero-width space every other photo: the same text again is read again.
-  if (scan?.way === "blocked") return t(hass, `inv_scan_${scan.reason ?? "failed"}` as TextKey) + ((scan.tries ?? 0) % 2 ? "\u200b" : "");
+  if (scan?.way === "blocked") return scanReasonText(hass, scan) + ((scan.tries ?? 0) % 2 ? "\u200b" : "");
   if (dialog.scanned !== undefined) return t(hass, "inv_scan_done", { id: dialog.scanned });
   if (dialog.scanUnknown !== undefined) return t(hass, "inv_scan_unknown", { id: dialog.scanUnknown });
   return "";
@@ -383,12 +388,10 @@ export function inventoryContent(ctx: CardContext, dialog: FilamentDialog, actio
   const { hass } = ctx;
   const list = dialog.spools;
   if (list === undefined || list === "loading") {
-    return html`<div id="inv-panel" role="tabpanel" aria-labelledby="inv-tab-inventory">
-      <div class="k-wait inv-wait"><span class="check-spinner" aria-hidden="true"></span><span>${t(hass, "inv_loading")}</span></div>
-    </div>`;
+    return invPanel(waitLine(t(hass, "inv_loading"), "inv-wait"));
   }
   if (list === "failed") {
-    return html`<div id="inv-panel" role="tabpanel" aria-labelledby="inv-tab-inventory">${dialogNote(t(hass, "inv_failed"), "warning")}</div>`;
+    return invPanel(dialogNote(t(hass, "inv_failed"), "warning"));
   }
   const assigned = slot.inventory?.id;
   const searchable = list.spools.length >= SEARCH_FROM;
@@ -401,6 +404,7 @@ export function inventoryContent(ctx: CardContext, dialog: FilamentDialog, actio
   const stop = choosable.find((spool) => spool.id === dialog.chosenSpool)?.id ?? choosable[0]?.id;
   const chosen = list.spools.find((spool) => spool.id === dialog.chosenSpool);
   const elsewhere = chosen && chosen.id !== assigned && chosen.place && !chosen.place.here ? whereOf(ctx, chosen.place).from : undefined;
+  // Named here: TypeScript keeps the narrowing of list in the inner listContent only so.
   const all = list.spools;
   return html`<div id="inv-panel" role="tabpanel" aria-labelledby="inv-tab-inventory" class="inv-panel">
     <p class="sr-only inv-say" aria-live="polite">${scanSays(hass, dialog)}</p>
@@ -479,18 +483,18 @@ export function inventoryContent(ctx: CardContext, dialog: FilamentDialog, actio
  * spool's own colour with one of its types (colours within 50 of each
  * other, as its colors_similar); a spool assigned to an empty slot sets the
  * slot itself. */
-export function endsAssignment(ctx: CardContext, dialog: FilamentDialog): { warn?: string } {
+export function assignmentEndsWarning(ctx: CardContext, dialog: FilamentDialog): string | undefined {
   const slot = slotOf(ctx.hass, dialog.entityId);
   const spool = slot.inventory;
   const chosen = chosenFilament(dialog);
   const changed = (dialog.color !== undefined && dialog.color !== dialog.current) || chosen !== undefined;
-  if (!spool || !spool.assignedType || !changed) return {};
+  if (!spool || !spool.assignedType || !changed) return undefined;
   const colour = dialog.color ?? dialog.current ?? "";
   const type = (chosen?.type ?? slot.type).toUpperCase();
   const keeps =
     (similarColors(colour, spool.assignedColor) && type === spool.assignedType.toUpperCase()) ||
     (similarColors(colour, spool.rgba ?? "FFFFFFFF") && spool.spoolTypes.includes(type));
-  return keeps ? {} : { warn: t(ctx.hass, "inv_warn_change", { name: spool.name }) };
+  return keeps ? undefined : t(ctx.hass, "inv_warn_change", { name: spool.name });
 }
 
 /** BamBuddy's colors_similar: RGB at most 50 apart, alpha ignored. */
@@ -530,20 +534,20 @@ export function inventoryButtons(ctx: CardContext, dialog: FilamentDialog): Dial
     danger: false,
     ready,
     ...(busy && chosen !== undefined && chosen.id !== assigned ? { need: busy } : {}),
-    ...(chosen !== undefined && chosen.id !== assigned ? warnings(otherMaterial(ctx, slot, chosen).warn ?? printingSlot(ctx, slot)) : {}),
+    ...(chosen !== undefined && chosen.id !== assigned ? warnings(otherMaterialWarning(ctx, slot, chosen) ?? printingSlot(ctx, slot)) : {}),
   };
 }
 
 /** Another material than the slot's: assigning sets the slot to it -- in a
  * running print, mid-print. Compared by the type BamBuddy reduces it to; an
  * empty slot is set from whatever comes. */
-function otherMaterial(ctx: CardContext, slot: Slot, spool: ListedSpool): { warn?: string } {
+function otherMaterialWarning(ctx: CardContext, slot: Slot, spool: ListedSpool): string | undefined {
   const current = slot.type.toUpperCase();
-  if (slot.empty || !current || !spool.type) return {};
+  if (slot.empty || !current || !spool.type) return undefined;
   const same = current === spool.type || current.startsWith(`${spool.type}-`);
-  if (same) return {};
+  if (same) return undefined;
   const values = { material: spool.type, slot: slot.type, printer: printerTitle(ctx) };
-  return { warn: t(ctx.hass, ctx.running && slot.active ? "inv_warn_material_printing" : "inv_warn_material", values) };
+  return t(ctx.hass, ctx.running && slot.active ? "inv_warn_material_printing" : "inv_warn_material", values);
 }
 
 /** The slot a running print feeds: any spool assigned there changes it

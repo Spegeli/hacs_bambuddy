@@ -11,7 +11,7 @@ import { formatFixed, formatNumber, needsOutline, rgbOf, stateOf } from "./forma
 import { nozzleOf } from "./header";
 import { icon } from "./icons";
 import { t, type TextKey } from "./i18n";
-import { actionButton, dialogNote, printerTitle, sideName, slotOf, slotPlace, type CardContext, type InventorySpool } from "./parts";
+import { actionButton, dialogNote, printerTitle, sideAt, sideName, slotOf, slotPlace, waitLine, type CardContext, type InventorySpool } from "./parts";
 import type { CameraFailure } from "./scan";
 import type { Hass } from "./types";
 
@@ -122,14 +122,23 @@ export interface FilamentDialog {
   filtersOpen?: boolean;
 }
 
+/** The dialog without its scan: the list shows again. */
+export function withoutScan(dialog: FilamentDialog): FilamentDialog {
+  const { scan: _scan, ...rest } = dialog;
+  return rest;
+}
+
+/** The pending key of a slot's filament change, as the Filament tab marks it. */
+export const filamentKey = (entityId: string): string => `filament_${entityId}`;
+
 /** Why the camera area shows no picture. */
 export type ScanReason = CameraFailure | "insecure" | "no_code" | "not_label";
 
-/** The vendor whose filaments hold the slot's own profile, where the offer has it. */
 /** An offered filament by its id. */
 const offered = (offer: FilamentOffer, id: string | undefined): OfferedFilament | undefined =>
   id === undefined ? undefined : offer.vendors.flatMap((vendor) => vendor.filaments).find((item) => item.id === id);
 
+/** The vendor whose filaments hold the slot's own profile, where the offer has it. */
 export function ownVendor(dialog: FilamentDialog): string | undefined {
   const offer = dialog.offer;
   if (typeof offer !== "object" || !offer.current) return undefined;
@@ -259,7 +268,7 @@ function kField(hass: Hass, dialog: FilamentDialog, actions: DialogActions): Tem
   const none = typeof state === "object" && !profiles.length ? state : undefined;
   const hint =
     state === "loading"
-      ? html`<div class="k-wait ${dialog.kSlow ? "slow" : ""}"><span class="check-spinner" aria-hidden="true"></span><span>${t(hass, dialog.kSlow ? "k_slow" : "k_loading")}</span></div>`
+      ? waitLine(t(hass, dialog.kSlow ? "k_slow" : "k_loading"), dialog.kSlow ? "slow" : "")
       : none && !none.answered
         ? dialogNote(t(hass, "k_no_answer"), "warning")
         : none?.diameter !== undefined
@@ -463,18 +472,18 @@ function nozzleLines(ctx: CardContext): string[] {
  * Hardened steel"; on a printer with two the unit's side ("Left nozzle:
  * …") or an external spool's, and both where a unit may feed either (a
  * filament track switch). */
-export function slotNozzleLines(ctx: CardContext, entityId: string): string[] {
+function slotNozzleLines(ctx: CardContext, entityId: string): string[] {
   const { hass, refs } = ctx;
   if (!refs.dual) {
     const parts = nozzleOf(ctx, 0);
     return parts ? [t(hass, "nozzle_side", { side: t(hass, "nozzle"), nozzle: parts })] : [];
   }
   // An external spool's side by its place -- known only while both are.
-  const spool = refs.externalSpools.length === 2 ? refs.externalSpools.indexOf(entityId) : refs.externalSpools.includes(entityId) ? -2 : -1;
-  if (spool === -2) return nozzleLines(ctx);
+  if (refs.externalSpools.length !== 2 && refs.externalSpools.includes(entityId)) return nozzleLines(ctx);
+  const spool = refs.externalSpools.indexOf(entityId);
   const attribute = stateOf(hass, entityId)?.attributes["nozzle"];
   const side = spool >= 0 ? spool : attribute === "left" ? 0 : attribute === "right" ? 1 : undefined;
   if (side === undefined) return nozzleLines(ctx);
   const parts = nozzleOf(ctx, side);
-  return parts ? [t(hass, "nozzle_side", { side: t(hass, side === 0 ? "nozzle_left" : "nozzle_right"), nozzle: parts })] : [];
+  return parts ? [t(hass, "nozzle_side", { side: t(hass, `nozzle_${sideAt(side)}`), nozzle: parts })] : [];
 }

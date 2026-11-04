@@ -6,7 +6,7 @@
 // (printer-dialogs.ts draws them).
 import { html, nothing, type TemplateResult } from "lit";
 
-import { formatDuration, formatNumber, formatState, hasValue, minutesOf, numericState, stateOf, textOrUndefined } from "./format";
+import { formatDurationKept, formatNumber, formatState, hasValue, minutesOf, numericState, stateOf, textOrUndefined } from "./format";
 import { icon, type IconName } from "./icons";
 import { t, type TextKey } from "./i18n";
 import { maintenanceChip } from "./maintenance";
@@ -71,7 +71,7 @@ export interface HmsError {
 export const HMS_ANSWERS: Record<string, TextKey> = {
   RESUME_PRINTING: "hms_answer_resume_printing",
   RESUME_PRINTING_DEFECTS: "hms_answer_resume_printing_defects",
-  RESUME_PRINTING_PROBELM_SOLVED: "hms_answer_resume_printing_probelm_solved",
+  RESUME_PRINTING_PROBELM_SOLVED: "hms_answer_resume_printing_problem_solved",
   PROBLEM_SOLVED_RESUME: "hms_answer_problem_solved_resume",
   FILAMENT_LOAD_RESUME: "hms_answer_filament_load_resume",
   PROCEED: "hms_answer_proceed",
@@ -278,7 +278,7 @@ function hmsLine(ctx: CardContext, open: (chip: DialogChip) => void): TemplateRe
   const severity = worst ? severityOf(worst) : "unknown";
   if (severity !== "error" && !STOPPED.has(ctx.status)) return nothing;
   const description = textOrUndefined(worst?.description);
-  const message = worst ? (description ?? t(hass, `hms_${severity}` as TextKey)) : t(hass, "hms_count", { count });
+  const message = worst ? (description ?? t(hass, `hms_${severity}`)) : t(hass, "hms_count", { count });
   const more = sorted.length - 1;
   return html`<button class="hms-line tone-${SEVERITIES[severity].chip}" title=${message} aria-haspopup="dialog" @click=${() => open("hms")}>
     ${icon(SEVERITIES[severity].icon)}<span class="hms-line-text">${message}</span>${more > 0
@@ -323,7 +323,7 @@ function dryingChip(ctx: CardContext): TemplateResult | typeof nothing {
   if (!first) return nothing;
   const times = drying.map((unit) => minutesOf(hass, unit.dryingRemaining)).filter((value): value is number => value !== undefined && value > 0);
   // Number and unit stay together when the chip wraps.
-  const time = times.length ? formatDuration(hass, Math.max(...times)).replace(/ /g, "\u00a0") : undefined;
+  const time = times.length ? formatDurationKept(hass, Math.max(...times)) : undefined;
   const n = drying.length;
   const what = n === 1 ? t(hass, "dry_chip_one_bare") : t(hass, "dry_chip_many_bare", { n });
   const detail = time
@@ -350,7 +350,7 @@ function dryingChip(ctx: CardContext): TemplateResult | typeof nothing {
  * they matter. Below it the HMS line where a message matters, whatever the
  * chips. */
 export function chips(ctx: CardContext, open: (chip: DialogChip) => void): TemplateResult | typeof nothing {
-  const chips: Record<HeaderChip, () => TemplateResult | typeof nothing> = {
+  const drawers: Record<HeaderChip, () => TemplateResult | typeof nothing> = {
     network: () => networkChip(ctx),
     hms: () => hmsChip(ctx, open),
     firmware: () => firmwareChip(ctx, open),
@@ -360,6 +360,6 @@ export function chips(ctx: CardContext, open: (chip: DialogChip) => void): Templ
     drying: () => dryingChip(ctx),
     power: () => powerChip(ctx, () => open("power")),
   };
-  const items = ctx.settings.chips.map((name: HeaderChip) => chips[name]()).filter((item) => item !== nothing);
+  const items = ctx.settings.chips.map((name: HeaderChip) => drawers[name]()).filter((item) => item !== nothing);
   return html`${items.length ? html`<div class="pills" aria-live="polite">${items}</div>` : nothing}${hmsLine(ctx, open)}`;
 }

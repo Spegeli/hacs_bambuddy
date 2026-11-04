@@ -4,7 +4,7 @@
 // new card of the same printer takes the dialog on.
 import type { ListedSpool } from "./actions";
 import type { Dialog, DialogActions } from "./dialogs";
-import type { FilamentDialog } from "./filament-dialog";
+import { withoutScan, type FilamentDialog } from "./filament-dialog";
 import { inventoryButtons, onInventory } from "./inventory-dialog";
 import type { FilamentSession } from "./filament-session";
 import type { Settings } from "./forms";
@@ -13,21 +13,15 @@ import { slotOf, type CardContext } from "./parts";
 import { decodePhoto, scanFrames, scanInApp, scanWay, setTorch, startCamera, stopStream, torchOf, type AppScanEnd } from "./scan";
 import type { CardConfig, Hass, PrinterRefs, View } from "./types";
 
-/** The dialog without its scan: the list shows again. */
-export function withoutScan(dialog: FilamentDialog): FilamentDialog {
-  const { scan: _scan, ...rest } = dialog;
-  return rest;
-}
-
 /** How long after the camera area offered a photo a replaced card hands its
  * dialog on, and how long the handed dialog waits for its new card. */
-export const PHOTO_TRIP_MS = 5 * 60_000;
-export const HANDOVER_MS = 30_000;
+const PHOTO_TRIP_MS = 5 * 60_000;
+const HANDOVER_MS = 30_000;
 /** The page hidden this long before at most: the rebuild follows the return. */
-export const HIDDEN_TRIP_MS = 60_000;
+const HIDDEN_TRIP_MS = 60_000;
 
 /** A slot dialog on its way from a card Home Assistant replaced to the new one. */
-export interface Handover {
+interface Handover {
   from: ScanSession;
   printer: string;
   /** The page and the card's set-up it was handed from. */
@@ -41,21 +35,13 @@ export interface Handover {
 }
 let handover: Handover | undefined;
 
-/** The slot dialog on its way, if one is. */
-export const pendingHandover = (): Handover | undefined => handover;
-
-/** A card that leaves hands its dialog on; undefined: none is on its way any more. */
-export function setHandover(next: Handover | undefined): void {
-  handover = next;
-}
-
 /** Tests start without a dialog on its way. */
 export function forgetHandoverForTests(): void {
   handover = undefined;
 }
 
 /** How long the camera's "no label" line stays after the last foreign code. */
-export const FOREIGN_FOR_MS = 3_000;
+const FOREIGN_FOR_MS = 3_000;
 
 /** What the scan needs of the card. */
 export interface ScanHost {
@@ -100,7 +86,12 @@ export class ScanSession {
   /** When the camera area last offered a photo: the camera app may take the page away. */
   private photoAsked = 0;
   /** When the page was last hidden: the camera app's trip, before a rebuild. */
-  hiddenAt = 0;
+  private hiddenAt = 0;
+
+  /** The page was hidden now: a rebuild that follows is the photo's trip. */
+  noteHidden(): void {
+    this.hiddenAt = Date.now();
+  }
 
   constructor(private readonly host: ScanHost) {}
 
@@ -108,7 +99,7 @@ export class ScanSession {
    * own. Else it may take on the slot dialog of a card Home Assistant just
    * replaced. */
   rejoin(): void {
-    if (pendingHandover()?.from === this) setHandover(undefined);
+    if (handover?.from === this) handover = undefined;
     this.takeOver();
   }
 
@@ -123,7 +114,7 @@ export class ScanSession {
     const trip = Date.now() - this.photoAsked < PHOTO_TRIP_MS && Date.now() - this.hiddenAt < HIDDEN_TRIP_MS;
     if (open?.kind === "filament" && printer && trip && !host.preview() && !host.inEditor()) {
       const dialog = open.scan?.way === "blocked" ? open : withoutScan(open);
-      setHandover({ from: this, printer, page: location.pathname, setup: JSON.stringify(config), dialog, view: host.view(), at: Date.now() });
+      handover = { from: this, printer, page: location.pathname, setup: JSON.stringify(config), dialog, view: host.view(), at: Date.now() };
     }
   }
 
@@ -134,15 +125,19 @@ export class ScanSession {
     return dialog?.kind === "filament" && hass && onInventory(hass, dialog) ? dialog.scan : undefined;
   }
 
+  /** The slot left the inventory (a reload, the printer away): the scan
+   * goes with it, or its camera area would stay with no picture. Before
+   * the card draws, so one update does it. */
+  dropLeftScan(): void {
+    const open = this.host.dialog();
+    if (!this.runningScan() && open?.kind === "filament" && open.scan) this.host.setDialog(withoutScan(open));
+  }
+
   /** The camera and the app's scanner follow the dialog: whatever ends the
    * scan -- a scan, Close camera, the dialog closed, the other tab, another
    * dialog -- ends them here, in one place. */
   followScan(): void {
     const scan = this.runningScan();
-    // The slot left the inventory (a reload, the printer away): the scan
-    // goes with it, or its camera area would stay with no picture.
-    const open = this.host.dialog();
-    if (!scan && open?.kind === "filament" && open.scan) this.host.setDialog(withoutScan(open));
     if (scan?.way !== "app") this.endAppScan();
     if (scan?.way !== "live") {
       this.endCamera();
@@ -303,11 +298,11 @@ export class ScanSession {
   /** A photo read: its spool, or what it lacked. One this card read after
    * Home Assistant replaced it goes to the card that took its dialog on. */
   private photoRead(found: number | "no_code" | "not_label"): void {
-    const left = pendingHandover();
+    const left = handover;
     if (!this.host.element.isConnected && left?.from === this) {
       left.photo = found;
       if (left.card) {
-        setHandover(undefined);
+        handover = undefined;
         left.card.photoRead(found);
       }
       return;
@@ -321,13 +316,13 @@ export class ScanSession {
   /** The slot dialog of a card of this printer Home Assistant just replaced. */
   private takeOver(): void {
     const host = this.host;
-    const left = pendingHandover();
+    const left = handover;
     if (!left || left.card || left.from === this || host.dialog() || host.preview() || host.inEditor()) return;
     // The same card again: the same printer, set-up and page.
     const config = host.config();
     if (left.printer !== config?.printer || left.setup !== JSON.stringify(config) || left.page !== location.pathname) return;
     if (Date.now() - left.at > HANDOVER_MS) {
-      setHandover(undefined);
+      handover = undefined;
       return;
     }
     left.card = this;
@@ -348,7 +343,7 @@ export class ScanSession {
     if (dialog.spools === "loading") void filament.loadSpools(dialog.entityId, ask);
     const photo = left.photo;
     if (photo === undefined) return;
-    setHandover(undefined);
+    handover = undefined;
     void host.updateComplete().then(() => this.photoRead(photo));
   }
 

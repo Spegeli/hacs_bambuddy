@@ -8,7 +8,7 @@ import { html, nothing, type TemplateResult } from "lit";
 import { entriesOf, responseOf } from "./actions";
 import { icon, type IconName } from "./icons";
 import { LANGUAGES, languageOf, t, type TextKey } from "./i18n";
-import type { CardContext } from "./parts";
+import { dialogError, type CardContext } from "./parts";
 import type { Hass } from "./types";
 
 export type CheckStatus = "pass" | "fail" | "warn" | "skip";
@@ -152,7 +152,7 @@ function state(ctx: CardContext, dialog: CheckDialog, now: number): TemplateResu
       <p class="hint">${t(hass, "check_running_hint")}</p>`;
   }
   if (dialog.error || !dialog.result) {
-    return html`<div class="dlg-error">${icon("error")}<span>${t(hass, "check_error", { error: dialog.error ?? "" })}</span></div>`;
+    return dialogError(t(hass, "check_error", { error: dialog.error ?? "" }));
   }
   const found = verdict(hass, dialog.result);
   return html`<div class="check-verdict tone-${found.tone}">${icon(VERDICT_ICONS[found.tone])}<span>${found.text}</span></div>`;

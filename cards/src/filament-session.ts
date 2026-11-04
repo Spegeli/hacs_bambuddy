@@ -3,11 +3,10 @@
 // the dialog of its own open, and what its fields change.
 import { filamentOffer, kProfiles, spoolList } from "./actions";
 import type { Dialog, DialogActions } from "./dialogs";
-import { inPalette, KEEP, matchingProfile, ownVendor, type FilamentDialog } from "./filament-dialog";
+import { filamentKey, inPalette, KEEP, matchingProfile, ownVendor, withoutScan, type FilamentDialog } from "./filament-dialog";
 import { formatPercent, stateOf } from "./format";
 import { t } from "./i18n";
 import type { Slot } from "./parts";
-import { withoutScan } from "./scan-session";
 import type { Hass, PrinterRefs } from "./types";
 
 /** The slot dialog's K field says the printer is slow after this long:
@@ -19,7 +18,7 @@ const DIALOG_MARGIN = 48;
 
 /** What the slot dialog's data needs of the card. */
 export interface FilamentHost {
-  hass: () => Hass | undefined;
+  hass: () => Hass;
   refs: () => PrinterRefs | undefined;
   /** The card's shadow root: Lit renders into one. */
   root: () => ShadowRoot;
@@ -70,7 +69,7 @@ export class FilamentSession {
   /** The dialog that sets a slot's filament: its own kept where it has
    * one, its colour chosen -- also one outside the palette. */
   openFilament(slot: Slot, title: string, inventoryOnly = false): void {
-    const hass = this.host.hass() as Hass;
+    const hass = this.host.hass();
     const refs = this.host.refs() as PrinterRefs;
     // A slot with a filament always has a name: its state at least.
     const keep = slot.type ? slot.name : undefined;
@@ -121,7 +120,7 @@ export class FilamentSession {
     let found: FilamentDialog["spools"] = "failed";
     for (let attempt = 0; attempt < 2 && found === "failed"; attempt += 1) {
       try {
-        found = (await spoolList(this.host.hass() as Hass, entityId)) ?? "failed";
+        found = (await spoolList(this.host.hass(), entityId)) ?? "failed";
       } catch {
         found = "failed";
       }
@@ -168,7 +167,7 @@ export class FilamentSession {
   async loadOffer(entityId: string, ask: number): Promise<void> {
     let found: FilamentDialog["offer"];
     try {
-      found = (await filamentOffer(this.host.hass() as Hass, entityId)) ?? "failed";
+      found = (await filamentOffer(this.host.hass(), entityId)) ?? "failed";
     } catch {
       found = "failed";
     }
@@ -186,7 +185,7 @@ export class FilamentSession {
   async loadKProfiles(entityId: string, ask: number): Promise<void> {
     let found: FilamentDialog["kprofiles"];
     try {
-      found = await kProfiles(this.host.hass() as Hass, entityId);
+      found = await kProfiles(this.host.hass(), entityId);
     } catch {
       found = "failed";
     }
@@ -205,7 +204,7 @@ export class FilamentSession {
   private resetSlot(): void {
     const dialog = this.host.dialog();
     if (dialog?.kind !== "filament") return;
-    const hass = this.host.hass() as Hass;
+    const hass = this.host.hass();
     this.host.parkDialog();
     this.host.dropSent();
     // The slot a paused print feeds from: said.
@@ -332,7 +331,7 @@ export class FilamentSession {
       const dialog = this.host.dialog();
       if (dialog?.kind !== "filament") return;
       this.host.closeDialog();
-      void this.host.run(`filament_${dialog.entityId}`, "bambuddy", "unassign_spool", { entity_id: dialog.entityId });
+      void this.host.run(filamentKey(dialog.entityId), "bambuddy", "unassign_spool", { entity_id: dialog.entityId });
     },
   };
 }

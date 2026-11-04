@@ -122,7 +122,7 @@ export function offlineJob(ctx: CardContext, picture: TemplateResult): TemplateR
   const power = offlinePower(ctx);
   if (power) return html`<div class="job">${picture}<div class="job-info">${power.info}</div></div>${power.actions}`;
   const check = html`<div class="offline-actions">${actionButton({ label: t(ctx.hass, "check_connection"), iconName: "lan", onClick: ctx.checkConnection })}</div>`;
-  return html`<div class="job">${picture}<div class="job-info">${note(offlineText(ctx, "offline_text"), "warning")}</div></div>
+  return html`<div class="job">${picture}<div class="job-info">${note(offlineText(ctx, "offline_text"), ctx.waiting ? "info" : "warning")}</div></div>
     ${ctx.unreachable ? nothing : check}`;
 }
 
@@ -249,19 +249,21 @@ function fans(ctx: CardContext): TemplateResult | typeof nothing {
     .map((fan) => [fan.key, fan.entityId, fanPercent(ctx, fan.entityId)]);
   if (refs.hotendFan) items.push(["hotend", refs.hotendFan, numericState(hass, refs.hotendFan)]);
   if (!items.length) return nothing;
-  // A short name on a narrow card, the entity's own where there is room;
-  // both start alike, and the entity's names the chip.
+  // A short name on a narrow card, the entity's own where there is room
+  // (CSS shows one). A tap's name comes from what it shows, as a voice user
+  // says it: "Part cooling 100 % (Part cooling fan)" narrow, "Part cooling
+  // fan: 100 %" wide -- the hidden label is left out of it.
   return html`<div class="fans" role="group" aria-label=${t(hass, "fans")}>
     ${items.map(([key, entityId, percent]) => {
       const short = t(hass, `fan_${key}`);
       const full = entityName(ctx, entityId, `fan_${key}_name`);
       const value = percent === undefined ? "—" : percent > 0 ? formatPercent(hass, percent) : t(hass, "fan_off");
-      const content = html`${icon("fan")}<span class="fan-label short">${short}</span><span class="fan-label full">${full}</span><span class="fan-value">${value}</span>`;
+      const content = html`${icon("fan")}<span class="fan-label short">${short}</span><span class="fan-label full">${full}<span class="fan-colon">:</span></span> <span class="fan-value">${value}</span><span class="fan-label short sr-only"> (${full})</span>`;
       // Hide controls: no tap -- the fan's dialog sets its speed. The hotend
       // fan is a sensor: its dialog shows its history and sets nothing.
       return ctx.viewOnly && key !== "hotend"
         ? html`<span class="fan ${percent ? "on" : ""}" role="img" aria-label="${full}: ${value}" title=${full}>${content}</span>`
-        : html`<button class="fan ${percent ? "on" : ""}" aria-label="${full}: ${value}" title=${full} @click=${() => ctx.moreInfo(entityId)}>
+        : html`<button class="fan ${percent ? "on" : ""}" title=${full} @click=${() => ctx.moreInfo(entityId)}>
             ${content}
           </button>`;
     })}
@@ -290,7 +292,7 @@ function amsStrip(ctx: CardContext): TemplateResult | typeof nothing {
     ...ctx.ams.map((unit) => {
       const model = unitModel(ctx.ams, unit);
       const nozzle = unitNozzle(hass, unit);
-      const extras = [model, nozzle ? t(hass, nozzle === "left" ? "strip_nozzle_left" : "strip_nozzle_right") : undefined].filter(Boolean);
+      const extras = [model, nozzle ? t(hass, `strip_nozzle_${nozzle}`) : undefined].filter(Boolean);
       return {
         name: unit.name,
         spoken: extras.length ? `${unit.name} (${extras.join(", ")})` : unit.name,
@@ -351,8 +353,8 @@ function amsStrip(ctx: CardContext): TemplateResult | typeof nothing {
             <span class="ams-name" title=${group.spoken}>${group.name}</span>
             ${group.model ? html`<span class="unit-model">${group.model}</span>` : nothing}
             ${group.nozzle
-              ? html`<span class="ams-nozzle" aria-hidden="true" title=${t(hass, group.nozzle === "left" ? "nozzle_left" : "nozzle_right")}
-                  >${t(hass, group.nozzle === "left" ? "side_left_short" : "side_right_short")}</span
+              ? html`<span class="ams-nozzle" aria-hidden="true" title=${t(hass, `nozzle_${group.nozzle}`)}
+                  >${t(hass, `side_${group.nozzle}_short`)}</span
                 >`
               : nothing}
           </span>

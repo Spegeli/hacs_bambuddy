@@ -4,12 +4,12 @@
 // Folded at first, its head says what is off ("All on", "1 off", "All
 // off"), so one switched off shows without opening it. Only the switch
 // itself taps, so a scroll over the list never switches one; a tap shows
-// the new state at once (see card.ts, toggleSwitch).
+// the new state at once (see drafts.ts, toggleSwitch).
 import { html, nothing, type TemplateResult } from "lit";
 
 import { hasValue } from "./format";
 import { icon } from "./icons";
-import { t, type TextKey } from "./i18n";
+import { t } from "./i18n";
 import { entityName, switchButton, type CardContext } from "./parts";
 import type { DetectorKey } from "./types";
 

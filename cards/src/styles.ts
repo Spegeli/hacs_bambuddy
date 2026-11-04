@@ -1314,6 +1314,13 @@ export const cardStyles = css`
   .fan-label.full {
     display: none;
   }
+  /* The full label's colon: in the name ("Part cooling fan: 100 %"), not on
+   * the tile. Inline, so the name keeps no space before it (an absolute
+   * sr-only span would put one there). */
+  .fan-colon {
+    font-size: 0;
+    clip-path: inset(50%);
+  }
   .fan-value {
     color: var(--bb-text);
     font-weight: 500;
@@ -2770,7 +2777,9 @@ export const cardStyles = css`
     align-items: stretch;
     gap: 4px;
   }
+  /* Each select to its column: Chrome sizes a select by its longest option. */
   .inv-filters .select {
+    width: 100%;
     max-width: none;
   }
   /* The location below vendor and material, across the row. */
@@ -3956,6 +3965,11 @@ export const cardStyles = css`
     .toggle .knob,
     .unit-fold {
       transition: none;
+    }
+    /* Still, the filament change's bar spans the line: it says something
+     * runs, not 30 % of it. */
+    .activity-bar {
+      width: 100%;
     }
   }
 `;

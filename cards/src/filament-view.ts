@@ -7,7 +7,17 @@
 // instead (card.ts).
 import { html, nothing, type TemplateResult } from "lit";
 
-import { formatDuration, formatPercent, formatTemperature, formatTemperatureOf, hasValue, minutesOf, numericState, stateOf } from "./format";
+import { filamentKey } from "./filament-dialog";
+import {
+  formatDurationKept,
+  formatPercent,
+  formatTemperature,
+  formatTemperatureOf,
+  hasValue,
+  minutesOf,
+  numericState,
+  stateOf,
+} from "./format";
 import { icon } from "./icons";
 import { t, type TextKey } from "./i18n";
 import { actionButton, AMS_2_PRO, AMS_HT, amsActivity, callout, developerHint, emptyText, inventoryLine, note, printerTitle, resumeButton, shownExternalSpools, sideName, slotOf, slotPlace, stateWord, swatch, switchButton, unitModel, unitNozzle, type CardContext, type Slot } from "./parts";
@@ -53,7 +63,7 @@ function editButton(ctx: CardContext, slot: Slot, title: string, label: string):
     kind: "plain",
     className: "edit",
     disabled: ctx.changing,
-    pending: ctx.isPending(`filament_${slot.entityId}`),
+    pending: ctx.isPending(filamentKey(slot.entityId)),
     onClick: () => ctx.openFilament(slot, title, inventoryOnly),
   });
 }
@@ -111,7 +121,7 @@ function slotRow(
       onClick: () =>
         ctx.confirm({
           title: t(hass, "unload_title"),
-          text: t(hass, options.nozzle ? (options.nozzle === "left" ? "unload_text_left" : "unload_text_right") : "unload_text"),
+          text: t(hass, options.nozzle ? `unload_text_${options.nozzle}` : "unload_text"),
           confirm: t(hass, "unload"),
           ...pauseHint,
           action: ["bambuddy", "unload_filament", { device_id: refs.deviceId }],
@@ -129,7 +139,7 @@ function slotRow(
         ctx.confirm({
           title: options.loadTitle(title),
           // Two nozzles: which one it goes into.
-          text: t(hass, options.nozzle ? (options.nozzle === "left" ? "load_text_left" : "load_text_right") : "load_text"),
+          text: t(hass, options.nozzle ? `load_text_${options.nozzle}` : "load_text"),
           confirm: t(hass, "load"),
           ...pauseHint,
           action: ["bambuddy", "load_filament", { entity_id: slot.entityId }],
@@ -178,7 +188,7 @@ function dryingRow(ctx: CardContext, unit: AmsRefs): TemplateResult | typeof not
   const on = drying?.state === "on";
   const left = minutesOf(hass, unit.dryingRemaining);
   // The time stays on one line: "3 h 20 min" never breaks inside.
-  const time = left ? formatDuration(hass, left).replace(/ /g, "\u00a0") : undefined;
+  const time = left ? formatDurationKept(hass, left) : undefined;
   // The temperature it dries at, where the integration knows it.
   const target = drying?.attributes["target_temperature"];
   const at = on && typeof target === "number" && target > 0 ? formatTemperature(hass, target) : undefined;
@@ -247,9 +257,9 @@ function unitSection(ctx: CardContext, unit: AmsRefs, canAct: boolean): Template
         <span class="unit-name">${unit.name}</span>
         ${model ? html`<span class="unit-model">${model}</span>` : nothing}
         ${nozzle
-          ? html`<span class="unit-nozzle" title=${t(hass, nozzle === "left" ? "nozzle_left" : "nozzle_right")}
-              >${icon("nozzle")}<span aria-hidden="true">${t(hass, nozzle === "left" ? "side_left_short" : "side_right_short")}</span
-              ><span class="sr-only">${t(hass, nozzle === "left" ? "nozzle_left" : "nozzle_right")}</span></span
+          ? html`<span class="unit-nozzle" title=${t(hass, `nozzle_${nozzle}`)}
+              >${icon("nozzle")}<span aria-hidden="true">${t(hass, `side_${nozzle}_short`)}</span
+              ><span class="sr-only">${t(hass, `nozzle_${nozzle}`)}</span></span
             >`
           : nothing}
         <span class="unit-end">

@@ -9,7 +9,7 @@ import { repeat } from "lit/directives/repeat.js";
 import { formatDuration, formatNumber, formatState, hasValue, stateOf } from "./format";
 import { icon } from "./icons";
 import { t, type TextKey } from "./i18n";
-import { compactWords, dialogNote, noData, type CardContext } from "./parts";
+import { compactWords, dialogError, dialogNote, noData, type CardContext } from "./parts";
 
 /** A task as the integration's maintenance sensor lists it. */
 export interface MaintenanceTask {
@@ -195,7 +195,7 @@ export function maintenanceContent(ctx: CardContext, dialog: MaintenanceDialog, 
       : ctx.unreachable
         ? dialogNote(t(hass, noData(ctx)))
         : html`<p class="hms-empty">${t(hass, "maint_none")}</p>`}
-    ${dialog.error ? html`<div class="dlg-error" role="alert">${icon("error")}<span>${dialog.error}</span></div>` : nothing}
+    ${dialog.error ? dialogError(dialog.error) : nothing}
     <p class="maint-said sr-only" role="status">${dialog.marked ? t(hass, "maint_marked", { task: dialog.marked }) : ""}</p>
     <p class="maint-foot">
       ${hours && hasValue(hass, refs.printHours)

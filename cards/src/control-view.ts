@@ -154,10 +154,10 @@ function motionSection(ctx: CardContext, step: Step, setStep: (step: Step) => vo
         <div class="seg" role="radiogroup" aria-label=${t(hass, "step")} aria-disabled=${disabled ? "true" : "false"} @keydown=${radioKeys} @focusout=${radioLeave}>
           ${STEPS.map(
             // Locked with the arrows: what it sets waits with them.
-            (value) => html`<button
+            (value, index) => html`<button
               role="radio"
               aria-checked=${value === step ? "true" : "false"}
-              tabindex=${STEPS.indexOf(value) === radioStop(STEPS, step) ? 0 : -1}
+              tabindex=${index === radioStop(STEPS, step) ? 0 : -1}
               ?disabled=${disabled}
               @click=${() => setStep(value)}
             >
@@ -185,7 +185,7 @@ function motionSection(ctx: CardContext, step: Step, setStep: (step: Step) => vo
 
 /** Whether a section has something to show: heating a heater whose target
  * the card can set, the print options a detection switch; moving always --
- * but with Hide controls (`viewOnly`), which shows states only. */
+ * but with Hide controls (`readOnly`), which shows states only. */
 export function sectionShown(refs: PrinterRefs, name: ControlSection, readOnly = false): boolean {
   if (name === "heating") return [...refs.nozzles, refs.bed, refs.chamber].some((heater) => heater.target !== undefined);
   if (name === "motion") return !readOnly;

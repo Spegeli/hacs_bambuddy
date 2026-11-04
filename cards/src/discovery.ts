@@ -3,6 +3,7 @@
 // entity's domain and translation key. Never by entity ID, which users can
 // rename. Each lookup reads the registries Home Assistant hands over at
 // that moment, so entities and AMS units that come later are found too.
+import { numberAttribute } from "./format";
 import {
   DETECTORS,
   type AmsRefs,
@@ -110,11 +111,6 @@ function childName(unit: HassDevice, printer: HassDevice): string {
 }
 
 /** A number attribute of an entity's state, if it has one. */
-function numberAttribute(hass: Hass, entityId: string, name: string): number | undefined {
-  const value = hass.states[entityId]?.attributes[name];
-  return typeof value === "number" ? value : undefined;
-}
-
 /** Slots in the order of their `slot` attribute; a slot without one last. */
 function bySlot(hass: Hass, slots: readonly string[]): string[] {
   const position = (entityId: string): number => numberAttribute(hass, entityId, "slot") ?? Number.MAX_SAFE_INTEGER;
@@ -343,6 +339,25 @@ function serverSensor(hass: Hass, device: HassDevice): string | undefined {
 export function notListed(hass: Hass, refs: PrinterRefs): boolean {
   const missing = refs.server ? hass.states[refs.server]?.attributes["missing_printers"] : undefined;
   return Array.isArray(missing) && missing.includes(refs.deviceId);
+}
+
+/** No data on the printer from the integration: its print status, or its
+ * Online sensor where it has one, without a state yet (Home Assistant
+ * starts) or unavailable (BamBuddy does not answer, or a reload). */
+export function noPrinterData(hass: Hass, refs: PrinterRefs): boolean {
+  const gone = (entityId: string | undefined): boolean => {
+    const state = entityId ? hass.states[entityId] : undefined;
+    return !state || state.state === "unavailable";
+  };
+  return gone(refs.status) || (refs.online !== undefined && gone(refs.online));
+}
+
+/** When the printer's data went away, as far as the states tell: the
+ * status's last change while it is unavailable, else now. */
+export function noDataSince(hass: Hass, refs: PrinterRefs, now: number): number {
+  const states = [refs.status, refs.online].map((entityId) => (entityId ? hass.states[entityId] : undefined));
+  const since = states.map((state) => (state?.state === "unavailable" ? Date.parse(state.last_changed ?? "") : NaN)).filter((time) => !Number.isNaN(time));
+  return Math.min(now, ...since);
 }
 
 /** Whether the printer is online: its Online sensor where it has one, else
