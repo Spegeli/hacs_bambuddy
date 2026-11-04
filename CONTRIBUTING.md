@@ -97,6 +97,7 @@ The card's modules, in `cards/src/`:
 | Module | What it holds |
 |---|---|
 | `card.ts` | The element: the three tabs, opening the dialogs and calling the actions; the editor's preview |
+| `card-dialogs.ts` | The dialogs' own flows: drying set to the loaded spools, the print's objects to skip, maintenance tasks marked done, the connection check and its seconds, "Copied" |
 | `drafts.ts` | Targets, switches and the print speed tapped: shown before their entities report them, a stepper's taps sent once they stop |
 | `menu.ts` | The ⋮ menu, and the keyboard's place kept when a press takes its control away |
 | `filament-session.ts` | The slot dialog's data: what it opens with and the answers it waits for (Bambu Studio's offer, the K profiles, the inventory's spools), each into the dialog of its own open |
@@ -143,6 +144,7 @@ The integration lives in `custom_components/bambuddy/`; the dashboard card's sou
 | `button.py` | Pause, resume, stop, plate cleared, clear HMS errors, refresh status; a script plug's Run; "Don't switch off this time" |
 | `camera.py` | MJPEG stream and snapshot through BamBuddy's camera proxy, with a stream token kept for 55 minutes |
 | `cards.py` | Serves the dashboard card's bundle and adds it to every dashboard |
+| `chamber.py` | The chamber's three locks side by side: ventilating, a chamber target and the airduct's mode, each refused while another rules it out |
 | `config_flow.py` | Setup (address, API key, certificate check, printers), reauthentication, reconfiguration (a new address, its printers matched by serial number), and the options (Configure): Manage printers (add and remove them) and Settings (the live updates, with a test of the connection) |
 | `const.py` | Domain, config keys, the permissions the key needs (`REQUIRED_SCOPES`) and those it may have (`OPTIONAL_PERMISSIONS`), intervals, the live updates' defaults, the minimum BamBuddy version, print speed modes |
 | `coordinator.py` | One coordinator per printer (`/printers/{id}/status` every 10 seconds, when BamBuddy's live connection tells of a change, and twice after a command; print hours, BamBuddy's name and details and the AMS units' names in BamBuddy (`/printers/{id}/ams-labels`) once a minute, and the device names after them; its maintenance every 10 minutes and after a print), the instance's (`/archives/stats` every minute, `/system/info` every 5 minutes) and the update checks' (`/updates/check`, `/firmware/updates` every 6 hours) |
