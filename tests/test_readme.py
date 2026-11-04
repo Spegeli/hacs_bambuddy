@@ -121,7 +121,7 @@ def test_the_key_needs_all_three_permissions() -> None:
     """The integration refuses a key lacking Read Status, Control Printer or
     Manage Maintenance -- also with BamBuddy's authentication off: the README
     says so, and none of the read-only advice is left."""
-    readme = (_ROOT / "README.md").read_text(encoding="utf-8")
+    readme = _README
     assert "**Read Status**, **Control Printer** and **Manage Maintenance**" in readme
     assert "Check that you pasted all of it" in readme
     # The owner given the right back: the stored key checked again.
@@ -147,7 +147,7 @@ def test_ams_entity_ids_name_the_unit() -> None:
     """AMS entity IDs carry the unit's model and serial; the AMS Lite's the
     printer's serial and its letter until BamBuddy reports its own (#3348),
     then a notice lists the renamed IDs."""
-    readme = (_ROOT / "README.md").read_text(encoding="utf-8")
+    readme = _README
     assert "_ams_a_humidity" not in readme
     assert "sensor.ams_2_pro_19c06a000000001_humidity" in readme
     assert "sensor.ams_lite_0309da000000002_a_slot_1" in readme

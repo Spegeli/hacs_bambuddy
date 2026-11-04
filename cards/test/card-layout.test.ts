@@ -1,13 +1,13 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import "../src/index";
 import { BamBuddyPrinterCard } from "../src/card";
-import { HEADER_CHIPS, type AmsRefs } from "../src/types";
+import { HEADER_CHIPS } from "../src/types";
 import {
   a1mini,
   amsDevice,
-  h2d,
   instanceDevice,
+  keepEntities,
   makeHass,
   mountCard,
   offlineP1s,
@@ -21,17 +21,9 @@ import {
   type FakeHass,
 } from "./fixtures";
 import { atRule, button, declarations, find, findAll, hasButton, NBSP, press, root, settle, showView, styleText, text, update } from "./helpers";
-import { cardFor, loadButtons, previewOf, PRINTERS, samples, withX1c } from "./card-helpers";
+import { cardFor, loadButtons, mountPreview, previewOf, samples, useCardPage, withX1c } from "./card-helpers";
 
-beforeEach(() => {
-  vi.useFakeTimers({ toFake: ["Date"] });
-  vi.setSystemTime(new Date("2026-10-16T08:00:00Z"));
-});
-
-afterEach(() => {
-  vi.useRealTimers();
-  document.body.innerHTML = "";
-});
+useCardPage();
 
 describe("a failed action", () => {
   const offline = { code: "home_assistant_error", message: "Printer offline", translation_domain: "bambuddy", translation_key: "printer_offline" };
@@ -261,11 +253,11 @@ describe("the card the user composes", () => {
     expect(tabs(heating)).toEqual(["Status", "Control", "Filament"]);
     // Heating needs a target to set; the user may have disabled them.
     const [printer] = p1s() as [FakeDevice];
-    const noTargets = { ...printer, entities: printer.entities.filter((entity) => !entity.entityId.startsWith("number.")) };
-    const { card: cold } = await cardFor("offline", { config: { control_sections: ["heating", "options"] }, devices: [noTargets] });
+    const noTargets = keepEntities(printer, (entity) => !entity.entityId.startsWith("number."));
+    const { card: cold } = await cardFor("p1s", { config: { control_sections: ["heating", "options"] }, devices: [noTargets] });
     expect(tabs(cold)).toEqual(["Status", "Filament"]);
     // Moving is always there.
-    const { card: moving } = await cardFor("offline", { config: { control_sections: ["options", "motion"] }, devices: [noTargets] });
+    const { card: moving } = await cardFor("p1s", { config: { control_sections: ["options", "motion"] }, devices: [noTargets] });
     expect(tabs(moving)).toEqual(["Status", "Control", "Filament"]);
   });
 
@@ -383,120 +375,6 @@ describe("folding the AMS units", () => {
   });
 });
 
-describe("texts in a state's colour, the plugs' too", () => {
-  it("mix the tone with the text colour; the icons keep the pure tone", () => {
-    const sheet = styleText();
-    expect(declarations(".p-row.warn .p-sub", sheet)).toContain("color: color-mix(in srgb, var(--bb-warn) 55%, var(--bb-text))");
-    expect(declarations(".p-row.warn .p-icon", sheet)).toContain("color: var(--bb-warn)");
-    expect(sheet).toMatch(/\.p-auto\.waiting \.p-name,\s*\.p-starting \.p-name\s*\{[^}]*color: color-mix\(in srgb, var\(--bb-accent\) 55%, var\(--bb-text\)\);/);
-    expect(declarations(".p-auto.waiting .p-icon", sheet)).toContain("color: var(--bb-accent)");
-    expect(declarations(".hms-wiki", sheet)).toContain("color: color-mix(in srgb, var(--bb-accent) 55%, var(--bb-text))");
-  });
-});
-
-describe("texts in a state's colour", () => {
-  const css = styleText;
-  const mixed = (tone: string): string => `color: color-mix\\(in srgb, var\\(${tone}\\) 55%, var\\(--bb-text\\)\\)`;
-
-  it("mix the colour with the text colour; the icons keep the colour", () => {
-    const sheet = css();
-    const rules: [string, string][] = [
-      ["\\.state", "--tone"],
-      ["\\.pct", "--tone"],
-      ["\\.slot-sub \\.in-use", "--bb-accent"],
-      ["\\.ams-activity", "--bb-accent"],
-      ["\\.spec-value\\.update", "--bb-warn"],
-    ];
-    // The rule of the selector itself: after a rule or a comment.
-    for (const [selector, tone] of rules) expect(sheet, selector).toMatch(new RegExp(`(^|[}/])\\s*${selector}\\s*\\{[^}]*${mixed(tone)}`));
-    expect(declarations(".state .icon", sheet)).toContain("color: var(--tone)");
-    expect(sheet).toMatch(/\.ams-activity \.icon,\s*\.activity \.icon\s*\{[^}]*color: var\(--bb-accent\)/);
-  });
-
-  // Home Assistant's default colours: of the 2025.5 floor -- the card's
-  // fallbacks -- and of today's frontend (20260930), light and dark.
-  const THEMES = [
-    { name: "2025.5 light", text: "#212121", muted: "#727272", background: "#ffffff", accent: "#03a9f4" },
-    { name: "2025.5 dark", text: "#e1e1e1", muted: "#9b9b9b", background: "#1c1c1c", accent: "#03a9f4" },
-    { name: "2026.10 light", text: "#141414", muted: "#5e5e5e", background: "#ffffff", accent: "#009ac7" },
-    { name: "2026.10 dark", text: "#e1e1e1", muted: "#9b9b9b", background: "#1c1c1c", accent: "#009ac7" },
-  ];
-  const ERROR = "#db4437";
-  type Rgb = number[];
-  const rgb = (hex: string): Rgb => [1, 3, 5].map((start) => parseInt(hex.slice(start, start + 2), 16));
-  const luminance = (channels: Rgb): number => {
-    const [r, g, b] = channels.map((value) => {
-      const c = value / 255;
-      return c <= 0.04045 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4;
-    }) as [number, number, number];
-    return 0.2126 * r + 0.7152 * g + 0.0722 * b;
-  };
-  const contrast = (a: Rgb, b: Rgb): number => {
-    const [light, dark] = [luminance(a), luminance(b)].sort((x, y) => y - x) as [number, number];
-    return (light + 0.05) / (dark + 0.05);
-  };
-  /** color-mix in srgb mixes the channels as they are written; a colour
-   * mixed with transparent is that colour at the share as its opacity. */
-  const mix = (a: Rgb, b: Rgb, share: number): Rgb => a.map((value, index) => share * value + (1 - share) * (b[index] as number));
-  /** The share of a rule's color-mix: `property: color-mix(in srgb, var(--x) N%, ...)`. */
-  const share = (selector: string, property: string, variable: string): number => {
-    const found = new RegExp(`(^|[}/])\\s*${selector}\\s*\\{[^}]*${property}: color-mix\\(in srgb, var\\(${variable}\\) (\\d+)%`).exec(css());
-    expect(found, `${selector} ${property}`).not.toBeNull();
-    return Number(found?.[2]) / 100;
-  };
-
-  it("reach 4.5:1 with Home Assistant's default colours, light and dark", () => {
-    const state = share("\\.state", "color", "--tone");
-    for (const theme of THEMES) {
-      // Accent and info, warning, success, error, the muted text.
-      for (const tone of [theme.accent, "#039be5", "#ffa600", "#43a047", ERROR, theme.muted]) {
-        expect(contrast(mix(rgb(tone), rgb(theme.text), state), rgb(theme.background)), `${tone} in ${theme.name}`).toBeGreaterThanOrEqual(4.5);
-      }
-    }
-  });
-
-  it("color the buttons' and the chosen options' texts the same way: 4.5:1 on their tints", () => {
-    const sheet = css();
-    const tonal = share("\\.btn", "color", "--bb-accent");
-    const tonalTint = share("\\.btn", "background", "--bb-accent");
-    const danger = share("\\.btn\\.danger", "color", "--bb-err");
-    const dangerTint = share("\\.btn\\.danger", "background", "--bb-err");
-    const chosen = share('\\.seg button\\[aria-checked="true"\\]', "color", "--bb-accent");
-    const chosenTint = share('\\.seg button\\[aria-checked="true"\\]', "background", "--bb-accent");
-    const tag = share("\\.heat-label \\.heat-tag", "color", "--bb-accent");
-    const tagTint = share("\\.heat-label \\.heat-tag", "background", "--bb-accent");
-    const chip = share("\\.chip", "color", "--tone");
-    const chipTint = share("\\.chip", "background", "--tone");
-    // The question's red button: the theme's red, darkened for its white text.
-    const filled = share("\\.dlg-actions \\.btn\\.danger", "background", "--bb-err");
-    expect(declarations(".dlg-actions .btn.danger", sheet)).toContain("color: #fff");
-    // A text button has no tint of its own: the tonal button's colour.
-    expect(sheet).toMatch(/\.btn\.plain\s*\{\s*background: none;\s*padding: 0 8px;\s*\}/);
-    // The camera's panel is dark in every theme: its button stays white.
-    expect(declarations(".live.failed .btn", sheet)).toContain("color: #fff");
-    // The speeds' percentages read as their names do.
-    expect(declarations(".seg.speeds .opt-sub", sheet)).toContain("opacity: 1");
-    for (const theme of THEMES) {
-      const [text, background, accent, muted] = [rgb(theme.text), rgb(theme.background), rgb(theme.accent), rgb(theme.muted)];
-      // The segments and the heating section lie on a 5 % tint of the text colour.
-      const tint = mix(text, background, 0.05);
-      const pairs: [string, Rgb, Rgb][] = [
-        ["tonal button", mix(accent, text, tonal), mix(accent, background, tonalTint)],
-        ["text button", mix(accent, text, tonal), background],
-        ["text button on a tint", mix(accent, text, tonal), tint],
-        ["danger button", mix(rgb(ERROR), text, danger), mix(rgb(ERROR), background, dangerTint)],
-        ["filled danger button", [255, 255, 255], mix(rgb(ERROR), [0, 0, 0], filled)],
-        ["chosen option", mix(accent, text, chosen), mix(accent, tint, chosenTint)],
-        ["active nozzle tag", mix(accent, text, tag), mix(accent, tint, tagTint)],
-        ...["#43a047", "#ffa600", ERROR, theme.muted].map((tone): [string, Rgb, Rgb] => [`chip ${tone}`, mix(rgb(tone), text, chip), mix(rgb(tone), background, chipTint)]),
-      ];
-      // 2025.5's own secondary text reaches 4.4:1 on such a tint; today's 5.9:1.
-      if (!theme.name.startsWith("2025.5 light")) pairs.push(["speed percentage", muted, tint]);
-      for (const [name, foreground, behind] of pairs) expect(contrast(foreground, behind), `${name} in ${theme.name}`).toBeGreaterThanOrEqual(4.5);
-    }
-  });
-});
-
 describe("the menu on a narrow card at the screen's left edge", () => {
   it("is moved onto the screen", async () => {
     const { card } = await cardFor("x1c");
@@ -551,6 +429,9 @@ describe("a command on its way", () => {
     expect(sheet).toMatch(/\.btn\.pending > \.icon,\s*\.icon-btn\.pending > \.icon\s*\{[^}]*border: 2px solid currentColor;[^}]*border-right-color: transparent;[^}]*border-radius: 50%;[^}]*animation: spin/);
     expect(sheet).toMatch(/\.btn\.pending > \.icon path,\s*\.icon-btn\.pending > \.icon path\s*\{[^}]*display: none;/);
     expect(atRule("@media (prefers-reduced-motion: reduce)")).toMatch(/\.btn\.pending > \.icon,\s*\.icon-btn\.pending > \.icon/);
+    // The filament change's bar stands still there: across the whole width,
+    // a line that says it runs -- not 30 % that reads as its progress.
+    expect(declarations(".activity-bar", atRule("@media (prefers-reduced-motion: reduce)"))).toContain("width: 100%");
   });
 
   it("is marked on its button while it runs", async () => {
@@ -622,159 +503,6 @@ describe("a command on its way", () => {
     expect(hass.calls.filter((call) => call.domain === "select")).toHaveLength(1);
     finish();
     await settle(card);
-  });
-});
-
-describe("the dialogs", () => {
-  it("stand out from the page in a dark theme: the theme's dialog surface, an edge, a darker backdrop", () => {
-    const sheet = styleText();
-    expect(sheet).toMatch(/(^|[}/])\s*dialog\s*\{[^}]*--bb-surface: var\(--ha-dialog-surface-background, var\(--mdc-theme-surface, var\(--card-background-color, #fff\)\)\);[^}]*background: var\(--bb-surface\);/);
-    expect(sheet).toMatch(/(^|[}/])\s*dialog\s*\{[^}]*box-shadow:\s*0 0 0 1px var\(--bb-divider\),/);
-    expect(declarations("dialog::backdrop", sheet)).toContain("background: rgba(0, 0, 0, 0.55)");
-    // What lies on the dialog takes its surface, not the card's.
-    expect(declarations(".select select", sheet)).toContain("background: var(--bb-surface)");
-    expect(sheet).toMatch(/\.pal\[aria-checked="true"\]\s*\{[^}]*0 0 0 2px var\(--bb-surface\),/);
-  });
-
-  it("take up to 440 px, and the screen less 16 px a side where it is narrower: every dialog alike", () => {
-    const sheet = styleText();
-    expect(sheet).toMatch(/(^|[}/])\s*dialog\s*\{[^}]*max-width: min\(440px, calc\(100vw - 32px\)\);[^}]*width: 100%;/);
-    // One rule for all of them: no dialog keeps a width of its own (the
-    // menu is no dialog: it takes its items' width).
-    const rules = [...sheet.replace(/\/\*[\s\S]*?\*\//g, "").matchAll(/([^{}]*)\{([^{}]*)\}/g)].map(([, selector, body]): [string, string] => [selector?.trim() ?? "", body ?? ""]);
-    const widths = rules.filter(([selector, body]) => /^dialog(\b|[.[:])/.test(selector) && !selector.includes("::backdrop") && /max-width/.test(body));
-    expect(widths.map(([selector]) => selector)).toEqual(["dialog"]);
-  });
-
-  it("the tints and lines come from the theme's text colour itself, not from its rgb triple", () => {
-    // Home Assistant computes --rgb-primary-text-color only from a theme's
-    // own hex value: a theme naming its text colour by a variable keeps the
-    // light default, dark grey under white text.
-    const sheet = styleText();
-    expect(sheet).not.toContain("--rgb-primary-text-color");
-    expect(sheet).toMatch(/--bb-tint: color-mix\(in srgb, var\(--bb-text\) 5%, transparent\);/);
-    expect(sheet).toMatch(/--bb-tint-2: color-mix\(in srgb, var\(--bb-text\) 9%, transparent\);/);
-    expect(sheet).toMatch(/--bb-line: color-mix\(in srgb, var\(--bb-text\) 16%, transparent\);/);
-  });
-
-  it("and the menu are never see-through: the theme's colour at full strength, where the browser can take its alpha away", () => {
-    const sheet = styleText();
-    expect(sheet).toMatch(
-      /@supports \(color: rgb\(from red r g b \/ 1\)\)\s*\{\s*dialog\s*\{[^}]*--bb-surface: rgb\(from var\(--ha-dialog-surface-background, var\(--mdc-theme-surface, var\(--card-background-color, #fff\)\)\) r g b \/ 1\);\s*\}\s*\.menu\s*\{[^}]*background: rgb\(from var\(--ha-card-background, var\(--card-background-color, #fff\)\) r g b \/ 1\);/,
-    );
-  });
-});
-
-describe("the layout of a narrow card and on a touch screen", () => {
-  /** A rule of a style sheet's part: its selector right after a rule or the start. */
-  const rule = (selector: string, declarations: string): RegExp =>
-    new RegExp(`(^|[}/])\\s*${selector}\\s*\\{[^}]*${declarations}`);
-
-  it("puts a notice's button below its text where both do not fit side by side", () => {
-    const sheet = styleText();
-    expect(sheet).toMatch(rule("\\.callout", "flex-wrap: wrap;"));
-    // The text stays beside its icon on a half-width card too.
-    expect(sheet).toMatch(rule("\\.callout > span", "flex: 1 1 150px;"));
-    // On a phone, the button takes the notice's full width below the text.
-    expect(atRule("@container (max-width: 400px)")).toMatch(rule("\\.callout \\.btn", "flex: 1 0 100%;[^}]*margin: 4px 0 0;"));
-  });
-
-  it("keeps the strip's chips readable in both themes", () => {
-    // In a selector list with the model chip.
-    expect(declarations(".ams-strip .ams-nozzle", styleText())).toEqual(expect.arrayContaining(["background: var(--bb-tint-2)", "color: color-mix(in srgb, var(--bb-muted) 50%, var(--bb-text))"]));
-  });
-
-  it("keeps the control view within a half-width card", () => {
-    const sheet = styleText();
-    const narrow = atRule("@container (max-width: 280px)");
-    // One column: the step, the pad, the bed, the extruder.
-    expect(narrow).toMatch(rule("\\.control", 'grid-template-areas: "step" "pad" "bed" "ext";'));
-    expect(narrow).toMatch(rule("\\.pad", "grid-template-columns: repeat\\(3, 40px\\);[^}]*grid-template-rows: repeat\\(3, 40px\\);"));
-    expect(narrow).toMatch(rule("\\.pad \\.btn", "width: 40px;[^}]*height: 40px;"));
-    expect(narrow).toMatch(rule("\\.axis-col\\.bed", "flex-direction: row;"));
-    // A heater's name and Off on a row, its steppers below with the whole
-    // width: beside a thumb's 44 px Off they would shrink under 24 px.
-    expect(narrow).toMatch(rule("\\.heat-name", "grid-column: 1;[^}]*grid-row: 1;"));
-    expect(narrow).toMatch(rule("\\.heat-row \\.heat-off", "grid-column: 2;[^}]*grid-row: 1;"));
-    // The place of a power symbol that cannot be used, beside it.
-    expect(narrow).toMatch(rule("\\.heat-row \\.heat-off-space", "grid-column: 2;[^}]*grid-row: 1;"));
-    expect(narrow).toMatch(rule("\\.heat-set", "grid-column: 1 / -1;"));
-    expect(narrow).toMatch(rule("\\.heat-target", "min-width: 44px;"));
-    // A heater's name wraps in whole words, never cut ("Right nozzle").
-    expect(sheet).toMatch(rule("\\.heat-label \\.heat-text", "white-space: normal;[^}]*overflow: visible;[^}]*overflow-wrap: break-word;"));
-    // A heating tile's target in the readable mix, its icon in the pure tone.
-    expect(sheet).toMatch(rule("\\.temp\\.heating \\.temp-head \\.icon", "color: var\\(--bb-heat\\);"));
-    // A heater that is on, in the Control tab: its icon in the same tone.
-    expect(sheet).toMatch(rule("\\.heat-name\\.on \\.heat-label \\.icon", "color: var\\(--bb-heat\\);"));
-    expect(sheet).toMatch(rule("\\.temp\\.heating \\.temp-target", "color: color-mix\\(in srgb, var\\(--bb-heat\\) 55%, var\\(--bb-text\\)\\);"));
-    // Two temperature tiles a row.
-    expect(narrow).toMatch(rule("\\.temps", "grid-template-columns: repeat\\(2, minmax\\(0, 1fr\\)\\);"));
-    // After the step below 340 px, so that it wins.
-    expect(sheet.indexOf("@container (max-width: 280px)")).toBeGreaterThan(sheet.indexOf("@container (max-width: 340px)"));
-  });
-
-  it("lets the drying row wrap: the state keeps its words, the hint a line of its own, the button at the right", () => {
-    const sheet = styleText();
-    expect(sheet).toMatch(rule("\\.drying", "display: flex;[^}]*flex-wrap: wrap;"));
-    expect(sheet).toMatch(rule("\\.drying > span", "flex: 1 1 auto;"));
-    expect(sheet).toMatch(rule("\\.drying > \\.btn", "margin-left: auto;"));
-    expect(sheet).toMatch(rule("\\.drying > \\.dry-where", "flex: 1 0 100%;"));
-    // A slot's sub line never widens the card.
-    expect(sheet).toMatch(rule("\\.slots", "grid-template-columns: minmax\\(0, 1fr\\);"));
-  });
-
-  it("keeps every action within a half-width card on a phone (under 200 px)", () => {
-    const tiny = atRule("@container (max-width: 200px)");
-    // From 280 px down a slot's buttons below its name; from 260 px a
-    // notice's button below its text, the job's words below its picture.
-    const half = atRule("@container (max-width: 280px)");
-    expect(half).toMatch(rule("\\.slot", "flex-wrap: wrap;"));
-    expect(half).toMatch(rule("\\.slot-main", "flex: 1 0 100%;"));
-    // The switch-off's row no longer indented beside the wrapped plug rows.
-    expect(half).toMatch(rule("\\.p-auto,\\s*\\.p-set", "padding-left: 0;"));
-    const narrow = atRule("@container (max-width: 260px)");
-    // The backup's "Unknown" under its text.
-    expect(narrow).toMatch(rule("\\.backup \\.det-row\\.choosing \\.det-text", "flex: 1 0 100%;"));
-    expect(narrow).toMatch(rule("\\.callout \\.btn", "white-space: normal;"));
-    expect(narrow).toMatch(rule("\\.callout > \\.icon", "display: none;"));
-    // The name on a row of its own, whole words; the HMS line keeps its text.
-    expect(tiny).toMatch(rule("\\.head", "flex-wrap: wrap;"));
-    expect(tiny).toMatch(rule("\\.names", "flex: 1 0 100%;[^}]*order: -1;"));
-    // The dot left, the light and the menu right, the chips under the name.
-    expect(tiny).toMatch(rule("\\.head \\.dot", "margin-right: auto;"));
-    // The job's words below its picture; one temperature a row.
-    expect(narrow).toMatch(rule("\\.job", "flex-wrap: wrap;"));
-    expect(narrow).toMatch(rule("\\.job-info", "flex: 1 0 100%;"));
-    expect(tiny).toMatch(rule("\\.temps,\\s*\\.temps\\.n1,\\s*\\.temps\\.n2,\\s*\\.temps\\.n4,\\s*\\.temps\\.dual", "grid-template-columns: minmax\\(0, 1fr\\);"));
-    // Controls and their labels wrap rather than leave the card.
-    expect(narrow).toMatch(rule("\\.ctl-buttons \\.btn,\\s*\\.drying > \\.btn", "white-space: normal;"));
-    expect(narrow).toMatch(rule("\\.nozzle-row", "flex-wrap: wrap;"));
-    expect(narrow).toMatch(rule("\\.det-head", "flex-wrap: wrap;"));
-    expect(narrow).toMatch(rule("\\.ext-buttons", "flex-direction: column;"));
-    // The tabs as icons: their names, too long here, only for a screen
-    // reader -- never cut or broken mid-word.
-    expect(tiny).toMatch(rule("\\.tabs \\.tab-icon", "display: inline-flex;"));
-    expect(tiny).toMatch(rule("\\.tabs \\.tab-text", "position: absolute;[^}]*clip: rect\\(0 0 0 0\\);"));
-    expect(styleText()).toMatch(rule("\\.tabs \\.tab-icon", "display: none;"));
-    expect(tiny).not.toMatch(rule("\\.tabs button", "text-overflow: ellipsis;"));
-    expect(tiny).toMatch(rule("\\.name", "overflow-wrap: break-word;"));
-    expect(tiny).toMatch(rule("\\.hms-line-more", "display: none;"));
-    const sheet = styleText();
-    expect(sheet.indexOf("@container (max-width: 200px)")).toBeGreaterThan(sheet.indexOf("@container (max-width: 280px)"));
-  });
-
-  it("gives a thumb 44 px for the light, the menu and a heater's off button", () => {
-    const touch = atRule("@media (pointer: coarse)");
-    expect(touch).toMatch(rule("\\.head \\.icon-btn", "width: 44px;[^}]*height: 44px;"));
-    expect(touch).toMatch(rule("\\.heat-row \\.btn\\.heat-off", "width: 44px;[^}]*height: 44px;[^}]*min-height: 44px;"));
-    expect(touch).toMatch(rule("\\.heat-row \\.heat-off-space", "width: 44px;[^}]*height: 44px;"));
-    // After the narrow card's smaller steppers, so that it wins there too.
-    const sheet = styleText();
-    expect(sheet.lastIndexOf("@media (pointer: coarse)")).toBeGreaterThan(sheet.indexOf("@container (max-width: 280px)"));
-    // Beside them the name takes its own row from 220 px down, in whole words.
-    expect(sheet.slice(sheet.lastIndexOf("@media (pointer: coarse)"))).toMatch(
-      /@container \(max-width: 220px\)\s*\{[^@]*\.names\s*\{[^}]*flex: 1 0 100%;[^}]*order: -1;/,
-    );
   });
 });
 
@@ -850,13 +578,7 @@ describe("the preview in the editor", () => {
     // the cards keep the size they will have.
     const edited: FakeCard[] = [];
     for (const name of ["a1mini", "offline"] as const) {
-      const [make, printer] = PRINTERS[name];
-      const card = document.createElement("bambuddy-printer-card") as FakeCard;
-      card.preview = true;
-      card.setConfig({ type: "custom:bambuddy-printer-card", printer, start_view: "control" });
-      card.hass = makeHass({ devices: make() });
-      document.body.append(card);
-      await card.updateComplete;
+      const card = await mountPreview(name, { start_view: "control" });
       expect(find(card, ".sample"), name).toBeNull();
       edited.push(card);
     }
@@ -865,23 +587,7 @@ describe("the preview in the editor", () => {
   });
 });
 
-describe("an offline printer's tabs", () => {
-  it("say it as the status tab does, with the picture, instead of controls and slots that show nothing", async () => {
-    const { card } = await cardFor("offline");
-    const offline = "The printer is offline. Check that it is switched on and connected to BamBuddy.";
-    expect(text(find(card, ".job .job-info"))).toBe(offline);
-    await showView(card, "Control");
-    expect(text(find(card, ".job .job-info"))).toBe(offline);
-    expect(find(card, ".job .picture")).not.toBeNull();
-    expect(find(card, ".heating")).toBeNull();
-    expect(find(card, ".pad")).toBeNull();
-    await showView(card, "Filament");
-    expect(text(find(card, ".job .job-info"))).toBe(offline);
-    expect(find(card, ".unit")).toBeNull();
-  });
-});
-
-describe("the preview's examples, closer", () => {
+describe("the preview's examples", () => {
   it("shows a warning that holds now outside the example: developer LAN mode off", async () => {
     const card = await previewOf("x1c", { status_blocks: ["controls"] }, "en", x1c({ developerMode: "off", status: "idle" }));
     const hint = findAll(card, ".note.warning").filter((item) => item.textContent?.includes("developer LAN mode is off"));
@@ -898,7 +604,7 @@ describe("the preview's examples, closer", () => {
     const hidden = await previewOf("a1mini", { status_blocks: ["controls"], read_only: true });
     expect(samples(hidden)).toEqual([]);
     // No temperature to show: no example with an empty box.
-    const bare = offlineP1s().map((device) => ({ ...device, entities: device.entities.filter((entity) => !/temperature/.test(entity.key)) }));
+    const bare = offlineP1s().map((device) => (keepEntities(device, (entity) => !/temperature/.test(entity.key))));
     const temps = await previewOf("offline", { status_blocks: ["temperatures"] }, "en", bare);
     expect(samples(temps)).toEqual([]);
   });
@@ -926,16 +632,6 @@ describe("the preview's examples, closer", () => {
   });
 });
 
-describe("an offline printer's tabs, closer", () => {
-  it("say no data from BamBuddy where it gives none, in every tab", async () => {
-    const { card } = await cardFor("x1c", { devices: unreachable(x1c()) });
-    for (const tab of ["Control", "Filament"] as const) {
-      await showView(card, tab);
-      expect(text(find(card, ".job .job-info")), tab).toContain("No data from BamBuddy");
-    }
-  });
-});
-
 describe("the editor's preview of an offline printer's Power block", () => {
   it("shows it as it is: the plugs the card shows now are no example", async () => {
     const devices = offlineP1s();
@@ -950,10 +646,3 @@ describe("the editor's preview of an offline printer's Power block", () => {
   });
 });
 
-describe("a switch that is off", () => {
-  it("has an edge in the muted colour, 3:1 and more against its box; on, the accent alone", () => {
-    const sheet = styleText();
-    expect(declarations(".toggle", sheet)).toContain("box-shadow: inset 0 0 0 1px var(--bb-muted)");
-    expect(declarations(".det-switch[aria-checked=\"true\"] .toggle", sheet)).toContain("box-shadow: none");
-  });
-});

@@ -68,8 +68,7 @@ async def test_the_card_is_registered_once(hass: HomeAssistant, bambuddy_api: Si
         "custom_components.bambuddy.async_register_card", register
     ):
         entry = await set_up(hass, X1C)
-        await hass.config_entries.async_reload(entry.entry_id)
-        await hass.async_block_till_done()
+        await reload_entry(hass, entry.entry_id)
 
     register.assert_awaited_once()
 
@@ -99,3 +98,4 @@ def test_the_readme_documents_what_the_bundle_takes() -> None:
     assert "bambuddy-printer-card" in bundle
     assert "custom:bambuddy-printer-card" in section
     assert "#-dashboard-card" in bundle
+from tests.helpers import reload_entry

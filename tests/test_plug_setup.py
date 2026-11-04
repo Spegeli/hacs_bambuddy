@@ -10,7 +10,7 @@ from unittest.mock import patch
 
 import attr
 from freezegun.api import FrozenDateTimeFactory
-from homeassistant.core import HomeAssistant
+from homeassistant.core import Event, HomeAssistant
 from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers import entity_registry as er
 from pytest_homeassistant_custom_component.common import async_capture_events
@@ -29,15 +29,20 @@ from tests.conftest import (
     make_entry,
     plug_identifier_of,
     plug_unique_id,
-    printer_key,
     set_up,
     setup_integration,
+    switch_off_uid,
 )
 from tests.helpers import plug_info, plug_list, reload_entry, with_plugs
 
 # Home Assistant restores a deleted entity's settings from 2025.x on; the floor only its registry id.
 _RESTORES_SETTINGS = "area_id" in attr.fields_dict(er.DeletedRegistryEntry)
 
+
+def _registry_id(hass: HomeAssistant, entity: str) -> str:
+    entry = er.async_get(hass).async_get(entity)
+    assert entry is not None
+    return entry.id
 
 
 def _device_id(hass: HomeAssistant, entry_id: str, plug_id: int) -> str:
@@ -46,7 +51,7 @@ def _device_id(hass: HomeAssistant, entry_id: str, plug_id: int) -> str:
     return device.id
 
 
-def _removed(events: list, entity: str) -> bool:  # type: ignore[type-arg]
+def _removed(events: list[Event], entity: str) -> bool:
     return any(event.data.get("action") == "remove" and event.data.get("entity_id") == entity for event in events)
 
 
@@ -57,7 +62,7 @@ async def test_a_swap_keeps_both_devices_and_moves_the_entities(hass: HomeAssist
     entry = await set_up(hass, X1C, A1_MINI)
     three, eight = _device_id(hass, entry.entry_id, 3), _device_id(hass, entry.entry_id, 8)
     switch = entity_id(hass, "switch", plug_unique_id(hass, entry.entry_id, 3, "power"))
-    registry_id = er.async_get(hass).async_get(switch).id  # type: ignore[union-attr]
+    registry_id = _registry_id(hass, switch)
     bambuddy_api.get_smart_plugs.return_value = plug_list(**{"3": {"ip_address": plug_info(8)["ip_address"]}, "8": {"ip_address": plug_info(3)["ip_address"]}})
 
     await reload_entry(hass, entry.entry_id)
@@ -88,7 +93,7 @@ async def test_a_plug_created_again_is_a_new_device_with_the_same_entities(hass:
     entry = await set_up(hass, X1C)
     device = _device_id(hass, entry.entry_id, 3)
     switch = entity_id(hass, "switch", plug_unique_id(hass, entry.entry_id, 3, "power"))
-    registry_id = er.async_get(hass).async_get(switch).id  # type: ignore[union-attr]
+    registry_id = _registry_id(hass, switch)
     events = async_capture_events(hass, er.EVENT_ENTITY_REGISTRY_UPDATED)
     bambuddy_api.get_smart_plugs.return_value = plug_list(**{"3": {"created_at": "2026-10-20T09:00:00"}})
 
@@ -125,7 +130,7 @@ async def test_another_server_with_the_same_tasmota_keeps_its_entities(hass: Hom
     with_plugs(bambuddy_api)
     entry = await set_up(hass, X1C)
     switch = entity_id(hass, "switch", plug_unique_id(hass, entry.entry_id, 3, "power"))
-    registry_id = er.async_get(hass).async_get(switch).id  # type: ignore[union-attr]
+    registry_id = _registry_id(hass, switch)
     events = async_capture_events(hass, er.EVENT_ENTITY_REGISTRY_UPDATED)
     bambuddy_api.plug_statuses["12"] = dict(bambuddy_api.plug_statuses["3"])
     twelve = {**plug_info(3), "id": 12, "created_at": "2026-10-20T09:00:00"}
@@ -158,7 +163,7 @@ async def test_the_switch_off_survives_its_plug_created_again(hass: HomeAssistan
     device with the user's ID and stays armed."""
     with_plugs(bambuddy_api)
     entry = await set_up(hass, X1C)
-    switch_off = entity_id(hass, "switch", f"{entry.entry_id}_switchoff_{printer_key(X1C)}_auto_off")
+    switch_off = entity_id(hass, "switch", switch_off_uid(entry, "auto_off"))
     er.async_get(hass).async_update_entity(switch_off, new_entity_id="switch.my_switch_off")
     await hass.services.async_call("switch", "turn_on", {"entity_id": "switch.my_switch_off"}, blocking=True)
     bambuddy_api.get_smart_plugs.return_value = plug_list(**{"3": {"created_at": "2026-10-20T09:00:00"}})

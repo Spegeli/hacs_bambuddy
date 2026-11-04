@@ -262,7 +262,7 @@ def test_the_checks_run_what_ci_promises():
         for step in release_script["steps"]
         if step.get("uses", "").startswith("actions/checkout@")
     ]
-    assert checkout["with"] == {"fetch-depth": 0}
+    assert checkout["with"] == {"fetch-depth": 0, "persist-credentials": False}
     assert "python -m py_compile .github/scripts/release.py" in _script(release_script)
     for job in (tests, typing):
         assert _python(job) == "3.14", job["name"]
@@ -278,6 +278,19 @@ def test_the_checks_run_what_ci_promises():
     assert "python -m pip install -r tests/requirements-floor.txt" in _script(minimum)
     assert "tests/requirements.txt" not in _script(minimum)
     assert "--cov" not in _script(minimum)
+
+
+def test_only_the_release_keeps_git_credentials_after_its_checkout():
+    """A check needs no credentials once the code is there: the token stays
+    out of the working copy's git config. The release's checkout keeps
+    them: it pushes, with the deploy key."""
+    for name, workflow in _every_workflow():
+        for job in workflow["jobs"].values():
+            for step in job.get("steps", []):
+                if not step.get("uses", "").startswith("actions/checkout@"):
+                    continue
+                kept = step.get("with", {}).get("persist-credentials", True)
+                assert kept is (name == "release.yml"), (name, job.get("name"))
 
 
 def test_the_cards_check_builds_and_compares_the_bundle():

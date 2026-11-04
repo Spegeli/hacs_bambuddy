@@ -15,32 +15,29 @@ from homeassistant.exceptions import HomeAssistantError, ServiceValidationError
 from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers import issue_registry as ir
 
-from custom_components.bambuddy.api import BamBuddyConnectionError
 from custom_components.bambuddy.const import DOMAIN
 from custom_components.bambuddy.coordinator import names_issue
-from custom_components.bambuddy.diagnostics import async_get_device_diagnostics
 
 from tests.conftest import (
-    API_KEY,
+    A1_MINI,
     H2D,
     P1S,
     X1C,
     ams_device,
     device_id,
     entity_id,
-    instance_uid,
     load_fixture,
     next_refresh,
     no_entity,
-    past_minutes,
+    past_polls,
     past_the_minute,
     printer_device,
     printer_info,
     printer_key,
     printer_uid,
     set_up,
-    state_of,
 )
+from tests.helpers import details_are, timed_out
 
 
 def _client_never_reached(printer_id: int) -> dict[str, Any]:
@@ -85,8 +82,7 @@ async def test_a_printer_off_at_bambuddys_restart_completes_itself(
 
     with patch.object(hass.config_entries, "async_schedule_reload") as reload:
         bambuddy_api.statuses[H2D] = load_fixture("status_h2d.json")
-        for _ in range(3):
-            await next_refresh(hass, freezer)
+        await past_polls(hass, freezer, 3)
 
     reload.assert_called_once_with(entry.entry_id)
 
@@ -183,29 +179,14 @@ async def test_the_names_notice_goes_with_its_entry(
     assert ir.async_get(hass).async_get_issue(DOMAIN, issue_id) is None
 
 
-async def test_device_diagnostics_of_an_entry_that_did_not_load(hass: HomeAssistant, bambuddy_api: SimpleNamespace) -> None:
-    """The entry's part then, without a secret."""
-    entry = await set_up(hass, X1C)
-    device = dr.async_get(hass).async_get(device_id(hass, entry, printer_device(entry, X1C)))
-    assert device is not None
-    await hass.config_entries.async_unload(entry.entry_id)
-    await hass.async_block_till_done()
-
-    diagnostics = await async_get_device_diagnostics(hass, entry, device)
-
-    assert diagnostics["entry"]["state"] == "not_loaded"
-    assert API_KEY not in str(diagnostics)
-
-
 async def test_the_replaced_refusal_names_this_printer(
     hass: HomeAssistant, bambuddy_api: SimpleNamespace, freezer: FrozenDateTimeFactory
 ) -> None:
     """The newcomer's name never becomes this printer's: the serial is
     checked first."""
     entry = await set_up(hass, X1C)
-    a1_mini = printer_info(2)
-    bambuddy_api.get_printer.side_effect = None
-    bambuddy_api.get_printer.return_value = {**a1_mini, "id": X1C}
+    a1_mini = printer_info(A1_MINI)
+    details_are(bambuddy_api, {**a1_mini, "id": X1C})
     bambuddy_api.get_runtime.return_value = {"total_hours": 3.0, "printer_name": a1_mini["name"]}
     bambuddy_api.statuses[X1C] = load_fixture("status_a1mini.json")
 
@@ -226,10 +207,9 @@ async def test_another_name_under_the_number_is_checked_at_once(
     printer, so its details are read in the same refresh -- no command
     reaches the newcomer."""
     entry = await set_up(hass, X1C)
-    a1_mini = printer_info(2)
+    a1_mini = printer_info(A1_MINI)
     await past_the_minute(hass, freezer)
-    bambuddy_api.get_printer.side_effect = None
-    bambuddy_api.get_printer.return_value = {**a1_mini, "id": X1C}
+    details_are(bambuddy_api, {**a1_mini, "id": X1C})
     bambuddy_api.statuses[X1C] = {**load_fixture("status_a1mini.json"), "name": a1_mini["name"]}
     with patch.object(hass.config_entries, "async_schedule_reload"):
         await next_refresh(hass, freezer)
@@ -243,8 +223,7 @@ async def test_another_name_under_the_number_is_checked_at_once(
 
 async def test_a_command_bambuddy_does_not_answer_in_time(hass: HomeAssistant, bambuddy_api: SimpleNamespace) -> None:
     entry = await set_up(hass, X1C)
-    timeout = BamBuddyConnectionError("POST /printers/1/print/pause: TimeoutError")
-    timeout.__cause__ = TimeoutError()
+    timeout = timed_out("POST /printers/1/print/pause")
     bambuddy_api.pause.side_effect = timeout
 
     with pytest.raises(HomeAssistantError) as raised:
@@ -255,20 +234,3 @@ async def test_a_command_bambuddy_does_not_answer_in_time(hass: HomeAssistant, b
     assert raised.value.translation_key == "no_answer"
 
 
-async def test_bambuddys_system_information_may_fail_once(
-    hass: HomeAssistant, bambuddy_api: SimpleNamespace, freezer: FrozenDateTimeFactory
-) -> None:
-    """Its archive walk is BamBuddy's slowest answer: the last one stands,
-    the statistics still come, BamBuddy still reads as connected."""
-    entry = await set_up(hass, X1C)
-    free = state_of(hass, "sensor", instance_uid(entry, "disk_free")).state
-    bambuddy_api.get_system_info.side_effect = BamBuddyConnectionError("GET /system/info: TimeoutError")
-    bambuddy_api.get_statistics.return_value = {**load_fixture("archives_stats.json"), "total_prints": 900}
-
-    await past_minutes(hass, freezer, 30)
-
-    assert bambuddy_api.get_system_info.await_count == 2
-    assert entry.runtime_data.instance.last_update_success
-    assert entry.runtime_data.instance.data["stats"]["total_prints"] == 900
-    assert state_of(hass, "sensor", instance_uid(entry, "printers_connected")).state == "2"
-    assert state_of(hass, "sensor", instance_uid(entry, "disk_free")).state == free

@@ -1,7 +1,7 @@
 // The printer's plug as BamBuddy picks it, a plug
 // without a state, the offline Power block, the switch-off's texts; a slot's
 // tools, its K field and the names of its buttons.
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import "../src/index";
 import { ICONS } from "../src/icons";
@@ -10,19 +10,21 @@ import {
   h2d,
   IDLE,
   idleX1c,
+  inactive,
   makeHass,
   mountCard,
   mountFor,
   offlineP1s,
   plugDevice,
   readOnlyX1c,
+  withPlugs,
   x1c,
   x1cWithPlugs,
   type FakeCard,
   type FakeDevice,
   type FakeHassOptions,
 } from "./fixtures";
-import { button, find, findAll, NBSP, press, root, settle, showView, styleText, text } from "./helpers";
+import { button, editSlot, find, findAll, NBSP, press, root, settle, showView, styleText, text } from "./helpers";
 
 afterEach(() => {
   document.body.innerHTML = "";
@@ -112,7 +114,7 @@ describe("the switch-off after the print", () => {
 
   it("does not offer to set it here where the key cannot", async () => {
     const devices = readOnlyX1c();
-    const card = await mount([...devices, plugDevice({ printer: devices[0] as FakeDevice, id: 3, name: "Tasmota", kind: "state", bambuddyAutoOff: true })], "dev-x1c");
+    const card = await mount(withPlugs(devices, { id: 3, name: "Tasmota", kind: "state", bambuddyAutoOff: true }), "dev-x1c");
     expect(text(find(card, ".power .p-auto"))).not.toContain("To set it here instead");
   });
 
@@ -127,26 +129,25 @@ describe("the switch-off after the print", () => {
     expect(text(root(card).getElementById(group.getAttribute("aria-labelledby") ?? ""))).toBe("Switch off once the nozzle is cooler than");
     // In the middle of the dialog, as the frame rate's; the text stays left.
     expect(group.classList.contains("centered")).toBe(true);
-    await press(card, `Lower the switch-off temperature by 5${NBSP}°C`);
-    await new Promise((resolve) => setTimeout(resolve, 900));
+    // The stepper sends once the taps stop: the fake clock goes past its wait.
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    button(card, `Lower the switch-off temperature by 5${NBSP}°C`).click();
+    await vi.advanceTimersByTimeAsync(900);
+    vi.useRealTimers();
     await settle(card);
     expect(hass.calls.at(-1)).toMatchObject({ domain: "number", service: "set_value", data: { value: 45 } });
   });
 });
 
 describe("a slot's tools", () => {
-  const editRow = async (card: FakeCard, row: number): Promise<void> => {
-    (findAll(card, ".slot")[row]?.querySelector(".btn.edit") as HTMLButtonElement).click();
-    await settle(card);
-  };
 
   it("offers no reset for a slot nobody described: there is nothing to reset", async () => {
     const card = await mount(idleX1c(), "dev-x1c");
     await showView(card, "Filament");
-    await editRow(card, 3);
+    await editSlot(card, 3);
     expect(findAll(card, "dialog .btn").map(text)).not.toContain("Reset slot");
     await press(card, "Cancel");
-    await editRow(card, 2);
+    await editSlot(card, 2);
     expect(findAll(card, "dialog .btn").map(text)).toContain("Reset slot");
   });
 
@@ -158,7 +159,7 @@ describe("a slot's tools", () => {
     ] as const) {
       const card = await mount(a1mini({ status: "idle", stage: "idle", externalSpools: [spool] }), "dev-a1mini", {}, { language });
       await showView(card, "Filament");
-      await editRow(card, 0);
+      await editSlot(card, 0);
       expect(findAll(card, "dialog .dlg-note").map(text)).toContain(hint);
       card.remove();
     }
@@ -172,7 +173,7 @@ describe("a slot's tools", () => {
     const hass = makeHass({ devices: idleX1c(), callService: failing });
     const card = await mountCard(hass, { printer: "dev-x1c" });
     await showView(card, "Filament");
-    await editRow(card, 2);
+    await editSlot(card, 2);
     const select = find<HTMLSelectElement>(card, "dialog select#fil-k") as HTMLSelectElement;
     select.value = "-1";
     select.dispatchEvent(new Event("change"));
@@ -186,7 +187,7 @@ describe("a slot's tools", () => {
       call.service === "get_k_profiles" ? { response: { nozzle_diameter: "0.4", current: -1, profiles: [] } } : undefined;
     const card = await mount(idleX1c(), "dev-x1c", {}, { callService: none });
     await showView(card, "Filament");
-    await editRow(card, 2);
+    await editSlot(card, 2);
     expect(text(find(card, "dialog #k-hint"))).toBe(
       `No K profiles of your own are saved on the printer for the 0.4${NBSP}mm nozzle diameter. Profiles of your own, for example from the flow dynamics calibration in Bambu Studio or from BamBuddy, show here. Until then the printer uses its default.`,
     );
@@ -207,7 +208,7 @@ describe("a slot's tools", () => {
 
     const blank = await mount(idleX1c(), "dev-x1c", {}, { callService: failing });
     await showView(blank, "Filament");
-    await editRow(blank, 3);
+    await editSlot(blank, 3);
     const select = find<HTMLSelectElement>(blank, "dialog select#fil-k") as HTMLSelectElement;
     select.value = "-1";
     select.dispatchEvent(new Event("change"));
@@ -221,12 +222,11 @@ describe("the names of a slot's and a unit's buttons", () => {
     const card = await mount(h2d({ status: "idle", stage: "idle" }), "dev-h2d");
     await showView(card, "Filament");
     const names = findAll<HTMLButtonElement>(card, ".slot .btn, .drying .btn").map((item) => item.getAttribute("aria-label") ?? "");
-    expect(names).toContain("Load from Slot 1 · AMS A");
+    expect(names).toContain("Load from Slot 1 · AMS\u00a0A");
     expect(names).toContain("Load from the left external spool");
-    expect(names.some((name) => /^(Dry|Stop drying) AMS /.test(name))).toBe(true);
     const german = await mount(h2d({ status: "idle", stage: "idle" }), "dev-h2d", {}, { language: "de" });
     await showView(german, "Filament");
-    expect(findAll<HTMLButtonElement>(german, ".slot .btn").map((item) => item.getAttribute("aria-label"))).toContain("Laden aus Fach 1 · AMS A");
+    expect(findAll<HTMLButtonElement>(german, ".slot .btn").map((item) => item.getAttribute("aria-label"))).toContain("Laden aus Fach 1 · AMS\u00a0A");
   });
 
   it("a unit's head says what its figures are", async () => {
@@ -254,7 +254,7 @@ describe("the backup's unknown state in German", () => {
 describe("the plug, the cold-nozzle hint, the backup and the menu", () => {
   it("finds the printer's own plug in the chip's dialog while the printer is offline", async () => {
     const devices = offlineP1s();
-    const card = await mount([...devices, plugDevice({ printer: devices[0] as FakeDevice, id: 5, name: "Power meter", kind: "state", watts: 156 })], "dev-p1s", { header_chips: ["power"] });
+    const card = await mount(withPlugs(devices, { id: 5, name: "Power meter", kind: "state", watts: 156 }), "dev-p1s", { header_chips: ["power"] });
     (find(card, ".pill.power-chip") as HTMLButtonElement).click();
     await settle(card);
     expect(findAll(card, "dialog .power-box .p-row").map(text)).toEqual([`Power meter Printer On · 156${NBSP}W Display only: BamBuddy cannot switch this plug.`]);
@@ -269,14 +269,8 @@ describe("the plug, the cold-nozzle hint, the backup and the menu", () => {
     expect(findAll(hidden, ".note").map(text)).toContain(`To extrude, the nozzle must be at least 170${NBSP}°C.`);
   });
 
-  it("learns that the backup switches although its state is unknown", async () => {
-    const card = await mount(x1c({ filamentBackup: "unknown" }), "dev-x1c");
-    await showView(card, "Filament");
-    expect(text(root(card))).toContain("State unknown: BamBuddy does not report it for this printer. Switching it on or off still works.");
-  });
-
   it("is not told a menu entry edits when it opens the device page", async () => {
-    const card = await mount(x1c(), "dev-x1c", {}, { admin: true } as never);
+    const card = await mount(x1c(), "dev-x1c", {}, { admin: true });
     (find(card, ".menu-btn") as HTMLButtonElement).click();
     await card.updateComplete;
     const first = findAll(card, ".menu [role=menuitem]")[0] as HTMLElement;
@@ -288,16 +282,16 @@ describe("the plug, the cold-nozzle hint, the backup and the menu", () => {
 describe("the printer's own plug while the printer is offline", () => {
   it("stays in the Power block where the offline view says nothing of it: a plug without a state, an unreachable one", async () => {
     const devices = offlineP1s();
-    const card = await mount([...devices, plugDevice({ printer: devices[0] as FakeDevice, id: 5, name: "REST Drucker", state: "unknown" })], "dev-p1s");
+    const card = await mount(withPlugs(devices, { id: 5, name: "REST Drucker", state: "unknown" }), "dev-p1s");
     expect(findAll(card, "button").some((item) => item.getAttribute("aria-label") === "Turn on “REST Drucker”")).toBe(true);
     const gone = offlineP1s();
-    const unreachable = await mount([...gone, plugDevice({ printer: gone[0] as FakeDevice, id: 5, name: "Tasmota Drucker", state: "unavailable" })], "dev-p1s");
+    const unreachable = await mount(withPlugs(gone, { id: 5, name: "Tasmota Drucker", state: "unavailable" }), "dev-p1s");
     expect(rows(unreachable).some((row) => row.startsWith("Tasmota Drucker"))).toBe(true);
   });
 
   it("leaves the Power block where the offline view has it: switched off", async () => {
     const devices = offlineP1s();
-    const card = await mount([...devices, plugDevice({ printer: devices[0] as FakeDevice, id: 5, name: "Steckdose Garage", state: "off" })], "dev-p1s");
+    const card = await mount(withPlugs(devices, { id: 5, name: "Steckdose Garage", state: "off" }), "dev-p1s");
     expect(text(find(card, ".job-info"))).toContain("Steckdose Garage");
     expect(find(card, ".power")).toBeNull();
   });
@@ -337,15 +331,6 @@ describe("a plug's question comes back to its own button", () => {
 });
 
 /** The other slots not feeding: the one the test picks is. */
-const inactive = (devices: FakeDevice[]): FakeDevice[] => {
-  for (const device of devices.slice(1)) {
-    for (const entity of device.entities) {
-      if ("attributes" in entity && entity.attributes && "active" in entity.attributes) entity.attributes = { ...entity.attributes, active: false };
-    }
-  }
-  return devices;
-};
-
 const PROFILES = {
   nozzle_diameter: "0.4",
   current: -1,
@@ -355,13 +340,6 @@ const PROFILES = {
   ],
 };
 const answering = async (call: { service: string }): Promise<unknown> => (call.service === "get_k_profiles" ? { response: PROFILES } : undefined);
-
-async function chooseK(card: FakeCard, value: string): Promise<void> {
-  const select = find<HTMLSelectElement>(card, "dialog select#fil-k") as HTMLSelectElement;
-  select.value = value;
-  select.dispatchEvent(new Event("change"));
-  await settle(card);
-}
 
 describe("each of a slot's texts", () => {
   it("names Dry and Stop drying by their unit", async () => {
@@ -406,7 +384,7 @@ describe("each of a slot's texts", () => {
 describe("a view-only card's offline view", () => {
   it("offers nothing to switch", async () => {
     const devices = offlineP1s();
-    const card = await mount([...devices, plugDevice({ printer: devices[0] as FakeDevice, id: 5, name: "Steckdose Garage", state: "off", watts: 0 })], "dev-p1s", { read_only: true });
+    const card = await mount(withPlugs(devices, { id: 5, name: "Steckdose Garage", state: "off", watts: 0 }), "dev-p1s", { read_only: true });
     expect(text(find(card, ".job-info"))).toBe("The printer is off: its plug “Steckdose Garage” is switched off.");
     expect(findAll(card, ".offline-actions .btn").map(text)).toEqual([]);
   });

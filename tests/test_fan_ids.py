@@ -122,8 +122,8 @@ async def test_a_second_setup_changes_nothing(hass: HomeAssistant, bambuddy_api:
     await setup_integration(hass, entry)
     before = (_at(hass, entry.entry_id, "aux_fan"), _at(hass, entry.entry_id, "left_aux_fan"))
 
-    assert await hass.config_entries.async_reload(entry.entry_id)
-    await hass.async_block_till_done()
+    await reload_entry(hass, entry.entry_id)
 
     assert (_at(hass, entry.entry_id, "aux_fan"), _at(hass, entry.entry_id, "left_aux_fan")) == before
     assert printer_uid(entry, "aux_fan").endswith("_aux_fan")
+from tests.helpers import reload_entry

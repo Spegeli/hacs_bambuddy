@@ -13,7 +13,6 @@ from typing import Any
 
 from freezegun.api import FrozenDateTimeFactory
 import pytest
-from homeassistant.config_entries import SOURCE_REAUTH
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers.update_coordinator import UpdateFailed
@@ -28,7 +27,6 @@ from custom_components.bambuddy.api import (
     BamBuddyConnectionError,
     BamBuddyPermissionError,
 )
-from custom_components.bambuddy.const import DOMAIN
 from custom_components.bambuddy.coordinator import fetch
 from custom_components.bambuddy.key import KeyCheck, KeyGuard
 
@@ -43,10 +41,6 @@ def _guard(hass: HomeAssistant, entry: MockConfigEntry) -> KeyGuard:
     guard = KeyGuard(hass, entry, client, KeyCheck(dt_util.utcnow(), "ok"))
     guard.async_start()
     return guard
-
-
-def _reauths(hass: HomeAssistant) -> list[dict[str, Any]]:
-    return [flow for flow in hass.config_entries.flow.async_progress_by_handler(DOMAIN) if flow["context"]["source"] == SOURCE_REAUTH]
 
 
 @pytest.fixture
@@ -67,7 +61,7 @@ async def test_the_check_runs_every_ten_minutes(
 
     assert bambuddy_api.get_auth_me.await_count == 2
     assert guard.last.outcome == "ok"
-    assert _reauths(hass) == []
+    assert reauth_flows(hass) == []
 
 
 async def test_the_check_stops_with_home_assistant(
@@ -78,10 +72,40 @@ async def test_the_check_stops_with_home_assistant(
     stop does is cancel the timers marked for it."""
     _guard(hass, entry)
 
-    hass._cancel_cancellable_timers()  # noqa: SLF001 -- the first stage of async_stop
+    home_assistant_stops(hass)
     await next_refresh(hass, freezer, 601)
 
     bambuddy_api.get_auth_me.assert_not_awaited()
+
+
+async def test_a_check_asked_for_soon_stops_with_home_assistant(
+    hass: HomeAssistant, bambuddy_api: SimpleNamespace, entry: MockConfigEntry, freezer: FrozenDateTimeFactory
+) -> None:
+    """A refused read asks for a check in a few seconds: a stop before then
+    leaves it unasked."""
+    guard = _guard(hass, entry)
+    guard.async_check_soon()
+
+    home_assistant_stops(hass)
+    await next_refresh(hass, freezer, 10)
+
+    bambuddy_api.get_auth_me.assert_not_awaited()
+
+
+async def test_a_retry_stops_with_home_assistant(
+    hass: HomeAssistant, bambuddy_api: SimpleNamespace, entry: MockConfigEntry, freezer: FrozenDateTimeFactory
+) -> None:
+    """BamBuddy unreachable: the check is tried again a minute later -- not
+    after Home Assistant began to stop."""
+    bambuddy_api.get_auth_me.side_effect = BamBuddyConnectionError("down")
+    guard = _guard(hass, entry)
+    await guard.async_check()
+    assert bambuddy_api.get_auth_me.await_count == 1
+
+    home_assistant_stops(hass)
+    await next_refresh(hass, freezer, 61)
+
+    assert bambuddy_api.get_auth_me.await_count == 1
 
 
 async def test_a_short_key_starts_the_reauth(
@@ -97,7 +121,7 @@ async def test_a_short_key_starts_the_reauth(
 
     assert check.outcome == "short"
     assert check.scopes is not None and check.scopes.marks()["control_printer"] == "✗"
-    assert len(_reauths(hass)) == 1
+    assert len(reauth_flows(hass)) == 1
     assert "control_printer" in caplog.text and API_KEY not in caplog.text
 
 
@@ -107,7 +131,7 @@ async def test_a_deactivated_owner_starts_the_reauth(hass: HomeAssistant, bambud
 
     assert (await guard.async_check()).outcome == "owner"
     await hass.async_block_till_done()
-    assert len(_reauths(hass)) == 1
+    assert len(reauth_flows(hass)) == 1
 
 
 async def test_a_lone_401_is_confirmed_first(
@@ -120,12 +144,12 @@ async def test_a_lone_401_is_confirmed_first(
 
     assert (await guard.async_check()).outcome == "unknown"
     await hass.async_block_till_done()
-    assert _reauths(hass) == []
+    assert reauth_flows(hass) == []
     await next_refresh(hass, freezer, 61)
 
     assert bambuddy_api.get_auth_me.await_count == 2
     assert guard.last.outcome == "ok"
-    assert _reauths(hass) == []
+    assert reauth_flows(hass) == []
 
 
 async def test_a_confirmed_401_starts_the_reauth(
@@ -139,7 +163,7 @@ async def test_a_confirmed_401_starts_the_reauth(
 
     # Two checks; the reauth dialog asks once more why a new key is needed.
     assert bambuddy_api.get_auth_me.await_count == 3
-    assert len(_reauths(hass)) == 1
+    assert len(reauth_flows(hass)) == 1
 
 
 @pytest.mark.parametrize(
@@ -160,12 +184,12 @@ async def test_unreachable_changes_nothing_and_retries(
 
     assert (await guard.async_check()).outcome == "unreachable"
     await hass.async_block_till_done()
-    assert _reauths(hass) == []
+    assert reauth_flows(hass) == []
     await next_refresh(hass, freezer, 61)
 
     assert bambuddy_api.get_auth_me.await_count == 2
     assert guard.last.outcome == "ok"
-    assert _reauths(hass) == []
+    assert reauth_flows(hass) == []
 
 
 async def test_an_unanswered_check_keeps_what_the_key_may_assign(
@@ -276,7 +300,7 @@ async def test_a_refusal_says_why(
 
     assert error.translation_key == key
     assert error.translation_placeholders == placeholders
-    assert len(_reauths(hass)) == reauths
+    assert len(reauth_flows(hass)) == reauths
 
 
 async def test_a_refusal_with_a_full_key_is_warned_once_per_route(
@@ -292,7 +316,7 @@ async def test_a_refusal_with_a_full_key_is_warned_once_per_route(
     await hass.async_block_till_done()
 
     assert caplog.text.count(PAUSE) == 1
-    assert _reauths(hass) == []
+    assert reauth_flows(hass) == []
 
 
 async def test_a_confirmed_401_is_said_as_such(
@@ -322,10 +346,10 @@ async def test_a_soon_check_during_the_doubt_starts_no_reauth(
     await next_refresh(hass, freezer, 6)
     await guard.async_refused(BamBuddyAuthError(401, "Authentication required", PAUSE))
     await hass.async_block_till_done()
-    assert _reauths(hass) == []
+    assert reauth_flows(hass) == []
 
     await next_refresh(hass, freezer, 55)
-    assert len(_reauths(hass)) == 1
+    assert len(reauth_flows(hass)) == 1
 
 
 async def test_a_check_finishing_after_unload_does_nothing(
@@ -352,7 +376,7 @@ async def test_a_check_finishing_after_unload_does_nothing(
     await next_refresh(hass, freezer, 6)
 
     assert bambuddy_api.get_auth_me.await_count == 1
-    assert _reauths(hass) == []
+    assert reauth_flows(hass) == []
 
 
 async def test_an_ok_check_ends_the_reauth(hass: HomeAssistant, bambuddy_api: SimpleNamespace, entry: MockConfigEntry) -> None:
@@ -362,13 +386,13 @@ async def test_an_ok_check_ends_the_reauth(hass: HomeAssistant, bambuddy_api: Si
     guard = _guard(hass, entry)
     await guard.async_check()
     await hass.async_block_till_done()
-    assert len(_reauths(hass)) == 1
+    assert len(reauth_flows(hass)) == 1
 
     bambuddy_api.get_auth_me.return_value = load_fixture("auth_me_control.json")
     await guard.async_check()
     await hass.async_block_till_done()
 
-    assert _reauths(hass) == []
+    assert reauth_flows(hass) == []
 
 
 async def test_a_lasting_read_refusal_checks_once_a_minute(
@@ -386,7 +410,7 @@ async def test_a_lasting_read_refusal_checks_once_a_minute(
     # One check, which finds the key fine: the route named once.
     assert bambuddy_api.get_auth_me.await_count == 1
     assert caplog.text.count("GET /printers/1/status") == 1
-    assert _reauths(hass) == []
+    assert reauth_flows(hass) == []
 
     await next_refresh(hass, freezer, 20)
     guard.async_read_refused(refused)
@@ -425,7 +449,8 @@ async def test_a_refused_read_says_the_key_is_doubted_until_confirmed(
 
     await next_refresh(hass, freezer, 6)
     await next_refresh(hass, freezer, 61)
-    assert len(_reauths(hass)) == 1
+    assert len(reauth_flows(hass)) == 1
     with pytest.raises(UpdateFailed) as later:
         await fetch(refused(), entry=entry)  # type: ignore[arg-type]
     assert later.value.translation_key == "auth_failed"
+from tests.helpers import home_assistant_stops, reauth_flows

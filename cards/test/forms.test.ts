@@ -4,13 +4,11 @@ import { changedConfig, configForm, DEFAULTS, editorData, settingsOf, startViewN
 import { de } from "../src/translations/de";
 import { en } from "../src/translations/en";
 import type { HeaderChip } from "../src/types";
-import { makeHass } from "./fixtures";
+import { makeHass, TYPE } from "./fixtures";
 
 afterEach(() => {
   document.body.innerHTML = "";
 });
-
-const TYPE = "custom:bambuddy-printer-card";
 
 describe("the configuration check", () => {
   it("accepts every option the card documents", () => {
@@ -97,7 +95,6 @@ describe("the settings", () => {
     expect(settings.readOnly).toBe(true);
     expect(settings.amsFolding).toBe("open");
   });
-
 });
 
 describe("what the editor shows and writes", () => {
@@ -388,7 +385,16 @@ describe("every field of the editor", () => {
     show_filament_tab: ["editor_filament_tab", "editor_filament_tab_help"],
     ams_folding: ["editor_ams_folding", "editor_ams_folding_help"],
     show_auto_off: ["editor_show_auto_off", "editor_show_auto_off_help"],
+    compact_chips: ["editor_compact_chips", "editor_compact_chips_help"],
+    show_external_spool: ["editor_external_spool", "editor_external_spool_help"],
+    assign_scanned_spool: ["editor_assign_scanned", "editor_assign_scanned_help"],
   } as const;
+
+  it("names every field of the form", () => {
+    const flat = (fields: readonly Record<string, unknown>[]): string[] =>
+      fields.flatMap((field) => (Array.isArray(field["schema"]) ? flat(field["schema"] as Record<string, unknown>[]) : [field["name"] as string]));
+    expect(Object.keys(FIELDS).sort()).toEqual(flat(configForm().schema).sort());
+  });
 
   it("has its own label and help, in English", () => {
     const form = configForm();
@@ -396,7 +402,7 @@ describe("every field of the editor", () => {
       expect(form.computeLabel({ name }), name).toBe(en[label]);
       expect(form.computeHelper({ name }), name).toBe(help ? en[help] : undefined);
     }
-    expect(new Set(Object.values(FIELDS).map(([label]) => en[label])).size).toBe(10);
+    expect(new Set(Object.values(FIELDS).map(([label]) => en[label])).size).toBe(Object.keys(FIELDS).length - 1);
   });
 
   it("has its German label", () => {
@@ -408,18 +414,23 @@ describe("every field of the editor", () => {
   });
 });
 
+describe("the editor's switches", () => {
+  it.each([
+    ["compact_chips", "compactChips", false],
+    ["show_external_spool", "externalSpool", true],
+    ["assign_scanned_spool", "assignScanned", false],
+  ] as const)("%s: its default, a yes or no only, and written only when changed", (option, setting, fallback) => {
+    expect(settingsOf(validateConfig({ type: TYPE, printer: "dev-x1c" }))[setting]).toBe(fallback);
+    expect(settingsOf(validateConfig({ type: TYPE, printer: "dev-x1c", [option]: !fallback }))[setting]).toBe(!fallback);
+    expect(() => validateConfig({ type: TYPE, printer: "dev-x1c", [option]: "yes" })).toThrow(new RegExp(option));
+    const shown = editorData({ type: TYPE, printer: "dev-x1c" });
+    expect(shown[option]).toBe(fallback);
+    expect(changedConfig({ type: TYPE }, shown, { ...shown, [option]: !fallback })).toEqual({ type: TYPE, [option]: !fallback });
+    expect(changedConfig({ type: TYPE, [option]: !fallback }, { ...shown, [option]: !fallback }, shown)).toEqual({ type: TYPE });
+  });
+});
 
 describe("the external spool's switch", () => {
-  it("accepts show_external_spool and writes it only when off", () => {
-    expect(settingsOf(validateConfig({ type: TYPE, printer: "dev-x1c" })).externalSpool).toBe(true);
-    expect(settingsOf(validateConfig({ type: TYPE, printer: "dev-x1c", show_external_spool: false })).externalSpool).toBe(false);
-    expect(() => validateConfig({ type: TYPE, printer: "dev-x1c", show_external_spool: "no" })).toThrow();
-    const shown = editorData({ type: TYPE, printer: "dev-x1c" });
-    expect(shown["show_external_spool"]).toBe(true);
-    expect(changedConfig({ type: TYPE }, shown, { ...shown, show_external_spool: false })).toEqual({ type: TYPE, show_external_spool: false });
-    expect(changedConfig({ type: TYPE, show_external_spool: false }, { ...shown, show_external_spool: false }, shown)).toEqual({ type: TYPE });
-  });
-
   it("names the switch and says what it does, in both languages", () => {
     const de = configForm(makeHass({ language: "de" }));
     expect(de.computeLabel({ name: "show_external_spool" })).toBe("Externe Spule anzeigen");
@@ -435,16 +446,6 @@ describe("the external spool's switch", () => {
 });
 
 describe("the scanned spool's switch", () => {
-  it("accepts assign_scanned_spool and writes it only when on", () => {
-    expect(settingsOf(validateConfig({ type: TYPE, printer: "dev-x1c" })).assignScanned).toBe(false);
-    expect(settingsOf(validateConfig({ type: TYPE, printer: "dev-x1c", assign_scanned_spool: true })).assignScanned).toBe(true);
-    expect(() => validateConfig({ type: TYPE, printer: "dev-x1c", assign_scanned_spool: "yes" })).toThrow();
-    const shown = editorData({ type: TYPE, printer: "dev-x1c" });
-    expect(shown["assign_scanned_spool"]).toBe(false);
-    expect(changedConfig({ type: TYPE }, shown, { ...shown, assign_scanned_spool: true })).toEqual({ type: TYPE, assign_scanned_spool: true });
-    expect(changedConfig({ type: TYPE, assign_scanned_spool: true }, { ...shown, assign_scanned_spool: true }, shown)).toEqual({ type: TYPE });
-  });
-
   it("names the switch and says what it does, in both languages", () => {
     const de = configForm(makeHass({ language: "de" }));
     expect(de.computeLabel({ name: "assign_scanned_spool" })).toBe("Gescannte Spule gleich zuweisen");

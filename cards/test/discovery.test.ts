@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import { findPrinter, hasPrintStatus, printerDevices, shownUnits } from "../src/discovery";
 import type { PrinterRefs } from "../src/types";
-import { a1mini, amsDevice, h2d, instanceDevice, makeHass, offlineP1s, readOnlyX1c, x1c, type FakeDevice } from "./fixtures";
+import { a1mini, amsDevice, h2d, instanceDevice, keepEntities, makeHass, offlineP1s, readOnlyX1c, x1c, type FakeDevice } from "./fixtures";
 
 describe("finding a printer's entities", () => {
   it("finds an X1C's entities by their translation keys", () => {
@@ -109,7 +109,7 @@ describe("finding a printer's entities", () => {
 
   it("knows a printer has two nozzles also where the user disabled a nozzle's sensor", () => {
     const [printer, ...units] = h2d() as [FakeDevice, ...FakeDevice[]];
-    const bare = { ...printer, entities: printer.entities.filter((entity) => entity.key !== "left_nozzle_temperature") };
+    const bare = keepEntities(printer, (entity) => entity.key !== "left_nozzle_temperature");
     const refs = findPrinter(makeHass({ devices: [bare, ...units] }), "dev-h2d");
     expect(refs?.dual).toBe(true);
     expect(refs?.nozzles).toEqual([

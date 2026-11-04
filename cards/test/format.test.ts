@@ -6,16 +6,18 @@ import {
   formatEndTime,
   formatNumber,
   formatPercent,
+  formatPower,
   formatState,
   formatTemperature,
   hasValue,
+  jobName,
+  minutesOf,
   needsOutline,
   numericState,
   toneOf,
 } from "../src/format";
 import { makeHass, x1c } from "./fixtures";
 import { NBSP } from "./helpers";
-
 
 describe("numbers", () => {
   it("follow Home Assistant's number format setting", () => {
@@ -145,5 +147,36 @@ describe("colours", () => {
     expect(needsOutline("#1F79E5")).toBe(false);
     expect(needsOutline("#F4EE2A")).toBe(true);
     expect(needsOutline("#C12E1F")).toBe(false);
+  });
+});
+
+describe("the edges a mutation test found", () => {
+  const hass = makeHass();
+
+  it("shows power in kW from 1000 W on, not from 1001 W", () => {
+    expect(formatPower(hass, 999)).toBe(`999${NBSP}W`);
+    expect(formatPower(hass, 1000)).toBe(`1${NBSP}kW`);
+    expect(formatPower(hass, -1000)).toBe(`-1${NBSP}kW`);
+  });
+
+  it("reads a duration in days, seconds and milliseconds as minutes", () => {
+    const of = (state: string, unit: string): number | undefined =>
+      minutesOf(makeHass({ devices: [] }).withState("sensor.t", state, { unit_of_measurement: unit }), "sensor.t");
+    expect(of("2", "d")).toBe(2880);
+    expect(of("90", "s")).toBe(1.5);
+    expect(of("120000", "ms")).toBe(2);
+    expect(of("5", "fortnights")).toBe(5);
+  });
+
+  it("takes a colour only as the whole text", () => {
+    expect(filamentColor("x#F4EE2A")).toBeUndefined();
+    expect(filamentColor("#F4EE2Ax")).toBeUndefined();
+  });
+
+  it("drops a job file's extension only at its end", () => {
+    expect(jobName("Benchy.gcode.3mf")).toBe("Benchy");
+    expect(jobName("Benchy.3mf")).toBe("Benchy");
+    expect(jobName("Benchy.3mf.bak")).toBe("Benchy.3mf.bak");
+    expect(jobName(".3mf")).toBe(".3mf");
   });
 });

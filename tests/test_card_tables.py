@@ -46,9 +46,11 @@ def test_set_filament_names_a_profile_by_its_id_alone() -> None:
     the card asks the integration for its filaments: get_filaments."""
     actions = yaml.safe_load((INTEGRATION / "services.yaml").read_text(encoding="utf-8"))
     assert "material" not in actions["set_filament"]["fields"]
-    # The dialogs, the slot dialog's two ways and the shared pieces dialogs.ts was split into.
-    for name in ("dialogs.ts", "filament-dialog.ts", "inventory-dialog.ts", "parts.ts"):
-        assert "GENERIC" not in _card(name), name
+    # No card module: the dialogs and every part they were split into.
+    modules = sorted(_CARD.glob("*.ts"))
+    assert len(modules) > 20
+    for module in modules:
+        assert "GENERIC" not in _card(module.name), module.name
 
 
 def test_the_filament_choice_is_the_list() -> None:

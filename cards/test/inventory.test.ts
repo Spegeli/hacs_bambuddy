@@ -3,8 +3,11 @@
 import { afterEach, describe, expect, it } from "vitest";
 
 import "../src/index";
+import { ICONS } from "../src/icons";
+import { en } from "../src/translations/en";
 import {
   assign,
+  changeEntities,
   geeetech,
   h2d,
   listed,
@@ -18,9 +21,7 @@ import {
   type FakeHass,
   type FakeHassOptions,
 } from "./fixtures";
-import { atRule, declarations, find, findAll, NBSP, root, settle, showView, styleText, text } from "./helpers";
-import { ICONS } from "../src/icons";
-import { en } from "../src/translations/en";
+import { atRule, chooseOption, declarations, editSlot, find, findAll, NBSP, root, settle, showView, styleText, text } from "./helpers";
 
 afterEach(() => {
   document.body.innerHTML = "";
@@ -30,6 +31,9 @@ const GEEETECH = geeetech();
 
 const X1C_SLOT_3 = "sensor.dev-x1c_ams_0_slot_3";
 const X1C_SLOT_4 = "sensor.dev-x1c_ams_0_slot_4";
+
+/** Slot 4 reports no spool for now (BamBuddy's present: false). */
+const absent = (devices: FakeDevice[]): FakeDevice[] => changeEntities(devices, (entity) => entity.entityId === X1C_SLOT_4, (entity) => ({ ...entity.attributes, present: false }));
 
 const mount = async (devices: FakeDevice[], printer: string, options: Partial<FakeHassOptions> = {}): Promise<FakeCard> =>
   (await mountFor(devices, printer, {}, { language: "de", ...options })).card;
@@ -88,19 +92,17 @@ describe("a slot's inventory spool", () => {
 
   it("an empty slot waits for its spool", async () => {
     const devices = assign(x1c(), X1C_SLOT_4, GEEETECH);
-    for (const entity of devices[1]?.entities ?? []) {
-      if (entity.entityId === X1C_SLOT_4) entity.attributes = { ...entity.attributes, present: false };
-    }
+    absent(devices);
     const card = await mount(devices, "dev-x1c");
 
     const strip = findAll(card, ".ams-slot")[3];
     expect(strip?.getAttribute("title")).toBe("Leer · Geeetech PLA Basic wartet");
+    // The strip keeps the slot empty.
+    expect(strip?.querySelector(".swatch")?.classList.contains("empty")).toBe(true);
     await showView(card, "Filament");
     const row = findAll(card, ".slot")[3];
     expect(text(row?.querySelector(".slot-name"))).toBe("Leer");
     expect(subLines(row)).toEqual(["Geeetech PLA Basic", "Wartet auf die Spule"]);
-    // The strip keeps the slot empty.
-    expect(findAll(card, ".ams-slot")[3]?.querySelector(".swatch")?.classList.contains("empty") ?? true).toBe(true);
   });
 
   it("the strip's title names the spool", async () => {
@@ -130,17 +132,13 @@ describe("a slot's inventory spool", () => {
   });
 });
 
-const edit = async (card: FakeCard, row: number): Promise<void> => {
-  (findAll(card, ".slot")[row]?.querySelector(".btn.edit") as HTMLButtonElement).click();
-  await settle(card);
-};
 
 async function openSlot3(spool: Record<string, unknown> | null, assignable: boolean, slot = 2): Promise<FakeCard> {
   const entity = [X1C_SLOT_3.replace("slot_3", "slot_1"), "sensor.dev-x1c_ams_0_slot_2", X1C_SLOT_3, X1C_SLOT_4][slot] as string;
   const devices = assign(x1c(), entity, spool, assignable);
   const card = await mount(devices, "dev-x1c");
   await showView(card, "Filament");
-  await edit(card, slot);
+  await editSlot(card, slot);
   return card;
 }
 
@@ -230,12 +228,6 @@ describe("the slot dialog and the inventory", () => {
 
   it("warns above the buttons only where a colour or type change ends the assignment", async () => {
     const warning = (card: FakeCard): string => text(find(card, "dialog .dlg-actions .dlg-warn"));
-    const choose = async (card: FakeCard, id: string, value: string): Promise<void> => {
-      const select = find<HTMLSelectElement>(card, `dialog select#${id}`) as HTMLSelectElement;
-      select.value = value;
-      select.dispatchEvent(new Event("change"));
-      await settle(card);
-    };
     const swatch = async (card: FakeCard, name: string): Promise<void> => {
       (findAll<HTMLButtonElement>(card, "dialog [role=radiogroup] [role=radio]").find((item) => item.getAttribute("aria-label") === name) as HTMLButtonElement).click();
       await settle(card);
@@ -249,14 +241,14 @@ describe("the slot dialog and the inventory", () => {
     const card = await openSlot3(GEEETECH, true);
     expect(find(card, "dialog .dlg-warn")).toBeNull();
     // Another vendor's PLA in the same colour: the assignment stays.
-    await choose(card, "fil-vendor", "Bambu Lab");
-    await choose(card, "fil-filament", "GFA00");
+    await chooseOption(card, "#fil-vendor", "Bambu Lab");
+    await chooseOption(card, "#fil-filament", "GFA00");
     expect(find(card, "dialog .dlg-warn")).toBeNull();
     // PETG: another type.
-    await choose(card, "fil-filament", "GFG02");
+    await chooseOption(card, "#fil-filament", "GFG02");
     expect(warning(card)).toBe("Übernehmen hebt die Zuweisung von Geeetech PLA Basic auf.");
     // Back to PLA, then another colour.
-    await choose(card, "fil-filament", "GFA00");
+    await chooseOption(card, "#fil-filament", "GFA00");
     expect(find(card, "dialog .dlg-warn")).toBeNull();
     await swatch(card, "Schwarz");
     expect(warning(card)).toBe("Übernehmen hebt die Zuweisung von Geeetech PLA Basic auf.");
@@ -297,9 +289,7 @@ describe("the pencil of an empty or busy slot", () => {
       [GEEETECH, false, true],
     ] as const) {
       const devices = assign(x1c(), X1C_SLOT_4, spool, assignable);
-      for (const entity of devices[1]?.entities ?? []) {
-        if (entity.entityId === X1C_SLOT_4) entity.attributes = { ...entity.attributes, present: false };
-      }
+      absent(devices);
       const card = await mount(devices, "dev-x1c");
       await showView(card, "Filament");
       expect(pencils(card)[3]).toBe(shown);
@@ -308,12 +298,10 @@ describe("the pencil of an empty or busy slot", () => {
 
   it("an empty slot's dialog is the inventory alone, without the switch", async () => {
     const devices = assign(x1c(), X1C_SLOT_4, GEEETECH, true);
-    for (const entity of devices[1]?.entities ?? []) {
-      if (entity.entityId === X1C_SLOT_4) entity.attributes = { ...entity.attributes, present: false };
-    }
+    absent(devices);
     const card = await mount(devices, "dev-x1c");
     await showView(card, "Filament");
-    await edit(card, 3);
+    await editSlot(card, 3);
 
     expect(findAll(card, "dialog [role=tablist]")).toHaveLength(0);
     expect(find(card, "dialog .inv-card")).not.toBeNull();
@@ -325,7 +313,7 @@ describe("the pencil of an empty or busy slot", () => {
     const card = await mount(devices, "dev-x1c");
     await showView(card, "Filament");
     expect(pencils(card)[1]).toBe(true);
-    await edit(card, 1);
+    await editSlot(card, 1);
     expect(tabs(card).map(text)).toEqual(["Filament einstellen", "Aus dem Inventar"]);
     expect(find(card, "dialog select#fil-vendor")).not.toBeNull();
     // Its tools wait for the print.
@@ -386,7 +374,7 @@ async function openInventory(spools = FOUR, options: OpenOptions = {}): Promise<
   const devices = options.devices ?? assign(x1c(), SLOTS[slot] as string, options.spool === undefined ? GEEETECH : options.spool, true);
   const card = await mount(devices, "dev-x1c", { callService: spoolAnswer(spools, options.assigned === undefined ? 1 : options.assigned, options.hold) });
   await showView(card, "Filament");
-  await edit(card, slot);
+  await editSlot(card, slot);
   const tab = tabs(card).find((item) => text(item) === "Aus dem Inventar");
   if (tab) {
     tab.click();
@@ -453,12 +441,12 @@ describe("the inventory tab", () => {
     ].map(listed);
     const card = await openInventory(spools, { assigned: null, spool: null });
     expect(rows(card).map(where)).toEqual([
-      "Zugewiesen: AMS A, Fach 1",
+      "Zugewiesen: AMS\u00a0A, Fach 1",
       "Zugewiesen: Werkstatt Silk, Fach 2",
       "Zugewiesen: externe Spule",
-      "Zugewiesen: Desk, AMS A, Fach 2",
+      "Zugewiesen: Desk, AMS\u00a0A, Fach 2",
       "Zugewiesen: Desk, externe Spule (rechts)",
-      "Zugewiesen: Desk, AMS HT A",
+      "Zugewiesen: Desk, AMS\u00a0HT\u00a0A",
       "Zugewiesen: Desk, AMS Lite, Fach 2",
       "Zugewiesen: Desk, externe Spule",
     ]);
@@ -495,14 +483,14 @@ describe("the inventory tab", () => {
     const desk = { printer_id: 99, printer_name: "Desk", ams_id: 0, tray_id: 1, ams_label: null, same_printer: false };
     const spools = FOUR.map((spool) => (spool["id"] === 1 ? { ...spool, also: [desk] } : spool["id"] === 2 ? { ...spool, also: [{ ...desk, tray_id: 2 }] } : spool));
     const card = await openInventory(spools);
-    expect([...rowNamed(card, "Geeetech PLA Basic").querySelectorAll(".inv-where")].map(text)).toEqual(["Zugewiesen: dieses Fach", "Zugewiesen: Desk, AMS A, Fach 2"]);
-    expect([...rowNamed(card, "Bambu PLA Basic").querySelectorAll(".inv-where")].map(text)).toEqual(["Zugewiesen: AMS A, Fach 1", "Zugewiesen: Desk, AMS A, Fach 3"]);
+    expect([...rowNamed(card, "Geeetech PLA Basic").querySelectorAll(".inv-where")].map(text)).toEqual(["Zugewiesen: dieses Fach", "Zugewiesen: Desk, AMS\u00a0A, Fach 2"]);
+    expect([...rowNamed(card, "Bambu PLA Basic").querySelectorAll(".inv-where")].map(text)).toEqual(["Zugewiesen: AMS\u00a0A, Fach 1", "Zugewiesen: Desk, AMS\u00a0A, Fach 3"]);
   });
 
   it("the box warns of the spool's other slots", async () => {
     const also = [{ printer_id: 99, printer_name: "Desk", ams_id: 0, tray_id: 1, ams_label: null, same_printer: false }];
     const card = await openSlot3({ ...GEEETECH, also_assigned: also }, true);
-    expect(findAll(card, "dialog .inv-card .inv-also").map(text)).toEqual(["Auch zugewiesen: Desk, AMS A, Fach 2"]);
+    expect(findAll(card, "dialog .inv-card .inv-also").map(text)).toEqual(["Auch zugewiesen: Desk, AMS\u00a0A, Fach 2"]);
     const single = await openSlot3(GEEETECH, true);
     expect(find(single, "dialog .inv-card .inv-also")).toBeNull();
   });
@@ -511,7 +499,7 @@ describe("the inventory tab", () => {
     const card = await openInventory([...FOUR, listed({ id: 9, name: "Bambu Lab ABS", material: "ABS", fits: "by_chip", place: { printer_id: 1, printer_name: "Workshop", ams_id: 0, tray_id: 0, ams_label: null, same_printer: true } })]);
     const row = rowNamed(card, "Bambu Lab ABS");
     expect(row.getAttribute("aria-disabled")).toBe("true");
-    expect([...row.querySelectorAll(".inv-where")].map(text)).toEqual(["Zugewiesen: AMS A, Fach 1", "Per Chip mit seinem Fach verknüpft"]);
+    expect([...row.querySelectorAll(".inv-where")].map(text)).toEqual(["Zugewiesen: AMS\u00a0A, Fach 1", "Per Chip mit seinem Fach verknüpft"]);
   });
 
   it("locks a spool in a slot of another printer that prints", async () => {
@@ -576,15 +564,13 @@ describe("the inventory tab", () => {
     const card = await openInventory();
     rowNamed(card, "Bambu PLA Basic").click();
     await settle(card);
-    expect(text(find(card, "dialog"))).toContain("Zuweisen nimmt die Spule aus AMS A, Fach 1.");
+    expect(text(find(card, "dialog"))).toContain("Zuweisen nimmt die Spule aus AMS\u00a0A, Fach 1.");
     (rows(card).find((row) => rowName(row) === "eSUN PETG") as HTMLElement).click();
     await settle(card);
-    expect(text(find(card, "dialog"))).toContain("Zuweisen nimmt die Spule aus dem Drucker Desk, AMS A, Fach 2.");
+    expect(text(find(card, "dialog"))).toContain("Zuweisen nimmt die Spule aus dem Drucker Desk, AMS\u00a0A, Fach 2.");
 
     const devices = assign(x1c(), X1C_SLOT_4, null, true);
-    for (const entity of devices[1]?.entities ?? []) {
-      if (entity.entityId === X1C_SLOT_4) entity.attributes = { ...entity.attributes, present: false };
-    }
+    absent(devices);
     const empty = await openInventory(FOUR, { slot: 3, devices, assigned: null });
     expect(text(find(empty, "dialog"))).toContain("Das Fach ist leer. BamBuddy stellt es ein, sobald die Spule drin ist.");
   });
@@ -713,7 +699,7 @@ describe("the inventory tab", () => {
     const card = await openInventory(FOUR, { hold });
     (find(card, "dialog .btn.safe") as HTMLButtonElement).click();
     await settle(card);
-    await edit(card, 2);
+    await editSlot(card, 2);
     const late = hold.release;
     late?.();
     await settle(card);
@@ -735,7 +721,7 @@ describe("the inventory tab", () => {
       },
     });
     await showView(card, "Filament");
-    await edit(card, 2);
+    await editSlot(card, 2);
     tabs(card)[1]?.click();
     await settle(card);
     await settle(card);
@@ -756,7 +742,7 @@ describe("the inventory tab", () => {
       },
     });
     await showView(card, "Filament");
-    await edit(card, 2);
+    await editSlot(card, 2);
     tabs(card)[1]?.click();
     await settle(card);
     await settle(card);
@@ -840,20 +826,14 @@ describe("after the live check", () => {
     ];
     const card = await openInventory([...FOUR, ...more]);
     const options = (id: string): string[] => [...(find<HTMLSelectElement>(card, `dialog #${id}`) as HTMLSelectElement).options].map((option) => option.text);
-    const choose = async (id: string, value: string): Promise<void> => {
-      const select = find<HTMLSelectElement>(card, `dialog #${id}`) as HTMLSelectElement;
-      select.value = value;
-      select.dispatchEvent(new Event("change"));
-      await settle(card);
-    };
     expect(options("inv-material")).toEqual(["Alle", "ePLA", "PETG", "PLA", "TPU"]);
 
-    await choose("inv-vendor", "geeetech");
+    await chooseOption(card, "#inv-vendor", "geeetech");
     expect(options("inv-material")).toEqual(["Alle", "PETG", "PLA"]);
     expect(options("inv-vendor")).toEqual(["Alle", "Bambu", "eSUN", "Geeetech", "Sunlu"]);
 
-    await choose("inv-vendor", "");
-    await choose("inv-material", "PETG");
+    await chooseOption(card, "#inv-vendor", "");
+    await chooseOption(card, "#inv-material", "PETG");
     expect(options("inv-vendor")).toEqual(["Alle", "eSUN", "Geeetech"]);
 
     const search = find<HTMLInputElement>(card, "dialog #inv-search") as HTMLInputElement;
@@ -987,12 +967,6 @@ describe("storage locations", () => {
     { id: 6, name: "Elegoo PETG", material: "PETG", storage_location: "Keller" },
   ].map(listed);
   const options = (card: FakeCard, id: string): string[] => [...(find<HTMLSelectElement>(card, `dialog #${id}`) as HTMLSelectElement).options].map((option) => option.text);
-  const choose = async (card: FakeCard, id: string, value: string): Promise<void> => {
-    const select = find<HTMLSelectElement>(card, `dialog #${id}`) as HTMLSelectElement;
-    select.value = value;
-    select.dispatchEvent(new Event("change"));
-    await settle(card);
-  };
 
   it("a spool in no slot names its location as its place; the line above leaves it out", async () => {
     const card = await openInventory(SHELVES);
@@ -1007,19 +981,19 @@ describe("storage locations", () => {
     const card = await openInventory(SHELVES);
     const places = (name: string): string[] => [...rowNamed(card, name).querySelectorAll(".inv-where")].map(text);
     expect(text(rowNamed(card, "Bambu PLA Basic").querySelector(".inv-line"))).not.toContain("Regal B");
-    expect(places("Bambu PLA Basic")).toEqual(["Lagerort: Regal B", "Zugewiesen: AMS A, Fach 1"]);
+    expect(places("Bambu PLA Basic")).toEqual(["Lagerort: Regal B", "Zugewiesen: AMS\u00a0A, Fach 1"]);
     expect(places("Geeetech PLA Basic")).toEqual(["Lagerort: Regal A", "Zugewiesen: dieses Fach"]);
   });
 
   it("filters by location, narrowed with the others", async () => {
     const card = await openInventory(SHELVES);
     expect(options(card, "inv-location")).toEqual(["Alle", "Keller", "Regal A", "Regal B", "Trockenbox"]);
-    await choose(card, "inv-location", "Regal A");
+    await chooseOption(card, "#inv-location", "Regal A");
     expect(rows(card).map(rowName)).toEqual(["eSUN PETG", "Geeetech PLA Basic"]);
     expect(options(card, "inv-material")).toEqual(["Alle", "PETG", "PLA"]);
-    await choose(card, "inv-material", "PLA");
+    await chooseOption(card, "#inv-material", "PLA");
     expect(rows(card).map(rowName)).toEqual(["Geeetech PLA Basic"]);
-    await choose(card, "inv-location", "");
+    await chooseOption(card, "#inv-location", "");
     expect(options(card, "inv-location")).toEqual(["Alle", "Regal A", "Regal B", "Trockenbox"]);
   });
 
@@ -1031,6 +1005,36 @@ describe("storage locations", () => {
 
   it("the location field takes the whole row below the two others", () => {
     expect(styleText()).toMatch(/\.inv-filters \.field\.inv-wide\s*\{[^}]*grid-column:\s*1 \/ -1/);
+  });
+});
+
+describe("the spool list by keyboard", () => {
+  const LOCKED = [
+    listed({ id: 31, name: "AAA chip ABS", material: "ABS", fits: "by_chip", place: { printer_id: 1, printer_name: "Workshop", ams_id: 0, tray_id: 0, ams_label: null, same_printer: true } }),
+    listed({ id: 32, name: "AAB printing ABS", material: "ABS", fits: "printing", printing: "Desk", place: { printer_id: 99, printer_name: "Desk", ams_id: 0, tray_id: 2, ams_label: null, same_printer: false } }),
+  ];
+  it("comes back on a spool that can be chosen after the focus left the list", async () => {
+    const card = await openInventory([...LOCKED, ...FOUR], { assigned: null });
+    const all = rows(card);
+    expect(all[0]?.getAttribute("aria-disabled")).toBe("true");
+    const list = find(card, "dialog .inv-list") as HTMLElement;
+    list.dispatchEvent(new FocusEvent("focusout", { bubbles: true, composed: true, relatedTarget: document.body }));
+    const stop = all.find((row) => row.tabIndex === 0) as HTMLElement;
+    expect(stop.getAttribute("aria-disabled")).toBe("false");
+    for (const row of all.filter((item) => item.getAttribute("aria-disabled") === "true")) expect(row.tabIndex).toBe(-1);
+    // From there the arrows move on.
+    stop.focus();
+    stop.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowDown", bubbles: true, composed: true }));
+    await settle(card);
+    expect(root(card).activeElement).not.toBe(stop);
+    expect((root(card).activeElement as HTMLElement).getAttribute("aria-disabled")).toBe("false");
+  });
+
+  it("falls back to the first spool when every spool is locked", async () => {
+    const card = await openInventory(LOCKED, { assigned: null });
+    const list = find(card, "dialog .inv-list") as HTMLElement;
+    list.dispatchEvent(new FocusEvent("focusout", { bubbles: true, composed: true, relatedTarget: document.body }));
+    expect(rows(card).map((row) => row.tabIndex)).toEqual([0, -1]);
   });
 });
 

@@ -39,6 +39,7 @@ from tests.conftest import (
     state_at,
     state_of,
 )
+from tests.helpers import reauth_flows
 
 _TRANSLATIONS = Path(__file__).parents[1] / "custom_components" / "bambuddy" / "translations"
 
@@ -614,7 +615,7 @@ async def test_fans_the_stock_printer_lacks_start_disabled(
 
     registry = er.async_get(hass)
     for key in ("part_cooling_fan", "aux_fan", "chamber_fan"):
-        entity = registry.async_get(registry.async_get_entity_id("fan", "bambuddy", printer_uid(entry, key)) or "")
+        entity = registry.async_get(entity_id(hass, "fan", printer_uid(entry, key)))
         assert entity is not None, key
         assert (entity.disabled_by is not None) == (key in disabled), key
 
@@ -668,20 +669,12 @@ async def test_a_target_goes_as_high_as_the_model_heats(hass: HomeAssistant, bam
 async def test_an_x1e_heats_its_chamber_to_60(hass: HomeAssistant, bambuddy_api: SimpleNamespace) -> None:
     """BamBuddy 1.3 gives the X1E its chamber heater (maziggy/bambuddy#3335) and takes up to 65 °C;
     the X1E heats its chamber to 60 °C (Bambu's spec, BamBuddy's own note)."""
-    printers = load_fixture("printers.json")
-    for printer in printers:
-        if printer["id"] == X1C:
-            printer["model"] = "X1E"
-    bambuddy_api.get_printers.return_value = printers
+    as_model(bambuddy_api, "X1E", X1C)
     bambuddy_api.statuses[X1C]["supports_chamber_heater"] = True
     bambuddy_api.statuses[X1C]["temperatures"]["chamber_target"] = 0.0
     entry = await set_up(hass, X1C)
 
     assert state_of(hass, "number", printer_uid(entry, "chamber_target")).attributes["max"] == 60
-
-
-def _reauths(hass: HomeAssistant) -> list[str]:
-    return [flow["flow_id"] for flow in hass.config_entries.flow.async_progress() if flow["context"]["source"] == "reauth"]
 
 
 async def test_a_command_refused_for_a_short_key_starts_the_reauth(hass: HomeAssistant, bambuddy_api: SimpleNamespace) -> None:
@@ -697,7 +690,7 @@ async def test_a_command_refused_for_a_short_key_starts_the_reauth(hass: HomeAss
 
     assert raised.value.translation_key == "key_scopes_missing"
     assert raised.value.translation_placeholders == {"read_status": "\u2713", "control_printer": "\u2717", "manage_maintenance": "\u2717"}
-    assert len(_reauths(hass)) == 1
+    assert len(reauth_flows(hass)) == 1
 
 
 async def test_a_refusal_with_a_full_key_starts_no_reauth(
@@ -713,7 +706,7 @@ async def test_a_refusal_with_a_full_key_starts_no_reauth(
         await _call(hass, "button", "press", entity_id(hass, "button", printer_uid(entry, "pause")))
     await hass.async_block_till_done()
 
-    assert _reauths(hass) == []
+    assert reauth_flows(hass) == []
     assert "POST /printers/1/print/pause" in caplog.text
 
 
@@ -727,4 +720,4 @@ async def test_a_first_401_on_a_command_says_the_key_is_checked_again(hass: Home
     await hass.async_block_till_done()
 
     assert raised.value.translation_key == "key_doubted"
-    assert _reauths(hass) == []
+    assert reauth_flows(hass) == []

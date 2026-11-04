@@ -1,6 +1,5 @@
-// The helpers the card's test files share (they were card.test.ts's own).
-import { it, vi } from "vitest";
-import type { AmsRefs } from "../src/types";
+// The helpers the card's test files share.
+import { afterEach, beforeEach, vi } from "vitest";
 import {
   a1mini,
   h2d,
@@ -17,6 +16,19 @@ import {
   type PrinterSpec,
 } from "./fixtures";
 import { button, find, findAll, hasButton, root, settle, text } from "./helpers";
+
+/** The card's tests run at one fixed time (the fixtures' "2026-10-16T08:00:00Z"),
+ * each on an empty page. */
+export function useCardPage(): void {
+  beforeEach(() => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date("2026-10-16T08:00:00Z"));
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+    document.body.innerHTML = "";
+  });
+}
 
 /** The load and unload buttons of the filament view's slots. */
 export const loadButtons = (card: FakeCard): HTMLButtonElement[] =>
@@ -46,20 +58,22 @@ export const PRINTERS = {
 } as const satisfies Record<string, readonly [() => FakeDevice[], string]>;
 
 /** A key pressed on an element of the card: the keyboard is there. */
-export const keyPress = (element: Element): boolean => element.dispatchEvent(new KeyboardEvent("keydown", { key: "Tab", bubbles: true, composed: true }));
+export const keyPress = (element: Element, key = "Tab"): boolean => element.dispatchEvent(new KeyboardEvent("keydown", { key, bubbles: true, composed: true }));
 
 /** One of the fixtures' printers on a card: its own devices unless others
  * are given, the card's options in `config`. */
 export async function cardFor(
   name: keyof typeof PRINTERS,
-  options: { config?: Record<string, unknown>; devices?: FakeDevice[] } & Partial<Pick<FakeHassOptions, "language" | "admin" | "callService">> = {},
+  options: { config?: Record<string, unknown>; devices?: FakeDevice[]; printer?: Partial<PrinterSpec> } & Partial<
+    Pick<FakeHassOptions, "language" | "admin" | "callService">
+  > = {},
 ): Promise<{ card: FakeCard; hass: FakeHass }> {
   const [devices, printer] = PRINTERS[name];
-  const { config = {}, devices: given, ...hass } = options;
-  return mountFor(given ?? devices(), printer, config, hass);
+  const { config = {}, devices: given, printer: spec, ...hass } = options;
+  return mountFor(given ?? (devices as (spec?: Partial<PrinterSpec>) => FakeDevice[])(spec), printer, config, hass);
 }
 
-export const withX1c = async (overrides: Partial<PrinterSpec>, config: Record<string, unknown> = {}) => cardFor("x1c", { config, devices: x1c(overrides) });
+export const withX1c = async (overrides: Partial<PrinterSpec>, config: Record<string, unknown> = {}) => cardFor("x1c", { config, printer: overrides });
 
 /** The card as Home Assistant's card editor shows it: in its dialog. */
 export async function previewOf(
@@ -68,14 +82,24 @@ export async function previewOf(
   language = "en",
   devices?: FakeDevice[],
 ): Promise<FakeCard> {
+  const dialog = document.createElement("hui-dialog-edit-card");
+  document.body.append(dialog);
+  return mountPreview(name, config, { language, devices, into: dialog.attachShadow({ mode: "open" }) });
+}
+
+/** A card Home Assistant draws as a preview (`preview` set): on the page,
+ * or `into` the editor's dialog. */
+export async function mountPreview(
+  name: keyof typeof PRINTERS,
+  config: Record<string, unknown> = {},
+  options: { language?: string; devices?: FakeDevice[]; into?: ParentNode } = {},
+): Promise<FakeCard> {
   const [make, printer] = PRINTERS[name];
   const card = document.createElement("bambuddy-printer-card") as FakeCard;
   card.preview = true;
   card.setConfig({ type: "custom:bambuddy-printer-card", printer, ...config });
-  card.hass = makeHass({ devices: devices ?? make(), language });
-  const dialog = document.createElement("hui-dialog-edit-card");
-  dialog.attachShadow({ mode: "open" }).append(card);
-  document.body.append(dialog);
+  card.hass = makeHass({ devices: options.devices ?? make(), language: options.language ?? "en" });
+  (options.into ?? document.body).append(card);
   await card.updateComplete;
   return card;
 }
@@ -83,7 +107,7 @@ export async function previewOf(
 export const samples = (card: FakeCard): string[] => findAll(card, ".sample .sample-note").map(text);
 
 /** happy-dom's own shadow-root getter, put back after each test. */
-export const shadowFullscreen = Object.getOwnPropertyDescriptor(ShadowRoot.prototype, "fullscreenElement");
+const shadowFullscreen = Object.getOwnPropertyDescriptor(ShadowRoot.prototype, "fullscreenElement");
 
 /** The browser's Fullscreen API, which happy-dom lacks: entering makes the
  * card (the shadow host) the document's full-screen element, as browsers do. */
@@ -224,4 +248,26 @@ export async function endFullscreens(): Promise<void> {
   }
 }
 
+/** After a full-screen test: real timers, no spies, the page visible (no
+ * event: the cards are still on it), full screen ended, no dialog left in
+ * the page's top layer, and neither API stubbed. */
+export async function leaveFullscreenWorld(): Promise<void> {
+  vi.useRealTimers();
+  vi.restoreAllMocks();
+  Object.defineProperty(document, "visibilityState", { configurable: true, get: () => "visible" });
+  await endFullscreens();
+  for (const dialog of document.body.querySelectorAll("dialog")) dialog.remove();
+  withoutFullscreenApi();
+  withoutPopoverApi();
+}
+
 export const historyMark = (): unknown => (history.state as { bambuddyFullscreen?: unknown } | null)?.bambuddyFullscreen;
+
+/** Past the card's wait for BamBuddy's data (30 s, its NO_DATA_WAIT_MS): a
+ * test that takes the data away now and wants the no-data texts. The tests'
+ * clock is a faked Date. */
+export async function pastTheWait(card: FakeCard): Promise<void> {
+  vi.setSystemTime(Date.now() + 30_000);
+  card.requestUpdate();
+  await settle(card);
+}

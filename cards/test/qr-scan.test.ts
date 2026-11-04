@@ -2,7 +2,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import "../src/index";
-import { forgetHandoverForTests } from "../src/card";
+import { forgetHandoverForTests } from "../src/scan-session";
 import { setDecoderForTests } from "../src/scan";
 import {
   assign,
@@ -18,7 +18,7 @@ import {
   type FakeHass,
   type FakeHassOptions,
 } from "./fixtures";
-import { find, findAll, settle, showView, text } from "./helpers";
+import { defineFor, find, findAll, restoreDefined, settle, showView, text } from "./helpers";
 
 // --- The world: a slot, its spools, a camera ----------------------------------
 
@@ -70,13 +70,6 @@ async function openScan(world: World = {}): Promise<FakeCard> {
   return card;
 }
 
-const restores: Array<() => void> = [];
-function define(target: object, key: string, value: unknown): void {
-  const had = Object.getOwnPropertyDescriptor(target, key);
-  Object.defineProperty(target, key, { value, configurable: true, writable: true });
-  restores.push(() => (had ? Object.defineProperty(target, key, had) : delete (target as Record<string, unknown>)[key]));
-}
-
 interface FakeTrack {
   stop: ReturnType<typeof vi.fn>;
   getCapabilities: () => { torch?: boolean };
@@ -92,8 +85,8 @@ function camera(options: { torch?: boolean; error?: string } = {}): { tracks: Fa
     tracks.push(track);
     return Object.assign(Object.create(window.MediaStream.prototype), { getTracks: () => [track], getVideoTracks: () => [track] });
   });
-  define(window, "isSecureContext", true);
-  define(navigator, "mediaDevices", { getUserMedia });
+  defineFor(window, "isSecureContext", true);
+  defineFor(navigator, "mediaDevices", { getUserMedia });
   return { tracks, getUserMedia };
 }
 
@@ -103,15 +96,15 @@ const decoded: { text?: string } = {};
 beforeEach(() => {
   decoded.text = undefined;
   setDecoderForTests({ decode: async () => decoded.text });
-  define(HTMLMediaElement.prototype, "play", vi.fn(async () => undefined));
-  define(HTMLVideoElement.prototype, "videoWidth", 640);
-  define(HTMLVideoElement.prototype, "videoHeight", 480);
+  defineFor(HTMLMediaElement.prototype, "play", vi.fn(async () => undefined));
+  defineFor(HTMLVideoElement.prototype, "videoWidth", 640);
+  defineFor(HTMLVideoElement.prototype, "videoHeight", 480);
 });
 
 afterEach(() => {
   document.body.innerHTML = "";
   forgetHandoverForTests();
-  while (restores.length) restores.pop()?.();
+  restoreDefined();
   setDecoderForTests(undefined);
   vi.unstubAllGlobals();
   delete window.externalBus;
@@ -154,7 +147,7 @@ describe("the scan button", () => {
   it("is locked while a filament change runs", async () => {
     const card = await openScan();
     expect(scanButton(card)?.disabled).toBe(false);
-    card.hass = (card.hass as FakeHass).withState("sensor.x1c_ams_status", "feeding") as never;
+    card.hass = (card.hass as FakeHass).withState("sensor.x1c_ams_status", "feeding");
     await settle(card);
     expect(scanButton(card)?.disabled).toBe(true);
   });
@@ -277,7 +270,7 @@ describe("the live camera", () => {
 
 describe("a photo of the label", () => {
   async function insecure(): Promise<FakeCard> {
-    define(window, "isSecureContext", false);
+    defineFor(window, "isSecureContext", false);
     const card = await openScan();
     await startScan(card);
     return card;
@@ -378,7 +371,7 @@ describe("after a scan", () => {
   it("a spool in another slot names where it is taken from", async () => {
     const card = await scanned("2");
     expect(rowNames(card)).toEqual(["Bambu PLA Basic"]);
-    expect(text(card.shadowRoot?.querySelector("dialog .inv-panel"))).toContain("AMS A, Fach 1");
+    expect(text(card.shadowRoot?.querySelector("dialog .inv-panel"))).toContain("AMS\u00a0A, Fach 1");
   });
 
   it("an unknown spool is said, the list untouched", async () => {
@@ -507,7 +500,7 @@ describe("the scan's edges", () => {
   it("the camera area keeps the height of what it stands in for", async () => {
     camera();
     const card = await openScan();
-    define(HTMLElement.prototype, "offsetHeight", 312);
+    defineFor(HTMLElement.prototype, "offsetHeight", 312);
     await startScan(card);
     expect(find(card, "dialog .inv-camera")?.getAttribute("style")).toBe("min-height: min(312px, 60dvh)");
   });
@@ -523,7 +516,7 @@ describe("the scan's edges", () => {
   });
 
   it("a photo read after the camera was closed changes nothing", async () => {
-    define(window, "isSecureContext", false);
+    defineFor(window, "isSecureContext", false);
     let release: (value: unknown) => void = () => undefined;
     vi.stubGlobal("createImageBitmap", vi.fn(() => new Promise((resolve) => (release = resolve))));
     decoded.text = "3";
@@ -544,7 +537,6 @@ describe("the scan's edges", () => {
 // --- The editor option: assign a scanned spool at once --------------------------
 
 describe("assign_scanned_spool", () => {
-  type Calls = { service: string; data?: Record<string, unknown> }[];
   const assigned = (card: FakeCard): unknown[] =>
     (card.hass as FakeHass).calls.filter((call) => call.service === "assign_spool").map((call) => call.data);
 
@@ -603,13 +595,24 @@ describe("the scan while things change", () => {
     await startScan(card);
     const hass = card.hass as FakeHass;
     const before = hass.states[SLOT] as { state: string; attributes: Record<string, unknown> };
-    card.hass = hass.withState(SLOT, before.state, { ...before.attributes, inventory_assignable: false }) as never;
+    card.hass = hass.withState(SLOT, before.state, { ...before.attributes, inventory_assignable: false });
     await settle(card);
     expect(tracks[0]?.stop).toHaveBeenCalledTimes(1);
-    card.hass = (card.hass as FakeHass).withState(SLOT, before.state, before.attributes) as never;
+    card.hass = (card.hass as FakeHass).withState(SLOT, before.state, before.attributes);
     await settle(card);
     expect(find(card, "dialog .inv-camera")).toBeNull();
     expect(find(card, "dialog .inv-list")).not.toBeNull();
+  });
+
+  it("drops the scan of a slot that left the inventory in the same update, not in a second one", async () => {
+    camera();
+    const card = await openScan();
+    await startScan(card);
+    const hass = card.hass as FakeHass;
+    const before = hass.states[SLOT] as { state: string; attributes: Record<string, unknown> };
+    card.hass = hass.withState(SLOT, before.state, { ...before.attributes, inventory_assignable: false });
+    // Lit's promise says whether the update asked for no other one.
+    expect(await card.updateComplete).toBe(true);
   });
 
   it("the keyboard's place follows the scan: the camera's buttons, back to the scan button, the chosen spool", async () => {
@@ -629,7 +632,7 @@ describe("the scan while things change", () => {
   });
 
   it("over HTTP the photo's button takes the keyboard's place; an unknown spool gives it back to the scan button", async () => {
-    define(window, "isSecureContext", false);
+    defineFor(window, "isSecureContext", false);
     vi.stubGlobal("createImageBitmap", vi.fn(async () => ({ width: 10, height: 10 })));
     const card = await openScan();
     await startScan(card);
@@ -659,8 +662,8 @@ describe("the scan while things change", () => {
   it("says the camera is on only once its picture comes", async () => {
     let give: (stream: unknown) => void = () => undefined;
     const track = { stop: vi.fn(), getCapabilities: () => ({}), applyConstraints: vi.fn() };
-    define(window, "isSecureContext", true);
-    define(navigator, "mediaDevices", { getUserMedia: () => new Promise((resolve) => (give = resolve)) });
+    defineFor(window, "isSecureContext", true);
+    defineFor(navigator, "mediaDevices", { getUserMedia: () => new Promise((resolve) => (give = resolve)) });
     const card = await openScan();
     await startScan(card);
     expect(text(find(card, "dialog .inv-say"))).toBe("");
@@ -686,7 +689,7 @@ describe("the scan while things change", () => {
 
 describe("the photo's trip to the camera app", () => {
   async function photoArea(world: World = {}): Promise<FakeCard> {
-    define(window, "isSecureContext", false);
+    defineFor(window, "isSecureContext", false);
     vi.stubGlobal("createImageBitmap", vi.fn(async () => ({ width: 10, height: 10 })));
     const card = await openScan(world);
     await startScan(card);
@@ -702,9 +705,9 @@ describe("the photo's trip to the camera app", () => {
 
   /** The camera app hides the page for a while. */
   function trip(): void {
-    define(document, "visibilityState", "hidden");
+    defineFor(document, "visibilityState", "hidden");
     document.dispatchEvent(new Event("visibilitychange"));
-    define(document, "visibilityState", "visible");
+    defineFor(document, "visibilityState", "visible");
     document.dispatchEvent(new Event("visibilitychange"));
   }
 
@@ -879,7 +882,7 @@ describe("a foreign code before the live camera", () => {
 
 describe("what screen readers hear, and the filter button's relation", () => {
   it("a second photo that fails the same is said again", async () => {
-    define(window, "isSecureContext", false);
+    defineFor(window, "isSecureContext", false);
     vi.stubGlobal("createImageBitmap", vi.fn(async () => ({ width: 10, height: 10 })));
     const card = await openScan();
     await startScan(card);
@@ -925,12 +928,12 @@ describe("a dialog too tall for the screen", () => {
   it("scrolls as a whole once the list's least would not fit", async () => {
     camera();
     const card = await openScan();
-    define(window, "innerHeight", 766);
-    define(HTMLElement.prototype, "scrollHeight", 900);
+    defineFor(window, "innerHeight", 766);
+    defineFor(HTMLElement.prototype, "scrollHeight", 900);
     card.requestUpdate();
     await settle(card);
     expect(find(card, "dialog .dlg-body")?.classList.contains("inv-short")).toBe(true);
-    define(HTMLElement.prototype, "scrollHeight", 400);
+    defineFor(HTMLElement.prototype, "scrollHeight", 400);
     card.requestUpdate();
     await settle(card);
     expect(find(card, "dialog .dlg-body")?.classList.contains("inv-short")).toBe(false);

@@ -7,20 +7,27 @@ from types import SimpleNamespace
 from typing import Any
 
 import aiohttp
+from multidict import CIMultiDict, CIMultiDictProxy
+import yarl
+from homeassistant.config_entries import SOURCE_REAUTH
 from homeassistant.core import HomeAssistant
+from homeassistant.data_entry_flow import FlowResultType
 from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers import entity_registry as er
+from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
 from homeassistant.setup import async_setup_component
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 from pytest_homeassistant_custom_component.typing import WebSocketGenerator
 
+from custom_components.bambuddy.api import BamBuddyConnectionError
 from custom_components.bambuddy.const import DOMAIN
 from tests.conftest import load_fixture
 
 
-async def reload_entry(hass: HomeAssistant, entry_id: str) -> None:
+async def reload_entry(hass: HomeAssistant, entry_id: str, *, wait_background_tasks: bool = False) -> None:
+    """Reload the entry; the reload must succeed."""
     assert await hass.config_entries.async_reload(entry_id)
-    await hass.async_block_till_done()
+    await hass.async_block_till_done(wait_background_tasks=wait_background_tasks)
 
 
 def plug_list(**changes: dict[str, Any]) -> list[dict[str, Any]]:
@@ -123,4 +130,84 @@ def listed_with(bambuddy_api: SimpleNamespace, printer_id: int, **fields: Any) -
 
 
 def reauth_flows(hass: HomeAssistant) -> list[dict[str, Any]]:
-    return [flow for flow in hass.config_entries.flow.async_progress() if flow["context"]["source"] == "reauth"]
+    """This integration's reauthentication flows in progress."""
+    return [flow for flow in hass.config_entries.flow.async_progress_by_handler(DOMAIN) if flow["context"].get("source") == SOURCE_REAUTH]
+
+
+def details_are(bambuddy_api: SimpleNamespace, details: dict[str, Any]) -> None:
+    """BamBuddy's details of a printer (`GET /printers/{id}`) answer this, whichever is asked."""
+    bambuddy_api.get_printer.side_effect = None
+    bambuddy_api.get_printer.return_value = details
+
+
+def failure_key(coordinator: DataUpdateCoordinator[Any]) -> str | None:
+    """The translation key of the coordinator's last failure."""
+    err = coordinator.last_exception
+    return getattr(err, "translation_key", None)
+
+
+def home_assistant_stops(hass: HomeAssistant) -> None:
+    """The first stage of `async_stop`: the timers it may cancel go."""
+    hass._cancel_cancellable_timers()  # noqa: SLF001
+
+
+def timed_out(text: str) -> BamBuddyConnectionError:
+    """A request that timed out, as the client raises it: "<route>: TimeoutError"."""
+    err = BamBuddyConnectionError(f"{text}: TimeoutError")
+    err.__cause__ = TimeoutError()
+    return err
+
+
+def socket_ready(bambuddy_api: SimpleNamespace, socket: FakeSocket | None = None) -> FakeSocket:
+    """BamBuddy's live connection opens: this socket, a new one by default."""
+    socket = socket if socket is not None else FakeSocket()
+    bambuddy_api.open_socket.side_effect = None
+    bambuddy_api.open_socket.return_value = socket
+    return socket
+
+
+def handshake_refusal(url: str, status: int, message: str = "Invalid response status") -> aiohttp.WSServerHandshakeError:
+    """A refused WebSocket handshake as aiohttp raises it: its text names the URL, token included."""
+    address = yarl.URL(url)
+    info = aiohttp.RequestInfo(address, "GET", CIMultiDictProxy(CIMultiDict()), address)
+    return aiohttp.WSServerHandshakeError(info, (), status=status, message=message)
+
+
+async def never_answers(*_: Any) -> str:
+    """A request that never comes back."""
+    await asyncio.Event().wait()
+    raise AssertionError("never answers")
+
+
+# Configure's choices one menu down: under Manage printers or Settings.
+_UNDER = {"add_printer": "printers", "remove_printer": "printers", "live_updates": "settings"}
+
+
+async def open_options(hass: HomeAssistant, entry: MockConfigEntry, choice: str) -> dict[str, Any]:
+    """Configure opened and its menus walked down to `choice`."""
+    result: dict[str, Any] = await hass.config_entries.options.async_init(entry.entry_id)  # type: ignore[assignment]
+    assert result["type"] is FlowResultType.MENU
+    if choice in _UNDER:
+        result = await hass.config_entries.options.async_configure(result["flow_id"], {"next_step_id": _UNDER[choice]})  # type: ignore[assignment]
+        assert result["type"] is FlowResultType.MENU
+    return await hass.config_entries.options.async_configure(result["flow_id"], {"next_step_id": choice})  # type: ignore[return-value]
+
+
+def spool_row(**fields: Any) -> dict[str, Any]:
+    """BamBuddy's first fixture spool (tests/fixtures/inventory_spools.json), some fields changed."""
+    return {**load_fixture("inventory_spools.json")[0], **fields}
+
+
+def with_inventory(bambuddy_api: SimpleNamespace, *extra: dict[str, Any]) -> None:
+    """BamBuddy's inventory of tests/fixtures/inventory_*.json: spool 1 in
+    the Workshop X1C's AMS A slot 3, spool 2 in slot 4, spool 3 in the Desk's
+    first slot (printer 99, not set up), a deleted and an archived spool's
+    rows; `extra` spools in no slot."""
+    bambuddy_api.get_spools.return_value = [*load_fixture("inventory_spools.json"), *extra]
+    bambuddy_api.get_spool_assignments.return_value = load_fixture("inventory_assignments.json")
+
+
+async def call_action(hass: HomeAssistant, name: str, /, *, response: bool = False, **data: Any) -> Any:
+    """One of the integration's actions, waited for; its answer with
+    `response`. `data` may hold a field named `action` (answer_hms)."""
+    return await hass.services.async_call(DOMAIN, name, data, blocking=True, return_response=response)

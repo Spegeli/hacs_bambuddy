@@ -9,7 +9,7 @@ from homeassistant.core import HomeAssistant
 
 from custom_components.bambuddy.timers import async_call_later_until_stop
 from tests.conftest import X1C, next_refresh, set_up
-from tests.helpers import with_plugs
+from tests.helpers import home_assistant_stops, with_plugs
 
 
 async def test_a_timer_runs_when_due(hass: HomeAssistant, freezer: FrozenDateTimeFactory) -> None:
@@ -23,7 +23,7 @@ async def test_a_timer_ends_when_home_assistant_stops(hass: HomeAssistant, freez
     """Home Assistant closes its web session while it stops: a read after that fails."""
     fired: list[datetime] = []
     async_call_later_until_stop(hass, 2, fired.append)
-    hass._cancel_cancellable_timers()  # noqa: SLF001 -- the first stage of async_stop
+    home_assistant_stops(hass)
     await next_refresh(hass, freezer, 3)
     assert fired == []
 
@@ -46,7 +46,7 @@ async def test_the_reads_after_a_command_end_when_home_assistant_stops(
 
     printer.async_refresh_soon()
     plugs.async_refresh_soon()
-    hass._cancel_cancellable_timers()  # noqa: SLF001 -- the first stage of async_stop
+    home_assistant_stops(hass)
     await next_refresh(hass, freezer, 5)
 
     assert bambuddy_api.get_status.await_count == statuses

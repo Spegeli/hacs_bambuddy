@@ -16,20 +16,12 @@ from custom_components.bambuddy.api import (
     BamBuddyNotFoundError,
     BamBuddyPermissionError,
 )
-from custom_components.bambuddy.const import DOMAIN
 
 from tests.conftest import H2D, X1C, ams_uid, entity_id, load_fixture, printer_uid, set_up, state_at
 
 
 def _extra(spool_id: int, **fields: Any) -> dict[str, Any]:
-    return {**load_fixture("inventory_spools.json")[0], "id": spool_id, "note": None, "storage_location": None, **fields}
-
-
-def with_inventory(bambuddy_api: SimpleNamespace, *extra: dict[str, Any]) -> None:
-    """Spool 1 in the X1C's AMS A slot 3, spool 2 in slot 4 (empty), spool 3
-    on the Desk (printer 99); `extra` spools in no slot."""
-    bambuddy_api.get_spools.return_value = [*load_fixture("inventory_spools.json"), *extra]
-    bambuddy_api.get_spool_assignments.return_value = load_fixture("inventory_assignments.json")
+    return spool_row(**{"id": spool_id, "note": None, "storage_location": None, **fields})
 
 
 def idle(bambuddy_api: SimpleNamespace) -> None:
@@ -39,10 +31,6 @@ def idle(bambuddy_api: SimpleNamespace) -> None:
 
 def _slot(hass: HomeAssistant, entry: Any, slot: int) -> str:
     return entity_id(hass, "sensor", ams_uid(entry, 0, f"slot_{slot}"))
-
-
-async def _act(hass: HomeAssistant, action: str, **data: Any) -> Any:
-    return await hass.services.async_call(DOMAIN, action, data, blocking=True, return_response=action == "get_spools")
 
 
 def _calls(bambuddy_api: SimpleNamespace) -> list[tuple[Any, ...]]:
@@ -61,7 +49,7 @@ async def test_a_spool_is_assigned_to_a_slot(hass: HomeAssistant, bambuddy_api: 
     calls = _calls(bambuddy_api)
     reads = bambuddy_api.get_spool_assignments.await_count
 
-    await _act(hass, "assign_spool", entity_id=_slot(hass, entry, 3), spool_id=7)
+    await call_action(hass, "assign_spool", entity_id=_slot(hass, entry, 3), spool_id=7)
 
     assert calls == [("assign", 7, X1C, 0, 2, {"move": False})]
     # Once fresh before (where is the spool now?), once after.
@@ -76,7 +64,7 @@ async def test_assigning_a_spool_from_another_slot_moves_it(hass: HomeAssistant,
     entry = await set_up(hass, X1C)
     calls = _calls(bambuddy_api)
 
-    await _act(hass, "assign_spool", entity_id=_slot(hass, entry, 4), spool_id=1)
+    await call_action(hass, "assign_spool", entity_id=_slot(hass, entry, 4), spool_id=1)
 
     assert calls == [("unassign", X1C, 0, 2), ("assign", 1, X1C, 0, 3, {"move": True})]
 
@@ -88,7 +76,7 @@ async def test_assigning_a_spool_from_another_printer_moves_it(hass: HomeAssista
     entry = await set_up(hass, X1C)
     calls = _calls(bambuddy_api)
 
-    await _act(hass, "assign_spool", entity_id=_slot(hass, entry, 3), spool_id=3)
+    await call_action(hass, "assign_spool", entity_id=_slot(hass, entry, 3), spool_id=3)
 
     assert calls == [("unassign", 99, 0, 0), ("assign", 3, X1C, 0, 2, {"move": True})]
 
@@ -99,7 +87,7 @@ async def test_a_move_whose_old_link_is_gone_goes_on(hass: HomeAssistant, bambud
     entry = await set_up(hass, X1C)
     bambuddy_api.unassign_spool.side_effect = BamBuddyNotFoundError(404, "Assignment not found")
 
-    await _act(hass, "assign_spool", entity_id=_slot(hass, entry, 4), spool_id=1)
+    await call_action(hass, "assign_spool", entity_id=_slot(hass, entry, 4), spool_id=1)
 
     bambuddy_api.assign_spool.assert_awaited_once_with(1, X1C, 0, 3, move=True)
 
@@ -109,7 +97,7 @@ async def test_the_external_spool_takes_a_spool(hass: HomeAssistant, bambuddy_ap
     idle(bambuddy_api)
     entry = await set_up(hass, X1C)
 
-    await _act(hass, "assign_spool", entity_id=entity_id(hass, "sensor", printer_uid(entry, "external_spool")), spool_id=7)
+    await call_action(hass, "assign_spool", entity_id=entity_id(hass, "sensor", printer_uid(entry, "external_spool")), spool_id=7)
 
     bambuddy_api.assign_spool.assert_awaited_once_with(7, X1C, 255, 0, move=False)
 
@@ -119,7 +107,7 @@ async def test_a_paused_print_may_take_a_spool_in_its_slot(hass: HomeAssistant, 
     bambuddy_api.statuses[X1C].update(state="PAUSE", tray_now=2)
     entry = await set_up(hass, X1C)
 
-    await _act(hass, "assign_spool", entity_id=_slot(hass, entry, 3), spool_id=7)
+    await call_action(hass, "assign_spool", entity_id=_slot(hass, entry, 3), spool_id=7)
 
     bambuddy_api.assign_spool.assert_awaited_once()
 
@@ -130,7 +118,7 @@ async def test_a_running_print_may_take_a_spool_in_its_slot(hass: HomeAssistant,
     bambuddy_api.statuses[X1C].update(state="RUNNING", tray_now=2)
     entry = await set_up(hass, X1C)
 
-    await _act(hass, "assign_spool", entity_id=_slot(hass, entry, 3), spool_id=7)
+    await call_action(hass, "assign_spool", entity_id=_slot(hass, entry, 3), spool_id=7)
 
     bambuddy_api.assign_spool.assert_awaited_once()
 
@@ -140,7 +128,7 @@ async def test_each_listed_spool_names_its_slot_type(hass: HomeAssistant, bambud
     with_inventory(bambuddy_api, _extra(7, material="PLA+"), _extra(8, material="PETG"))
     entry = await set_up(hass, X1C)
 
-    answer = await _act(hass, "get_spools", entity_id=_slot(hass, entry, 3))
+    answer = await call_action(hass, "get_spools", response=True, entity_id=_slot(hass, entry, 3))
     types = {spool["id"]: spool["type"] for spool in answer["spools"]}
     assert (types[1], types[7], types[8]) == ("PLA", "PLA", "PETG")
 
@@ -173,7 +161,7 @@ async def test_an_assignment_is_refused(
     entry = await set_up(hass, X1C)
 
     with pytest.raises(ServiceValidationError) as raised:
-        await _act(hass, "assign_spool", entity_id=_slot(hass, entry, slot), spool_id=spool)
+        await call_action(hass, "assign_spool", entity_id=_slot(hass, entry, slot), spool_id=spool)
 
     assert raised.value.translation_key == key
     bambuddy_api.assign_spool.assert_not_awaited()
@@ -187,11 +175,11 @@ async def test_a_spool_made_after_the_last_read_is_assigned(hass: HomeAssistant,
     entry = await set_up(hass, X1C)
     with_inventory(bambuddy_api, _extra(7), _extra(8, material="TPU 95A"))
 
-    await _act(hass, "assign_spool", entity_id=_slot(hass, entry, 3), spool_id=7)
+    await call_action(hass, "assign_spool", entity_id=_slot(hass, entry, 3), spool_id=7)
     bambuddy_api.assign_spool.assert_awaited_once_with(7, X1C, 0, 2, move=False)
 
     with pytest.raises(ServiceValidationError) as raised:
-        await _act(hass, "assign_spool", entity_id=_slot(hass, entry, 3), spool_id=8)
+        await call_action(hass, "assign_spool", entity_id=_slot(hass, entry, 3), spool_id=8)
     assert raised.value.translation_key == "spool_not_for_ams"
 
 
@@ -203,7 +191,7 @@ async def test_a_spool_bambuddy_does_not_list_goes_to_bambuddy(hass: HomeAssista
     bambuddy_api.assign_spool.side_effect = BamBuddyApiError(400, "Cannot assign an archived spool")
 
     with pytest.raises(ServiceValidationError) as raised:
-        await _act(hass, "assign_spool", entity_id=_slot(hass, entry, 3), spool_id=42)
+        await call_action(hass, "assign_spool", entity_id=_slot(hass, entry, 3), spool_id=42)
 
     assert raised.value.translation_key == "spool_archived"
     bambuddy_api.assign_spool.assert_awaited_once_with(42, X1C, 0, 2, move=False)
@@ -229,7 +217,7 @@ async def test_bambuddys_refusals_of_an_assignment(
     bambuddy_api.assign_spool.side_effect = error
 
     with pytest.raises(ServiceValidationError) as raised:
-        await _act(hass, "assign_spool", entity_id=_slot(hass, entry, 3), spool_id=7)
+        await call_action(hass, "assign_spool", entity_id=_slot(hass, entry, 3), spool_id=7)
 
     assert raised.value.translation_key == key
     assert not hass.config_entries.flow.async_progress()
@@ -242,7 +230,7 @@ async def test_a_bambuddy_without_answer_says_so(hass: HomeAssistant, bambuddy_a
     bambuddy_api.assign_spool.side_effect = BamBuddyConnectionError("down")
 
     with pytest.raises(HomeAssistantError) as raised:
-        await _act(hass, "assign_spool", entity_id=_slot(hass, entry, 3), spool_id=7)
+        await call_action(hass, "assign_spool", entity_id=_slot(hass, entry, 3), spool_id=7)
 
     assert raised.value.translation_key == "cannot_connect"
 
@@ -255,7 +243,7 @@ async def test_an_assignment_is_removed(hass: HomeAssistant, bambuddy_api: Simpl
         bambuddy_api.statuses[X1C]["connected"] = False
     entry = await set_up(hass, X1C)
 
-    await _act(hass, "unassign_spool", entity_id=_slot(hass, entry, 3))
+    await call_action(hass, "unassign_spool", entity_id=_slot(hass, entry, 3))
 
     bambuddy_api.unassign_spool.assert_awaited_once_with(X1C, 0, 2)
 
@@ -269,7 +257,7 @@ async def test_no_assignment_to_remove(hass: HomeAssistant, bambuddy_api: Simple
         bambuddy_api.unassign_spool.side_effect = BamBuddyNotFoundError(404, "Assignment not found")
 
     with pytest.raises(ServiceValidationError) as raised:
-        await _act(hass, "unassign_spool", entity_id=_slot(hass, entry, slot))
+        await call_action(hass, "unassign_spool", entity_id=_slot(hass, entry, slot))
 
     assert raised.value.translation_key == "no_assignment"
 
@@ -280,7 +268,7 @@ async def test_removing_needs_manage_inventory(hass: HomeAssistant, bambuddy_api
     entry = await set_up(hass, X1C)
 
     with pytest.raises(ServiceValidationError) as raised:
-        await _act(hass, "unassign_spool", entity_id=_slot(hass, entry, 3))
+        await call_action(hass, "unassign_spool", entity_id=_slot(hass, entry, 3))
 
     assert raised.value.translation_key == "inventory_not_allowed"
     bambuddy_api.unassign_spool.assert_not_awaited()
@@ -293,7 +281,7 @@ async def test_a_slots_spool_list(hass: HomeAssistant, bambuddy_api: SimpleNames
     entry = await set_up(hass, X1C)
     reads = bambuddy_api.get_spools.await_count
 
-    answer = await _act(hass, "get_spools", entity_id=_slot(hass, entry, 3))
+    answer = await call_action(hass, "get_spools", response=True, entity_id=_slot(hass, entry, 3))
 
     assert bambuddy_api.get_spools.await_count == reads + 1
     assert answer["assigned"] == 1
@@ -332,18 +320,18 @@ async def test_a_chip_spool_in_another_slot_is_not_for_assigning(hass: HomeAssis
     idle(bambuddy_api)
     entry = await set_up(hass, X1C)
 
-    answer = await _act(hass, "get_spools", entity_id=_slot(hass, entry, 3))
+    answer = await call_action(hass, "get_spools", response=True, entity_id=_slot(hass, entry, 3))
     fits = {spool["id"]: spool["fits"] for spool in answer["spools"]}
     # Spool 2 is a Bambu spool with its chip in slot 4.
     assert (fits[2], fits[7], fits[8]) == ("by_chip", None, None)
 
     with pytest.raises(ServiceValidationError) as raised:
-        await _act(hass, "assign_spool", entity_id=_slot(hass, entry, 3), spool_id=2)
+        await call_action(hass, "assign_spool", entity_id=_slot(hass, entry, 3), spool_id=2)
     assert raised.value.translation_key == "spool_by_chip"
     bambuddy_api.assign_spool.assert_not_awaited()
 
-    await _act(hass, "assign_spool", entity_id=_slot(hass, entry, 3), spool_id=7)
-    await _act(hass, "assign_spool", entity_id=_slot(hass, entry, 3), spool_id=8)
+    await call_action(hass, "assign_spool", entity_id=_slot(hass, entry, 3), spool_id=7)
+    await call_action(hass, "assign_spool", entity_id=_slot(hass, entry, 3), spool_id=8)
     assert [call.args[0] for call in bambuddy_api.assign_spool.await_args_list] == [7, 8]
 
 
@@ -357,18 +345,18 @@ async def test_a_spool_in_a_printing_printer_is_locked(hass: HomeAssistant, bamb
     # Spool 3 sits in the Desk (printer 99), which no entry here watches.
     bambuddy_api.statuses[99] = {"connected": True, "state": "PAUSE"}
 
-    answer = await _act(hass, "get_spools", entity_id=_slot(hass, entry, 3))
+    answer = await call_action(hass, "get_spools", response=True, entity_id=_slot(hass, entry, 3))
     desk = next(item for item in answer["spools"] if item["id"] == 3)
     assert (desk["fits"], desk["printing"]) == ("printing", "Desk")
 
     with pytest.raises(ServiceValidationError) as raised:
-        await _act(hass, "assign_spool", entity_id=_slot(hass, entry, 3), spool_id=3)
+        await call_action(hass, "assign_spool", entity_id=_slot(hass, entry, 3), spool_id=3)
     assert raised.value.translation_key == "spool_printing"
     assert raised.value.translation_placeholders == {"printer": "Desk"}
     bambuddy_api.assign_spool.assert_not_awaited()
 
     bambuddy_api.statuses[99] = {"connected": True, "state": "IDLE"}
-    answer = await _act(hass, "get_spools", entity_id=_slot(hass, entry, 3))
+    answer = await call_action(hass, "get_spools", response=True, entity_id=_slot(hass, entry, 3))
     assert next(item for item in answer["spools"] if item["id"] == 3)["fits"] is None
 
     read = bambuddy_api.get_status.side_effect
@@ -379,9 +367,9 @@ async def test_a_spool_in_a_printing_printer_is_locked(hass: HomeAssistant, bamb
         return read(printer_id)
 
     bambuddy_api.get_status.side_effect = desk_down
-    answer = await _act(hass, "get_spools", entity_id=_slot(hass, entry, 3))
+    answer = await call_action(hass, "get_spools", response=True, entity_id=_slot(hass, entry, 3))
     assert next(item for item in answer["spools"] if item["id"] == 3)["fits"] is None
-    await _act(hass, "assign_spool", entity_id=_slot(hass, entry, 3), spool_id=3)
+    await call_action(hass, "assign_spool", entity_id=_slot(hass, entry, 3), spool_id=3)
     bambuddy_api.assign_spool.assert_awaited()
 
 
@@ -398,7 +386,7 @@ async def test_a_spool_in_a_printing_printer_of_the_entry_is_locked(hass: HomeAs
     entry = await set_up(hass, X1C, H2D)
     reads = bambuddy_api.get_status.await_count
 
-    answer = await _act(hass, "get_spools", entity_id=_slot(hass, entry, 3))
+    answer = await call_action(hass, "get_spools", response=True, entity_id=_slot(hass, entry, 3))
     studio = next(item for item in answer["spools"] if item["id"] == 3)
     assert (studio["fits"], studio["printing"]) == ("printing", "Studio")
     assert bambuddy_api.get_status.await_count == reads
@@ -415,7 +403,7 @@ async def test_a_spool_in_two_slots_names_both(hass: HomeAssistant, bambuddy_api
     bambuddy_api.get_spool_assignments.return_value = rows
     entry = await set_up(hass, X1C)
 
-    answer = await _act(hass, "get_spools", entity_id=_slot(hass, entry, 3))
+    answer = await call_action(hass, "get_spools", response=True, entity_id=_slot(hass, entry, 3))
     first = next(item for item in answer["spools"] if item["id"] == 1)
     assert first["place"] == {"this_slot": True}
     assert [(place["printer_name"], place["tray_id"]) for place in first["also"]] == [("Desk", 1)]
@@ -429,7 +417,7 @@ async def test_a_spool_list_while_the_printer_is_offline(hass: HomeAssistant, ba
     bambuddy_api.statuses[X1C]["connected"] = False
     entry = await set_up(hass, X1C)
 
-    answer = await _act(hass, "get_spools", entity_id=_slot(hass, entry, 2))
+    answer = await call_action(hass, "get_spools", response=True, entity_id=_slot(hass, entry, 2))
 
     assert answer["assigned"] is None
     assert len(answer["spools"]) == 3
@@ -447,7 +435,7 @@ async def test_a_spool_list_bambuddy_does_not_give(
     bambuddy_api.get_spools.side_effect = error
 
     with pytest.raises(HomeAssistantError) as raised:
-        await _act(hass, "get_spools", entity_id=_slot(hass, entry, 3))
+        await call_action(hass, "get_spools", response=True, entity_id=_slot(hass, entry, 3))
 
     assert raised.value.translation_key == key
     assert not hass.config_entries.flow.async_progress()
@@ -460,7 +448,7 @@ async def test_a_spool_list_after_spoolman_came_on(hass: HomeAssistant, bambuddy
     bambuddy_api.get_spoolman_status.return_value = {"enabled": True, "connected": True, "url": None}
 
     with pytest.raises(ServiceValidationError) as raised:
-        await _act(hass, "get_spools", entity_id=_slot(hass, entry, 3))
+        await call_action(hass, "get_spools", response=True, entity_id=_slot(hass, entry, 3))
 
     assert raised.value.translation_key == "inventory_not_shown"
     assert entry.runtime_data.inventory.data.shown is False
@@ -471,12 +459,11 @@ async def test_an_assignment_without_answer_says_so(hass: HomeAssistant, bambudd
     with_inventory(bambuddy_api, _extra(7))
     idle(bambuddy_api)
     entry = await set_up(hass, X1C)
-    error = BamBuddyConnectionError("POST /inventory/assignments: TimeoutError")
-    error.__cause__ = TimeoutError()
+    error = timed_out("POST /inventory/assignments")
     bambuddy_api.assign_spool.side_effect = error
 
     with pytest.raises(HomeAssistantError) as raised:
-        await _act(hass, "assign_spool", entity_id=_slot(hass, entry, 3), spool_id=7)
+        await call_action(hass, "assign_spool", entity_id=_slot(hass, entry, 3), spool_id=7)
 
     assert raised.value.translation_key == "no_answer"
 
@@ -487,6 +474,7 @@ async def test_no_spool_list_with_spoolman(hass: HomeAssistant, bambuddy_api: Si
     entry = await set_up(hass, X1C)
 
     with pytest.raises(ServiceValidationError) as raised:
-        await _act(hass, "get_spools", entity_id=_slot(hass, entry, 3))
+        await call_action(hass, "get_spools", response=True, entity_id=_slot(hass, entry, 3))
 
     assert raised.value.translation_key == "inventory_not_shown"
+from tests.helpers import call_action, spool_row, timed_out, with_inventory

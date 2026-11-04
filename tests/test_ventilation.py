@@ -6,7 +6,6 @@ together with heating the chamber locks the other."""
 from __future__ import annotations
 
 import json
-import re
 from types import SimpleNamespace
 from typing import Any
 
@@ -15,13 +14,14 @@ from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import ServiceValidationError
 
 from custom_components.bambuddy import fan as fan_module
-from tests.conftest import INTEGRATION, X1C, as_model, entity_id, printer_uid, set_up, state_at
+from tests.conftest import INTEGRATION, X1C, as_model, entity_id, no_entity, placeholders, printer_uid, set_up, state_at
 
 
-def placeholders_of(key: str) -> set[str]:
+def placeholders_of(key: str) -> frozenset[str]:
     """The placeholders a refusal's English text uses: a refusal passes those, no more."""
     texts = json.loads((INTEGRATION / "translations" / "en.json").read_text(encoding="utf-8"))["exceptions"]
-    return set(re.findall(r"\{(\w+)\}", texts[key]["message"]))
+    return placeholders(texts[key]["message"])
+
 
 _FANS = ("cooling_fan_speed", "big_fan1_speed", "big_fan2_speed", "heatbreak_fan_speed")
 _HEATER = {"H2D": True, "H2S": True, "H2C": True, "H2D Pro": True, "X2D": True, "P2S": False}
@@ -93,7 +93,7 @@ async def test_no_ventilation_without_an_airduct(hass: HomeAssistant, bambuddy_a
     entry = await set_up(hass, X1C)
 
     assert hass.states.async_entity_ids("fan") and not [e for e in hass.states.async_entity_ids("fan") if e.endswith("_ventilation")]
-    assert printer_uid(entry, "ventilation")
+    assert no_entity(hass, "fan", printer_uid(entry, "ventilation"))
 
 
 async def test_ventilation_switches_to_cooling_first(hass: HomeAssistant, bambuddy_api: SimpleNamespace) -> None:

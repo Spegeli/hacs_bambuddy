@@ -4,7 +4,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import "../src/index";
-import { changedConfig, configForm, editorData, settingsOf, validateConfig } from "../src/forms";
+import { configForm } from "../src/forms";
 import {
   h2d,
   IDLE,
@@ -18,16 +18,12 @@ import {
   x1cWithPlugs,
   type FakeCard,
   type FakeDevice,
-  type FakeHass,
+  type Mounted,
   type PlugSpec,
   type PrinterSpec,
 } from "./fixtures";
 import { declarations, find, findAll, NBSP, shownText, styleText, text, update } from "./helpers";
 
-interface Mounted {
-  card: FakeCard;
-  hass: FakeHass;
-}
 
 const mount = (devices: FakeDevice[], printer: string, config: Record<string, unknown> = {}, language = "en"): Promise<Mounted> =>
   mountFor(devices, printer, config, { language });
@@ -184,13 +180,19 @@ describe("compact chips", () => {
   it("show the drying time, with how many units dry", async () => {
     const { card, hass } = await mount(h2d(), "dev-h2d", { compact_chips: true, header_chips: ["drying"] });
     expect(shownText(pill(card, "dry-chip"))).toBe(TIME);
+    // Its name in full, for screen readers.
+    expect(named(card, "dry-chip")).toBe(`AMS A drying, done in ${TIME}`);
     const both = hass.withState("binary_sensor.dev-h2d_ams_128_drying", "on").withState("sensor.dev-h2d_ams_128_drying_remaining_time", "320");
     await update(card, both);
     expect(shownText(pill(card, "dry-chip"))).toBe(`2× ${BOTH}`);
     expect(tooltip(card, "dry-chip")).toBe(`2 AMS units drying, all done in ${BOTH}`);
+    expect(named(card, "dry-chip")).toBe(`2 AMS units drying, all done in ${BOTH}`);
     // Without a time: what dries.
     await update(card, both.withState("sensor.dev-h2d_ams_0_drying_remaining_time", "unknown").withState("sensor.dev-h2d_ams_128_drying_remaining_time", "unknown"));
     expect(shownText(pill(card, "dry-chip"))).toBe("2 AMS drying");
+    // One unit without a time: a word, no name of its own.
+    await update(card, hass.withState("sensor.dev-h2d_ams_0_drying_remaining_time", "unknown"));
+    expect([text(pill(card, "dry-chip")), named(card, "dry-chip")]).toEqual(["Drying", null]);
   });
 
   it("show the plug's power or its state in a word", async () => {
@@ -220,17 +222,6 @@ describe("compact chips", () => {
 });
 
 describe("the compact chips' option", () => {
-  it("is off unless the configuration says so, and written only when on", () => {
-    const TYPE = "custom:bambuddy-printer-card";
-    expect(settingsOf(validateConfig({ type: TYPE })).compactChips).toBe(false);
-    expect(settingsOf(validateConfig({ type: TYPE, compact_chips: true })).compactChips).toBe(true);
-    expect(() => validateConfig({ type: TYPE, compact_chips: "yes" })).toThrow(/compact_chips/);
-    const shown = editorData({ type: TYPE });
-    expect(shown["compact_chips"]).toBe(false);
-    expect(changedConfig({ type: TYPE }, shown, { ...shown, compact_chips: true })).toEqual({ type: TYPE, compact_chips: true });
-    expect(changedConfig({ type: TYPE, compact_chips: true }, { ...shown, compact_chips: true }, shown)).toEqual({ type: TYPE });
-  });
-
   it("is a switch right below the chips, named and explained in both languages", () => {
     const form = configForm(makeHass({ language: "en" }));
     const general = (form.schema[1]?.["schema"] as { name: string; selector?: unknown }[]).map((field) => field.name);
@@ -251,19 +242,8 @@ describe("the compact chips' option", () => {
   });
 });
 
-
 describe("compact chips in every state, with their full words for screen readers", () => {
   const compact = { compact_chips: true, header_chips: EVERY_CHIP };
-
-  it("name the drying chip in full: one unit, several, none without a time", async () => {
-    const { card, hass } = await mount(h2d(), "dev-h2d", { compact_chips: true, header_chips: ["drying"] });
-    expect(named(card, "dry-chip")).toBe(`AMS A drying, done in ${TIME}`);
-    const both = hass.withState("binary_sensor.dev-h2d_ams_128_drying", "on").withState("sensor.dev-h2d_ams_128_drying_remaining_time", "320");
-    await update(card, both);
-    expect(named(card, "dry-chip")).toBe(`2 AMS units drying, all done in ${BOTH}`);
-    await update(card, hass.withState("sensor.dev-h2d_ams_0_drying_remaining_time", "unknown"));
-    expect([text(pill(card, "dry-chip")), named(card, "dry-chip")]).toEqual(["Drying", null]);
-  });
 
   it("give the chip row's announcements the full text", async () => {
     const { card } = await mount(x1c(ALL), "dev-x1c", compact);

@@ -11,6 +11,12 @@ from pathlib import Path
 import re
 
 _ROOT = Path(__file__).parent.parent
+_CONTRIBUTING = (_ROOT / "CONTRIBUTING.md").read_text(encoding="utf-8")
+
+
+def _first_cells(text: str) -> set[str]:
+    """The first column of each table row: one file, or several (`services.py`, `services.yaml`)."""
+    return {cell.strip(" `") for line in text.splitlines() if line.startswith("| `") for cell in line.split("|")[1].split(",")}
 
 
 def _anchor(heading: str) -> str:
@@ -20,19 +26,19 @@ def _anchor(heading: str) -> str:
 
 
 def _sections() -> set[str]:
-    text = (_ROOT / "CONTRIBUTING.md").read_text(encoding="utf-8")
+    text = _CONTRIBUTING
     return {_anchor(heading) for heading in re.findall(r"^#{2,3} (.+)$", text, re.MULTILINE)}
 
 
 def test_every_link_within_contributing_finds_its_section():
-    text = (_ROOT / "CONTRIBUTING.md").read_text(encoding="utf-8")
+    text = _CONTRIBUTING
     links = set(re.findall(r"\]\(#([^)]+)\)", text))
     assert links
     assert sorted(links - _sections()) == []
 
 
 def test_contributing_says_a_short_key_is_refused() -> None:
-    text = (_ROOT / "CONTRIBUTING.md").read_text(encoding="utf-8")
+    text = _CONTRIBUTING
     assert "| `key.py` |" in text
     assert "a key lacking Read Status, Control Printer or Manage Maintenance is refused" in text
     assert "with a key that has only **Read Status**" not in text
@@ -40,21 +46,20 @@ def test_contributing_says_a_short_key_is_refused() -> None:
 
 def test_the_module_table_lists_every_module() -> None:
     """Each module of the integration has its row."""
-    contributing = (_ROOT / "CONTRIBUTING.md").read_text(encoding="utf-8")
-    # The first column of each row: one file, or several (`services.py`, `services.yaml`).
-    named = {cell.strip(" `") for line in contributing.splitlines() if line.startswith("| `") for cell in line.split("|")[1].split(",")}
+    contributing = _CONTRIBUTING
+    named = _first_cells(contributing)
     modules = sorted(path.name for path in (_ROOT / "custom_components" / "bambuddy").glob("*.py"))
     assert [name for name in modules if name not in named] == []
 
 
 def test_contributing_says_how_ams_entity_ids_are_made() -> None:
-    contributing = (_ROOT / "CONTRIBUTING.md").read_text(encoding="utf-8")
+    contributing = _CONTRIBUTING
     assert "`models.ams_object_id`" in contributing
 
 
 def test_the_card_table_lists_every_module() -> None:
     """Each module of the dashboard card has its row."""
-    contributing = (_ROOT / "CONTRIBUTING.md").read_text(encoding="utf-8")
-    named = {cell.strip(" `") for line in contributing.splitlines() if line.startswith("| `") for cell in line.split("|")[1].split(",")}
+    contributing = _CONTRIBUTING
+    named = _first_cells(contributing)
     modules = sorted(path.name for path in (_ROOT / "cards" / "src").glob("*.ts"))
     assert [name for name in modules if name not in named] == []

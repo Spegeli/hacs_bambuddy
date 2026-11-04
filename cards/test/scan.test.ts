@@ -5,20 +5,13 @@ vi.mock("jsqr", () => ({ default: vi.fn(() => null) }));
 import jsQR from "jsqr";
 import { currentDecoder, decodePhoto, defaultDecoder, parseSpoolQr, scanFrames, scanInApp, scanWay, setDecoderForTests, setTorch, startCamera, stopStream, torchOf } from "../src/scan";
 import type { Hass } from "../src/types";
+import { defineFor, restoreDefined } from "./helpers";
 
 const jsqr = vi.mocked(jsQR);
 
-/** Sets a property of an object for one test; restored in afterEach. */
-const restores: Array<() => void> = [];
-function define(target: object, key: string, value: unknown): void {
-  const had = Object.getOwnPropertyDescriptor(target, key);
-  Object.defineProperty(target, key, { value, configurable: true, writable: true });
-  restores.push(() => (had ? Object.defineProperty(target, key, had) : delete (target as Record<string, unknown>)[key]));
-}
-
 /** A canvas 2D context good enough for jsQR's input. */
 function fakeContext(): void {
-  define(HTMLCanvasElement.prototype, "getContext", function (this: HTMLCanvasElement) {
+  defineFor(HTMLCanvasElement.prototype, "getContext", function (this: HTMLCanvasElement) {
     return {
       drawImage: vi.fn(),
       getImageData: (_x: number, _y: number, w: number, h: number) => ({ data: new Uint8ClampedArray(w * h * 4), width: w, height: h }),
@@ -27,7 +20,7 @@ function fakeContext(): void {
 }
 
 afterEach(() => {
-  while (restores.length) restores.pop()?.();
+  restoreDefined();
   vi.unstubAllGlobals();
   jsqr.mockReset();
   jsqr.mockReturnValue(null);
@@ -55,10 +48,10 @@ describe("parseSpoolQr", () => {
 describe("scanWay", () => {
   it("chooses the app's scanner, else the camera, else none", () => {
     expect(scanWay(hassWith({ external: { config: { hasBarCodeScanner: 1 }, fireMessage: vi.fn() } }))).toBe("app");
-    define(window, "isSecureContext", true);
+    defineFor(window, "isSecureContext", true);
     expect(scanWay(hassWith({ external: { config: {}, fireMessage: vi.fn() } }))).toBe("live");
     expect(scanWay(hassWith(undefined))).toBe("live");
-    define(window, "isSecureContext", false);
+    defineFor(window, "isSecureContext", false);
     expect(scanWay(hassWith({}))).toBe("insecure");
   });
 });
@@ -108,7 +101,7 @@ describe("defaultDecoder", () => {
   });
 
   it("reads nothing where the canvas has no 2D context", async () => {
-    define(HTMLCanvasElement.prototype, "getContext", () => null);
+    defineFor(HTMLCanvasElement.prototype, "getContext", () => null);
     vi.stubGlobal("BarcodeDetector", undefined);
     expect(await defaultDecoder().decode(video, 10, 10, false)).toBeUndefined();
     expect(jsqr).not.toHaveBeenCalled();
@@ -249,13 +242,13 @@ describe("the camera and the photo", () => {
   it("asks for the back camera without sound", async () => {
     const stream = streamOf(track());
     const getUserMedia = vi.fn(async () => stream);
-    define(navigator, "mediaDevices", { getUserMedia });
+    defineFor(navigator, "mediaDevices", { getUserMedia });
     expect(await startCamera()).toBe(stream);
     expect(getUserMedia).toHaveBeenCalledWith({ video: { facingMode: { ideal: "environment" } }, audio: false });
   });
 
   it("maps camera errors", async () => {
-    const failing = (error: unknown) => define(navigator, "mediaDevices", { getUserMedia: async () => { throw error; } });
+    const failing = (error: unknown) => defineFor(navigator, "mediaDevices", { getUserMedia: async () => { throw error; } });
     failing({ name: "NotAllowedError" });
     expect(await startCamera()).toBe("denied");
     failing({ name: "NotFoundError" });
@@ -264,7 +257,7 @@ describe("the camera and the photo", () => {
     expect(await startCamera()).toBe("failed");
     failing(new TypeError("x"));
     expect(await startCamera()).toBe("failed");
-    define(navigator, "mediaDevices", undefined);
+    defineFor(navigator, "mediaDevices", undefined);
     expect(await startCamera()).toBe("none");
   });
 
@@ -368,6 +361,10 @@ describe("the camera and the photo", () => {
     setDecoderForTests(undefined);
     const first = currentDecoder();
     expect(currentDecoder()).toBe(first);
+    const other = { detect: async () => [] } as unknown as Parameters<typeof setDecoderForTests>[0];
+    setDecoderForTests(other);
+    expect(currentDecoder()).toBe(other);
+    setDecoderForTests(undefined);
   });
 });
 
@@ -443,7 +440,7 @@ describe("a phone's photo of a screen", () => {
 
   it("tries smaller sizes, smoothed, until one reads", async () => {
     const contexts: Array<{ imageSmoothingQuality?: string; imageSmoothingEnabled?: boolean }> = [];
-    define(HTMLCanvasElement.prototype, "getContext", function () {
+    defineFor(HTMLCanvasElement.prototype, "getContext", function () {
       const context: { drawImage: unknown; getImageData: unknown; imageSmoothingQuality?: string; imageSmoothingEnabled?: boolean } = { drawImage: vi.fn(), getImageData: () => ({ data: new Uint8ClampedArray(4), width: 1, height: 1 }) };
       contexts.push(context);
       return context;

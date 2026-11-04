@@ -55,6 +55,17 @@ _STATUSES = {
     X1E: "status_never.json",
 }
 
+# Keys that lack a permission, by their /auth/me answer, with each scope's mark.
+SHORT_KEYS = [
+    # BamBuddy's create dialog leaves Control Printer off.
+    ("auth_me_default.json", {"read_status": "\u2713", "control_printer": "\u2717", "manage_maintenance": "\u2713"}),
+    ("auth_me_read.json", {"read_status": "\u2713", "control_printer": "\u2717", "manage_maintenance": "\u2717"}),
+    # Its owner may only read: BamBuddy narrows the key to it.
+    ("auth_me_viewer.json", {"read_status": "\u2713", "control_printer": "\u2717", "manage_maintenance": "\u2717"}),
+    # BamBuddy knows the key: not an invalid one, three marks.
+    ("auth_me_other.json", {"read_status": "\u2717", "control_printer": "\u2717", "manage_maintenance": "\u2717"}),
+]
+
 _FIXTURES = Path(__file__).parent / "fixtures"
 INTEGRATION = Path(__file__).parent.parent / "custom_components" / "bambuddy"
 
@@ -114,7 +125,7 @@ def ams_key(printer_id: int, ams_id: int) -> str:
     return str(unit.get("serial_number") or ams_id)
 
 
-def as_model(bambuddy_api: SimpleNamespace, model: str, printer_id: int = X1C) -> None:
+def as_model(bambuddy_api: SimpleNamespace, model: str | None, printer_id: int = X1C) -> None:
     """The printer's place listed as another model."""
     printers = load_fixture("printers.json")
     for printer in printers:
@@ -230,18 +241,20 @@ def bambuddy_api() -> Iterator[SimpleNamespace]:
         yield SimpleNamespace(statuses=statuses, maintenance=maintenance, plug_statuses=plug_statuses, **mocks)
 
 
-def make_entry(hass: HomeAssistant, *printer_ids: int, **options: Any) -> MockConfigEntry:
+def make_entry(
+    hass: HomeAssistant, *printer_ids: int, url: str = URL, title: str = "BamBuddy (bambuddy.local)", **options: Any
+) -> MockConfigEntry:
     """A BamBuddy entry as the config flow creates it, with these printers
     (and Configure's settings, if given); added to Home Assistant, not set up."""
     entry = MockConfigEntry(
         domain=DOMAIN,
-        title="BamBuddy (bambuddy.local)",
-        data={"url": URL, "api_key": API_KEY, "verify_ssl": True},
+        title=title,
+        data={"url": url, "api_key": API_KEY, "verify_ssl": True},
         options={
             "printers": [printer_entry(printer_id) for printer_id in printer_ids],
             **options,
         },
-        unique_id=URL,
+        unique_id=url,
         version=2,
         minor_version=2,
     )
@@ -264,6 +277,15 @@ async def set_up(hass: HomeAssistant, *printer_ids: int) -> MockConfigEntry:
     return entry
 
 
+async def try_set_up(hass: HomeAssistant, *printer_ids: int, **options: Any) -> MockConfigEntry:
+    """An entry with these printers, its setup tried -- for one that fails
+    or waits to retry: nothing asserted."""
+    entry = make_entry(hass, *printer_ids, **options)
+    await hass.config_entries.async_setup(entry.entry_id)
+    await hass.async_block_till_done()
+    return entry
+
+
 async def next_refresh(hass: HomeAssistant, freezer: FrozenDateTimeFactory, seconds: float = 11) -> None:
     """Past the printers' next poll: a coordinator's next refresh comes 9 to
     10.5 seconds after the last (other intervals: `seconds`)."""
@@ -273,7 +295,7 @@ async def next_refresh(hass: HomeAssistant, freezer: FrozenDateTimeFactory, seco
     await hass.async_block_till_done(wait_background_tasks=True)
 
 
-async def past_minutes(hass: HomeAssistant, freezer: FrozenDateTimeFactory, polls: int) -> None:
+async def past_polls(hass: HomeAssistant, freezer: FrozenDateTimeFactory, polls: int) -> None:
     """`polls` of the printers' polls of 11 s one after another: past the
     minute's details read (6), the system information's 5 minutes (30)."""
     for _ in range(polls):
@@ -282,7 +304,7 @@ async def past_minutes(hass: HomeAssistant, freezer: FrozenDateTimeFactory, poll
 
 async def past_the_minute(hass: HomeAssistant, freezer: FrozenDateTimeFactory) -> None:
     """Past the printers' minute: their details, print hours and names read again."""
-    await past_minutes(hass, freezer, 6)
+    await past_polls(hass, freezer, 6)
 
 
 def entity_id(hass: HomeAssistant, platform: str, unique_id: str) -> str:
@@ -325,6 +347,11 @@ def no_entity(hass: HomeAssistant, platform: str, unique_id: str) -> bool:
 def printer_uid(entry: MockConfigEntry, key: str, printer_id: int = X1C) -> str:
     """The unique ID of a printer's entity `key`."""
     return f"{entry.entry_id}_p{printer_key(printer_id)}_{key}"
+
+
+def switch_off_uid(entry: MockConfigEntry, key: str, printer_id: int = X1C) -> str:
+    """The unique ID of a part of a printer's switch-off after the print."""
+    return f"{entry.entry_id}_switchoff_{printer_key(printer_id)}_{key}"
 
 
 def ams_uid(entry: MockConfigEntry, ams_id: int, key: str, printer_id: int = X1C) -> str:

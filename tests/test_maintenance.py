@@ -9,6 +9,7 @@ from typing import Any
 
 from freezegun.api import FrozenDateTimeFactory
 import pytest
+import voluptuous as vol
 from homeassistant.const import STATE_UNAVAILABLE
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError, ServiceValidationError
@@ -27,6 +28,7 @@ from tests.conftest import (
     set_up,
     state_of,
 )
+from tests.helpers import timed_out
 
 
 def _maintenance(hass: HomeAssistant, entry: Any) -> Any:
@@ -171,6 +173,20 @@ async def test_marking_done_a_task_the_printer_lacks(hass: HomeAssistant, bambud
     bambuddy_api.perform_maintenance.assert_not_awaited()
 
 
+@pytest.mark.parametrize("task", [0, -3, 1_000_001])
+async def test_a_task_number_out_of_its_range_is_refused(hass: HomeAssistant, bambuddy_api: SimpleNamespace, task: int) -> None:
+    """The action takes BamBuddy's task numbers, 1 to 1 000 000 (as
+    services.yaml says): another never reaches BamBuddy."""
+    entry = await set_up(hass, X1C)
+    bambuddy_api.get_maintenance.reset_mock()
+
+    with pytest.raises(vol.Invalid):
+        await _mark_done(hass, entry, task)
+
+    bambuddy_api.perform_maintenance.assert_not_awaited()
+    bambuddy_api.get_maintenance.assert_not_awaited()
+
+
 async def test_bambuddy_refusing_to_mark_done(hass: HomeAssistant, bambuddy_api: SimpleNamespace) -> None:
     entry = await set_up(hass, X1C)
     bambuddy_api.perform_maintenance.side_effect = BamBuddyConnectionError("refused")
@@ -197,8 +213,7 @@ async def test_no_answer_while_marking_done(hass: HomeAssistant, bambuddy_api: S
     """A command BamBuddy may have carried out: said so, and the tasks are
     read again to tell."""
     entry = await set_up(hass, X1C)
-    timeout = BamBuddyConnectionError("POST /maintenance/items/11/perform: TimeoutError")
-    timeout.__cause__ = TimeoutError()
+    timeout = timed_out("POST /maintenance/items/11/perform")
     bambuddy_api.perform_maintenance.side_effect = timeout
 
     with pytest.raises(HomeAssistantError) as raised:

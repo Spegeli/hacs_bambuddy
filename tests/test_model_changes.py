@@ -25,11 +25,12 @@ from tests.conftest import (
     H2D,
     X1C,
     ams_uid,
+    as_model,
     load_fixture,
     make_entry,
     next_refresh,
     no_entity,
-    past_minutes,
+    past_polls,
     past_the_minute,
     printer_device,
     printer_entry,
@@ -41,54 +42,13 @@ from tests.conftest import (
     setup_integration,
     state_of,
 )
-from tests.helpers import devices_by_identifier, entity_ids, listed_with
+from tests.helpers import details_are, devices_by_identifier, entity_ids, listed_with, reload_entry
 
 
-def _listed_as(bambuddy_api: SimpleNamespace, printer_id: int, **fields: object) -> dict:
-    printers = load_fixture("printers.json")
-    for printer in printers:
-        if printer["id"] == printer_id:
-            printer.update(fields)
-    bambuddy_api.get_printers.return_value = printers
-    return next(printer for printer in printers if printer["id"] == printer_id)
-
-
-async def test_new_entity_ids_follow_model_and_serial(hass: HomeAssistant, bambuddy_api: SimpleNamespace) -> None:
-    """Whatever the printer is called in BamBuddy, in any language: model,
-    serial number and the entity's key."""
-    hass.config.language = "de"
-    entry = await set_up(hass, H2D)
-    registry = er.async_get(hass)
-
-    assert registry.async_get_entity_id("sensor", DOMAIN, printer_uid(entry, "status", H2D)) == (
-        "sensor.h2d_0948ad000000004_print_status"
-    )
-    # An AMS unit's: what stays for it -- its own model and serial, no place.
-    assert registry.async_get_entity_id("sensor", DOMAIN, ams_uid(entry, 0, "slot_1", H2D)) == (
-        "sensor.ams_2_pro_19c06a000000001_slot_1"
-    )
-    assert registry.async_get_entity_id("sensor", DOMAIN, ams_uid(entry, 128, "humidity", H2D)) == (
-        "sensor.ams_ht_19f06a000000002_humidity"
-    )
-    assert registry.async_get_entity_id("binary_sensor", DOMAIN, ams_uid(entry, 128, "drying", H2D)) == (
-        "binary_sensor.ams_ht_19f06a000000002_drying"
-    )
-    assert registry.async_get_entity_id("sensor", DOMAIN, ams_uid(entry, 128, "drying_remaining_time", H2D)) == (
-        "sensor.ams_ht_19f06a000000002_drying_remaining_time"
-    )
-    assert registry.async_get_entity_id("update", DOMAIN, printer_uid(entry, "firmware", H2D)) == (
-        "update.h2d_0948ad000000004_firmware"
-    )
-    # The instance's: BamBuddy and the key -- not its address, which may change.
-    assert registry.async_get_entity_id("sensor", DOMAIN, f"{entry.entry_id}_total_prints") == (
-        "sensor.bambuddy_total_prints"
-    )
-    assert registry.async_get_entity_id("binary_sensor", DOMAIN, f"{entry.entry_id}_connected") == (
-        "binary_sensor.bambuddy_online"
-    )
-    assert registry.async_get_entity_id("update", DOMAIN, f"{entry.entry_id}_bambuddy_update") == (
-        "update.bambuddy_update"
-    )
+# What an X1C has and a printer without a model lacks: its detections, fans and SD card.
+_WITH_THE_MODEL = (("switch", "ai_monitoring"), ("fan", "aux_fan"), ("fan", "chamber_fan"), ("binary_sensor", "sdcard"))
+# What an X1C has and an A1 lacks.
+_X1C_ONLY = (("binary_sensor", "door"), ("fan", "aux_fan"), ("fan", "chamber_fan"))
 
 
 async def test_a_model_bambuddy_detects_later(
@@ -102,14 +62,13 @@ async def test_a_model_bambuddy_detects_later(
     printers = load_fixture("printers.json")
     x1c = next(printer for printer in printers if printer["id"] == X1C)
     bambuddy_api.get_printers.return_value = [{**x1c, "model": None}]
-    bambuddy_api.get_printer.side_effect = None
-    bambuddy_api.get_printer.return_value = {**x1c, "model": None}
+    details_are(bambuddy_api, {**x1c, "model": None})
     entry = await set_up(hass, X1C)
     registry = er.async_get(hass)
     device = devices_by_identifier(hass, entry)[printer_device(entry, X1C)]
     assert (device.name, device.model) == ("Workshop (00M00A000000001)", None)
     # The X1 series' detections, its auxiliary and chamber fans and SD card come with the model.
-    for domain, key in (("switch", "ai_monitoring"), ("fan", "aux_fan"), ("fan", "chamber_fan"), ("binary_sensor", "sdcard")):
+    for domain, key in _WITH_THE_MODEL:
         assert no_entity(hass, domain, printer_uid(entry, key)), key
 
     bambuddy_api.get_printers.return_value = printers
@@ -119,7 +78,7 @@ async def test_a_model_bambuddy_detects_later(
 
     device = devices_by_identifier(hass, entry)[printer_device(entry, X1C)]
     assert (device.name, device.model) == (printer_name(X1C), "X1C")
-    for domain, key in (("switch", "ai_monitoring"), ("fan", "aux_fan"), ("fan", "chamber_fan"), ("binary_sensor", "sdcard")):
+    for domain, key in _WITH_THE_MODEL:
         assert registry.async_get_entity_id(domain, DOMAIN, printer_uid(entry, key)) is not None, key
     assert entry.options["printers"] == [printer_entry(X1C)]
 
@@ -133,11 +92,10 @@ async def test_bambuddys_details_are_read_once_a_minute(
     entry = await set_up(hass, X1C)
     bambuddy_api.get_printer.assert_not_awaited()
     x1c = printer_info(X1C)
-    bambuddy_api.get_printer.side_effect = None
-    bambuddy_api.get_printer.return_value = {**x1c, "ip_address": "192.168.1.77"}
+    details_are(bambuddy_api, {**x1c, "ip_address": "192.168.1.77"})
 
     with patch.object(hass.config_entries, "async_schedule_reload") as reload:
-        await past_minutes(hass, freezer, 12)
+        await past_polls(hass, freezer, 12)
 
     assert bambuddy_api.get_printer.await_count == bambuddy_api.get_runtime.await_count - 1 >= 2
     reload.assert_not_called()
@@ -153,8 +111,7 @@ async def test_another_printer_under_the_number_is_not_this_one(
     reloads, and finds the X1C again by its serial, or reports it missing."""
     entry = await set_up(hass, X1C)
     a1_mini = printer_info(A1_MINI)
-    bambuddy_api.get_printer.side_effect = None
-    bambuddy_api.get_printer.return_value = {**a1_mini, "id": X1C}
+    details_are(bambuddy_api, {**a1_mini, "id": X1C})
     bambuddy_api.statuses[X1C] = load_fixture("status_a1mini.json")
 
     with patch.object(hass.config_entries, "async_schedule_reload") as reload:
@@ -163,8 +120,7 @@ async def test_another_printer_under_the_number_is_not_this_one(
         device = devices_by_identifier(hass, entry)[printer_device(entry, X1C)]
         with pytest.raises(ServiceValidationError, match="another printer"):
             await hass.services.async_call(DOMAIN, "home_axes", {"device_id": device.id}, blocking=True)
-        for _ in range(3):
-            await next_refresh(hass, freezer)
+        await past_polls(hass, freezer, 3)
 
     reload.assert_called_once_with(entry.entry_id)
     bambuddy_api.home_axes.assert_not_awaited()
@@ -189,16 +145,13 @@ async def test_a_printer_bambuddy_had_not_reached_yet_completes_itself(
     assert all(no_entity(hass, domain, printer_uid(entry, key, H2D)) for domain, key in keys)
 
     with patch.object(hass.config_entries, "async_schedule_reload") as reload:
-        for _ in range(3):
-            await next_refresh(hass, freezer)
+        await past_polls(hass, freezer, 3)
         reload.assert_not_called()
         bambuddy_api.statuses[H2D] = load_fixture("status_h2d.json")
-        for _ in range(3):
-            await next_refresh(hass, freezer)
+        await past_polls(hass, freezer, 3)
     reload.assert_called_once_with(entry.entry_id)
 
-    await hass.config_entries.async_reload(entry.entry_id)
-    await hass.async_block_till_done()
+    await reload_entry(hass, entry.entry_id)
     assert all(registry.async_get_entity_id(domain, DOMAIN, printer_uid(entry, key, H2D)) for domain, key in keys)
 
 
@@ -212,7 +165,7 @@ async def test_asking_for_the_model_may_fail(
     bambuddy_api.get_printer.side_effect = BamBuddyConnectionError("refused")
     entry = await set_up(hass, X1C)
 
-    await past_minutes(hass, freezer, 12)
+    await past_polls(hass, freezer, 12)
 
     assert entry.state is ConfigEntryState.LOADED
     assert devices_by_identifier(hass, entry)[printer_device(entry, X1C)].model is None
@@ -228,12 +181,11 @@ async def test_a_model_found_reloads_once(
     answer reloads nothing again."""
     x1c = printer_info(X1C)
     bambuddy_api.get_printers.return_value = [{**x1c, "model": None}]
-    bambuddy_api.get_printer.side_effect = None
-    bambuddy_api.get_printer.return_value = x1c
+    details_are(bambuddy_api, x1c)
     entry = make_entry(hass, X1C)
     with patch.object(hass.config_entries, "async_schedule_reload") as reload:
         await setup_integration(hass, entry)
-        await past_minutes(hass, freezer, 12)
+        await past_polls(hass, freezer, 12)
 
     reload.assert_called_once_with(entry.entry_id)
     assert bambuddy_api.get_printer.await_count == 2
@@ -281,7 +233,7 @@ async def test_one_reload_for_several_printers(
 
 async def test_a_printer_stored_under_its_code_shows_its_model(hass: HomeAssistant, bambuddy_api: SimpleNamespace) -> None:
     """BamBuddy may store the model code (BL-P002): the device page and its name say "X1"."""
-    _listed_as(bambuddy_api, X1C, model="BL-P002")
+    as_model(bambuddy_api, "BL-P002", X1C)
     entry = await set_up(hass, X1C)
 
     device = devices_by_identifier(hass, entry)[printer_device(entry, X1C)]
@@ -295,8 +247,7 @@ async def test_a_model_changed_in_bambuddy_reloads(
     with one reload, as with a model that comes later."""
     entry = await set_up(hass, X1C)
     x1c = printer_info(X1C)
-    bambuddy_api.get_printer.side_effect = None
-    bambuddy_api.get_printer.return_value = {**x1c, "model": "X1E"}
+    details_are(bambuddy_api, {**x1c, "model": "X1E"})
 
     with patch.object(hass.config_entries, "async_schedule_reload") as reload:
         await past_the_minute(hass, freezer)
@@ -309,8 +260,7 @@ async def test_the_same_model_in_another_spelling_reloads_nothing(
 ) -> None:
     entry = await set_up(hass, X1C)
     x1c = printer_info(X1C)
-    bambuddy_api.get_printer.side_effect = None
-    bambuddy_api.get_printer.return_value = {**x1c, "model": " x1c "}
+    details_are(bambuddy_api, {**x1c, "model": " x1c "})
 
     with patch.object(hass.config_entries, "async_schedule_reload") as reload:
         await past_the_minute(hass, freezer)
@@ -326,7 +276,7 @@ async def test_a_chamber_bambuddy_reports_after_setup_reloads_once(
     """BamBuddy 1.2.5.7 reports no chamber temperature or heater for the H2D Pro (it compares
     "H2D PRO" with "H2DPRO"); 1.3 does (maziggy/bambuddy#3335). Updated while the entry runs -- or a
     printer that had not reported at setup --, the entities come with one reload, without the user."""
-    _listed_as(bambuddy_api, H2D, model="H2D Pro")
+    as_model(bambuddy_api, "H2D Pro", H2D)
     status = bambuddy_api.statuses[H2D]
     status["temperatures"].update({"chamber": None, "chamber_target": None})
     status["supports_chamber_heater"] = False
@@ -337,8 +287,7 @@ async def test_a_chamber_bambuddy_reports_after_setup_reloads_once(
         status["supports_chamber_heater"] = True
 
     with patch.object(hass.config_entries, "async_schedule_reload") as reload:
-        for _ in range(3):
-            await next_refresh(hass, freezer)
+        await past_polls(hass, freezer, 3)
 
     reload.assert_called_once_with(entry.entry_id)
 
@@ -347,7 +296,7 @@ async def test_the_reload_for_a_late_chamber_builds_its_entities(
     hass: HomeAssistant, bambuddy_api: SimpleNamespace, freezer: FrozenDateTimeFactory
 ) -> None:
     """After BamBuddy's update the H2D Pro's chamber temperature and target are there by themselves."""
-    _listed_as(bambuddy_api, H2D, model="H2D Pro")
+    as_model(bambuddy_api, "H2D Pro", H2D)
     status = bambuddy_api.statuses[H2D]
     status["temperatures"].update({"chamber": None, "chamber_target": None})
     status["supports_chamber_heater"] = False
@@ -360,7 +309,7 @@ async def test_the_reload_for_a_late_chamber_builds_its_entities(
     await hass.async_block_till_done()
 
     assert state_of(hass, "sensor", printer_uid(entry, "chamber_temp", H2D)).state == "31.0"
-    assert state_of(hass, "number", printer_uid(entry, "chamber_target", H2D)) is not None
+    state_of(hass, "number", printer_uid(entry, "chamber_target", H2D))
 
 
 async def test_a_chamber_that_comes_and_goes_reloads_at_most_three_times_a_run(
@@ -375,12 +324,10 @@ async def test_a_chamber_that_comes_and_goes_reloads_at_most_three_times_a_run(
     with patch.object(hass.config_entries, "async_schedule_reload") as reload:
         for _ in range(4):
             status["temperatures"]["chamber"] = 31.0
-            for _ in range(2):
-                await next_refresh(hass, freezer)
+            await past_polls(hass, freezer, 2)
             reloads = reload.call_count
             status["temperatures"]["chamber"] = None
-            await hass.config_entries.async_reload(entry.entry_id)
-            await hass.async_block_till_done()
+            await reload_entry(hass, entry.entry_id)
 
     assert reloads == 3
 
@@ -391,14 +338,13 @@ async def test_a_fan_kit_bambuddy_reports_after_setup_reloads_once(
 ) -> None:
     """BamBuddy learns of the P2S's exhaust fan kit or left auxiliary fan from the printer's first full
     airduct report, a moment after it connects: set up before that, the fan comes with one reload."""
-    _listed_as(bambuddy_api, X1C, model="P2S")
+    as_model(bambuddy_api, "P2S", X1C)
     bambuddy_api.statuses[X1C].update({"exhaust_fan_present": False, "left_aux_fan_speed": None})
     entry = await set_up(hass, X1C)
     bambuddy_api.statuses[X1C][field] = True if field == "exhaust_fan_present" else 0
 
     with patch.object(hass.config_entries, "async_schedule_reload") as reload:
-        for _ in range(3):
-            await next_refresh(hass, freezer)
+        await past_polls(hass, freezer, 3)
 
     reload.assert_called_once_with(entry.entry_id)
 
@@ -409,14 +355,11 @@ async def test_a_corrected_model_takes_its_entities_along(hass: HomeAssistant, b
     the AMS units' entities and the firmware update too."""
     entry = await set_up(hass, X1C)
     assert not no_entity(hass, "binary_sensor", printer_uid(entry, "door"))
-    printers = [{**printer, "model": "A1"} if printer["id"] == X1C else printer for printer in load_fixture("printers.json")]
-    bambuddy_api.get_printers.return_value = printers
-    bambuddy_api.get_printer.side_effect = lambda printer_id: next(item for item in printers if item["id"] == printer_id)
+    listed_with(bambuddy_api, X1C, model="A1")
 
-    await hass.config_entries.async_reload(entry.entry_id)
-    await hass.async_block_till_done()
+    await reload_entry(hass, entry.entry_id)
 
-    for platform, key in (("binary_sensor", "door"), ("fan", "aux_fan"), ("fan", "chamber_fan")):
+    for platform, key in _X1C_ONLY:
         assert no_entity(hass, platform, printer_uid(entry, key)), key
     assert not no_entity(hass, "sensor", printer_uid(entry, "status"))
     assert not no_entity(hass, "update", printer_uid(entry, "firmware"))
@@ -437,8 +380,7 @@ async def test_a_corrected_model_met_blank_waits_for_the_printers_report(
     connected = bambuddy_api.statuses[X1C]
     bambuddy_api.statuses[X1C] = {**load_fixture("status_never.json"), "id": X1C, "name": connected["name"]}
 
-    await hass.config_entries.async_reload(entry.entry_id)
-    await hass.async_block_till_done()
+    await reload_entry(hass, entry.entry_id)
 
     # Only the camera's frame rate goes: it follows BamBuddy's printer
     # information (an A1's camera gives 5 frames a second), not a report.
@@ -448,7 +390,7 @@ async def test_a_corrected_model_met_blank_waits_for_the_printers_report(
     await next_refresh(hass, freezer)
     await hass.async_block_till_done()
     await next_refresh(hass, freezer)
-    for platform, key in (("binary_sensor", "door"), ("fan", "aux_fan"), ("fan", "chamber_fan")):
+    for platform, key in _X1C_ONLY:
         assert no_entity(hass, platform, printer_uid(entry, key)), key
     assert devices_by_identifier(hass, entry)[printer_device(entry, X1C)].model == "A1"
 
@@ -471,11 +413,10 @@ async def test_a_failed_setup_after_a_corrected_model_takes_it_again(hass: HomeA
     await hass.config_entries.async_reload(entry.entry_id)
     await hass.async_block_till_done()
     assert failed
-    await hass.config_entries.async_reload(entry.entry_id)
-    await hass.async_block_till_done()
+    await reload_entry(hass, entry.entry_id)
 
     assert entry.state is ConfigEntryState.LOADED
-    for platform, key in (("binary_sensor", "door"), ("fan", "aux_fan"), ("fan", "chamber_fan")):
+    for platform, key in _X1C_ONLY:
         assert no_entity(hass, platform, printer_uid(entry, key)), key
 
 
@@ -493,8 +434,7 @@ async def test_a_fan_kit_reported_after_the_reload_keeps_its_fan(
     listed_with(bambuddy_api, H2D, model="H2D Pro")
     bambuddy_api.statuses[H2D]["left_aux_fan_speed"] = None
 
-    await hass.config_entries.async_reload(entry.entry_id)
-    await hass.async_block_till_done()
+    await reload_entry(hass, entry.entry_id)
 
     assert er.async_get(hass).async_get_entity_id("fan", DOMAIN, fan) == before
 
@@ -525,8 +465,7 @@ async def test_a_blank_printer_keeps_its_entities_without_a_model_change(hass: H
     before = entity_ids(hass, entry)
     bambuddy_api.statuses[X1C] = {**load_fixture("status_never.json"), "id": X1C, "name": "Workshop"}
 
-    await hass.config_entries.async_reload(entry.entry_id)
-    await hass.async_block_till_done()
+    await reload_entry(hass, entry.entry_id)
 
     assert sorted(set(before) - set(entity_ids(hass, entry))) == []
 
@@ -537,8 +476,7 @@ async def test_a_model_that_comes_is_no_model_change(hass: HomeAssistant, bambud
     entry = await set_up(hass, X1C)
     listed_with(bambuddy_api, X1C, model="X1C")
 
-    await hass.config_entries.async_reload(entry.entry_id)
-    await hass.async_block_till_done()
+    await reload_entry(hass, entry.entry_id)
 
     assert not entry.runtime_data.printers[X1C].model_changed
 
@@ -550,3 +488,21 @@ async def test_a_printer_without_a_model_says_printer_in_its_entity_ids(hass: Ho
     entry = await set_up(hass, X1C)
 
     assert er.async_get(hass).async_get_entity_id("sensor", DOMAIN, printer_uid(entry, "status")) == "sensor.printer_00m00a000000001_print_status"
+
+
+async def test_an_ams_unit_still_without_its_serial_keeps_its_entities(hass: HomeAssistant, bambuddy_api: SimpleNamespace) -> None:
+    """Corrected to an X1E: at the reload BamBuddy reports the AMS unit
+    without its serial yet (it comes a moment after the connection), so its
+    entities come later -- they stay."""
+    entry = await set_up(hass, X1C)
+    before = {uid for uid in entity_ids(hass, entry) if "_ams" in uid.removeprefix(entry.entry_id)}
+    assert before
+    listed_with(bambuddy_api, X1C, model="X1E")
+    status = bambuddy_api.statuses[X1C]
+    status["firmware_version"] = None
+    for unit in status["ams"]:
+        unit["serial_number"] = ""
+
+    await reload_entry(hass, entry.entry_id)
+
+    assert sorted(before - set(entity_ids(hass, entry))) == []

@@ -24,13 +24,13 @@ from tests.conftest import (
     load_fixture,
     make_entry,
     next_refresh,
-    past_minutes,
+    past_polls,
     past_the_minute,
     printer_uid,
     set_up,
     state_of,
 )
-from tests.helpers import devices_by_identifier, reauth_flows
+from tests.helpers import devices_by_identifier, reauth_flows, timed_out
 
 
 async def test_bambuddys_figures_do_not_hold_up_the_printers(
@@ -65,24 +65,8 @@ async def test_bambuddy_answers_without_its_system_information(
     assert state_of(hass, "sensor", instance_uid(entry, "printers_connected")).state == STATE_UNKNOWN
 
     bambuddy_api.get_system_info.side_effect = None
-    await past_minutes(hass, freezer, 30)
+    await past_polls(hass, freezer, 30)
     assert state_of(hass, "sensor", instance_uid(entry, "printers_connected")).state == "2"
-
-
-async def test_a_slow_answer_reads_as_slow(
-    hass: HomeAssistant, bambuddy_api: SimpleNamespace, freezer: FrozenDateTimeFactory
-) -> None:
-    """A poll that times out says that BamBuddy did not answer in time, not
-    that it cannot be reached."""
-    entry = await set_up(hass, X1C)
-    coordinator = entry.runtime_data.printers[X1C]
-    timeout = BamBuddyConnectionError("GET /printers/1/status: TimeoutError")
-    timeout.__cause__ = TimeoutError()
-    bambuddy_api.get_status.side_effect = timeout
-
-    await next_refresh(hass, freezer)
-
-    assert coordinator.last_exception.translation_key == "update_timeout"  # type: ignore[union-attr]
 
 
 async def test_setup_waits_for_the_system_information_only_briefly(
@@ -92,7 +76,7 @@ async def test_setup_waits_for_the_system_information_only_briefly(
     await set_up(hass, X1C)
     assert bambuddy_api.get_system_info.await_args.kwargs == {"patient": False}
 
-    await past_minutes(hass, freezer, 30)
+    await past_polls(hass, freezer, 30)
 
     assert bambuddy_api.get_system_info.await_args.kwargs == {"patient": True}
 
@@ -106,10 +90,9 @@ async def test_the_system_information_is_read_every_five_minutes(
     system = load_fixture("system_info.json")
     bambuddy_api.get_system_info.return_value = {**system, "app": {**system["app"], "version": "1.2.6"}}
 
-    await past_minutes(hass, freezer, 27)
+    await past_polls(hass, freezer, 27)
     assert bambuddy_api.get_system_info.await_count == 1
-    for _ in range(3):
-        await next_refresh(hass, freezer)
+    await past_polls(hass, freezer, 3)
 
     assert bambuddy_api.get_system_info.await_count == 2
     assert bambuddy_api.get_statistics.await_count >= 5
@@ -169,8 +152,7 @@ async def test_statistics_bambuddy_took_but_did_not_finish_keep_it_connected(
     each): one unreachable plug makes them slow. BamBuddy answers -- the last figures stand."""
     entry = await set_up(hass, X1C)
     if failure == "timeout":
-        error: Exception = BamBuddyConnectionError("GET /archives/stats: TimeoutError")
-        error.__cause__ = TimeoutError()
+        error: Exception = timed_out("GET /archives/stats")
     else:
         error = BamBuddyApiError(500, "Internal Server Error")
     bambuddy_api.get_statistics.side_effect = error
@@ -188,8 +170,7 @@ async def test_statistics_slow_since_the_start_leave_bambuddy_connected_after_it
 ) -> None:
     """A plug does not answer while Home Assistant starts: the setup's read fails in its 10 s; the
     reads after it get their 30 s and, failing too, keep BamBuddy connected (figures unknown)."""
-    error = BamBuddyConnectionError("GET /archives/stats: TimeoutError")
-    error.__cause__ = TimeoutError()
+    error = timed_out("GET /archives/stats")
     bambuddy_api.get_statistics.side_effect = error
     entry = await set_up(hass, X1C)
     assert state_of(hass, "binary_sensor", instance_uid(entry, "connected")).state == "off"
@@ -245,3 +226,22 @@ async def test_the_setup_does_not_wait_for_the_update_checks(hass: HomeAssistant
     answer.set()
     await hass.async_block_till_done(wait_background_tasks=True)
     assert state_of(hass, "update", printer_uid(entry, "firmware")).state == "on"
+
+
+async def test_bambuddys_system_information_may_fail_once(
+    hass: HomeAssistant, bambuddy_api: SimpleNamespace, freezer: FrozenDateTimeFactory
+) -> None:
+    """Its archive walk is BamBuddy's slowest answer: the last one stands,
+    the statistics still come, BamBuddy still reads as connected."""
+    entry = await set_up(hass, X1C)
+    free = state_of(hass, "sensor", instance_uid(entry, "disk_free")).state
+    bambuddy_api.get_system_info.side_effect = BamBuddyConnectionError("GET /system/info: TimeoutError")
+    bambuddy_api.get_statistics.return_value = {**load_fixture("archives_stats.json"), "total_prints": 900}
+
+    await past_polls(hass, freezer, 30)
+
+    assert bambuddy_api.get_system_info.await_count == 2
+    assert entry.runtime_data.instance.last_update_success
+    assert entry.runtime_data.instance.data["stats"]["total_prints"] == 900
+    assert state_of(hass, "sensor", instance_uid(entry, "printers_connected")).state == "2"
+    assert state_of(hass, "sensor", instance_uid(entry, "disk_free")).state == free

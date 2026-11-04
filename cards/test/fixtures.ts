@@ -83,7 +83,7 @@ export const OFFER = {
 };
 
 /** The fixtures' slots by their profile, as get_filaments names it. */
-export const SLOT_PROFILES: Record<string, string> = {
+const SLOT_PROFILES: Record<string, string> = {
   "sensor.dev-x1c_ams_0_slot_3": "GFL99",
   "sensor.dev-a1mini_ams_0_slot_3": "GFG99",
   "sensor.a1_mini_external_spool": "GFU03",
@@ -590,10 +590,10 @@ export function printerDevice(spec: PrinterSpec): FakeDevice {
       { entityId: `number.${p}_bed_target_temperature`, key: "bed_target_temperature", state: value(String(spec.bed[1] ?? 0)) },
     );
     if (spec.airduct !== undefined) {
-      entities.push({ entityId: `select.${p}_airduct_mode`, key: "airduct_mode", state: value(spec.airduct), // The laser mode is listed while the printer is in it (the integration's select).
-        attributes: { options: spec.airduct === "laser" ? ["cooling", "heating", "laser"] : ["cooling", "heating"] } });
+      // The laser mode is listed while the printer is in it (the integration's select).
+      const options = spec.airduct === "laser" ? ["cooling", "heating", "laser"] : ["cooling", "heating"];
+      entities.push({ entityId: `select.${p}_airduct_mode`, key: "airduct_mode", state: value(spec.airduct), attributes: { options } });
     }
-
     spec.nozzles.forEach(([, target], index) => {
       const side = sides[index] as string;
       entities.push({ entityId: `number.${p}_${side}nozzle_target_temperature`, key: `${side}nozzle_target_temperature`, state: value(String(target ?? 0)) });
@@ -621,9 +621,7 @@ export function printerDevice(spec: PrinterSpec): FakeDevice {
         attributes: available ? { percentage: percent, percentage_step: 10, fans } : { fans },
       });
     }
-    entities.push(
-      { entityId: `light.${p}_chamber_light`, key: "chamber_light", state: value(spec.light ? "on" : "off") },
-    );
+    entities.push({ entityId: `light.${p}_chamber_light`, key: "chamber_light", state: value(spec.light ? "on" : "off") });
     if (spec.filamentBackup !== "none") {
       const backup = spec.filamentBackup ?? "on";
       entities.push({
@@ -708,7 +706,7 @@ export function amsDevice(spec: AmsSpec): FakeDevice {
 
 // --- The printers the tests and the screenshots use ---------------------------
 
-export const END_TIME = "2026-10-16T12:35:00+00:00";
+const END_TIME = "2026-10-16T12:35:00+00:00";
 
 /** An X1 Carbon printing from its AMS (slot 2), with a camera, a cover and
  * three AI detections. */
@@ -958,14 +956,33 @@ export function offlineP1s(): FakeDevice[] {
 /** The devices while BamBuddy does not answer: the integration's poll
  * fails, and every entity of the printer and its AMS units is unavailable,
  * the print status and the Online sensor too, without their attributes. */
+/** Since an hour before the tests' clock: the card's wait for data is long over. */
+const LONG_AGO = "2026-10-16T07:00:00Z";
+
+/** The attributes of the devices' entities `match` takes, set by `change`
+ * -- in place, as the tests then read the same devices. */
+export function changeEntities(
+  devices: FakeDevice[],
+  match: (entity: FakeEntity) => boolean,
+  change: (entity: FakeEntity) => Record<string, unknown>,
+): FakeDevice[] {
+  for (const device of devices) {
+    for (const entity of device.entities) if (match(entity)) entity.attributes = change(entity);
+  }
+  return devices;
+}
+
+/** A copy of the device with only the entities `keep` keeps. */
+export const keepEntities = (device: FakeDevice, keep: (entity: FakeEntity) => boolean): FakeDevice => ({ ...device, entities: device.entities.filter(keep) });
+
 export const unreachable = (devices: FakeDevice[]): FakeDevice[] =>
-  devices.map((device) => ({ ...device, entities: device.entities.map((entity) => ({ ...entity, state: "unavailable", attributes: {} })) }));
+  devices.map((device) => ({ ...device, entities: device.entities.map((entity) => ({ ...entity, state: "unavailable", attributes: {}, lastChanged: LONG_AGO })) }));
 
 /** The devices whose entities the integration does not set up -- a printer
  * BamBuddy no longer lists, or every device of an entry not loaded: Home
  * Assistant writes each registered entity unavailable, marked restored. */
 export const missingFromBamBuddy = (devices: FakeDevice[]): FakeDevice[] =>
-  devices.map((device) => ({ ...device, entities: device.entities.map((entity) => ({ ...entity, state: "unavailable", attributes: { restored: true } })) }));
+  devices.map((device) => ({ ...device, entities: device.entities.map((entity) => ({ ...entity, state: "unavailable", attributes: { restored: true }, lastChanged: LONG_AGO })) }));
 
 /** The X1C without its control entities: Home Assistant has not created
  * them (yet) -- the integration's key always may control. */
@@ -990,26 +1007,36 @@ export interface FakeCard extends HTMLElement {
 }
 
 /** The card as a dashboard creates it: element, configuration, hass. */
+/** The card's type, as a dashboard names it. */
+export const TYPE = "custom:bambuddy-printer-card";
+
 export async function mountCard(hass: FakeHass, config: Record<string, unknown>): Promise<FakeCard> {
   const card = document.createElement("bambuddy-printer-card") as FakeCard;
-  card.setConfig({ type: "custom:bambuddy-printer-card", ...config });
+  card.setConfig({ type: TYPE, ...config });
   card.hass = hass;
   document.body.append(card);
   await card.updateComplete;
   return card;
 }
 
+/** An idle H2D without HMS messages. */
+export const IDLE_H2D: Partial<PrinterSpec> = { status: "idle", hms: [] };
+
 /** The X1C idle, no slot in use: every slot may be set. */
-export const idleX1c = (): FakeDevice[] => {
-  const all = x1c({ status: "idle", stage: "idle" });
-  for (const entity of (all[1] as FakeDevice).entities) {
-    if ("attributes" in entity && entity.attributes) entity.attributes = { ...entity.attributes, active: false };
-  }
-  return all;
-};
+export const idleX1c = (): FakeDevice[] => inactive(x1c({ status: "idle", stage: "idle" }));
+
+/** The AMS units' slots feed nothing: none is active. */
+export const inactive = (devices: FakeDevice[]): FakeDevice[] =>
+  changeEntities(devices, (entity) => entity.attributes !== undefined && "active" in entity.attributes && devices[0]?.entities.includes(entity) !== true, (entity) => ({ ...entity.attributes, active: false }));
 
 /** A printer at rest: idle, nothing printed, the nozzle cold. */
 export const IDLE: Partial<PrinterSpec> = { status: "idle", stage: "idle", progress: 0, nozzles: [[30, 0]] };
+
+/** A card on the page and its Home Assistant. */
+export interface Mounted {
+  card: FakeCard;
+  hass: FakeHass;
+}
 
 /** A card for the printer device given, on a hass with these devices: the
  * hass options beside the devices in `options`. */
@@ -1018,7 +1045,7 @@ export async function mountFor(
   printer: string,
   config: Record<string, unknown> = {},
   options: Partial<FakeHassOptions> = {},
-): Promise<{ card: FakeCard; hass: FakeHass }> {
+): Promise<Mounted> {
   const hass = makeHass({ devices, ...options });
   const card = await mountCard(hass, { printer, ...config });
   return { card, hass };
@@ -1110,10 +1137,12 @@ export function plugDevice(spec: PlugSpec): FakeDevice {
 }
 
 /** The X1C -- printing, unless its overrides say otherwise -- with the plugs given. */
-export function x1cWithPlugs(printer: Partial<PrinterSpec>, ...plugs: Omit<PlugSpec, "printer">[]): FakeDevice[] {
-  const devices = x1c(printer);
+/** The devices with plugs linked to their printer (the first device). */
+export function withPlugs(devices: FakeDevice[], ...plugs: Omit<PlugSpec, "printer">[]): FakeDevice[] {
   return [...devices, ...plugs.map((spec) => plugDevice({ printer: devices[0] as FakeDevice, ...spec }))];
 }
+
+export const x1cWithPlugs = (printer: Partial<PrinterSpec>, ...plugs: Omit<PlugSpec, "printer">[]): FakeDevice[] => withPlugs(x1c(printer), ...plugs);
 
 // --- BamBuddy's spool inventory ---------------------------------------------
 
@@ -1138,26 +1167,16 @@ const GEEETECH = {
 };
 
 /** The X1C's active slot 2 without a chip (a third-party spool the print feeds). */
-export function withoutChip(devices: FakeDevice[], entityId = "sensor.dev-x1c_ams_0_slot_2"): FakeDevice[] {
-  for (const device of devices) {
-    for (const entity of device.entities) {
-      if (entity.entityId === entityId) entity.attributes = { ...entity.attributes, rfid: false };
-    }
-  }
-  return devices;
-}
+export const withoutChip = (devices: FakeDevice[], entityId = "sensor.dev-x1c_ams_0_slot_2"): FakeDevice[] =>
+  changeEntities(devices, (entity) => entity.entityId === entityId, (entity) => ({ ...entity.attributes, rfid: false }));
 
 /** The slot sensor `entityId` gets the inventory's attributes. */
-export function assign(devices: FakeDevice[], entityId: string, spool: Record<string, unknown> | null, assignable = true): FakeDevice[] {
-  for (const device of devices) {
-    for (const entity of device.entities) {
-      if (entity.entityId === entityId) {
-        entity.attributes = { ...entity.attributes, inventory_assignable: assignable, ...(spool ? { inventory_spool: spool } : {}) };
-      }
-    }
-  }
-  return devices;
-}
+export const assign = (devices: FakeDevice[], entityId: string, spool: Record<string, unknown> | null, assignable = true): FakeDevice[] =>
+  changeEntities(
+    devices,
+    (entity) => entity.entityId === entityId,
+    (entity) => ({ ...entity.attributes, inventory_assignable: assignable, ...(spool ? { inventory_spool: spool } : {}) }),
+  );
 
 /** BamBuddy's Geeetech spool as a slot sensor's attribute names it, with
  * the overrides given. */

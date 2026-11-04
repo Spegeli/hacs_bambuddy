@@ -21,8 +21,9 @@ from tests.conftest import (
     A1_MINI,
     API_KEY,
     H2D,
-    X1C,
+    P1S,
     WS_TOKEN,
+    X1C,
     device_id,
     load_fixture,
     make_entry,
@@ -32,7 +33,9 @@ from tests.conftest import (
     printers_but,
     set_up,
     setup_integration,
+    try_set_up,
 )
+from tests.helpers import with_plugs
 
 
 async def test_no_secret_reaches_the_diagnostics(hass: HomeAssistant, bambuddy_api: SimpleNamespace) -> None:
@@ -70,6 +73,27 @@ async def test_no_secret_reaches_the_diagnostics(hass: HomeAssistant, bambuddy_a
     )
     assert key["last_check"]
     assert diagnostics["printers"]["1"]["status"]["state"] == "RUNNING"
+
+
+async def test_no_place_or_plug_name_reaches_the_diagnostics(hass: HomeAssistant, bambuddy_api: SimpleNamespace) -> None:
+    """A printer's location is the user's own text (a room, an address), a
+    plug's device name the switch's or the Home Assistant entity's name: the
+    download goes into public bug reports."""
+    printers = load_fixture("printers.json")
+    for printer in printers:
+        printer["location"] = "Cellar room 3"
+    bambuddy_api.get_printers.return_value = printers
+    with_plugs(bambuddy_api)
+    entry = await set_up(hass, X1C, P1S, H2D)
+
+    diagnostics = await async_get_config_entry_diagnostics(hass, entry)
+    dumped = json.dumps(diagnostics)
+
+    for private in ("Cellar room 3", "Garage printer", "Printer light"):
+        assert private not in dumped, private
+    # The plug's status keeps what a bug report needs.
+    status = diagnostics["plugs"]["5"]["status"]
+    assert (status["device_name"], status["state"]) == ("**REDACTED**", load_fixture("plug_statuses.json")["5"]["state"])
 
 
 async def test_a_printers_device_diagnostics(hass: HomeAssistant, bambuddy_api: SimpleNamespace) -> None:
@@ -144,9 +168,7 @@ async def test_the_diagnostics_of_an_entry_that_did_not_load(hass: HomeAssistant
     """The bug report form asks for this download -- most needed when the
     setup fails: the entry, its state, no secret."""
     bambuddy_api.get_version.side_effect = BamBuddyConnectionError("refused")
-    entry = make_entry(hass, X1C)
-    await hass.config_entries.async_setup(entry.entry_id)
-    await hass.async_block_till_done()
+    entry = await try_set_up(hass, X1C)
     assert entry.state is ConfigEntryState.SETUP_RETRY
 
     diagnostics = await async_get_config_entry_diagnostics(hass, entry)
@@ -180,3 +202,17 @@ async def test_the_download_names_no_serial_through_the_repairs(
     assert response.status == 200
     assert printer_serial(X1C) not in body
     assert printer_serial(A1_MINI) not in body
+
+
+async def test_device_diagnostics_of_an_entry_that_did_not_load(hass: HomeAssistant, bambuddy_api: SimpleNamespace) -> None:
+    """The entry's part then, without a secret."""
+    entry = await set_up(hass, X1C)
+    device = dr.async_get(hass).async_get(device_id(hass, entry, printer_device(entry, X1C)))
+    assert device is not None
+    await hass.config_entries.async_unload(entry.entry_id)
+    await hass.async_block_till_done()
+
+    diagnostics = await async_get_device_diagnostics(hass, entry, device)
+
+    assert diagnostics["entry"]["state"] == "not_loaded"
+    assert API_KEY not in str(diagnostics)

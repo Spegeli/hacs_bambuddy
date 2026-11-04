@@ -6,7 +6,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import "../src/index";
 import { findPrinter } from "../src/discovery";
 import { ICONS } from "../src/icons";
-import { button, declarations, find, findAll, NBSP, styleText } from "./helpers";
+import { button, declarations, find, findAll, moreInfoIds, NBSP, styleText, update } from "./helpers";
 import { h2d, makeHass, mountCard, x1c, type FakeCard, type FakeHass } from "./fixtures";
 
 afterEach(() => {
@@ -61,10 +61,8 @@ describe("the card steps a fan as it steps a heater", () => {
     ventRaise(card).click();
     await vi.advanceTimersByTimeAsync(900);
     // The fan stays "on": its percentage tells the report.
-    card.hass = hass.withState(VENT, "on", { percentage: 70, fans: ["exhaust"] });
-    await card.updateComplete;
-    card.hass = (card.hass as FakeHass).withState(VENT, "on", { percentage: 60, fans: ["exhaust"] });
-    await card.updateComplete;
+    await update(card, hass.withState(VENT, "on", { percentage: 70, fans: ["exhaust"] }));
+    await update(card, (card.hass as FakeHass).withState(VENT, "on", { percentage: 60, fans: ["exhaust"] }));
     expect(ventShown(card)).toContain(`60${NBSP}%`);
   });
 });
@@ -247,8 +245,7 @@ describe("heating and ventilation in one block", () => {
     expect(words(chamberRow(card)?.querySelector(".heat-target"))).toBe("Kammer, Ziel: Aus");
     expect(buttonsOf(ventRow(card)).every((item) => item.disabled)).toBe(true);
     expect(notes(card)).toEqual(["Solange die Kammer heizt, lässt sie sich nicht lüften. Schalte zuerst oben unter „Heizen“ die Kammer aus."]);
-    card.hass = hass.withState("number.h2d_chamber_target_temperature", "0");
-    await card.updateComplete;
+    await update(card, hass.withState("number.h2d_chamber_target_temperature", "0"));
     expect(buttonsOf(ventRow(card))[1]?.disabled).toBe(false);
     expect(notes(card)).toEqual([]);
     // The other way round: the ventilation's off, then the chamber.
@@ -365,8 +362,7 @@ describe("the chamber tile in the Status tab says what the chamber does", () => 
     async function opened(spec: Spec, printer: "h2d" | "x1c" = "h2d", config: Record<string, unknown> = {}): Promise<string[]> {
       const devices = printer === "h2d" ? h2d({ status: "idle", stage: "idle", ...spec }) : x1c({ status: "idle", stage: "idle", ...spec });
       const card = await mountCard(makeHass({ devices, language: "de" }), { printer: `dev-${printer}`, start_view: "status", ...config });
-      const seen: string[] = [];
-      card.addEventListener("hass-more-info", (event) => seen.push((event as CustomEvent<{ entityId: string }>).detail.entityId));
+      const seen = moreInfoIds(card);
       (findAll(card, ".temp").find((item) => /Kammer/.test(item.querySelector(".temp-head")?.textContent ?? "")) as HTMLButtonElement | undefined)?.click();
       return seen;
     }

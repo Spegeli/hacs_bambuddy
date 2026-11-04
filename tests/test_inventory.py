@@ -19,14 +19,6 @@ from custom_components.bambuddy.sensor import BamBuddyAmsSlotSensor, BamBuddyPri
 from tests.conftest import H2D, X1C, ams_uid, load_fixture, next_refresh, printer_uid, set_up, state_of
 
 
-def with_inventory(bambuddy_api: SimpleNamespace) -> None:
-    """BamBuddy's inventory of tests/fixtures/inventory_*.json: spool 1 in
-    the Workshop X1C's AMS A slot 3, spool 2 in slot 4, spool 3 in the Desk's
-    first slot (printer 99, not set up), a deleted and an archived spool's rows."""
-    bambuddy_api.get_spools.return_value = load_fixture("inventory_spools.json")
-    bambuddy_api.get_spool_assignments.return_value = load_fixture("inventory_assignments.json")
-
-
 async def _refresh(hass: HomeAssistant, inventory: BamBuddyInventoryCoordinator) -> None:
     await inventory.async_refresh()
     await hass.async_block_till_done()
@@ -122,7 +114,7 @@ async def test_assignable_needs_inventory_update_and_a_spool(
 
 
 def _spool(**fields: Any) -> Spool:
-    spool = spool_of({**load_fixture("inventory_spools.json")[0], **fields})
+    spool = spool_of(spool_row(**fields))
     assert spool is not None
     return spool
 
@@ -245,3 +237,4 @@ async def test_no_inventory_no_attributes(hass: HomeAssistant, bambuddy_api: Sim
     attributes = _slot(hass, entry, 3).attributes
     assert "inventory_spool" not in attributes
     assert "inventory_assignable" not in attributes
+from tests.helpers import spool_row, with_inventory

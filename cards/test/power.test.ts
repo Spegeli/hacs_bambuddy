@@ -7,7 +7,6 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import "../src/index";
 import { findPrinter } from "../src/discovery";
 import { configForm } from "../src/forms";
-
 import {
   h2d,
   IDLE,
@@ -17,22 +16,19 @@ import {
   offlineP1s,
   plugDevice,
   unreachable,
+  withPlugs,
   x1c,
   x1cWithPlugs,
   type FakeCard,
   type FakeDevice,
-  type FakeHass,
+  type Mounted,
   type PlugSpec,
   type PrinterSpec,
 } from "./fixtures";
-import { atRule, find, findAll, NBSP, styleText, text, update } from "./helpers";
+import { atRule, declarations, find, findAll, NBSP, styleText, text, update } from "./helpers";
 
 const NOW = new Date("2026-10-18T14:10:00Z");
 
-interface Mounted {
-  card: FakeCard;
-  hass: FakeHass;
-}
 
 const mount = (devices: FakeDevice[], printer: string, config: Record<string, unknown> = {}, language = "en"): Promise<Mounted> =>
   mountFor(devices, printer, config, { language });
@@ -317,7 +313,7 @@ describe("switching off after the print", () => {
 describe("a printer whose plug is off", () => {
   const off = (plug: Omit<PlugSpec, "printer" | "id" | "name">): FakeDevice[] => {
     const devices = offlineP1s();
-    return [...devices, plugDevice({ printer: devices[0] as FakeDevice, id: 5, name: "Steckdose Garage", ...plug })];
+    return withPlugs(devices, { id: 5, name: "Steckdose Garage", ...plug });
   };
 
   it("says so and switches it on, instead of checking the connection", async () => {
@@ -421,7 +417,6 @@ describe("the editor", () => {
   });
 });
 
-
 describe("a plug's state and the switch-off's row", () => {
   it("says Unknown where a plug does not report its state, in its row and its chip", async () => {
     const { card } = await mount(x1cWith({}, { id: 7, name: "MQTT meter", kind: "state", state: "unknown", watts: 150 }), "dev-x1c", { header_chips: ["power"] });
@@ -471,7 +466,7 @@ describe("a plug's state and the switch-off's row", () => {
 describe("the plug's questions and its chip", () => {
   const offline = (plug: Omit<PlugSpec, "printer" | "id" | "name">): FakeDevice[] => {
     const devices = offlineP1s();
-    return [...devices, plugDevice({ printer: devices[0] as FakeDevice, id: 5, name: "Steckdose Garage", onSince: "2026-10-18T13:00:00Z", ...plug })];
+    return withPlugs(devices, { id: 5, name: "Steckdose Garage", onSince: "2026-10-18T13:00:00Z", ...plug });
   };
   const askOffline = async (plug: Omit<PlugSpec, "printer" | "id" | "name">): Promise<FakeCard> => {
     const { card } = await mount(offline(plug), "dev-p1s");
@@ -582,10 +577,11 @@ describe("the plug's questions and its chip", () => {
   it("lets the offline actions wrap, a long label too, Run go under its name on a narrow card, and the model line wrap", () => {
     const css = styleText();
     expect(/\.offline-actions\s*\{[^}]*flex-wrap:\s*wrap[^}]*gap:\s*8px/.exec(css)).not.toBeNull();
-    expect(/\.offline-actions \.btn\s*\{[^}]*white-space:\s*normal/.exec(css)).not.toBeNull();
+    expect(declarations(".offline-actions .btn", css)).toContain("white-space: normal");
     // Under 280 px every plug row wraps: its switch or Run under the text.
     expect(atRule("@container (max-width: 280px)")).toMatch(/(^|[}\s])\.p-row\s*\{[^}]*flex-wrap:\s*wrap/);
-    expect(/\.p-skip \.btn,\s*\.p-set \.btn\s*\{[^}]*white-space:\s*normal/.exec(css)).not.toBeNull();
-    expect(/\.model\s*\{[^}]*\}/.exec(css)?.[0]).not.toContain("ellipsis");
+    expect(declarations(".p-skip .btn", css)).toContain("white-space: normal");
+    expect(declarations(".p-set .btn", css)).toContain("white-space: normal");
+    expect(declarations(".model", css).filter((declaration) => declaration.includes("ellipsis"))).toEqual([]);
   });
 });

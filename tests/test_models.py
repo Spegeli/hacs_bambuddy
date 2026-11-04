@@ -38,7 +38,7 @@ from custom_components.bambuddy.models import (
 )
 
 
-def _printer(status: dict[str, Any], model: str = "X1C", **info: Any) -> PrinterData:
+def _printer(status: dict[str, Any], model: str | None = "X1C", **info: Any) -> PrinterData:
     return PrinterData(info={"model": model, **info}, status=status)
 
 
@@ -125,7 +125,7 @@ def test_every_stage_is_an_option() -> None:
     ],
 )
 def test_ams_model(unit: dict[str, Any], model: str | None, expected: str) -> None:
-    assert ams_model(unit, _printer({}, model)) == expected  # type: ignore[arg-type]
+    assert ams_model(unit, _printer({}, model)) == expected
     assert expected in AMS_MODELS
 
 

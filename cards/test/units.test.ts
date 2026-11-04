@@ -2,21 +2,14 @@
 // chose: °F with US customary units, hours where a sensor's unit was set
 // so. The card reads each entity in its own unit and turns its own Celsius
 // figures (a start, a limit) into it.
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import "../src/index";
 import { a1mini, h2d, makeHass, mountCard, plugDevice, x1c, type FakeDevice } from "./fixtures";
 import { button, find, findAll, hasButton, NBSP, shownText, showView, text, update } from "./helpers";
+import { useCardPage } from "./card-helpers";
 
-beforeEach(() => {
-  vi.useFakeTimers({ toFake: ["Date"] });
-  vi.setSystemTime(new Date("2026-10-16T08:00:00Z"));
-});
-
-afterEach(() => {
-  vi.useRealTimers();
-  document.body.innerHTML = "";
-});
+useCardPage();
 
 const toF = (celsius: number): number => Math.round(celsius * 1.8 + 32);
 

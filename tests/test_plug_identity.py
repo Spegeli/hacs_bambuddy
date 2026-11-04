@@ -14,7 +14,7 @@ from custom_components.bambuddy import plug_identity
 from custom_components.bambuddy.const import DOMAIN
 from custom_components.bambuddy.plug_identity import Known
 
-from .conftest import TEST_SECRET
+from tests.conftest import TEST_SECRET
 
 EPOCH = int(datetime(2026, 9, 1, 10, tzinfo=UTC).timestamp())
 LATER = "2026-10-01T08:30:00"

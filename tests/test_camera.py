@@ -13,20 +13,19 @@ from unittest.mock import AsyncMock, patch
 import aiohttp
 
 from freezegun.api import FrozenDateTimeFactory
-from homeassistant.components.camera import DATA_COMPONENT
-import pytest
-from homeassistant.components.camera import async_get_image
+from homeassistant.components.camera import DATA_COMPONENT, async_get_image
 from homeassistant.const import STATE_UNAVAILABLE, EntityCategory
 from homeassistant.core import HomeAssistant, State
-from homeassistant.helpers import entity_registry as er
 from homeassistant.exceptions import HomeAssistantError
+from homeassistant.helpers import entity_registry as er
+import pytest
 from pytest_homeassistant_custom_component.common import MockConfigEntry, mock_restore_cache
 from pytest_homeassistant_custom_component.test_util.aiohttp import AiohttpClientMocker
 from pytest_homeassistant_custom_component.typing import ClientSessionGenerator
 
-from custom_components.bambuddy.const import DOMAIN
 from custom_components.bambuddy import camera as camera_module
 from custom_components.bambuddy.api import BamBuddyApiError, BamBuddyAuthError, BamBuddyClient, BamBuddyConnectionError
+from custom_components.bambuddy.const import DOMAIN
 
 from tests.conftest import (
     A1_MINI,
@@ -47,6 +46,7 @@ from tests.conftest import (
     state_at,
     state_of,
 )
+from tests.helpers import listed_with, reload_entry
 
 
 async def _camera(hass: HomeAssistant, entry: MockConfigEntry) -> str:
@@ -216,15 +216,6 @@ _MJPEG = {"Content-Type": "multipart/x-mixed-replace;boundary=frame"}
 _EXTERNAL = {"external_camera_enabled": True, "external_camera_url": "http://camera.local/stream"}
 
 
-def _with_info(bambuddy_api: SimpleNamespace, printer_id: int, **info: object) -> None:
-    """BamBuddy lists the printer with these fields."""
-    printers = load_fixture("printers.json")
-    for printer in printers:
-        if printer["id"] == printer_id:
-            printer.update(info)
-    bambuddy_api.get_printers.return_value = printers
-
-
 def _stream(aioclient_mock: AiohttpClientMocker, printer_id: int, fps: int) -> None:
     aioclient_mock.get(
         f"{URL}/api/v1/printers/{printer_id}/camera/stream?fps={fps}&token={STREAM_TOKEN}", content=_FRAME, headers=_MJPEG
@@ -287,13 +278,13 @@ async def test_the_frame_rate_setting(hass: HomeAssistant, bambuddy_api: SimpleN
     # The X1E has never been online.
     assert state_of(hass, "number", printer_uid(entry, "camera_fps", X1E)).state == "30"
     for printer_id in (A1_MINI, P1S):
-        assert registry.async_get_entity_id("number", "bambuddy", printer_uid(entry, "camera_fps", printer_id)) is None
+        assert no_entity(hass, "number", printer_uid(entry, "camera_fps", printer_id))
 
 
 async def test_an_external_camera_goes_up_to_15(hass: HomeAssistant, bambuddy_api: SimpleNamespace) -> None:
     """BamBuddy caps a camera it takes from elsewhere at 15: an A1 mini with
     one gets the setting too."""
-    _with_info(bambuddy_api, A1_MINI, **_EXTERNAL)
+    listed_with(bambuddy_api, A1_MINI, **_EXTERNAL)
     entry = await set_up(hass, A1_MINI)
 
     state = state_of(hass, "number", printer_uid(entry, "camera_fps", A1_MINI))
@@ -385,7 +376,7 @@ async def test_a_kept_rate_above_a_new_limit(hass: HomeAssistant, bambuddy_api: 
     """30 kept from before BamBuddy took an external camera for the X1C,
     which goes up to 15: 15."""
     mock_restore_cache(hass, [State(f"number.x1c_{printer_serial(X1C).lower()}_camera_frame_rate", "30")])
-    _with_info(bambuddy_api, X1C, **_EXTERNAL)
+    listed_with(bambuddy_api, X1C, **_EXTERNAL)
     entry = await set_up(hass, X1C)
 
     assert state_of(hass, "number", printer_uid(entry, "camera_fps")).state == "15"
@@ -645,7 +636,7 @@ async def test_an_external_camera_is_never_stopped(
 ) -> None:
     """BamBuddy streams a camera it takes from elsewhere to each viewer on
     its own, at each one's rate -- and its stop would end every viewer's."""
-    _with_info(bambuddy_api, X1C, **_EXTERNAL)
+    listed_with(bambuddy_api, X1C, **_EXTERNAL)
     entry = await set_up(hass, X1C)
     camera = entity_id(hass, "camera", printer_uid(entry, "camera"))
     _stream(aioclient_mock, X1C, 15)
@@ -703,12 +694,11 @@ async def test_an_external_camera_switched_on_later(
 async def test_the_frame_rate_setting_goes_with_the_external_camera(hass: HomeAssistant, bambuddy_api: SimpleNamespace) -> None:
     """An A1 mini whose camera BamBuddy takes from elsewhere has the setting;
     once the camera is taken away in BamBuddy, the reload leaves none behind."""
-    _with_info(bambuddy_api, A1_MINI, **_EXTERNAL)
+    listed_with(bambuddy_api, A1_MINI, **_EXTERNAL)
     entry = await set_up(hass, A1_MINI)
     assert not no_entity(hass, "number", printer_uid(entry, "camera_fps", A1_MINI))
 
-    _with_info(bambuddy_api, A1_MINI, external_camera_enabled=False)
-    await hass.config_entries.async_reload(entry.entry_id)
-    await hass.async_block_till_done()
+    listed_with(bambuddy_api, A1_MINI, external_camera_enabled=False)
+    await reload_entry(hass, entry.entry_id)
 
     assert no_entity(hass, "number", printer_uid(entry, "camera_fps", A1_MINI))

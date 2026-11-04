@@ -7,7 +7,7 @@ import "../src/index";
 import { BamBuddyPrinterCard } from "../src/card";
 import { EDITOR_TAG, loadForm } from "../src/editor";
 import { configForm, editorData } from "../src/forms";
-import { makeHass, x1c } from "./fixtures";
+import { makeHass, TYPE, x1c } from "./fixtures";
 import { text } from "./helpers";
 
 interface FormField {
@@ -34,8 +34,6 @@ interface Editor extends HTMLElement {
   setConfig(config: unknown): void;
   updateComplete: Promise<boolean>;
 }
-
-const TYPE = "custom:bambuddy-printer-card";
 
 async function mountEditor(config: Record<string, unknown>, language = "en"): Promise<Editor> {
   await customElements.whenDefined(EDITOR_TAG);

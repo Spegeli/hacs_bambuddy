@@ -22,12 +22,14 @@ from tests.conftest import (
     X1C,
     X1E,
     ams_uid,
+    as_model,
     entity_id,
     instance_uid,
     load_fixture,
     make_entry,
     next_refresh,
     no_entity,
+    past_polls,
     past_the_minute,
     printer_key,
     printer_uid,
@@ -244,11 +246,7 @@ async def test_a_wired_printer_s_wifi_signal_is_off_at_first(hass: HomeAssistant
     """On a cable from the start: no signal to show, nothing unavailable on
     its device page. The H2D's fixture reads -90 "wired" as BamBuddy does, here as an H2D Pro (which has
     a port)."""
-    printers = load_fixture("printers.json")
-    for printer in printers:
-        if printer["id"] == H2D:
-            printer["model"] = "H2D Pro"
-    bambuddy_api.get_printers.return_value = printers
+    as_model(bambuddy_api, "H2D Pro", H2D)
     entry = await set_up(hass, H2D)
 
     wifi = er.async_get(hass).async_get(entity_id(hass, "sensor", printer_uid(entry, "wifi_signal", H2D)))
@@ -329,7 +327,7 @@ async def test_rarely_needed_sensors_start_disabled(hass: HomeAssistant, bambudd
     entry = await set_up(hass, X1C)
     registry = er.async_get(hass)
 
-    entity = registry.async_get(registry.async_get_entity_id("sensor", DOMAIN, printer_uid(entry, "printable_objects_count")) or "")
+    entity = registry.async_get(entity_id(hass, "sensor", printer_uid(entry, "printable_objects_count")))
     assert entity is not None and entity.disabled_by is er.RegistryEntryDisabler.INTEGRATION
     # The dashboard card's printer information shows and copies it.
     assert state_of(hass, "sensor", printer_uid(entry, "ip_address")).state == "192.0.2.11"
@@ -390,7 +388,7 @@ async def test_drying_shows_also_where_it_starts_only_at_the_printer(
     status["drying_screen_only"] = screen_only
     entry = await set_up(hass, P1S)
 
-    assert state_of(hass, "sensor", ams_uid(entry, 0, "drying_remaining_time", P1S)) is not None
+    state_of(hass, "sensor", ams_uid(entry, 0, "drying_remaining_time", P1S))
     drying = state_of(hass, "binary_sensor", ams_uid(entry, 0, "drying", P1S))
     assert drying.attributes["remote_start"] is remote
 
@@ -483,8 +481,7 @@ async def test_the_end_time_follows_an_estimate_that_stands_still(
     await past_the_minute(hass, freezer)
     assert state_of(hass, "sensor", end_time).state == "2026-10-16T12:37:00+00:00"
     # 2 minutes behind with the same estimate: it moves with the clock.
-    for _ in range(2):
-        await next_refresh(hass, freezer)
+    await past_polls(hass, freezer, 2)
     assert state_of(hass, "sensor", end_time).state == "2026-10-16T12:39:00+00:00"
 
 
@@ -514,11 +511,7 @@ async def test_no_end_time_while_paused(hass: HomeAssistant, bambuddy_api: Simpl
 
 async def test_no_wifi_signal_on_a_cable(hass: HomeAssistant, bambuddy_api: SimpleNamespace, freezer: FrozenDateTimeFactory) -> None:
     """BamBuddy reports -90 dBm for a printer on Ethernet (the X1E here)."""
-    printers = load_fixture("printers.json")
-    for printer in printers:
-        if printer["id"] == X1C:
-            printer["model"] = "X1E"
-    bambuddy_api.get_printers.return_value = printers
+    as_model(bambuddy_api, "X1E", X1C)
     entry = await set_up(hass, X1C)
     bambuddy_api.statuses[X1C].update({"wired_network": True, "wifi_signal": -90})
 
@@ -586,8 +579,7 @@ async def test_the_print_hours(hass: HomeAssistant, bambuddy_api: SimpleNamespac
     assert state_of(hass, "sensor", hours).state == "559.5"
     assert bambuddy_api.get_runtime.await_count == 1
 
-    for _ in range(5):
-        await next_refresh(hass, freezer)
+    await past_polls(hass, freezer, 5)
     assert state_of(hass, "sensor", hours).state == "560.0"
 
 
@@ -637,11 +629,7 @@ async def test_a_silent_unit_of_a_printer_without_a_model_gets_no_climate_sensor
 ) -> None:
     """It may be an AMS Lite, which measures neither: the reload when the model comes adds them for a
     real AMS -- none stay behind for a Lite."""
-    printers = load_fixture("printers.json")
-    for printer in printers:
-        if printer["id"] == A1_MINI:
-            printer["model"] = None
-    bambuddy_api.get_printers.return_value = printers
+    as_model(bambuddy_api, None, A1_MINI)
     entry = await set_up(hass, A1_MINI)
 
     assert no_entity(hass, "sensor", ams_uid(entry, 0, "humidity", A1_MINI))
@@ -667,11 +655,7 @@ async def test_an_ams_lite_gets_no_climate_sensors(hass: HomeAssistant, bambuddy
 
 async def test_the_a2l_s_ams_lite_gets_no_climate_sensors(hass: HomeAssistant, bambuddy_api: SimpleNamespace) -> None:
     """The A2L's Lite (BamBuddy's unit 6) also sends a humidity of 0."""
-    printers = load_fixture("printers.json")
-    for printer in printers:
-        if printer["id"] == A1_MINI:
-            printer["model"] = "A2L"
-    bambuddy_api.get_printers.return_value = printers
+    as_model(bambuddy_api, "A2L", A1_MINI)
     bambuddy_api.statuses[A1_MINI]["ams"][0].update({"id": 6, "humidity": 0.0, "temp": 0.0})
     entry = await set_up(hass, A1_MINI)
 
@@ -682,11 +666,7 @@ async def test_an_ams_ht_of_a_printer_without_a_model_gets_its_climate_sensors(
     hass: HomeAssistant, bambuddy_api: SimpleNamespace
 ) -> None:
     """An AMS HT is told by its id: no Lite, whatever BamBuddy named."""
-    printers = load_fixture("printers.json")
-    for printer in printers:
-        if printer["id"] == A1_MINI:
-            printer["model"] = None
-    bambuddy_api.get_printers.return_value = printers
+    as_model(bambuddy_api, None, A1_MINI)
     bambuddy_api.statuses[A1_MINI]["ams"][0].update({"id": 128, "module_type": "", "humidity": 12.0, "temp": 30.0})
     entry = await set_up(hass, A1_MINI)
 
@@ -697,11 +677,7 @@ async def test_a_named_unit_of_a_printer_without_a_model_gets_its_climate_sensor
     hass: HomeAssistant, bambuddy_api: SimpleNamespace
 ) -> None:
     """BamBuddy named it an AMS: no Lite, whatever the printer is."""
-    printers = load_fixture("printers.json")
-    for printer in printers:
-        if printer["id"] == A1_MINI:
-            printer["model"] = None
-    bambuddy_api.get_printers.return_value = printers
+    as_model(bambuddy_api, None, A1_MINI)
     bambuddy_api.statuses[A1_MINI]["ams"][0].update({"module_type": "ams", "humidity": 31.0, "temp": 24.0})
     entry = await set_up(hass, A1_MINI)
 

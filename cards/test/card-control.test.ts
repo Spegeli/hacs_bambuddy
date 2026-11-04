@@ -1,29 +1,14 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import "../src/index";
 import { ICONS } from "../src/icons";
 import { unitModel } from "../src/parts";
 import type { AmsRefs } from "../src/types";
-import {
-  a1mini,
-  h2d,
-  p1s,
-  x1c,
-  type FakeCard,
-  type FakeDevice,
-} from "./fixtures";
+import { a1mini, IDLE_H2D, keepEntities, x1c, type FakeCard, type FakeDevice } from "./fixtures";
 import { button, declarations, find, findAll, hasButton, NBSP, press, root, settle, shownText, showView, styleText, text, update } from "./helpers";
-import { cardFor, confirmDialog, keyPress, previewOf, withX1c } from "./card-helpers";
+import { cardFor, confirmDialog, keyPress, previewOf, useCardPage, withX1c } from "./card-helpers";
 
-beforeEach(() => {
-  vi.useFakeTimers({ toFake: ["Date"] });
-  vi.setSystemTime(new Date("2026-10-16T08:00:00Z"));
-});
-
-afterEach(() => {
-  vi.useRealTimers();
-  document.body.innerHTML = "";
-});
+useCardPage();
 
 describe("the views", () => {
   it("switch with the tabs, also by the arrow keys", async () => {
@@ -81,7 +66,7 @@ describe("the views", () => {
     await showView(card, "Filament");
     // The AMS unit and the external spool are gone.
     const [printer] = x1c() as [FakeDevice];
-    await update(card, hass.withDevices([{ ...printer, entities: printer.entities.filter((entity) => entity.key !== "external_spool") }]));
+    await update(card, hass.withDevices([keepEntities(printer, (entity) => entity.key !== "external_spool")]));
     expect(find(card, ".job")).not.toBeNull();
     expect(findAll(card, "[role=tab]").map(text)).toEqual(["Status", "Control"]);
   });
@@ -140,7 +125,7 @@ describe("the groups of choices: speed, active nozzle, step", () => {
   });
 
   it("work alike for the active nozzle and the step; the first option is the stop where none is chosen", async () => {
-    const { card, hass } = await cardFor("h2d", { devices: h2d({ status: "idle", hms: [] }) });
+    const { card, hass } = await cardFor("h2d", { printer: IDLE_H2D });
     await showView(card, "Control");
     const sides = (): HTMLButtonElement[] => findAll<HTMLButtonElement>(card, ".nozzle-row [role=radio]");
     const steps = (): HTMLButtonElement[] => findAll<HTMLButtonElement>(card, ".step-row [role=radio]");
@@ -189,7 +174,7 @@ describe("the control view", () => {
       ["Move the nozzle 1 mm away from the bed", ICONS.up],
       ["Move the nozzle 1 mm closer to the bed", ICONS.down],
     ]);
-    const { card: x1 } = await cardFor("x1c", { devices: x1c({ status: "idle", stage: "idle", progress: 0 }) });
+    const { card: x1 } = await cardFor("x1c", { printer: { status: "idle", stage: "idle", progress: 0 } });
     await showView(x1, "Control");
     expect(text(find(x1, ".axis-col.bed .axis-label"))).toBe("Bed");
     expect(column(x1)).toEqual([
@@ -319,7 +304,10 @@ describe("the control view", () => {
     const { card } = await cardFor("offline");
     await showView(card, "Control");
     expect(find(card, ".pad")).toBeNull();
+    expect(find(card, ".heating")).toBeNull();
     expect(text(find(card, ".job .job-info"))).toBe("The printer is offline. Check that it is switched on and connected to BamBuddy.");
+    // With the picture, as the Status tab's offline view.
+    expect(find(card, ".job .picture")).not.toBeNull();
     const preview = await previewOf("offline", { start_view: "control" });
     expect(find(preview, ".sample-body[inert] .pad")).not.toBeNull();
   });
@@ -353,6 +341,15 @@ describe("the fans", () => {
 });
 
 describe("the heating section", () => {
+  it("is no button of its own: each heater has its power symbol", async () => {
+    const { card } = await cardFor("x1c", { config: { start_view: "control" }, printer: { status: "idle", stage: "idle" } });
+    expect(hasButton(card, "Heating off")).toBe(false);
+    expect(find(card, ".heat-head .btn")).toBeNull();
+    expect(findAll(card, ".heat-row .heat-off").every((item) => item.querySelector("path")?.getAttribute("d") === ICONS.power)).toBe(true);
+    const { card: german } = await cardFor("x1c", { config: { start_view: "control" }, language: "de", printer: { status: "idle", stage: "idle" } });
+    expect(hasButton(german, "Heizen aus")).toBe(false);
+  });
+
   it("marks the row of a heater that is on, from the tap on", async () => {
     vi.useFakeTimers();
     const { card } = await withX1c({ status: "idle", stage: "idle", progress: 0, nozzles: [[30, 0]], bed: [31, 40] });
@@ -506,7 +503,7 @@ describe("the heating section", () => {
 
   it("stops at the number's highest target and turns a heater off below 5 °C", async () => {
     vi.useFakeTimers();
-    const { card, hass } = await cardFor("h2d", { devices: h2d({ status: "idle", hms: [] }) });
+    const { card, hass } = await cardFor("h2d", { printer: IDLE_H2D });
     await showView(card, "Control");
     expect(findAll(card, ".heat-row").map((row) => text(row.querySelector(".heat-label .heat-text")))).toEqual(["Left nozzle", "Right nozzle", "Bed", "Chamber"]);
     expect(targets(card)).toEqual([`250${NBSP}°C`, "Off", `90${NBSP}°C`, `45${NBSP}°C`]);
@@ -545,7 +542,7 @@ describe("the heating section", () => {
     expect(findAll(card, ".heat-now").map(text)).toEqual(["—", "—"]);
     expect(targets(card)).toEqual(["—", "—"]);
     const [printer] = a1mini() as [FakeDevice];
-    const bare = { ...printer, entities: printer.entities.filter((entity) => !entity.entityId.startsWith("number.")) };
+    const bare = keepEntities(printer, (entity) => !entity.entityId.startsWith("number."));
     const { card: noTargets } = await cardFor("a1mini", { devices: [bare] });
     await showView(noTargets, "Control");
     expect(find(noTargets, ".heating")).toBeNull();
@@ -664,7 +661,7 @@ describe("the print options", () => {
       "An: Der Drucker pausiert den Druck, wenn die Erkennung anschlägt. Eine ausgeschaltete Erkennung bleibt aus, auch bei den nächsten Drucken.",
     );
     // The first layer's inspection has none either.
-    const { card: plain } = await cardFor("x1c", { devices: x1c({ detectors: [{ key: "first_layer_inspection", on: true }, { key: "build_plate_position_detection", on: true }] }) });
+    const { card: plain } = await cardFor("x1c", { printer: { detectors: [{ key: "first_layer_inspection", on: true }, { key: "build_plate_position_detection", on: true }] } });
     await showView(plain, "Control");
     await unfold(plain);
     expect(text(find(plain, ".detection .hint"))).not.toContain("Sensitivity");
@@ -705,7 +702,6 @@ describe("the print options", () => {
     expect(toggle(card, "AI print monitoring").getAttribute("aria-checked")).toBe("false");
   });
 
-
   it("is folded at first and says how many are on", async () => {
     const { card } = await cardFor("x1c");
     await showView(card, "Control");
@@ -742,11 +738,11 @@ describe("the print options", () => {
     const { card: german } = await cardFor("x1c", { language: "de" });
     await showView(german, "Steuerung");
     expect(text(head(german))).toBe("Druckoptionen 1 aus");
-    const { card: germanAll } = await cardFor("x1c", { language: "de", devices: x1c({ detectors: [{ key: "ai_monitoring", on: true }] }) });
+    const { card: germanAll } = await cardFor("x1c", { language: "de", printer: { detectors: [{ key: "ai_monitoring", on: true }] } });
     await showView(germanAll, "Steuerung");
     // One detection: its own state.
     expect(text(find(germanAll, ".det-summary"))).toBe("An");
-    const { card: germanNone } = await cardFor("x1c", { language: "de", devices: x1c({ detectors: [{ key: "ai_monitoring", on: false }] }) });
+    const { card: germanNone } = await cardFor("x1c", { language: "de", printer: { detectors: [{ key: "ai_monitoring", on: false }] } });
     await showView(germanNone, "Steuerung");
     expect(text(find(germanNone, ".det-summary"))).toBe("Aus");
   });
@@ -837,7 +833,7 @@ describe("the print options", () => {
     await unfold(mini);
     expect(states(mini)).toEqual(["Build plate position detection: true"]);
     // Monitoring on a printer outside the X1 series: no line about what it watches.
-    const { card: other } = await cardFor("h2d", { devices: h2d({ detectors: [{ key: "ai_monitoring", on: true }] }) });
+    const { card: other } = await cardFor("h2d", { printer: { detectors: [{ key: "ai_monitoring", on: true }] } });
     await showView(other, "Control");
     await unfold(other);
     expect(states(other)).toEqual(["AI print monitoring: true"]);
@@ -849,14 +845,14 @@ describe("the print options", () => {
   });
 
   it("names each in the viewer's language, not the server's, unless the user renamed it", async () => {
-    const { card } = await cardFor("a1mini", { devices: a1mini({ renamed: { build_plate_position_detection: "Plate check" } }) });
+    const { card } = await cardFor("a1mini", { printer: { renamed: { build_plate_position_detection: "Plate check" } } });
     await showView(card, "Control");
     await unfold(card);
     // The device is "Desk A1 mini": the friendly name without it.
     expect(toggles(card).map(name)).toEqual(["Plate check"]);
     expect(text(find(card, ".det-name"))).toBe("Plate check");
     // A German server names the entities in German; the viewer reads English.
-    const { card: english } = await cardFor("h2d", { devices: h2d({ serverLanguage: "de" }) });
+    const { card: english } = await cardFor("h2d", { printer: { serverLanguage: "de" } });
     await showView(english, "Control");
     await unfold(english);
     expect(toggles(english).map(name)).toEqual([
@@ -885,7 +881,7 @@ describe("the print options", () => {
       "An: Der Drucker pausiert den Druck, wenn die Erkennung anschlägt. Empfindlichkeit wie am Drucker eingestellt. Eine ausgeschaltete Erkennung bleibt aus, auch bei den nächsten Drucken.",
     );
     expect(text(find(x1, ".detection .det-sub"))).toBe("Spaghetti und Stau im Auswurfschacht");
-    const { card: x1English } = await cardFor("x1c", { devices: x1c({ serverLanguage: "de" }) });
+    const { card: x1English } = await cardFor("x1c", { printer: { serverLanguage: "de" } });
     await showView(x1English, "Control");
     await unfold(x1English);
     expect(toggles(x1English).map(name)).toEqual(["AI print monitoring", "First layer inspection", "Build plate position detection"]);
@@ -930,7 +926,7 @@ describe("the print options", () => {
 
 describe("the active nozzle", () => {
   it("switches between left and right without a print", async () => {
-    const { card, hass } = await cardFor("h2d", { devices: h2d({ status: "idle", hms: [] }) });
+    const { card, hass } = await cardFor("h2d", { printer: IDLE_H2D });
     await showView(card, "Control");
     const sides = (): HTMLButtonElement[] => findAll<HTMLButtonElement>(card, ".nozzle-row [role=radio]");
     expect(text(find(card, ".nozzle-row .step-label"))).toBe("Active nozzle");
@@ -953,7 +949,7 @@ describe("the active nozzle", () => {
   });
 
   it("decides whether the nozzle is hot enough to extrude, and names it", async () => {
-    const { card, hass } = await cardFor("h2d", { devices: h2d({ status: "idle", hms: [] }) });
+    const { card, hass } = await cardFor("h2d", { printer: IDLE_H2D });
     await showView(card, "Control");
     expect(button(card, "Extrude 10 mm of filament").disabled).toBe(false);
     expect(find(card, ".note")).toBeNull();
@@ -971,7 +967,7 @@ describe("the active nozzle", () => {
   });
 
   it("is tagged in the heating section while a job runs, as in the Status tab", async () => {
-    const { card, hass } = await cardFor("h2d", { devices: h2d({ status: "printing", hms: [] }) });
+    const { card, hass } = await cardFor("h2d", { printer: { status: "printing", hms: [] } });
     await showView(card, "Control");
     const tags = (): (string | null)[] => findAll(card, ".heat-row").map((row) => (row.querySelector(".heat-tag") ? text(row.querySelector(".heat-tag")) : null));
     expect(tags()).toEqual(["active", null, null, null]);
@@ -985,7 +981,7 @@ describe("the active nozzle", () => {
     await update(card, hass.withState("select.h2d_active_nozzle", "unavailable"));
     expect(tags()).toEqual([null, null, null, null]);
     // Idle, "active" beside Off would read as on: the select below says which one.
-    const { card: idle } = await cardFor("h2d", { devices: h2d({ status: "idle", hms: [] }) });
+    const { card: idle } = await cardFor("h2d", { printer: IDLE_H2D });
     await showView(idle, "Control");
     expect(find(idle, ".heat-tag")).toBeNull();
     const { card: single } = await cardFor("a1mini");
@@ -994,11 +990,11 @@ describe("the active nozzle", () => {
   });
 
   it("says it in German", async () => {
-    const { card, hass } = await cardFor("h2d", { language: "de", devices: h2d({ status: "idle", hms: [] }) });
+    const { card, hass } = await cardFor("h2d", { language: "de", printer: IDLE_H2D });
     await showView(card, "Steuerung");
     expect(text(find(card, ".nozzle-row .step-label"))).toBe("Aktive Düse");
     expect(findAll(card, ".nozzle-row [role=radio]").map(text)).toEqual(["Links", "Rechts"]);
-    const { card: printing } = await cardFor("h2d", { language: "de", devices: h2d({ status: "printing", hms: [] }) });
+    const { card: printing } = await cardFor("h2d", { language: "de", printer: { status: "printing", hms: [] } });
     await showView(printing, "Steuerung");
     expect(text(find(printing, ".heat-tag"))).toBe("aktiv");
     await update(card, hass.withState("select.h2d_active_nozzle", "right"));

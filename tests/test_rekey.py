@@ -30,9 +30,10 @@ from tests.conftest import (
     H2D,
     INTEGRATION,
     X1C,
+    as_model,
     load_fixture,
-    make_entry,
     next_refresh,
+    past_polls,
     printer_device,
     printer_entry,
     printer_key,
@@ -40,8 +41,12 @@ from tests.conftest import (
     set_up,
     setup_integration,
 )
+from tests.helpers import devices_by_identifier, reload_entry
 
 LITE_SERIAL = "03C00A000000004"
+STAND_IN = "sensor.ams_lite_0309da000000002_a_slot_{}"
+RENAMED = "sensor.ams_lite_03c00a000000004_slot_{}"
+OTHER_SERIAL = "00600A3B0000009"
 LITE_FIRMWARE = "00.00.07.94"
 
 
@@ -60,13 +65,23 @@ def _serial_device(entry: MockConfigEntry, serial: str = LITE_SERIAL) -> str:
     return f"{printer_device(entry, A1_MINI)}_ams_{serial}"
 
 
+async def _known_then_unloaded(hass: HomeAssistant) -> MockConfigEntry:
+    """The A1 mini's entry set up once -- its unit known by its place -- then unloaded."""
+    entry = await set_up(hass, A1_MINI)
+    assert await hass.config_entries.async_unload(entry.entry_id)
+    return entry
+
+
+def _without_serials(units: list[dict[str, Any]]) -> list[str]:
+    """The units report no serial for now; their serials, to give back."""
+    serials = [unit["serial_number"] for unit in units]
+    for unit in units:
+        unit["serial_number"] = ""
+    return serials
+
+
 def _ams_devices(hass: HomeAssistant, entry: MockConfigEntry) -> list[str]:
-    return sorted(
-        identifier
-        for device in dr.async_entries_for_config_entry(dr.async_get(hass), entry.entry_id)
-        for domain, identifier in device.identifiers
-        if domain == DOMAIN and "_ams_" in identifier
-    )
+    return sorted(identifier for identifier in devices_by_identifier(hass, entry) if "_ams_" in identifier)
 
 
 def _serial_entities(hass: HomeAssistant, entry: MockConfigEntry, serial: str = LITE_SERIAL) -> list[str]:
@@ -119,8 +134,7 @@ async def test_a_hold_while_a_reload_is_pending(
     assert _holds(hass, entry) == 1
 
     # The reload that was pending moves the unit.
-    assert await hass.config_entries.async_reload(entry.entry_id)
-    await hass.async_block_till_done(wait_background_tasks=True)
+    await reload_entry(hass, entry.entry_id, wait_background_tasks=True)
     assert _ams_devices(hass, entry) == [_serial_device(entry)]
 
 
@@ -182,11 +196,7 @@ async def test_a_model_less_printers_guess(
     its place. Without firmware that was a guess -- a real AMS reports it --
     and it may become the "AMS Lite" the serial now tells; with firmware it
     was a real AMS, and an AMS Lite at its place is another unit."""
-    printers = load_fixture("printers.json")
-    for printer in printers:
-        if printer["id"] == A1_MINI:
-            printer["model"] = None
-    bambuddy_api.get_printers.return_value = printers
+    as_model(bambuddy_api, None, A1_MINI)
     entry = await set_up(hass, A1_MINI)
     registry = dr.async_get(hass)
     device = find_device(hass, entry.entry_id, (DOMAIN, _place_device(entry)))
@@ -230,8 +240,7 @@ async def _serial_then_reload(hass: HomeAssistant, bambuddy_api: SimpleNamespace
     _lite_reports_its_serial(bambuddy_api)
     with patch.object(hass.config_entries, "async_schedule_reload"):
         await next_refresh(hass, freezer)
-    assert await hass.config_entries.async_reload(entry.entry_id)
-    await hass.async_block_till_done(wait_background_tasks=True)
+    await reload_entry(hass, entry.entry_id, wait_background_tasks=True)
 
 
 async def test_the_unit_moves_to_its_serial(
@@ -263,9 +272,7 @@ async def test_the_unit_moves_to_its_serial(
 
 async def test_the_serial_at_a_restart_needs_no_reload(hass: HomeAssistant, bambuddy_api: SimpleNamespace) -> None:
     """The serial already in the setup's first read: moved in that setup."""
-    entry = make_entry(hass, A1_MINI)
-    await setup_integration(hass, entry)
-    assert await hass.config_entries.async_unload(entry.entry_id)
+    entry = await _known_then_unloaded(hass)
     _lite_reports_its_serial(bambuddy_api)
 
     with patch.object(hass.config_entries, "async_schedule_reload") as reload:
@@ -279,9 +286,7 @@ async def test_the_serial_at_a_restart_needs_no_reload(hass: HomeAssistant, bamb
 async def test_the_race_between_the_setup_step_and_the_platforms(hass: HomeAssistant, bambuddy_api: SimpleNamespace) -> None:
     """The serial arrives after the setup's step, before the platforms:
     held, one reload, and that setup moves it."""
-    entry = make_entry(hass, A1_MINI)
-    await setup_integration(hass, entry)
-    assert await hass.config_entries.async_unload(entry.entry_id)
+    entry = await _known_then_unloaded(hass)
     forward = hass.config_entries.async_forward_entry_setups
 
     async def serial_meanwhile(setting_up: Any, platforms: Any) -> None:
@@ -298,8 +303,7 @@ async def test_the_race_between_the_setup_step_and_the_platforms(hass: HomeAssis
     reload.assert_called_once_with(entry.entry_id)
     assert _serial_entities(hass, entry) == []
 
-    assert await hass.config_entries.async_reload(entry.entry_id)
-    await hass.async_block_till_done(wait_background_tasks=True)
+    await reload_entry(hass, entry.entry_id, wait_background_tasks=True)
     assert _ams_devices(hass, entry) == [_serial_device(entry)]
 
 
@@ -387,9 +391,7 @@ async def test_two_units_in_one_refresh(hass: HomeAssistant, bambuddy_api: Simpl
     """Both units of a printer get their serials at once: one reload, both
     move."""
     units = bambuddy_api.statuses[H2D]["ams"]
-    serials = [unit["serial_number"] for unit in units]
-    for unit in units:
-        unit["serial_number"] = ""
+    serials = _without_serials(units)
     entry = await set_up(hass, H2D)
     for unit, serial in zip(units, serials, strict=True):
         unit["serial_number"] = serial
@@ -397,8 +399,7 @@ async def test_two_units_in_one_refresh(hass: HomeAssistant, bambuddy_api: Simpl
     with patch.object(hass.config_entries, "async_schedule_reload") as reload:
         await next_refresh(hass, freezer)
     reload.assert_called_once_with(entry.entry_id)
-    assert await hass.config_entries.async_reload(entry.entry_id)
-    await hass.async_block_till_done(wait_background_tasks=True)
+    await reload_entry(hass, entry.entry_id, wait_background_tasks=True)
 
     # The AMS HT's entities come from two platforms (sensor, binary sensor): one hold.
     assert [_holds(hass, entry, serial, H2D) for serial in serials] == [1, 1]
@@ -406,7 +407,7 @@ async def test_two_units_in_one_refresh(hass: HomeAssistant, bambuddy_api: Simpl
     assert _entity_id(hass, "sensor", _uid(entry, serials[1], "humidity", H2D)) == "sensor.ams_ht_19f06a000000002_humidity"
     renamed = {new for _, new in await renames.async_get(hass, entry.entry_id, printer_key(H2D))}
     assert {"sensor.ams_2_pro_19c06a000000001_slot_1", "sensor.ams_ht_19f06a000000002_humidity"} <= renamed
-    devices = {identifier for device in dr.async_entries_for_config_entry(dr.async_get(hass), entry.entry_id) for _, identifier in device.identifiers}
+    devices = set(devices_by_identifier(hass, entry))
     assert {f"{printer_device(entry, H2D)}_ams_{serial}" for serial in serials} <= devices
     assert not {f"{printer_device(entry, H2D)}_ams_{place}" for place in (0, 128)} & devices
 
@@ -435,10 +436,6 @@ async def test_an_action_on_a_moved_slot(hass: HomeAssistant, bambuddy_api: Simp
     await hass.services.async_call(DOMAIN, "load_filament", {"entity_id": "sensor.ams_lite_03c00a000000004_slot_1"}, blocking=True)
 
     bambuddy_api.load_filament.assert_awaited_once_with(A1_MINI, 0)
-
-
-STAND_IN = "sensor.ams_lite_0309da000000002_a_slot_{}"
-RENAMED = "sensor.ams_lite_03c00a000000004_slot_{}"
 
 
 def _notice(hass: HomeAssistant, entry: MockConfigEntry, printer_id: int = A1_MINI) -> ir.IssueEntry | None:
@@ -494,8 +491,7 @@ async def test_done_clears_the_notice_and_its_list(
 
     assert _notice(hass, entry) is None
     assert await renames.async_get(hass, entry.entry_id, printer_key(A1_MINI)) == []
-    assert await hass.config_entries.async_reload(entry.entry_id)
-    await hass.async_block_till_done()
+    await reload_entry(hass, entry.entry_id)
     assert _notice(hass, entry) is None
 
 
@@ -541,8 +537,7 @@ async def test_an_ignored_notice_stays_ignored(
     await _serial_then_reload(hass, bambuddy_api, entry, freezer)
     ir.async_ignore_issue(hass, DOMAIN, renames_issue(entry.entry_id, printer_key(A1_MINI)), True)
 
-    assert await hass.config_entries.async_reload(entry.entry_id)
-    await hass.async_block_till_done()
+    await reload_entry(hass, entry.entry_id)
 
     issue = _notice(hass, entry)
     assert issue is not None and issue.dismissed_version is not None
@@ -553,16 +548,13 @@ async def test_new_renames_show_again_after_ignore(
 ) -> None:
     """A second unit renamed later: the notice shows again, with both."""
     units = bambuddy_api.statuses[H2D]["ams"]
-    serials = [unit["serial_number"] for unit in units]
-    for unit in units:
-        unit["serial_number"] = ""
+    serials = _without_serials(units)
     entry = await set_up(hass, H2D)
     for index in (0, 1):
         units[index]["serial_number"] = serials[index]
         with patch.object(hass.config_entries, "async_schedule_reload"):
             await next_refresh(hass, freezer)
-        assert await hass.config_entries.async_reload(entry.entry_id)
-        await hass.async_block_till_done(wait_background_tasks=True)
+        await reload_entry(hass, entry.entry_id, wait_background_tasks=True)
         if index == 0:
             ir.async_ignore_issue(hass, DOMAIN, renames_issue(entry.entry_id, printer_key(H2D)), True)
 
@@ -619,9 +611,7 @@ async def test_the_download_carries_no_renamed_serial(
     download: the notice's list of IDs (both serials) stays out of it.
     (Moved at a restart, without the frozen clock: Home Assistant 2025.5's
     download fails on freezegun's datetime.)"""
-    entry = make_entry(hass, A1_MINI)
-    await setup_integration(hass, entry)
-    assert await hass.config_entries.async_unload(entry.entry_id)
+    entry = await _known_then_unloaded(hass)
     _lite_reports_its_serial(bambuddy_api)
     await setup_integration(hass, entry)
     assert _notice(hass, entry) is not None
@@ -634,9 +624,6 @@ async def test_the_download_carries_no_renamed_serial(
     assert response.status == 200
     assert LITE_SERIAL.lower() not in body
     assert printer_serial(A1_MINI).lower() not in body
-
-
-OTHER_SERIAL = "00600A3B0000009"
 
 
 async def test_a_unit_waiting_for_its_type_is_not_held(
@@ -691,8 +678,7 @@ async def test_a_unit_still_without_its_type_after_the_wait_is_no_merge(
     status["ams"][0].update({"serial_number": OTHER_SERIAL, "module_type": ""})
 
     with patch.object(hass.config_entries, "async_schedule_reload") as reload:
-        for _ in range(7):
-            await next_refresh(hass, freezer)
+        await past_polls(hass, freezer, 7)
 
     reload.assert_not_called()
     assert _serial_entities(hass, entry, OTHER_SERIAL) != []
@@ -701,9 +687,7 @@ async def test_a_unit_still_without_its_type_after_the_wait_is_no_merge(
 async def test_the_setup_moves_the_unit_at_the_cap_too(hass: HomeAssistant, bambuddy_api: SimpleNamespace) -> None:
     """The cap limits the holds, not the setup's move: a setup that finds
     the serial moves the unit however often it was held."""
-    entry = make_entry(hass, A1_MINI)
-    await setup_integration(hass, entry)
-    assert await hass.config_entries.async_unload(entry.entry_id)
+    entry = await _known_then_unloaded(hass)
     hass.data.setdefault(DOMAIN, {}).setdefault("ams_holds", {})[(entry.entry_id, printer_key(A1_MINI), LITE_SERIAL)] = RELOADS_PER_RUN
     _lite_reports_its_serial(bambuddy_api)
 
@@ -759,9 +743,7 @@ async def test_an_unexpected_error_in_the_move_lets_the_setup_go_on(
 async def test_a_store_that_cannot_load_changes_nothing(hass: HomeAssistant, bambuddy_api: SimpleNamespace) -> None:
     """The list cannot be kept: nothing is moved, so nothing renamed goes
     unsaid; the next setup tries again."""
-    entry = make_entry(hass, A1_MINI)
-    await setup_integration(hass, entry)
-    assert await hass.config_entries.async_unload(entry.entry_id)
+    entry = await _known_then_unloaded(hass)
     _lite_reports_its_serial(bambuddy_api)
     hass.data[DOMAIN].pop("ams_renames", None)
 
@@ -777,17 +759,14 @@ async def test_confirming_one_printers_notice_leaves_the_others(
     hass: HomeAssistant, bambuddy_api: SimpleNamespace, freezer: FrozenDateTimeFactory, hass_client: ClientSessionGenerator
 ) -> None:
     units = bambuddy_api.statuses[H2D]["ams"]
-    serials = [unit["serial_number"] for unit in units]
-    for unit in units:
-        unit["serial_number"] = ""
+    serials = _without_serials(units)
     entry = await set_up(hass, A1_MINI, H2D)
     _lite_reports_its_serial(bambuddy_api)
     for unit, serial in zip(units, serials, strict=True):
         unit["serial_number"] = serial
     with patch.object(hass.config_entries, "async_schedule_reload"):
         await next_refresh(hass, freezer)
-    assert await hass.config_entries.async_reload(entry.entry_id)
-    await hass.async_block_till_done(wait_background_tasks=True)
+    await reload_entry(hass, entry.entry_id, wait_background_tasks=True)
     desk, studio = _notice(hass, entry), _notice(hass, entry, H2D)
     assert desk is not None and studio is not None
 
@@ -813,8 +792,7 @@ async def test_an_absent_printers_notice_names_its_device(
     registry.async_update_device(device.id, name="Desk renamed (A1 Mini / 0309DA000000002)")
     bambuddy_api.get_printers.return_value = [printer for printer in load_fixture("printers.json") if printer["id"] != A1_MINI]
 
-    assert await hass.config_entries.async_reload(entry.entry_id)
-    await hass.async_block_till_done()
+    await reload_entry(hass, entry.entry_id)
 
     issue = _notice(hass, entry)
     assert issue is not None
@@ -842,9 +820,7 @@ async def test_a_unique_id_taken_under_the_serial_keeps_the_unit_by_its_place(
     """An entry under the serial's unique ID already (left by something
     else): nothing moves -- no registry entry is overwritten -- and the log
     says why."""
-    entry = make_entry(hass, A1_MINI)
-    await setup_integration(hass, entry)
-    assert await hass.config_entries.async_unload(entry.entry_id)
+    entry = await _known_then_unloaded(hass)
     er.async_get(hass).async_get_or_create("sensor", DOMAIN, _uid(entry, LITE_SERIAL, "slot_1"))
     _lite_reports_its_serial(bambuddy_api)
 
