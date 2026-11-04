@@ -16,11 +16,12 @@ from typing import TYPE_CHECKING, Literal
 from homeassistant.config_entries import SOURCE_REAUTH
 from homeassistant.core import CALLBACK_TYPE, HomeAssistant, callback
 from homeassistant.exceptions import HomeAssistantError
-from homeassistant.helpers.event import async_call_later, async_track_time_interval
+from homeassistant.helpers.event import async_track_time_interval
 from homeassistant.util import dt as dt_util
 
 from .api import BamBuddyApiError, BamBuddyAuthError, BamBuddyClient, BamBuddyError, BamBuddyPermissionError, KeyScopes
 from .const import DOMAIN, KEY_CHECK_INTERVAL, KEY_RETRY_DELAY, MANAGE_INVENTORY
+from .timers import async_call_later_until_stop
 
 if TYPE_CHECKING:
     from homeassistant.config_entries import ConfigEntry
@@ -129,7 +130,7 @@ class KeyGuard:
     def async_check_soon(self) -> None:
         """A check within a few seconds: BamBuddy refused a request."""
         if self._active and self._soon is None and not self._lock.locked():
-            self._soon = async_call_later(self.hass, _SOON, self._async_soon)
+            self._soon = async_call_later_until_stop(self.hass, _SOON, self._async_soon)
 
     @callback
     def async_read_refused(self, err: BamBuddyApiError) -> None:
@@ -241,7 +242,7 @@ class KeyGuard:
     @callback
     def _later(self, delay: timedelta) -> None:
         if self._active and self._retry is None:
-            self._retry = async_call_later(self.hass, delay, self._async_retry)
+            self._retry = async_call_later_until_stop(self.hass, delay.total_seconds(), self._async_retry)
 
     @callback
     def _cancel_retry(self) -> None:

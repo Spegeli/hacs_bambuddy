@@ -22,7 +22,7 @@ from homeassistant.util import dt as dt_util
 
 from .api import BamBuddyAuthError, BamBuddyError, BamBuddyPermissionError
 from .entity import refuse
-from .models import ENDED_STATES, JOB_STATES, PrinterData, drying_minutes, is_number, short_name
+from .models import ENDED_STATES, JOB_STATES, PrinterData, drying_minutes, is_number
 from .plugs import Plug
 
 if TYPE_CHECKING:
@@ -206,7 +206,7 @@ class AutoOff:
         self._notify()
 
     @callback
-    def restore(self, armed: bool, phase: str | None, since: datetime | None, every_print: bool, printer: str | None = None) -> None:
+    def restore(self, armed: bool, phase: str | None, since: datetime | None, every_print: bool, printer: str | None) -> None:
         """After a restart: a wait goes on with fresh data -- one older than
         the limit is over (a time ahead of now counts as now), as a running
         one ends: from now, and "only after the next print" used up.
@@ -320,7 +320,7 @@ class AutoOff:
                 status = await self.printer.client.get_status(self.printer.printer_id)
             except BamBuddyError as err:
                 # Not the plug: the next check reads the printer again.
-                _LOGGER.debug("Reading %s before switching its plug off failed: %s", short_name(self.printer.info), err)
+                _LOGGER.debug("Reading %s before switching its plug off failed: %s", self.printer.short_name, err)
                 return
             reread = PrinterData(self.printer.info, status, None, None)
             if self.phase != "waiting" or not self.armed or blocker(reread, self.threshold) is not None:
@@ -343,7 +343,7 @@ class AutoOff:
         _LOGGER.info(
             "Switched the plug %s of %s off after the print: nozzle %s °C, below %s °C",
             plug.name,
-            short_name(self.printer.info),
+            self.printer.short_name,
             max(temperatures) if temperatures else "?",
             self.threshold,
         )
@@ -369,8 +369,8 @@ def gets_auto_off(plugs: BamBuddyPlugCoordinator, plug: Plug) -> bool:
 
 
 def auto_off_for(entry: BamBuddyConfigEntry, plug: Plug) -> AutoOff | None:
-    """The switch-off after the print of the printer's own plug, where this
-    key may switch it; one per plug, started once."""
+    """The switch-off after the print of the printer's own plug; one per
+    plug, started once."""
     runtime = entry.runtime_data
     plugs = runtime.plugs
     if not gets_auto_off(plugs, plug):

@@ -277,7 +277,7 @@ class BamBuddyInventoryCoordinator(DataUpdateCoordinator[InventoryData]):
         await super().async_shutdown()
 
 
-Fit = Literal["not_for_ams", "not_for_nozzle", "not_for_printer"]
+type Fit = Literal["not_for_ams", "not_for_nozzle", "not_for_printer"]
 
 _FITS: dict[str, Fit] = {
     "filament_not_for_ams": "not_for_ams",
@@ -330,22 +330,18 @@ def spool_fit(spool: Spool, slot: filaments.Slot) -> Fit | None:
     return _FITS.get(why) if why is not None else None
 
 
-def inventory_attributes(coordinator: BamBuddyInventoryCoordinator | None, printer_id: int, ams_id: int, tray_id: int) -> dict[str, Any]:
+def inventory_attributes(coordinator: BamBuddyInventoryCoordinator, printer_id: int, ams_id: int, tray_id: int) -> dict[str, Any]:
     """A slot's sensor attributes: nothing while the inventory is not shown;
     else whether spools may be assigned, and the slot's spool if it has one."""
-    data = coordinator.data if coordinator is not None else None
-    if data is None or not data.shown or coordinator is None:
+    data = coordinator.data
+    if data is None or not data.shown:
         return {}
     attributes: dict[str, Any] = {"inventory_assignable": coordinator.assignable}
     row = data.row_at((printer_id, ams_id, tray_id))
-    spool = None if row is None else data.spools.get(row.spool_id)
-    if spool is not None and row is not None:
+    if row is not None and (spool := data.spools.get(row.spool_id)) is not None:
         # The spool's other slots: BamBuddy can hold one in two (its "Show all spools",
         # a chip read in another printer).
-        also = [
-            {**place_json(other), "same_printer": other.printer_id == printer_id}
-            for other in data.places_of(spool.id, besides=row.slot)
-        ]
+        also = [place_json(other, printer_id) for other in data.places_of(spool.id, besides=row.slot)]
         attributes["inventory_spool"] = {
             **spool.attributes(),
             "also_assigned": also,
@@ -364,9 +360,11 @@ def spool_types(spool: Spool) -> list[str]:
     return sorted({printer_filament_type(name).upper() for name in names if name} - {""})
 
 
-def place_json(row: Placed) -> dict[str, Any]:
-    """A slot a spool is assigned to, as the attributes and the actions name it."""
-    return {"printer_id": row.printer_id, "printer_name": row.printer_name, "ams_id": row.ams_id, "tray_id": row.tray_id, "ams_label": row.ams_label}
+def place_json(row: Placed, here: int | None = None) -> dict[str, Any]:
+    """A slot a spool is assigned to, as the attributes and the actions name
+    it; with `here`, the printer asking, whether it is that printer's."""
+    place = {"printer_id": row.printer_id, "printer_name": row.printer_name, "ams_id": row.ams_id, "tray_id": row.tray_id, "ams_label": row.ams_label}
+    return place if here is None else {**place, "same_printer": row.printer_id == here}
 
 
 def diagnostics(coordinator: BamBuddyInventoryCoordinator) -> dict[str, Any]:

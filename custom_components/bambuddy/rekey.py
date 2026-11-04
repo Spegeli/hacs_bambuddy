@@ -15,7 +15,7 @@ from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers import entity_registry as er
 
-from .models import AMS_MODELS, ams_model, ams_object_id, ams_serial
+from .models import AMS_MODELS, ams_model, ams_object_id, ams_serial, part_id
 
 if TYPE_CHECKING:
     from .coordinator import BamBuddyPrinterCoordinator
@@ -46,7 +46,7 @@ def _rekey(
     hass: HomeAssistant, coordinator: BamBuddyPrinterCoordinator, unit: dict[str, Any], device: dr.DeviceEntry
 ) -> list[tuple[str, str]]:
     serial = ams_serial(unit) or ""
-    place = int(unit.get("id", 0))
+    place = part_id(unit)
     registry = er.async_get(hass)
     old_prefix = coordinator.entity_unique_id(f"ams{place}_")
     new_prefix = coordinator.entity_unique_id(f"ams{serial}_")
@@ -66,7 +66,7 @@ def _rekey(
             _LOGGER.warning(
                 "The AMS unit %s of %s keeps its place: its entity %s exists under the serial number already",
                 serial,
-                coordinator.printer_name,
+                coordinator.short_name,
                 key,
             )
             return []
@@ -91,9 +91,9 @@ def _rekey(
             serial_number=serial,
         )
     except Exception as err:  # noqa: BLE001 -- whatever stops it, the setup goes on
-        _LOGGER.warning("Moving the AMS unit %s of %s to its serial number stopped: %s", serial, coordinator.printer_name, err)
+        _LOGGER.warning("Moving the AMS unit %s of %s to its serial number stopped: %s", serial, coordinator.short_name, err)
     else:
-        _LOGGER.info("The AMS unit %s of %s is known by its serial number now", serial, coordinator.printer_name)
+        _LOGGER.info("The AMS unit %s of %s is known by its serial number now", serial, coordinator.short_name)
     return pairs
 
 
@@ -102,11 +102,12 @@ def _ours(entity_id: str, domain: str, printer_key: str, place: int, key: str) -
     AMS model (the one the entity was built with may have been a guess),
     or that with Home Assistant's suffix."""
     object_id = entity_id.removeprefix(f"{domain}.")
-    for model in AMS_MODELS:
-        form = ams_object_id(model, printer_key, place, None, key)
-        if object_id == form or re.fullmatch(rf"{re.escape(form)}_(?:[2-9]|[1-9]\d+)", object_id):
-            return True
-    return False
+    return any(is_our_form(object_id, ams_object_id(model, printer_key, place, None, key)) for model in AMS_MODELS)
+
+
+def is_our_form(object_id: str, form: str) -> bool:
+    """The object ID the integration gave, or that with Home Assistant's suffix."""
+    return object_id == form or re.fullmatch(rf"{re.escape(form)}_(?:[2-9]|[1-9]\d+)", object_id) is not None
 
 
 def free_entity_id(registry: er.EntityRegistry, domain: str, object_id: str) -> str:

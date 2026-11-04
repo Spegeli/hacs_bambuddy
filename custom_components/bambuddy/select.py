@@ -12,10 +12,11 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 
 from .api import BamBuddyClient
+from .chamber import airduct_check
 from .const import PRINT_SPEEDS
 from .coordinator import BamBuddyConfigEntry
-from .entity import BamBuddyDescribedEntity, async_run_command, refuse
-from .models import JOB_STATES, PrinterData, by_code, chamber_target_set, ventilating
+from .entity import BamBuddyDescribedEntity, async_run_command
+from .models import JOB_STATES, PrinterData, by_code
 
 PARALLEL_UPDATES = 1
 
@@ -35,22 +36,9 @@ class BamBuddySelectDescription(SelectEntityDescription):
     allowed: Callable[[PrinterData], bool] | None = None
     refusal: str = "not_now"
     idle_only: bool = False
-    # A choice the printer's state rules out: raises its own refusal
-    # (`refuse(key, printer=name)`), given the state, the choice and the name.
-    option_check: Callable[[PrinterData, str, str], None] | None = None
-
-
-def _airduct_check(data: PrinterData, mode: str, name: str) -> None:
-    """Cooling beside a heating chamber is a state Bambu describes nowhere:
-    the chamber goes off first. Heating (on the P2S: keeping the chamber
-    warm) waits while the chamber is ventilated."""
-    # The chamber heater has a target: the printer keeps the airduct on heating
-    # (Bambu: "When the chamber is heated, the system will automatically switch
-    # to the heating mode").
-    if mode == "cooling" and chamber_target_set(data):
-        raise refuse("chamber_heating")
-    if mode == "heating" and ventilating(data):
-        raise refuse("ventilation_on")
+    # A choice the printer's state rules out: raises its own refusal, given
+    # the state and the choice.
+    option_check: Callable[[PrinterData, str], None] | None = None
 
 
 SELECTS: tuple[BamBuddySelectDescription, ...] = (
@@ -75,7 +63,7 @@ SELECTS: tuple[BamBuddySelectDescription, ...] = (
         # The print sets it at its start (Bambu Studio refuses a change
         # during one).
         idle_only=True,
-        option_check=_airduct_check,
+        option_check=airduct_check,
     ),
     BamBuddySelectDescription(
         key="active_nozzle",
@@ -128,5 +116,5 @@ class BamBuddySelect(BamBuddyDescribedEntity, SelectEntity):
             allowed=description.allowed,
             refusal=description.refusal,
             idle_only=description.idle_only,
-            check=None if option_check is None else lambda data, name: option_check(data, option, name),
+            check=None if option_check is None else lambda data, _name: option_check(data, option),
         )

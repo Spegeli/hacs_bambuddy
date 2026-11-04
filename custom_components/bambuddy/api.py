@@ -53,6 +53,7 @@ _API_PATH = "/api/v1"
 # A gateway's answers: a proxy without BamBuddy behind it.
 GATEWAY_STATUSES = (502, 503, 504)
 
+
 class AddressWithLoginError(ValueError):
     """The address carries a user name or password: BamBuddy takes the API
     key, and the address is the entry's identity -- no secret in it."""
@@ -306,7 +307,13 @@ class BamBuddyClient:
         return await self._object("/firmware/updates", timeout=_UPDATE_TIMEOUT)
 
     async def get_printers(self) -> list[dict[str, Any]]:
-        return await self._list("/printers/")
+        """BamBuddy's printers: an entry that is no printer with a number
+        (no object, no whole-number id) is left out."""
+        return [
+            printer
+            for printer in await self._list("/printers/")
+            if isinstance(printer, dict) and isinstance(printer.get("id"), int) and not isinstance(printer.get("id"), bool)
+        ]
 
     async def get_printer(self, printer_id: int) -> dict[str, Any]:
         return await self._object(f"/printers/{printer_id}")
@@ -327,7 +334,8 @@ class BamBuddyClient:
         return {
             int(place): label.strip()
             for place, label in answer.items()
-            if isinstance(label, str) and label.strip() and str(place).isdigit()
+            # isdecimal, not isdigit: "²" is a digit int() refuses.
+            if isinstance(label, str) and label.strip() and str(place).isdecimal()
         }
 
     async def get_maintenance(self, printer_id: int) -> dict[str, Any]:
@@ -569,8 +577,8 @@ class BamBuddyClient:
         `setting_id`: Bambu Studio's for the profile, left out when empty
         (BamBuddy then derives one from the filament id)."""
         optional = {
-            name: value
-            for name, value in (
+            field: value
+            for field, value in (
                 ("kprofile_filament_id", kprofile_filament_id),
                 ("kprofile_setting_id", kprofile_setting_id),
                 ("k_value", k_value),

@@ -19,9 +19,10 @@ from homeassistant.components.fan import (  # type: ignore[attr-defined]
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 
+from .chamber import may_ventilate
 from .coordinator import BamBuddyConfigEntry, BamBuddyPrinterCoordinator
-from .entity import BamBuddyDescribedEntity, BamBuddyPrinterEntity, async_run_command, refuse
-from .models import PrinterData, chamber_heats, is_int, round_ten, ventilating, ventilation_fans, ventilation_speed
+from .entity import BamBuddyDescribedEntity, BamBuddyPrinterEntity, async_run_command
+from .models import PrinterData, is_int, round_ten, ventilating, ventilation_fans, ventilation_speed
 
 PARALLEL_UPDATES = 1
 
@@ -158,23 +159,6 @@ class BamBuddyFan(BamBuddyDescribedEntity, FanEntity):
         await self.async_set_percentage(0)
 
 
-def _may_ventilate(data: PrinterData, name: str) -> None:
-    """Ventilating needs cooling mode, which a print or a filament change
-    keeps as they set it, and goes not with a heated chamber."""
-    mode = data.airduct
-    if data.job_running:
-        if mode == "heating":
-            raise refuse("ventilation_heating_print", printer=name)
-        if mode == "laser":
-            raise refuse("not_now", printer=name)
-    elif chamber_heats(data):
-        if data.status.get("supports_chamber_heater"):
-            raise refuse("chamber_heating")
-        raise refuse("keep_warm_on")
-    if data.changing_filament and mode != "cooling":
-        raise refuse("filament_change", printer=name)
-
-
 class BamBuddyVentilation(BamBuddyPrinterEntity, FanEntity):
     """The chamber ventilated: the airduct on cooling and its ventilation
     fans (`models.ventilation_fans`) at one speed, in tens. Off stops the
@@ -216,7 +200,7 @@ class BamBuddyVentilation(BamBuddyPrinterEntity, FanEntity):
             for fan in fans:
                 await coordinator.client.set_fan_speed(coordinator.printer_id, fan.fan, speed)
 
-        await async_run_command(coordinator, ventilate, check=_may_ventilate)
+        await async_run_command(coordinator, ventilate, check=may_ventilate)
 
     async def async_turn_on(
         self, percentage: int | None = None, preset_mode: str | None = None, **kwargs: Any

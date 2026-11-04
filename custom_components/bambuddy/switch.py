@@ -17,9 +17,15 @@ from homeassistant.util import dt as dt_util
 
 from .auto_off import AutoOff, auto_off_for
 from .coordinator import BamBuddyConfigEntry, BamBuddyPrinterCoordinator
-from .plug_coordinator import BamBuddyPlugCoordinator
-from .entity import BamBuddyAutoOffPart, BamBuddyPlugMainEntity, BamBuddyToggle, async_add_plug_entities, async_switch_plug
+from .entity import (
+    BamBuddyAutoOffPart,
+    BamBuddyPlugPowerEntity,
+    BamBuddyToggle,
+    async_add_plug_entities,
+    async_switch_plug,
+)
 from .models import detectors, plate_position_only
+from .plug_coordinator import BamBuddyPlugCoordinator
 from .plugs import Plug
 
 PARALLEL_UPDATES = 1
@@ -131,22 +137,11 @@ def _add_plug_switches(coordinator: BamBuddyPlugCoordinator, async_add_entities:
     async_add_plug_entities(coordinator, async_add_entities, create)
 
 
-class BamBuddyPlugSwitch(BamBuddyPlugMainEntity, SwitchEntity):
+class BamBuddyPlugSwitch(BamBuddyPlugPowerEntity, SwitchEntity):
     """A smart plug on or off, as BamBuddy reads it from the plug. Off cuts
     the power: a plug that powers the printer takes it offline in BamBuddy,
     a print stops -- never refused here (the plug is an emergency stop);
     the card asks first."""
-
-    # The plug's own entity: named as its device, the plug.
-    _attr_name = None
-    _attr_translation_key = "plug"
-
-    def __init__(self, coordinator: BamBuddyPlugCoordinator, plug: Plug) -> None:
-        super().__init__(coordinator, plug, "power")
-
-    @property
-    def is_on(self) -> bool | None:
-        return self.plug.state if self.plug else None
 
     @property
     def assumed_state(self) -> bool:

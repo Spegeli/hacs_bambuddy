@@ -24,16 +24,16 @@ from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 
 from .const import DOMAIN
 from .coordinator import BamBuddyConfigEntry, BamBuddyInstanceCoordinator, BamBuddyPrinterCoordinator
-from .plug_coordinator import BamBuddyPlugCoordinator
 from .entity import (
     BamBuddyAmsEntity,
     BamBuddyDescribedEntity,
     BamBuddyInstanceEntity,
-    BamBuddyPlugMainEntity,
+    BamBuddyPlugPowerEntity,
     async_add_ams_entities,
     async_add_plug_entities,
 )
-from .models import PrinterData, can_dry, has_heater, is_drying
+from .models import PrinterData, can_dry, has_heater, is_drying, part_id
+from .plug_coordinator import BamBuddyPlugCoordinator
 from .plugs import Plug
 
 PARALLEL_UPDATES = 0
@@ -142,7 +142,7 @@ def _add_drying_sensors(
     """One per AMS unit with a heater."""
 
     def create(unit: dict[str, Any], data: PrinterData) -> list[tuple[str, Callable[[], BinarySensorEntity]]]:
-        return [("drying", partial(BamBuddyDryingSensor, coordinator, int(unit.get("id", 0))))]
+        return [("drying", partial(BamBuddyDryingSensor, coordinator, part_id(unit)))]
 
     async_add_ams_entities(coordinator, async_add_entities, create, wanted=has_heater)
 
@@ -221,17 +221,7 @@ def _add_plug_states(coordinator: BamBuddyPlugCoordinator, async_add_entities: A
     async_add_plug_entities(coordinator, async_add_entities, create)
 
 
-class BamBuddyPlugState(BamBuddyPlugMainEntity, BinarySensorEntity):
+class BamBuddyPlugState(BamBuddyPlugPowerEntity, BinarySensorEntity):
     """On while the plug delivers power, as BamBuddy reads it."""
 
-    # The plug's own entity: named as its device, the plug.
-    _attr_name = None
-    _attr_translation_key = "plug"
     _attr_device_class = BinarySensorDeviceClass.POWER
-
-    def __init__(self, coordinator: BamBuddyPlugCoordinator, plug: Plug) -> None:
-        super().__init__(coordinator, plug, "power")
-
-    @property
-    def is_on(self) -> bool | None:
-        return self.plug.state if self.plug else None

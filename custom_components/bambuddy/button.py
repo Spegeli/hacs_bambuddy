@@ -15,9 +15,16 @@ from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 from .api import BamBuddyClient
 from .auto_off import AutoOff, auto_off_for
 from .coordinator import BamBuddyConfigEntry
-from .plug_coordinator import BamBuddyPlugCoordinator
-from .entity import BamBuddyAutoOffPart, BamBuddyDescribedEntity, BamBuddyPlugMainEntity, async_add_plug_entities, async_run_command, async_switch_plug
+from .entity import (
+    BamBuddyAutoOffPart,
+    BamBuddyDescribedEntity,
+    BamBuddyPlugMainEntity,
+    async_add_plug_entities,
+    async_run_command,
+    async_switch_plug,
+)
 from .models import ACTIVE_STATES, ENDED_STATES, JOB_STATES, PrinterData
+from .plug_coordinator import BamBuddyPlugCoordinator
 from .plugs import Plug
 
 PARALLEL_UPDATES = 1

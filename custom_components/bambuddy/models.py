@@ -336,7 +336,7 @@ def nozzle_side(extruder: Any) -> str:
 def chamber_heats(data: PrinterData) -> bool:
     """The chamber is heated: a target above 0 where BamBuddy reports a
     heater, else (the P2S) the airduct on heating, which keeps the warmth."""
-    if data.status.get("supports_chamber_heater"):
+    if data.has_chamber_heater():
         return chamber_target_set(data)
     return data.has_airduct() and data.airduct == "heating"
 
@@ -387,6 +387,11 @@ CAMERA_MIN_FPS = 5
 CAMERA_FPS_STEP = 5
 _RTSP_PREFIXES = ("X1", "X2", "H2", "P2")
 _RTSP_CODES = frozenset({"BL-P001", "C13", "N6", "O1D", "O1C", "O1C2", "O1S", "O1E", "O2D", "N7"})
+# The most frames a second BamBuddy streams: an external camera, an RTSP
+# camera, the chamber image (A1, P1, A2L and any model it does not know).
+_EXTERNAL_FPS = 15
+_RTSP_FPS = 30
+_CHAMBER_IMAGE_FPS = 5
 
 
 def camera_is_external(info: dict[str, Any]) -> bool:
@@ -398,10 +403,10 @@ def camera_is_external(info: dict[str, Any]) -> bool:
 def camera_max_fps(info: dict[str, Any]) -> int:
     """The most frames a second BamBuddy streams of a printer's camera."""
     if camera_is_external(info):
-        return 15
+        return _EXTERNAL_FPS
     # As BamBuddy compares: in capitals, not stripped.
     model = str(info.get("model") or "").upper()
-    return 30 if model.startswith(_RTSP_PREFIXES) or model in _RTSP_CODES else 5
+    return _RTSP_FPS if model.startswith(_RTSP_PREFIXES) or model in _RTSP_CODES else _CHAMBER_IMAGE_FPS
 
 
 @dataclass(frozen=True)
@@ -513,6 +518,10 @@ class PrinterData:
     def stores_on_usb(self) -> bool:
         return model_key(self.model) in _USB_DRIVE
 
+    def has_chamber_heater(self) -> bool:
+        """BamBuddy says the printer can heat its chamber."""
+        return bool(self.status.get("supports_chamber_heater"))
+
     def has_chamber_fan(self) -> bool:
         """A chamber fan Bambu calls so (on the P2S, the X2D and the H2 series it is the exhaust fan)."""
         return self.has_aux_fans() and model_key(self.model) not in _EXHAUST_FAN
@@ -543,7 +552,7 @@ class PrinterData:
         parts = set()
         if self.temperatures.get("chamber") is not None:
             parts.add("temperature")
-        if self.status.get("supports_chamber_heater"):
+        if self.has_chamber_heater():
             parts.add("heater")
         return frozenset(parts)
 
@@ -633,6 +642,12 @@ def find_printers(listed: list[dict[str, Any]], stored: list[dict[str, Any]]) ->
 def ams_serial(unit: dict[str, Any]) -> str | None:
     """The serial number BamBuddy reports for an AMS unit, if any."""
     return str(unit.get("serial_number") or "").strip() or None
+
+
+def part_id(part: dict[str, Any], default: int = 0) -> int:
+    """BamBuddy's number of an AMS unit (its place), a tray or an external
+    spool."""
+    return int(part.get("id", default))
 
 
 def ams_key(unit: dict[str, Any]) -> str:
@@ -1014,9 +1029,9 @@ def active_tray(data: PrinterData) -> int | None:
 def find_tray(data: PrinterData, global_id: int) -> tuple[dict[str, Any], int] | None:
     """The tray with BamBuddy's global id, and its 1-based slot number."""
     for unit in data.ams_units:
-        unit_id = int(unit.get("id", 0))
+        unit_id = part_id(unit)
         for tray in unit.get("tray") or []:
-            slot = int(tray.get("id", 0))
+            slot = part_id(tray)
             if tray_id(unit_id, slot) == global_id:
                 return tray, slot + 1
     for index, tray in enumerate(data.external_spools):

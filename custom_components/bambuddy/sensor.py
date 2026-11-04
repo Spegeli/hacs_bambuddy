@@ -36,7 +36,6 @@ from homeassistant.util import dt as dt_util
 
 from .const import DOMAIN
 from .coordinator import BamBuddyConfigEntry, BamBuddyInstanceCoordinator, BamBuddyPrinterCoordinator
-from .plug_coordinator import BamBuddyPlugCoordinator
 from .entity import (
     BamBuddyAmsEntity,
     BamBuddyDescribedEntity,
@@ -54,8 +53,8 @@ from .models import (
     EXTERNAL_LEFT,
     EXTERNAL_RIGHT,
     PRINT_STATUSES,
-    STAGE_OPTIONS,
     PrinterData,
+    STAGE_OPTIONS,
     active_tray,
     ams_model,
     ams_status,
@@ -67,6 +66,7 @@ from .models import (
     maintenance_task,
     nozzle_side,
     nozzle_type,
+    part_id,
     print_stage,
     print_status,
     slot_attributes,
@@ -76,6 +76,7 @@ from .models import (
     tray_label,
     unit_extruder,
 )
+from .plug_coordinator import BamBuddyPlugCoordinator
 from .plugs import Plug
 
 PARALLEL_UPDATES = 0
@@ -249,7 +250,7 @@ def _external_spool_attributes(tray: int | None) -> Callable[[PrinterData], dict
         if spool is None:
             return {}
         number = 2 if spool.get("id") == EXTERNAL_RIGHT else 1
-        return slot_attributes(spool, number, int(spool.get("id", EXTERNAL_LEFT)), active_tray(data))
+        return slot_attributes(spool, number, part_id(spool, EXTERNAL_LEFT), active_tray(data))
 
     return attributes
 
@@ -501,8 +502,8 @@ def _add_ams_units(coordinator: BamBuddyPrinterCoordinator, async_add_entities: 
     """The AMS units' sensors and slots."""
 
     def create(unit: dict[str, Any], data: PrinterData) -> list[tuple[str, Callable[[], SensorEntity]]]:
-        unit_id = int(unit.get("id", 0))
-        trays = [int(tray.get("id", 0)) for tray in unit.get("tray") or []]
+        unit_id = part_id(unit)
+        trays = [part_id(tray) for tray in unit.get("tray") or []]
         return [
             *(
                 (description.key, partial(BamBuddyAmsSensor, coordinator, unit_id, description))
@@ -591,8 +592,8 @@ class BamBuddyPrinterSensor(BamBuddyDescribedEntity, SensorEntity):
 
 class BamBuddyMaintenanceSensor(BamBuddyPrinterSensor):
     """BamBuddy's maintenance of the printer: overdue when a task is due,
-    due soon in a task's last tenth. Its tasks (enabled ones), and whether
-    the key may mark them done."""
+    due soon in a task's last tenth. Its tasks (enabled ones), and how
+    many are due or due soon."""
 
     _unrecorded_attributes = frozenset({"tasks"})
 

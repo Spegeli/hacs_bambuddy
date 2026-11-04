@@ -245,11 +245,16 @@ class BamBuddyLive:
                 body = json.loads(message.data)
             except ValueError:
                 body = None
-        if isinstance(body, dict) and body.get("type") in _SPOOL_EVENTS:
+        # A "type" that is no text names no message we know (a list would not
+        # even be looked up).
+        kind = body.get("type") if isinstance(body, dict) else None
+        if not isinstance(kind, str):
+            kind = None
+        if kind in _SPOOL_EVENTS:
             self._messages += 1
             self.entry.runtime_data.inventory.async_pushed()
             return
-        printer_id = body.get("printer_id") if isinstance(body, dict) and body.get("type") in _PUSHES else None
+        printer_id = body.get("printer_id") if kind in _PUSHES else None
         if not is_int(printer_id):
             self._ignored += 1
             return

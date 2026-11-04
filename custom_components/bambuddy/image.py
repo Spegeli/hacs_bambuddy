@@ -104,5 +104,5 @@ class BamBuddyCover(BamBuddyPrinterEntity, ImageEntity):
                 else:
                     self._retry_at = dt_util.utcnow() + self._retry_in
                     self._retry_in = min(self._retry_in * 2, MAX_RETRY)
-                _LOGGER.debug("No cover for %s: %s", self.coordinator.printer_name, err)
+                _LOGGER.debug("No cover for %s: %s", self.coordinator.short_name, err)
         return self._image

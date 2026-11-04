@@ -17,7 +17,7 @@ import hmac
 import re
 import secrets
 from string import hexdigits
-from typing import Any
+from typing import Any, Literal
 
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers import device_registry as dr
@@ -31,6 +31,10 @@ from .storage import async_load_once
 STORE_KEY = f"{DOMAIN}.plug_secret"
 STORE_VERSION = 1
 # hass.data[DOMAIN]: the secret once loaded in this run.
+# What a plug is known by: from what it switches, from its BamBuddy record
+# (a REST plug), or the last key kept (the answer lacked the field).
+type KnownBy = Literal["source", "record", "kept"]
+
 _DATA = "plug_secret"
 _LOCK = "plug_secret_lock"
 
@@ -138,9 +142,7 @@ class PlugIdentity:
     # 64 hex; only the 16 of `internal` when carried over from the registry.
     key: str
     rank: int
-    # "source": from what it switches; "record": from its BamBuddy record (a
-    # REST plug); "kept": the answer lacked the field, the last key stays.
-    known_by: str
+    known_by: KnownBy
 
     @property
     def digest(self) -> str:
@@ -161,7 +163,7 @@ class PlugIdentity:
         return Known(self.plug_type, self.epoch, frozenset({self.internal}))
 
 
-def _key(secret: bytes, plug_id: int, plug_type: str, epoch: int | None, info: Mapping[str, Any], before: Known | None) -> tuple[str, str]:
+def _key(secret: bytes, plug_id: int, plug_type: str, epoch: int | None, info: Mapping[str, Any], before: Known | None) -> tuple[str, KnownBy]:
     """The plug's key, and what it is known by (`PlugIdentity.known_by`).
     `before`: what was known of it with the same type."""
     if plug_type == "rest":
@@ -184,7 +186,7 @@ def identities(secret: bytes, infos: Iterable[Mapping[str, Any]], known: Mapping
     """The identities of the linked plugs `infos`; a part an answer lacks
     keeps what `known` says, but a type changed or a REST plug carries no
     key over."""
-    parts: list[tuple[int, str, int | None, str, str]] = []
+    parts: list[tuple[int, str, int | None, str, KnownBy]] = []
     for info in infos:
         plug_id = int(info["id"])
         plug_type = plug_type_of(info)

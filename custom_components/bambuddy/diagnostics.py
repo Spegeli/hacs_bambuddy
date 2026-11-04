@@ -30,6 +30,9 @@ TO_REDACT = {
     "tag_uid",
     "tray_uuid",
     "token",
+    # The user's own words: a printer's place, a plug's device name.
+    "location",
+    "device_name",
 }
 
 
@@ -73,7 +76,7 @@ def _plug(runtime: BamBuddyData, plug: Plug) -> dict[str, Any]:
     identity = runtime.plugs.identity(plug.id)
     return {
         "info": info,
-        "status": plug.status,
+        "status": async_redact_data(plug.status, TO_REDACT),
         "identity": None
         if identity is None
         else {

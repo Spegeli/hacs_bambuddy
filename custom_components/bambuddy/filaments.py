@@ -69,7 +69,7 @@ def _rank(item: Filament) -> tuple[int, int, bytes]:
 # Bambu Studio's prohibitions the integration checks (its filament blacklist;
 # the generator stops when they read otherwise there).
 _TPU_HIGH_FLOW_TPUS = frozenset({"GFU04", "GFU03", "GFU01", "GFU00", "GFU99"})
-_H2D = frozenset({"H2D", "H2D PRO"})
+_H2D_FAMILY = frozenset({"H2D", "H2D PRO"})
 # A BamBuddy nozzle code ("HS01"): its second letter the flow, as Bambu Studio reads it.
 _NOZZLE_CODE = re.compile(r"^[A-Z]([A-Z])\d{2}$")
 _FLOW = {"S": "standard", "A": "standard", "X": "standard", "H": "high", "E": "high", "B": "e3d", "U": "tpu"}
@@ -134,9 +134,9 @@ def _offered_ids(slot: Slot) -> Sequence[str]:
     return _every_model(slot.diameter)
 
 
-def _not_on(slot: Slot) -> dict[str, list[str]]:
+def _not_on(slot: Slot) -> Mapping[str, list[str]]:
     entry = _printer_entry(slot)
-    return dict(entry.get("not_on", {})) if entry is not None else {}
+    return entry.get("not_on", {}) if entry is not None else {}
 
 
 def _flow(code: str | None) -> str | None:
@@ -145,7 +145,7 @@ def _flow(code: str | None) -> str | None:
 
 
 def _nozzle_refuses(item: Filament, slot: Slot, extruder: int) -> bool:
-    if slot.model not in _H2D:
+    if slot.model not in _H2D_FAMILY:
         return False
     flow = _flow(slot.nozzle_types.get(extruder))
     if flow == "tpu" and item.id not in _TPU_HIGH_FLOW_TPUS:

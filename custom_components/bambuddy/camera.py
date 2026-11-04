@@ -178,7 +178,7 @@ class BamBuddyCamera(BamBuddyPrinterEntity, Camera):
             except BamBuddyAuthError:
                 return await client.get_snapshot(printer_id, await self._get_token(renew=True))
         except BamBuddyError as err:
-            _LOGGER.debug("No camera picture from %s: %s", self.coordinator.printer_name, err)
+            _LOGGER.debug("No camera picture from %s: %s", self.coordinator.short_name, err)
             return None
 
     async def _open_stream(self, fps: int, *, renew: bool = False) -> aiohttp.ClientResponse:
@@ -209,9 +209,9 @@ class BamBuddyCamera(BamBuddyPrinterEntity, Camera):
                 if await client.stop_camera(printer_id):
                     return True
             except BamBuddyError as err:
-                _LOGGER.debug("BamBuddy did not end the camera connection of %s: %s", self.coordinator.printer_name, err)
+                _LOGGER.debug("BamBuddy did not end the camera connection of %s: %s", self.coordinator.short_name, err)
                 return False
-        _LOGGER.debug("Someone else watches %s: the stream gets BamBuddy's rate", self.coordinator.printer_name)
+        _LOGGER.debug("Someone else watches %s: the stream gets BamBuddy's rate", self.coordinator.short_name)
         return False
 
     def _counted(self, meter: _RateMeter, frames: int, fps: int) -> None:
@@ -236,15 +236,15 @@ class BamBuddyCamera(BamBuddyPrinterEntity, Camera):
                 upstream.release()
                 upstream = await self._open_stream(fps, renew=True)
         except BamBuddyError as err:
-            _LOGGER.debug("No camera stream from %s: %s", self.coordinator.printer_name, err)
+            _LOGGER.debug("No camera stream from %s: %s", self.coordinator.short_name, err)
             return None
         except (aiohttp.ClientError, TimeoutError) as err:
             # Only the kind: some aiohttp errors name the address, and the
             # token is part of it.
-            _LOGGER.debug("No camera stream from %s: %s", self.coordinator.printer_name, type(err).__name__)
+            _LOGGER.debug("No camera stream from %s: %s", self.coordinator.short_name, type(err).__name__)
             return None
         if upstream.status >= HTTPStatus.BAD_REQUEST:
-            _LOGGER.debug("No camera stream from %s: HTTP %s", self.coordinator.printer_name, upstream.status)
+            _LOGGER.debug("No camera stream from %s: HTTP %s", self.coordinator.short_name, upstream.status)
             upstream.release()
             return None
         # Where BamBuddy kept its connection, the rate it began at stays: the

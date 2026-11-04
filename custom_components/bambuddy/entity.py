@@ -23,7 +23,7 @@ from .coordinator import (
     failure,
     find_device,
 )
-from .models import PrinterData, ams_key, ams_model, ams_name, ams_object_id, ams_serial, display_model, short_name
+from .models import PrinterData, ams_key, ams_model, ams_name, ams_object_id, ams_serial, display_model, part_id
 from .plug_coordinator import BamBuddyPlugCoordinator
 from .plug_identity import PlugIdentity, device_identifier, entity_unique_id
 from .plugs import Plug
@@ -109,9 +109,7 @@ def printer_object_id(coordinator: BamBuddyPrinterCoordinator, *parts: str) -> s
 
 def suggest_entity_id(entity: Any, coordinator: BamBuddyPrinterCoordinator, *parts: str) -> None:
     """The ID a new printer entity gets (`printer_object_id`)."""
-    domain = _domain_of(entity)
-    if domain:
-        entity.entity_id = f"{domain}.{printer_object_id(coordinator, *parts)}"
+    _suggest(entity, printer_object_id(coordinator, *parts))
 
 
 def suggest_instance_entity_id(entity: Any, key: str) -> None:
@@ -264,7 +262,7 @@ class BamBuddyAmsEntity(BamBuddyPrinterEntity):
         """The unit's place now (BamBuddy's AMS id), else where it was."""
         unit = self.unit
         if unit is not None:
-            self._ams_id = int(unit.get("id", 0))
+            self._ams_id = part_id(unit)
         return self._ams_id
 
     @property
@@ -373,13 +371,13 @@ async def async_run_command(
     takes it -- a filament swap by hand, between the colours of a print.
     `offline_ok`: BamBuddy acts without the printer (it sends it nothing).
     `refresh`: a command, not a read: read the status again soon after.
-    `check`: raises `refuse(key, printer=name)` where the printer's state
+    `check`: raises a `refuse(...)` where the printer's state
     rules the command out for a reason of its own, after `allowed`.
     A refusal (401, 403) goes to the key's guard: it says whether the key is
     the cause, and alone starts a reauthentication."""
     data = coordinator.data
     # BamBuddy's name, short enough for a phone's toast.
-    name = short_name(coordinator.info)
+    name = coordinator.short_name
     if coordinator.replaced:
         raise refuse("printer_replaced", printer=name)
     if not data.connected and not offline_ok:
@@ -441,31 +439,6 @@ class BamBuddyPlugEntity(CoordinatorEntity[BamBuddyPlugCoordinator]):
     def plug(self) -> Plug | None:
         return (self.coordinator.data or {}).get(self.plug_id)
 
-    def plug_role(self) -> dict[str, Any] | None:
-        """What the card tells plugs apart by, and BamBuddy's own auto off --
-        as capability attributes: Home Assistant keeps those while the plug
-        is unavailable, and drops the others."""
-        plug = self.plug
-        if plug is None:
-            return None
-        return {
-            "powers_printer": plug.powers_printer,
-            # Of two plugs that power the printer, which is its own (the card's
-            # tag, switch-off row and offline view): BamBuddy's choice.
-            "printer_main": plug.id == self.coordinator.main_plug(plug.printer_id),
-            "on_printer_card": plug.on_card,
-            "bambuddy_auto_off": plug.bambuddy_auto_off,
-            "plug_type": plug.plug_type,
-        }
-
-    def plug_attributes(self) -> dict[str, Any]:
-        """Off to on, seen by the integration: the card counts the start."""
-        plug = self.plug
-        if plug is None:
-            return {}
-        on_since = self.coordinator.on_since(plug.id)
-        return {"on_since": on_since.isoformat() if on_since else None}
-
     @property
     def available(self) -> bool:
         return super().available and self.plug is not None
@@ -502,11 +475,45 @@ class BamBuddyPlugMainEntity(BamBuddyReachablePlugEntity):
 
     @property
     def capability_attributes(self) -> dict[str, Any] | None:
-        return self.plug_role()
+        """What the card tells plugs apart by, and BamBuddy's own auto off --
+        as capability attributes: Home Assistant keeps those while the plug
+        is unavailable, and drops the others."""
+        plug = self.plug
+        if plug is None:
+            return None
+        return {
+            "powers_printer": plug.powers_printer,
+            # Of two plugs that power the printer, which is its own (the card's
+            # tag, switch-off row and offline view): BamBuddy's choice.
+            "printer_main": plug.id == self.coordinator.main_plug(plug.printer_id),
+            "on_printer_card": plug.on_card,
+            "bambuddy_auto_off": plug.bambuddy_auto_off,
+            "plug_type": plug.plug_type,
+        }
 
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
-        return self.plug_attributes()
+        """Off to on, seen by the integration: the card counts the start."""
+        plug = self.plug
+        if plug is None:
+            return {}
+        on_since = self.coordinator.on_since(plug.id)
+        return {"on_since": on_since.isoformat() if on_since else None}
+
+
+class BamBuddyPlugPowerEntity(BamBuddyPlugMainEntity):
+    """The plug's power, on or off: its switch, or its state where it may not
+    be switched from here. Named as its device, the plug."""
+
+    _attr_name = None
+    _attr_translation_key = "plug"
+
+    def __init__(self, coordinator: BamBuddyPlugCoordinator, plug: Plug) -> None:
+        super().__init__(coordinator, plug, "power")
+
+    @property
+    def is_on(self) -> bool | None:
+        return self.plug.state if self.plug else None
 
 
 class BamBuddyAutoOffPart(BamBuddyPlugEntity):

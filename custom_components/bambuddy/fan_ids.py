@@ -7,7 +7,6 @@ then fan 2 into the one it left. An ID the user chose stays."""
 from __future__ import annotations
 
 import logging
-import re
 from typing import TYPE_CHECKING
 
 from homeassistant.core import HomeAssistant, callback
@@ -15,7 +14,7 @@ from homeassistant.helpers import entity_registry as er
 
 from .const import DOMAIN
 from .entity import printer_object_id
-from .rekey import free_entity_id
+from .rekey import free_entity_id, is_our_form
 
 if TYPE_CHECKING:
     from .coordinator import BamBuddyPrinterCoordinator
@@ -39,22 +38,21 @@ def async_rename_x2d_fans(
             entity_id = registry.async_get_entity_id("fan", DOMAIN, coordinator.entity_unique_id(key))
             if entity_id is None or not _ours(entity_id, printer_object_id(coordinator, old)):
                 continue
-            target = f"fan.{printer_object_id(coordinator, new)}"
+            wanted = f"fan.{printer_object_id(coordinator, new)}"
             # Home Assistant 2025.5 keeps a restored state when its entity is
             # renamed: the ID fan 10 left would read as taken.
-            state = hass.states.get(target)
-            if state is not None and state.attributes.get("restored") and registry.async_get(target) is None:
-                hass.states.async_remove(target)
+            state = hass.states.get(wanted)
+            if state is not None and state.attributes.get("restored") and registry.async_get(wanted) is None:
+                hass.states.async_remove(wanted)
             try:
                 target = free_entity_id(registry, "fan", printer_object_id(coordinator, new))
                 registry.async_update_entity(entity_id, new_entity_id=target)
             except Exception as err:  # noqa: BLE001 -- whatever stops it, the setup goes on
-                _LOGGER.warning("The fan %s of %s keeps its ID: %s", entity_id, coordinator.printer_name, err)
+                _LOGGER.warning("The fan %s of %s keeps its ID: %s", entity_id, coordinator.short_name, err)
                 continue
-            _LOGGER.info("The fan %s of %s is %s now", entity_id, coordinator.printer_name, target)
+            _LOGGER.info("The fan %s of %s is %s now", entity_id, coordinator.short_name, target)
 
 
 def _ours(entity_id: str, form: str) -> bool:
     """The ID the integration gave, or that with Home Assistant's suffix."""
-    object_id = entity_id.removeprefix("fan.")
-    return object_id == form or re.fullmatch(rf"{re.escape(form)}_(?:[2-9]|[1-9]\d+)", object_id) is not None
+    return is_our_form(entity_id.removeprefix("fan."), form)

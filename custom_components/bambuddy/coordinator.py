@@ -61,6 +61,7 @@ from .models import (
     camera_max_fps,
     find_printers,
     model_key,
+    part_id,
     printer_key,
     printer_name,
     short_name,
@@ -70,10 +71,10 @@ from .timers import async_call_later_until_stop
 
 if TYPE_CHECKING:
     from .auto_off import AutoOff
-    from .plug_coordinator import BamBuddyPlugCoordinator
     from .inventory import BamBuddyInventoryCoordinator
     from .key import KeyGuard
     from .live import BamBuddyLive
+    from .plug_coordinator import BamBuddyPlugCoordinator
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -291,7 +292,7 @@ class BamBuddyPrinterCoordinator(DataUpdateCoordinator[PrinterData]):
         # The fan kits BamBuddy reported at setup (`PrinterData.fan_kits`).
         self._kits_at_setup: frozenset[str] = frozenset()
         self._chamber_at_setup: frozenset[str] = frozenset()
-        self._hours_read = -RUNTIME_INTERVAL
+        self._minutely_read = -RUNTIME_INTERVAL
         # The AMS units' names in BamBuddy by place; None until read in this run.
         self.ams_labels: dict[int, str] | None = None
         self._maintenance: dict[str, Any] | None = None
@@ -344,7 +345,7 @@ class BamBuddyPrinterCoordinator(DataUpdateCoordinator[PrinterData]):
         try:
             # The runtime counter once a minute, beside the status, not after
             # it: a slow one delays this refresh by no more than its own read.
-            status, read, _ = await asyncio.gather(self._read_status(), self._read_hours(), self._read_maintenance())
+            status, read, _ = await asyncio.gather(self._read_status(), self._read_minutely(), self._read_maintenance())
         except UpdateFailed as err:
             # Gone from BamBuddy's list: the entry reloads now and its repair
             # tells -- no error to log, the last values stand until then.
@@ -397,7 +398,7 @@ class BamBuddyPrinterCoordinator(DataUpdateCoordinator[PrinterData]):
         # unless its id tells the type (an AMS HT; place 6, the A2L's Lite).
         versions_read = bool(data.status.get("firmware_version"))
         waiting = {
-            int(unit.get("id", 0))
+            part_id(unit)
             for unit in data.ams_units
             if not versions_read
             and (not ams_serial(unit) or not (unit.get("module_type") or ams_type_by_place(unit)))
@@ -420,7 +421,7 @@ class BamBuddyPrinterCoordinator(DataUpdateCoordinator[PrinterData]):
         entry_id = self.config_entry.entry_id
         if find_device(self.hass, entry_id, self.ams_identifier(serial)) is not None:
             return None
-        device = find_device(self.hass, entry_id, self.ams_identifier(str(int(unit.get("id", 0)))))
+        device = find_device(self.hass, entry_id, self.ams_identifier(str(part_id(unit))))
         if device is None or device.serial_number:
             return None
         model = ams_model(unit, self.data)
@@ -434,7 +435,7 @@ class BamBuddyPrinterCoordinator(DataUpdateCoordinator[PrinterData]):
             _LOGGER.warning(
                 "The AMS unit %s of %s got its serial number, but %s reloads did not move it to it: it gets its entities as a new device",
                 serial,
-                self.printer_name,
+                self.short_name,
                 RELOADS_PER_RUN,
             )
             return None
@@ -447,7 +448,7 @@ class BamBuddyPrinterCoordinator(DataUpdateCoordinator[PrinterData]):
         by its serial a moment later would be two devices. A unit known by
         its place that now reports its serial waits for the entry's reload:
         the next setup moves its device and entities to the serial."""
-        place = int(unit.get("id", 0))
+        place = part_id(unit)
         serial = ams_serial(unit)
         since = self._unserialised.get(place)
         if since is not None and self.hass.loop.time() - since < AMS_SERIAL_WAIT:
@@ -462,7 +463,7 @@ class BamBuddyPrinterCoordinator(DataUpdateCoordinator[PrinterData]):
                 holds = _run_counts(self.hass, "ams_holds")
                 key = (self.config_entry.entry_id, self.key, serial)
                 holds[key] = holds.get(key, 0) + 1
-                _LOGGER.debug("The AMS unit %s of %s got its serial number: the entry reloads", serial, self.printer_name)
+                _LOGGER.debug("The AMS unit %s of %s got its serial number: the entry reloads", serial, self.short_name)
                 self._schedule_reload()
             return False
         return True
@@ -471,6 +472,12 @@ class BamBuddyPrinterCoordinator(DataUpdateCoordinator[PrinterData]):
     def printer_name(self) -> str:
         """The device name, after the printer's name in BamBuddy."""
         return printer_name(self.info)
+
+    @property
+    def short_name(self) -> str:
+        """The printer's name in BamBuddy, else its model: for texts and the
+        log, which name no serial (the diagnostics leave it out)."""
+        return short_name(self.info)
 
     @property
     def frame_rate(self) -> int:
@@ -503,14 +510,14 @@ class BamBuddyPrinterCoordinator(DataUpdateCoordinator[PrinterData]):
         # task runs, so a reload cutting the refresh short leaves none behind.
         return await fetch(self.client.get_status(self.printer_id), entry=self.config_entry)
 
-    async def _read_hours(self) -> bool:
+    async def _read_minutely(self) -> bool:
         """The print hours, the printer's name and its AMS units' names in
         BamBuddy, once a minute -- True then; without them the status goes
         on and each keeps its last value."""
         now = self.hass.loop.time()
-        if now - self._hours_read < RUNTIME_INTERVAL:
+        if now - self._minutely_read < RUNTIME_INTERVAL:
             return False
-        self._hours_read = now
+        self._minutely_read = now
         runtime, _ = await asyncio.gather(self._read_runtime(), self._read_ams_labels())
         hours = runtime.get("total_hours")
         if isinstance(hours, int | float):
@@ -528,7 +535,7 @@ class BamBuddyPrinterCoordinator(DataUpdateCoordinator[PrinterData]):
         try:
             return await self.client.get_runtime(self.printer_id)
         except BamBuddyError as err:
-            _LOGGER.debug("No runtime counter for %s: %s", self.printer_name, err)
+            _LOGGER.debug("No runtime counter for %s: %s", self.short_name, err)
             return {}
 
     async def _read_ams_labels(self) -> None:
@@ -538,7 +545,7 @@ class BamBuddyPrinterCoordinator(DataUpdateCoordinator[PrinterData]):
         try:
             self.ams_labels = await self.client.get_ams_labels(self.printer_id)
         except BamBuddyError as err:
-            _LOGGER.debug("No AMS names for %s: %s", self.printer_name, err)
+            _LOGGER.debug("No AMS names for %s: %s", self.short_name, err)
 
     async def _read_maintenance(self) -> None:
         """The printer's maintenance tasks, every ten minutes and after a
@@ -553,7 +560,7 @@ class BamBuddyPrinterCoordinator(DataUpdateCoordinator[PrinterData]):
         try:
             maintenance = await self.client.get_maintenance(self.printer_id)
         except BamBuddyError as err:
-            _LOGGER.debug("No maintenance for %s: %s", self.printer_name, err)
+            _LOGGER.debug("No maintenance for %s: %s", self.short_name, err)
             return
         if generation == self._maintenance_generation:
             self._maintenance = maintenance
@@ -579,12 +586,12 @@ class BamBuddyPrinterCoordinator(DataUpdateCoordinator[PrinterData]):
         try:
             info = await self.client.get_printer(self.printer_id)
         except BamBuddyError as err:
-            _LOGGER.debug("No printer details for %s: %s", self.printer_name, err)
+            _LOGGER.debug("No printer details for %s: %s", self.short_name, err)
             return
         serial = str(info.get("serial_number") or "").strip()
         known = str(self.info.get("serial_number") or "").strip()
         if serial and known and serial != known:
-            _LOGGER.debug("BamBuddy lists another printer under the number of %s", self.printer_name)
+            _LOGGER.debug("BamBuddy lists another printer under the number of %s", self.short_name)
             self.replaced = True
             self._schedule_reload()
             return
@@ -620,20 +627,20 @@ class BamBuddyPrinterCoordinator(DataUpdateCoordinator[PrinterData]):
         try:
             listed = await self.client.get_printers()
         except BamBuddyError as err:
-            _LOGGER.debug("No printer list after a 404 for %s: %s", self.printer_name, err)
+            _LOGGER.debug("No printer list after a 404 for %s: %s", self.short_name, err)
             return False
         stored: list[dict[str, Any]] = self.config_entry.options.get(CONF_PRINTERS, [])
         found = dict(zip((stored_key(printer) for printer in stored), find_printers(listed, stored), strict=True))
         info = found.get(self.key)
         if info is None or info.get("id") != self.printer_id:
-            _LOGGER.debug("BamBuddy no longer lists %s under its number: the entry reloads", self.printer_name)
+            _LOGGER.debug("BamBuddy no longer lists %s under its number: the entry reloads", self.short_name)
             self._schedule_reload()
             return True
         return False
 
     def _replaced_error(self) -> UpdateFailed:
         return UpdateFailed(
-            translation_domain=DOMAIN, translation_key="printer_replaced", translation_placeholders={"printer": short_name(self.info)}
+            translation_domain=DOMAIN, translation_key="printer_replaced", translation_placeholders={"printer": self.short_name}
         )
 
     def _schedule_reload(self) -> None:
@@ -648,7 +655,7 @@ class BamBuddyPrinterCoordinator(DataUpdateCoordinator[PrinterData]):
         if reloads.get(key, 0) >= RELOADS_PER_RUN:
             return
         reloads[key] = reloads.get(key, 0) + 1
-        _LOGGER.debug("BamBuddy reports a chamber for %s that the setup had not: the entry reloads", self.printer_name)
+        _LOGGER.debug("BamBuddy reports a chamber for %s that the setup had not: the entry reloads", self.short_name)
         self._schedule_reload()
 
     @callback
@@ -659,7 +666,7 @@ class BamBuddyPrinterCoordinator(DataUpdateCoordinator[PrinterData]):
         its serial): its letter follows the place it is plugged in now, its
         model and firmware what it reports; an unplugged one keeps what was
         known."""
-        self.name = f"{DOMAIN} {short_name(self.info)}"
+        self.name = f"{DOMAIN} {self.short_name}"
         registry = dr.async_get(self.hass)
         entry_id = self.config_entry.entry_id
         printer = self.identifier
@@ -685,7 +692,7 @@ class BamBuddyPrinterCoordinator(DataUpdateCoordinator[PrinterData]):
                     # Its name in BamBuddy, else the letter of the place it is
                     # plugged in now -- once the names are read in this run.
                     if self.ams_labels is not None:
-                        place = int(unit.get("id", 0))
+                        place = part_id(unit)
                         details["name"] = ams_name(self.info, place, model, details["serial_number"], self.ams_labels.get(place))
             changed = {key: value for key, value in details.items() if getattr(device, key) != value}
             if device.name_by_user is not None:

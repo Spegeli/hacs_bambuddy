@@ -22,18 +22,18 @@ from homeassistant.helpers.restore_state import RestoreEntity
 
 from .api import BamBuddyClient
 from .auto_off import MAX_TEMPERATURE, MIN_TEMPERATURE, AutoOff, auto_off_for
+from .chamber import may_heat_chamber
 from .const import DOMAIN
 from .coordinator import BamBuddyConfigEntry, BamBuddyPrinterCoordinator
-from .plug_coordinator import BamBuddyPlugCoordinator
 from .entity import (
     BamBuddyAutoOffPart,
     BamBuddyDescribedEntity,
     BamBuddyPrinterEntity,
     async_add_plug_entities,
     async_run_command,
-    refuse,
 )
-from .models import CAMERA_FPS_STEP, CAMERA_MIN_FPS, PrinterData, camera_max_fps, heater_max, is_number, ventilating
+from .models import CAMERA_FPS_STEP, CAMERA_MIN_FPS, PrinterData, camera_max_fps, heater_max, is_number
+from .plug_coordinator import BamBuddyPlugCoordinator
 from .plugs import Plug
 
 PARALLEL_UPDATES = 1
@@ -103,7 +103,7 @@ NUMBERS: tuple[BamBuddyTemperatureDescription, ...] = (
         native_max_value=65,
         heater="chamber",
         set_fn=lambda client, printer, target: client.set_chamber_temperature(printer, target),
-        exists_fn=lambda data: bool(data.status.get("supports_chamber_heater")),
+        exists_fn=lambda data: data.has_chamber_heater(),
     ),
 )
 
@@ -119,7 +119,7 @@ async def async_setup_entry(
         return [("auto_off_temperature", partial(BamBuddyAutoOffTemperature, plugs, plug, auto_off))] if auto_off else []
 
     async_add_plug_entities(plugs, async_add_entities, create)
-    # Home Assistant's setting, not the printer's: with any key; where the
+    # Home Assistant's setting, not the printer's; where the
     # camera gives no more than the least (an external camera taken away in
     # BamBuddy), it goes.
     registry = er.async_get(hass)
@@ -167,22 +167,7 @@ class BamBuddyTemperature(BamBuddyDescribedEntity, NumberEntity):
                 await coordinator.client.set_airduct_mode(coordinator.printer_id, "heating")
             await description.set_fn(coordinator.client, coordinator.printer_id, target)
 
-        await async_run_command(coordinator, heat, check=_may_heat_chamber)
-
-
-def _may_heat_chamber(data: PrinterData, name: str) -> None:
-    """A chamber target waits while the chamber is ventilated, and goes not
-    into a print or a filament change in cooling mode (Bambu Studio: "Chamber
-    temperature cannot be changed in cooling mode while printing")."""
-    cooling = data.airduct == "cooling"
-    if data.job_running:
-        if cooling:
-            raise refuse("chamber_cooling_print", printer=name)
-    elif data.changing_filament:
-        if cooling:
-            raise refuse("filament_change", printer=name)
-    elif ventilating(data):
-        raise refuse("ventilation_on")
+        await async_run_command(coordinator, heat, check=may_heat_chamber)
 
 
 class BamBuddyAutoOffTemperature(BamBuddyAutoOffPart, RestoreNumber):
