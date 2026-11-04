@@ -223,13 +223,18 @@ def _offered(by_name: list[str], usable: dict[str, dict[str, Any]]) -> dict[tupl
     return offered
 
 
-def _check_machines(offered: dict[tuple[str, str], dict[str, dict[str, Any]]], machines_raw: dict[str, dict[str, Any]]) -> None:
+def _check_machines(offered: dict[tuple[str, str], dict[str, dict[str, Any]]], machine_presets: dict[str, dict[str, Any]]) -> None:
+    """Every model and nozzle the list offers has Bambu Studio's machine preset."""
     for model, diameter in offered:
-        if f"Bambu Lab {model} {diameter} nozzle" not in machines_raw:
+        if f"Bambu Lab {model} {diameter} nozzle" not in machine_presets:
             raise SystemExit(f"Bambu Studio has no machine preset Bambu Lab {model} {diameter} nozzle: its nozzle rules would go unseen")
 
 
-def _order(filaments: dict[str, dict[str, Any]], vendors: list[str]) -> Callable[[str], tuple[int, int, bytes]]:
+# The key the list sorts filament ids by.
+_Order = Callable[[str], tuple[int, int, bytes]]
+
+
+def _order(filaments: dict[str, dict[str, Any]], vendors: list[str]) -> _Order:
     """The list's order of filaments: by vendor, then type, then name."""
 
     def order(fid: str) -> tuple[int, int, bytes]:
@@ -241,7 +246,7 @@ def _order(filaments: dict[str, dict[str, Any]], vendors: list[str]) -> Callable
     return order
 
 
-def _not_on(ids: dict[str, dict[str, Any]], extruders: list[str], order: Callable[[str], tuple[int, int, bytes]]) -> dict[str, list[str]]:
+def _not_on(ids: dict[str, dict[str, Any]], extruders: list[str], order: _Order) -> dict[str, list[str]]:
     """A two-nozzle printer's filaments each nozzle refuses (the preset's printable bits)."""
     not_on: dict[str, list[str]] = {}
     for fid, preset in ids.items():
@@ -254,7 +259,8 @@ def _not_on(ids: dict[str, dict[str, Any]], extruders: list[str], order: Callabl
     return {physical: sorted(found, key=order) for physical, found in sorted(not_on.items())}
 
 
-def _apply_corrections(printers: dict[str, dict[str, Any]], filaments: dict[str, dict[str, Any]], order: Callable[[str], tuple[int, int, bytes]]) -> None:
+def _apply_corrections(printers: dict[str, dict[str, Any]], filaments: dict[str, dict[str, Any]], order: _Order) -> None:
+    """The models' corrections (MODEL_CORRECTIONS): ids removed, ids the list has added."""
     for key, change in MODEL_CORRECTIONS.items():
         for nozzle in printers.get(key, {}).values():
             kept = [fid for fid in nozzle["ids"] if fid not in change.get("remove", [])]
@@ -266,13 +272,13 @@ def build(root: Path, commit: str) -> dict[str, Any]:
     """The list, as filaments.json holds it."""
     _check_rules(root)
     version = str(_read(root / "resources" / "profiles" / "BBL.json").get("version") or "")
-    raw = _presets(root, "filament_list")
-    usable = _usable({name: _resolved(raw, name) for name in raw})
+    filament_presets = _presets(root, "filament_list")
+    usable = _usable({name: _resolved(filament_presets, name) for name in filament_presets})
     by_name = sorted(usable, key=lambda name: name.encode("utf-8"))
     filaments = _filament_entries(by_name, usable)
     offered = _offered(by_name, usable)
-    machines_raw = _presets(root, "machine_list")
-    _check_machines(offered, machines_raw)
+    machine_presets = _presets(root, "machine_list")
+    _check_machines(offered, machine_presets)
     vendors = _vendors(filaments)
     order = _order(filaments, vendors)
 
@@ -280,7 +286,7 @@ def build(root: Path, commit: str) -> dict[str, Any]:
     for (model, diameter), ids in offered.items():
         key = MODEL_KEYS.get(model, model.upper())
         nozzle: dict[str, Any] = {"ids": sorted(ids, key=order)}
-        machine = _resolved(machines_raw, f"Bambu Lab {model} {diameter} nozzle")
+        machine = _resolved(machine_presets, f"Bambu Lab {model} {diameter} nozzle")
         extruders = [str(item) for item in machine.get("physical_extruder_map") or []]
         if len(extruders) > 1 and (not_on := _not_on(ids, extruders, order)):
             nozzle["not_on"] = not_on
@@ -319,14 +325,8 @@ def fetch(target: Path, ref: str = "HEAD") -> str:
     return _git("rev-parse", "HEAD", cwd=target)
 
 
-def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description="Make the integration's filament list from Bambu Studio's profiles.")
-    parser.add_argument("checkout", type=Path, nargs="?", help="a Bambu Studio checkout of your own (with --commit)")
-    parser.add_argument("--commit", help="that checkout's commit, named in the list")
-    parser.add_argument("--fetch", action="store_true", help=f"fetch what the list needs into {FETCH_DIR.name}/ instead")
-    parser.add_argument("--ref", help="with --fetch: a commit's full id or a tag (default: the newest state)")
-    parser.add_argument("--out", type=Path, default=OUT, help="where to write the list (default: the integration's filaments.json)")
-    args = parser.parse_args(argv)
+def _check_arguments(parser: argparse.ArgumentParser, args: argparse.Namespace) -> None:
+    """The arguments that go together, or the parser's error."""
     if args.fetch == (args.checkout is not None) or (args.checkout is not None and not args.commit):
         parser.error("give --fetch, or a checkout with its --commit")
     if args.fetch and args.commit:
@@ -335,6 +335,17 @@ def main(argv: list[str] | None = None) -> int:
         parser.error("--ref goes with --fetch")
     if args.ref and _SHORT_ID.match(args.ref):
         parser.error("--ref takes a commit's full id (40 characters) or a tag")
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(description="Make the integration's filament list from Bambu Studio's profiles.")
+    parser.add_argument("checkout", type=Path, nargs="?", help="a Bambu Studio checkout of your own (with --commit)")
+    parser.add_argument("--commit", help="that checkout's commit, named in the list")
+    parser.add_argument("--fetch", action="store_true", help=f"fetch what the list needs into {FETCH_DIR.name}/ instead")
+    parser.add_argument("--ref", help="with --fetch: a commit's full id or a tag (default: the newest state)")
+    parser.add_argument("--out", type=Path, default=OUT, help="where to write the list (default: the integration's filaments.json)")
+    args = parser.parse_args(argv)
+    _check_arguments(parser, args)
     if args.fetch:
         root, commit = FETCH_DIR, fetch(FETCH_DIR, args.ref or "HEAD")
     else:
