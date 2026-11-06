@@ -141,10 +141,10 @@ The integration lives in `custom_components/bambuddy/`; the dashboard card's sou
 | `auto_off.py` | The switch-off after the print: Home Assistant's own, for the printer's own plug — BamBuddy's pick among the plugs that power it (waits for the nozzles, the AMS, a target; never beside BamBuddy's own auto off) |
 | `binary_sensor.py` | BamBuddy's connection; per printer online, door, build plate, SD card (a USB drive on the P2S, X2D and H2 series), developer mode, wired network, timelapse; per AMS unit drying; a plug's state where no switch shows it |
 | `brand/` | Icon and logo for Home Assistant's brands proxy |
-| `button.py` | Pause, resume, stop, plate cleared, clear HMS errors, refresh status; a script plug's Run; "Don't switch off this time" |
+| `button.py` | Pause, resume, stop, plate cleared, clear HMS errors, refresh status; a script plug's Run; "Don't turn off this time" |
 | `camera.py` | MJPEG stream and snapshot through BamBuddy's camera proxy, with a stream token kept for 55 minutes |
 | `cards.py` | Serves the dashboard card's bundle and adds it to every dashboard |
-| `chamber.py` | The chamber's three locks side by side: ventilating, a chamber target and the airduct's mode, each refused while another rules it out |
+| `chamber.py` | The chamber's three locks side by side: ventilating, a chamber target and the airduct's mode, each refused while another rules it out, what was just sent counted as done |
 | `config_flow.py` | Setup (address, API key, certificate check, printers), reauthentication, reconfiguration (a new address, its printers matched by serial number), and the options (Configure): Manage printers (add and remove them) and Settings (the live updates, with a test of the connection) |
 | `const.py` | Domain, config keys, the permissions the key needs (`REQUIRED_SCOPES`) and those it may have (`OPTIONAL_PERMISSIONS`), intervals, the live updates' defaults, the minimum BamBuddy version, print speed modes |
 | `coordinator.py` | One coordinator per printer (`/printers/{id}/status` every 10 seconds, when BamBuddy's live connection tells of a change, and twice after a command; print hours, BamBuddy's name and details and the AMS units' names in BamBuddy (`/printers/{id}/ams-labels`) once a minute, and the device names after them; its maintenance every 10 minutes and after a print), the instance's (`/archives/stats` every minute, `/system/info` every 5 minutes) and the update checks' (`/updates/check`, `/firmware/updates` every 6 hours) |
