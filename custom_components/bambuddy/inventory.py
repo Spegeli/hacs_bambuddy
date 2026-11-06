@@ -330,19 +330,25 @@ def spool_fit(spool: Spool, slot: filaments.Slot) -> Fit | None:
     return _FITS.get(why) if why is not None else None
 
 
+# The slot attributes from BamBuddy's inventory: kept out of the recorder.
+_ASSIGNABLE = "inventory_assignable"
+_SPOOL = "inventory_spool"
+INVENTORY_ATTRIBUTES = (_SPOOL, _ASSIGNABLE)
+
+
 def inventory_attributes(coordinator: BamBuddyInventoryCoordinator, printer_id: int, ams_id: int, tray_id: int) -> dict[str, Any]:
     """A slot's sensor attributes: nothing while the inventory is not shown;
     else whether spools may be assigned, and the slot's spool if it has one."""
     data = coordinator.data
     if data is None or not data.shown:
         return {}
-    attributes: dict[str, Any] = {"inventory_assignable": coordinator.assignable}
+    attributes: dict[str, Any] = {_ASSIGNABLE: coordinator.assignable}
     row = data.row_at((printer_id, ams_id, tray_id))
     if row is not None and (spool := data.spools.get(row.spool_id)) is not None:
         # The spool's other slots: BamBuddy can hold one in two (its "Show all spools",
         # a chip read in another printer).
         also = [place_json(other, printer_id) for other in data.places_of(spool.id, besides=row.slot)]
-        attributes["inventory_spool"] = {
+        attributes[_SPOOL] = {
             **spool.attributes(),
             "also_assigned": also,
             # What keeps the assignment when the slot is set anew: the colour and type BamBuddy
@@ -360,11 +366,17 @@ def spool_types(spool: Spool) -> list[str]:
     return sorted({printer_filament_type(name).upper() for name in names if name} - {""})
 
 
-def place_json(row: Placed, here: int | None = None) -> dict[str, Any]:
+def place_json(row: Placed, here: int) -> dict[str, Any]:
     """A slot a spool is assigned to, as the attributes and the actions name
-    it; with `here`, the printer asking, whether it is that printer's."""
-    place = {"printer_id": row.printer_id, "printer_name": row.printer_name, "ams_id": row.ams_id, "tray_id": row.tray_id, "ams_label": row.ams_label}
-    return place if here is None else {**place, "same_printer": row.printer_id == here}
+    it; `here`, the printer asking: whether it is that printer's."""
+    return {
+        "printer_id": row.printer_id,
+        "printer_name": row.printer_name,
+        "ams_id": row.ams_id,
+        "tray_id": row.tray_id,
+        "ams_label": row.ams_label,
+        "same_printer": row.printer_id == here,
+    }
 
 
 def diagnostics(coordinator: BamBuddyInventoryCoordinator) -> dict[str, Any]:

@@ -83,6 +83,8 @@ class KeyGuard:
         self._warned: set[str] = set()
         # Reads refused since the last check, by route: named once it finds the key fine.
         self._refused_reads: dict[str, BamBuddyApiError] = {}
+        # The last check a read that worked asked for.
+        self._worked_at: datetime | None = None
         # The optional permissions of the last check that answered: one without
         # an answer takes nothing away (#21).
         self._optional = first.scopes.optional if first.scopes is not None else frozenset()
@@ -152,6 +154,19 @@ class KeyGuard:
         if not isinstance(err, BamBuddyAuthError):
             self._refused_reads[err.path] = err
         self.async_check_soon()
+
+    @callback
+    def async_read_worked(self) -> None:
+        """A read BamBuddy answered: where the key stands refused, BamBuddy
+        may be back from what looked like a refusal -- checked soon, so the
+        repair goes with it; at most once a minute, should the check keep
+        saying no."""
+        if self._said not in ("unknown", "owner") or self._lock.locked():
+            return
+        now = dt_util.utcnow()
+        if self._worked_at is None or now - self._worked_at >= KEY_RETRY_DELAY:
+            self._worked_at = now
+            self.async_check_soon()
 
     async def async_refused(self, err: BamBuddyApiError) -> HomeAssistantError:
         """What to tell the user when BamBuddy refused a request (401 or

@@ -73,7 +73,7 @@ INVENTORY_PUSH_COOLDOWN = 1.0
 UPDATE_RETRY_INTERVAL = timedelta(minutes=15)
 # The print hours, BamBuddy's name and details of a printer change slowly:
 # read once a minute, not with every status.
-RUNTIME_INTERVAL = 60.0
+MINUTELY_INTERVAL = 60.0
 # Maintenance: every ten minutes (and after a print) -- a read can write to
 # BamBuddy's database.
 MAINTENANCE_INTERVAL = 600.0

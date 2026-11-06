@@ -30,9 +30,13 @@ TO_REDACT = {
     "tag_uid",
     "tray_uuid",
     "token",
-    # The user's own words: a printer's place, a plug's device name.
+    # The user's own words: a printer's place, a plug's device name, a job's
+    # file name.
     "location",
     "device_name",
+    "subtask_name",
+    "gcode_file",
+    "current_print",
 }
 
 

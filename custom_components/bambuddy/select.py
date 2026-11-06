@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
-from functools import partial
 
 from homeassistant.components.select import SelectEntity, SelectEntityDescription
 from homeassistant.const import EntityCategory
@@ -16,7 +15,7 @@ from .chamber import airduct_check
 from .const import PRINT_SPEEDS
 from .coordinator import BamBuddyConfigEntry
 from .entity import BamBuddyDescribedEntity, async_run_command
-from .models import JOB_STATES, PrinterData, by_code
+from .models import JOB_STATES, ChamberSent, PrinterData, by_code
 
 PARALLEL_UPDATES = 1
 
@@ -37,8 +36,10 @@ class BamBuddySelectDescription(SelectEntityDescription):
     refusal: str = "not_now"
     idle_only: bool = False
     # A choice the printer's state rules out: raises its own refusal, given
-    # the state and the choice.
-    option_check: Callable[[PrinterData, str], None] | None = None
+    # the state, the choice and what the chamber was just told.
+    option_check: Callable[[PrinterData, str, ChamberSent], None] | None = None
+    # The choice counts for the chamber's locks once BamBuddy took it.
+    airduct: bool = False
 
 
 SELECTS: tuple[BamBuddySelectDescription, ...] = (
@@ -64,6 +65,7 @@ SELECTS: tuple[BamBuddySelectDescription, ...] = (
         # during one).
         idle_only=True,
         option_check=airduct_check,
+        airduct=True,
     ),
     BamBuddySelectDescription(
         key="active_nozzle",
@@ -110,11 +112,19 @@ class BamBuddySelect(BamBuddyDescribedEntity, SelectEntity):
         if option not in (description.options or []):
             return  # the mode it is in, which only the printer sets
         option_check = description.option_check
+        coordinator = self.coordinator
+        sent = coordinator.chamber_sent
+
+        async def select() -> None:
+            await description.select_fn(coordinator.client, coordinator.printer_id, option)
+            if description.airduct:
+                sent.note(airduct=option)
+
         await async_run_command(
-            self.coordinator,
-            partial(description.select_fn, self.coordinator.client, self.coordinator.printer_id, option),
+            coordinator,
+            select,
             allowed=description.allowed,
             refusal=description.refusal,
             idle_only=description.idle_only,
-            check=None if option_check is None else lambda data, _name: option_check(data, option),
+            check=None if option_check is None else lambda data, _name: option_check(data, option, sent),
         )

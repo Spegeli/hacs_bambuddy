@@ -334,7 +334,7 @@
         "name": "Run"
       },
       "auto_off_skip": {
-        "name": "Don't switch off this time"
+        "name": "Don't turn off this time"
       }
     },
     "camera": {
@@ -398,7 +398,7 @@
         "name": "Camera frame rate"
       },
       "auto_off_temperature": {
-        "name": "Switch off when nozzle is below"
+        "name": "Turn off when nozzle is below"
       }
     },
     "select": {
@@ -767,7 +767,7 @@
         "name": "Power"
       },
       "auto_off": {
-        "name": "Switch off after the print"
+        "name": "Turn off after the print"
       },
       "auto_off_every_print": {
         "name": "Repeat after every print"
@@ -832,16 +832,16 @@
       "message": "{printer} is printing or paused: this works once the print is done or stopped."
     },
     "chamber_heating": {
-      "message": "The chamber is heating: switch the chamber heater off first."
+      "message": "The chamber is heating: turn off the chamber heater first."
     },
     "ventilation_heating_print": {
       "message": "{printer} prints in heating mode: ventilation is possible once the print is done."
     },
     "keep_warm_on": {
-      "message": "The chamber is kept warm: switch Keep warm off first."
+      "message": "The chamber is kept warm: turn off Keep warm first."
     },
     "ventilation_on": {
-      "message": "The chamber is being ventilated: switch the ventilation off first."
+      "message": "The chamber is being ventilated: turn off the ventilation first."
     },
     "chamber_cooling_print": {
       "message": "{printer} prints in cooling mode: the chamber can be heated once the print is done."
@@ -970,7 +970,7 @@
       "message": "BamBuddy could not switch the smart plug {plug}: {error}"
     },
     "auto_off_bambuddy": {
-      "message": "BamBuddy already switches the plug {plug} off after the print (its Auto Off). Turn that off in BamBuddy to use it here."
+      "message": "BamBuddy already turns the plug {plug} off after the print (its Auto Off). Turn that off in BamBuddy to use it here."
     },
     "cannot_delete_plug": {
       "message": "BamBuddy still links this smart plug to the printer, so its device would come back. Unlink or delete the plug in BamBuddy: its device then goes by itself within a minute."
@@ -1193,7 +1193,7 @@
       "fields": {
         "entity_id": {
           "name": "Slot",
-          "description": "The sensor of the AMS slot or of the external spool, for example \"… Slot 2\" or \"… External spool\"."
+          "description": "The sensor of the AMS slot or of the external spool, for example “… Slot 2” or “… External spool”."
         },
         "filament": {
           "name": "Filament",
@@ -1253,7 +1253,7 @@
     },
     "get_k_profiles": {
       "name": "Get K profiles",
-      "description": "Lists the printer's own K (pressure advance) calibrations for the nozzle that feeds a slot, as Set filament takes them, and the slot's current one. The printer is asked live (up to about 16 seconds). With an empty list, “answered” says whether the printer has none of its own (true) or did not answer (false).",
+      "description": "Lists the printer's own K (flow dynamics) calibrations for the nozzle that feeds a slot, as Set filament takes them, and the slot's current one. The printer is asked live (up to about 16 seconds). With an empty list, “answered” says whether the printer has none of its own (true) or did not answer (false).",
       "fields": {
         "entity_id": {
           "name": "Slot",
@@ -1267,7 +1267,7 @@
       "fields": {
         "entity_id": {
           "name": "Slot",
-          "description": "The sensor of the AMS slot or of the external spool, for example \"… Slot 2\" or \"… External spool\"."
+          "description": "The sensor of the AMS slot or of the external spool, for example “… Slot 2” or “… External spool”."
         }
       }
     },

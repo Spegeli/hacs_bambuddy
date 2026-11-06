@@ -44,7 +44,7 @@ from .entity import (
     async_add_ams_entities,
     async_add_plug_entities,
 )
-from .inventory import inventory_attributes
+from .inventory import INVENTORY_ATTRIBUTES, inventory_attributes
 from .models import (
     ACTIVE_STATES,
     AMS_HT_FIRST_ID,
@@ -533,9 +533,8 @@ class BamBuddyInstanceSensor(BamBuddyInstanceEntity, SensorEntity):
         return None if data is None else self.entity_description.value_fn(data)
 
 
-# The slot attributes from BamBuddy's inventory; the external spools in its
-# numbers (AMS 255, tray 0 left or the only one, 1 right).
-_INVENTORY_ATTRIBUTES = ("inventory_spool", "inventory_assignable")
+# The external spools in BamBuddy's inventory's numbers (AMS 255, tray 0 left
+# or the only one, 1 right).
 _EXTERNAL_TRAYS = {"external_spool": 0, "external_spool_2": 1}
 
 
@@ -549,7 +548,7 @@ class BamBuddyPrinterSensor(BamBuddyDescribedEntity, SensorEntity):
     entity_description: BamBuddyPrinterSensorDescription
     # The HMS list can be long and changes with each error, the inventory
     # spool with each print: kept out of the recorder.
-    _unrecorded_attributes = frozenset({"errors", *_INVENTORY_ATTRIBUTES})
+    _unrecorded_attributes = frozenset({"errors", *INVENTORY_ATTRIBUTES})
 
     def __init__(self, coordinator: BamBuddyPrinterCoordinator, description: BamBuddyPrinterSensorDescription) -> None:
         super().__init__(coordinator, description)
@@ -652,7 +651,7 @@ class BamBuddyAmsSlotSensor(BamBuddyAmsEntity, SensorEntity):
 
     _attr_translation_key = "ams_slot"
     # The inventory spool changes with each print: kept out of the recorder.
-    _unrecorded_attributes = frozenset(_INVENTORY_ATTRIBUTES)
+    _unrecorded_attributes = frozenset(INVENTORY_ATTRIBUTES)
 
     def __init__(self, coordinator: BamBuddyPrinterCoordinator, ams_id: int, slot: int) -> None:
         super().__init__(coordinator, ams_id, f"slot_{slot + 1}")

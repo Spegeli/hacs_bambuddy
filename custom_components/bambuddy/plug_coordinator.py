@@ -170,8 +170,7 @@ class BamBuddyPlugCoordinator(DataUpdateCoordinator[dict[int, Plug]]):
         return changed
 
     async def _read_list(self) -> list[dict[str, Any]]:
-        listed = await fetch(self.client.get_smart_plugs(), entry=self.config_entry)
-        return [info for info in listed if isinstance(info, dict) and isinstance(info.get("id"), int)]
+        return await fetch(self.client.get_smart_plugs(), entry=self.config_entry)
 
     async def _read_status(self, plug_id: int, patient: bool) -> dict[str, Any] | None:
         try:

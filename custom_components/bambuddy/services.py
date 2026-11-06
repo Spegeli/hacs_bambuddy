@@ -98,6 +98,21 @@ def _distance(limit: float) -> vol.All:
     return vol.All(vol.Coerce(float), vol.Range(min=-limit, max=limit))
 
 
+def _whole(value: Any) -> int:
+    """A whole number, as 2, 2.0 or "2": `vol.Coerce(int)` cuts 2.5 down to 2,
+    which names another spool, task or profile."""
+    if isinstance(value, int) and not isinstance(value, bool):
+        return value
+    if isinstance(value, float) and value.is_integer():
+        return int(value)
+    if isinstance(value, str):
+        try:
+            return int(value)
+        except ValueError:
+            pass
+    raise vol.Invalid("expected a whole number")
+
+
 _DEVICE = {vol.Required(ATTR_DEVICE_ID): cv.string}
 SCHEMAS: dict[str, vol.Schema] = {
     "move_axis": vol.Schema({**_DEVICE, vol.Required(ATTR_AXIS): vol.In(["x", "y", "z"]), vol.Required(ATTR_DISTANCE): _distance(200)}),
@@ -115,12 +130,12 @@ SCHEMAS: dict[str, vol.Schema] = {
     "stop_drying": vol.Schema(_DEVICE),
     "get_print_objects": vol.Schema(_DEVICE),
     "run_diagnostic": vol.Schema(_DEVICE),
-    "mark_maintenance_done": vol.Schema({**_DEVICE, vol.Required(ATTR_TASK_ID): vol.All(vol.Coerce(int), vol.Range(min=1, max=1_000_000))}),
+    "mark_maintenance_done": vol.Schema({**_DEVICE, vol.Required(ATTR_TASK_ID): vol.All(_whole, vol.Range(min=1, max=1_000_000))}),
     "answer_hms": vol.Schema(
         {**_DEVICE, vol.Required(ATTR_CODE): cv.string, vol.Required(ATTR_ACTION): vol.All(cv.string, vol.Upper)}
     ),
     "skip_objects": vol.Schema(
-        {**_DEVICE, vol.Required(ATTR_OBJECTS): vol.All(cv.ensure_list, [vol.Coerce(int)], vol.Length(min=1))}
+        {**_DEVICE, vol.Required(ATTR_OBJECTS): vol.All(cv.ensure_list, [_whole], vol.Length(min=1))}
     ),
     "set_filament": vol.Schema(
         {
@@ -129,7 +144,7 @@ SCHEMAS: dict[str, vol.Schema] = {
             vol.Optional(ATTR_FILAMENT): cv.string,
             vol.Optional(ATTR_COLOR): vol.All(vol.Coerce(tuple), vol.ExactSequence((cv.byte, cv.byte, cv.byte))),
             # The printer's K calibration by its index; -1 its default K.
-            vol.Optional(ATTR_K_PROFILE): vol.All(vol.Coerce(int), vol.Range(min=-1)),
+            vol.Optional(ATTR_K_PROFILE): vol.All(_whole, vol.Range(min=-1)),
         }
     ),
     "get_k_profiles": vol.Schema({vol.Required(ATTR_ENTITY_ID): cv.entity_id}),
@@ -137,7 +152,7 @@ SCHEMAS: dict[str, vol.Schema] = {
     "reset_slot": vol.Schema({vol.Required(ATTR_ENTITY_ID): cv.entity_id}),
     "refresh_rfid": vol.Schema({vol.Required(ATTR_ENTITY_ID): cv.entity_id}),
     "assign_spool": vol.Schema(
-        {vol.Required(ATTR_ENTITY_ID): cv.entity_id, vol.Required(ATTR_SPOOL_ID): vol.All(vol.Coerce(int), vol.Range(min=1))}
+        {vol.Required(ATTR_ENTITY_ID): cv.entity_id, vol.Required(ATTR_SPOOL_ID): vol.All(_whole, vol.Range(min=1))}
     ),
     "unassign_spool": vol.Schema({vol.Required(ATTR_ENTITY_ID): cv.entity_id}),
     "get_spools": vol.Schema({vol.Required(ATTR_ENTITY_ID): cv.entity_id}),

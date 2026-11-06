@@ -30,11 +30,11 @@ from .storage import async_load_once
 
 STORE_KEY = f"{DOMAIN}.plug_secret"
 STORE_VERSION = 1
-# hass.data[DOMAIN]: the secret once loaded in this run.
 # What a plug is known by: from what it switches, from its BamBuddy record
 # (a REST plug), or the last key kept (the answer lacked the field).
 type KnownBy = Literal["source", "record", "kept"]
 
+# hass.data[DOMAIN]: the secret once loaded in this run.
 _DATA = "plug_secret"
 _LOCK = "plug_secret_lock"
 

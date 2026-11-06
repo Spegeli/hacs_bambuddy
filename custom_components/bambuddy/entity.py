@@ -90,7 +90,7 @@ def _domain_of(entity: object) -> str | None:
     return None
 
 
-def _suggest(entity: Any, *words: str) -> None:
+def _suggest(entity: Entity, *words: str) -> None:
     """The entity ID a new entity gets: its platform and the words, in
     Home Assistant's form. Home Assistant keeps the ID of an entity it knows."""
     domain = _domain_of(entity)
@@ -107,19 +107,19 @@ def printer_object_id(coordinator: BamBuddyPrinterCoordinator, *parts: str) -> s
     return slugify(" ".join((display_model(info.get("model")) or "printer", serial, *parts)))
 
 
-def suggest_entity_id(entity: Any, coordinator: BamBuddyPrinterCoordinator, *parts: str) -> None:
+def suggest_entity_id(entity: Entity, coordinator: BamBuddyPrinterCoordinator, *parts: str) -> None:
     """The ID a new printer entity gets (`printer_object_id`)."""
     _suggest(entity, printer_object_id(coordinator, *parts))
 
 
-def suggest_instance_entity_id(entity: Any, key: str) -> None:
+def suggest_instance_entity_id(entity: Entity, key: str) -> None:
     """The ID a new entity of the instance gets: BamBuddy and the English
     key -- not its address, which may change. A second instance's get Home
     Assistant's `_2`."""
     _suggest(entity, "bambuddy", key.removeprefix("bambuddy_"))
 
 
-def suggest_plug_entity_id(entity: Any, identity: PlugIdentity, key: str) -> None:
+def suggest_plug_entity_id(entity: Entity, identity: PlugIdentity, key: str) -> None:
     """The ID a new entity of a smart plug gets: six characters of what the
     plug switches and the English key -- it stays when the plug is renamed,
     moved to another printer or found on another BamBuddy; a second plug
@@ -142,7 +142,7 @@ def switch_off_prefix(entry_id: str) -> str:
     return f"{entry_id}_switchoff_"
 
 
-def key_by_printer(entity: Any, printer: BamBuddyPrinterCoordinator, key: str) -> None:
+def key_by_printer(entity: Entity, printer: BamBuddyPrinterCoordinator, key: str) -> None:
     """A switch-off entity's unique ID and entity ID, by its printer."""
     entity._attr_unique_id = switch_off_unique_id(printer.config_entry.entry_id, printer.key, key)
     suggest_entity_id(entity, printer, key)

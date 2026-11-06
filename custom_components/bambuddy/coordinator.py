@@ -18,6 +18,7 @@ from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers import issue_registry as ir
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
+from homeassistant.util import dt as dt_util
 
 from .api import (
     BamBuddyApiError,
@@ -44,7 +45,7 @@ from .const import (
     REFRESH_AFTER_COMMAND,
     REFRESH_AFTER_COMMAND_AGAIN,
     RELOADS_PER_RUN,
-    RUNTIME_INTERVAL,
+    MINUTELY_INTERVAL,
     SYSTEM_INTERVAL,
     UPDATE_INTERVAL,
     UPDATE_RETRY_INTERVAL,
@@ -52,6 +53,7 @@ from .const import (
 from .models import (
     CAMERA_MIN_FPS,
     JOB_STATES,
+    ChamberSent,
     PrinterData,
     ams_key,
     ams_model,
@@ -101,11 +103,12 @@ async def fetch(call: Awaitable[_T], *, entry: BamBuddyConfigEntry | None = None
     reauthentication, so a 401 BamBuddy answers for a moment, or a route it
     refuses despite every scope, asks for no new key; a 401 says so only
     once the guard confirmed it. During the setup (`entry` not loaded yet)
-    the setup's own check ran a moment before."""
+    the setup's own check ran a moment before. A read that works tells the
+    guard too: a key it stands refused on may be fine again."""
+    runtime: BamBuddyData | None = getattr(entry, "runtime_data", None) if entry is not None else None
     try:
-        return await call
+        answer = await call
     except (BamBuddyAuthError, BamBuddyPermissionError) as err:
-        runtime: BamBuddyData | None = getattr(entry, "runtime_data", None) if entry is not None else None
         if runtime is not None:
             runtime.key.async_read_refused(err)
         if isinstance(err, BamBuddyAuthError):
@@ -115,6 +118,9 @@ async def fetch(call: Awaitable[_T], *, entry: BamBuddyConfigEntry | None = None
         raise kind(translation_domain=DOMAIN, translation_key="bambuddy_refused", translation_placeholders={"error": err.detail}) from err
     except BamBuddyError as err:
         raise failure(err, kind) from err
+    if runtime is not None:
+        runtime.key.async_read_worked()
+    return answer
 
 
 @callback
@@ -221,6 +227,17 @@ def ams_identifier(entry_id: str, printer: str, unit: str) -> tuple[str, str]:
     return (DOMAIN, f"{entry_id}_printer_{printer}_ams_{unit}")
 
 
+def ams_identifier_prefix(entry_id: str, printer: str) -> str:
+    """What every AMS unit's identifier of the printer starts with."""
+    return ams_identifier(entry_id, printer, "")[1]
+
+
+def _type_known(data: PrinterData, unit: dict[str, Any]) -> bool:
+    """Whether an AMS unit's type can be trusted: BamBuddy read the versions,
+    the unit reports it, or its id tells it."""
+    return bool(data.status.get("firmware_version") or unit.get("module_type") or ams_type_by_place(unit))
+
+
 def find_device(hass: HomeAssistant, entry_id: str, identifier: tuple[str, str]) -> dr.DeviceEntry | None:
     """The entry's device with this identifier (async_get_device by
     identifiers is deprecated from Home Assistant 2026.8 on)."""
@@ -270,6 +287,8 @@ class BamBuddyPrinterCoordinator(DataUpdateCoordinator[PrinterData]):
         # and whether its model changed since the last: then the entities
         # the model no longer has leave the registry.
         self.created: set[str] = set()
+        # What the chamber was just told, for its locks.
+        self.chamber_sent = ChamberSent(lambda: dt_util.utcnow().timestamp())
         self.model_changed = False
         # What the device and the entities are known by: the serial number.
         self.key = printer_key(info)
@@ -281,8 +300,9 @@ class BamBuddyPrinterCoordinator(DataUpdateCoordinator[PrinterData]):
         self._firmware: str | None = None
         self._refresh_later: CALLBACK_TYPE | None = None
         self._hours: float | None = None
-        # Since when each AMS place reports a unit without a serial number.
-        self._unserialised: dict[int, float] = {}
+        # Since when each AMS place waits: for its unit's serial number, or
+        # with the serial for the unit's type.
+        self._waiting_since: dict[int, float] = {}
         # Serials of AMS units this coordinator holds for a reload (`rekey_source`).
         self._held: set[str] = set()
         # The printer's K profiles per nozzle diameter, when last listed.
@@ -292,7 +312,7 @@ class BamBuddyPrinterCoordinator(DataUpdateCoordinator[PrinterData]):
         # The fan kits BamBuddy reported at setup (`PrinterData.fan_kits`).
         self._kits_at_setup: frozenset[str] = frozenset()
         self._chamber_at_setup: frozenset[str] = frozenset()
-        self._minutely_read = -RUNTIME_INTERVAL
+        self._minutely_read = -MINUTELY_INTERVAL
         # The AMS units' names in BamBuddy by place; None until read in this run.
         self.ams_labels: dict[int, str] | None = None
         self._maintenance: dict[str, Any] | None = None
@@ -397,13 +417,8 @@ class BamBuddyPrinterCoordinator(DataUpdateCoordinator[PrinterData]):
         # report first, and the model goes into its entity IDs for good --
         # unless its id tells the type (an AMS HT; place 6, the A2L's Lite).
         versions_read = bool(data.status.get("firmware_version"))
-        waiting = {
-            part_id(unit)
-            for unit in data.ams_units
-            if not versions_read
-            and (not ams_serial(unit) or not (unit.get("module_type") or ams_type_by_place(unit)))
-        }
-        self._unserialised = {place: self._unserialised.get(place, now) for place in waiting}
+        waiting = {part_id(unit) for unit in data.ams_units if not versions_read and not (ams_serial(unit) and _type_known(data, unit))}
+        self._waiting_since = {place: self._waiting_since.get(place, now) for place in waiting}
 
     def rekey_source(self, unit: dict[str, Any], *, holding: bool = False) -> dr.DeviceEntry | None:
         """The device of the unit's place that this unit, now with a serial,
@@ -416,7 +431,7 @@ class BamBuddyPrinterCoordinator(DataUpdateCoordinator[PrinterData]):
         serial = ams_serial(unit)
         if serial is None:
             return None
-        if not self.data.status.get("firmware_version") and not unit.get("module_type") and not ams_type_by_place(unit):
+        if not _type_known(self.data, unit):
             return None
         entry_id = self.config_entry.entry_id
         if find_device(self.hass, entry_id, self.ams_identifier(serial)) is not None:
@@ -450,7 +465,7 @@ class BamBuddyPrinterCoordinator(DataUpdateCoordinator[PrinterData]):
         the next setup moves its device and entities to the serial."""
         place = part_id(unit)
         serial = ams_serial(unit)
-        since = self._unserialised.get(place)
+        since = self._waiting_since.get(place)
         if since is not None and self.hass.loop.time() - since < AMS_SERIAL_WAIT:
             # Waiting for its serial, or with it for its type. A unit known
             # before -- by its serial, or without one by its place -- has
@@ -498,7 +513,7 @@ class BamBuddyPrinterCoordinator(DataUpdateCoordinator[PrinterData]):
 
     def ams_identifier_prefix(self) -> str:
         """What the identifiers of all the printer's AMS unit devices begin with."""
-        return self.ams_identifier("")[1]
+        return ams_identifier_prefix(self.config_entry.entry_id, self.key)
 
     def entity_unique_id(self, key: str) -> str:
         """What the printer's entity `key` is known by: the entry, the
@@ -511,11 +526,11 @@ class BamBuddyPrinterCoordinator(DataUpdateCoordinator[PrinterData]):
         return await fetch(self.client.get_status(self.printer_id), entry=self.config_entry)
 
     async def _read_minutely(self) -> bool:
-        """The print hours, the printer's name and its AMS units' names in
-        BamBuddy, once a minute -- True then; without them the status goes
-        on and each keeps its last value."""
+        """The print hours, the printer's name, its AMS units' names in
+        BamBuddy and its details (`_read_details`), once a minute -- True
+        then; without them the status goes on and each keeps its last value."""
         now = self.hass.loop.time()
-        if now - self._minutely_read < RUNTIME_INTERVAL:
+        if now - self._minutely_read < MINUTELY_INTERVAL:
             return False
         self._minutely_read = now
         runtime, _ = await asyncio.gather(self._read_runtime(), self._read_ams_labels())

@@ -191,16 +191,20 @@ class BamBuddyVentilation(BamBuddyPrinterEntity, FanEntity):
             await self.async_turn_off()
             return
         coordinator = self.coordinator
+        sent = coordinator.chamber_sent
         fans = ventilation_fans(self.data)
 
         async def ventilate() -> None:
-            if coordinator.data.airduct != "cooling":
+            if sent.get("airduct", coordinator.data.airduct) != "cooling":
                 await coordinator.client.set_airduct_mode(coordinator.printer_id, "cooling")
+                sent.note(airduct="cooling")
+            if coordinator.data.airduct != "cooling":
                 await coordinator.async_wait_for(lambda data: data.airduct == "cooling", VENT_MODE_WAIT, VENT_MODE_POLL)
             for fan in fans:
                 await coordinator.client.set_fan_speed(coordinator.printer_id, fan.fan, speed)
+                sent.note(ventilating=True)
 
-        await async_run_command(coordinator, ventilate, check=may_ventilate)
+        await async_run_command(coordinator, ventilate, check=partial(may_ventilate, sent=sent))
 
     async def async_turn_on(
         self, percentage: int | None = None, preset_mode: str | None = None, **kwargs: Any
@@ -211,13 +215,15 @@ class BamBuddyVentilation(BamBuddyPrinterEntity, FanEntity):
         # Outside cooling mode it is off already, and its fans do other work:
         # the X2D's right fan filters, the P2S's circulates through the
         # filter, the H2's exhaust fan draws off the laser's fumes.
-        if self.data.airduct != "cooling":
-            return
         coordinator = self.coordinator
+        sent = coordinator.chamber_sent
+        if sent.get("airduct", self.data.airduct) != "cooling":
+            return
         fans = ventilation_fans(self.data)
 
         async def stop() -> None:
             for fan in fans:
                 await coordinator.client.set_fan_speed(coordinator.printer_id, fan.fan, 0)
+            sent.note(ventilating=False)
 
         await async_run_command(coordinator, stop)

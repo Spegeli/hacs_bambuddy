@@ -4,7 +4,7 @@ slots, and what each printer model has."""
 from __future__ import annotations
 
 import re
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any, TypeGuard
@@ -14,6 +14,10 @@ from homeassistant.util import slugify
 
 from . import filaments
 from .const import CONF_PRINTER_ID, CONF_PRINTER_NAME, CONF_SERIAL, MIN_BAMBUDDY_VERSION
+
+# How long a command to the chamber counts for its locks: the printer's
+# report follows within about four seconds.
+SENT_HOLD = 5.0
 
 # The print status sensor's states. BamBuddy passes the firmware's
 # gcode_state on and adds "unknown"; a printer it cannot reach is "offline".
@@ -194,6 +198,8 @@ NOTHING_LOADED = 255
 EXTERNAL_AMS = 255
 # The first unit id of an AMS HT (128-135).
 AMS_HT_FIRST_ID = 128
+# The place BamBuddy gives the A2L's AMS Lite.
+AMS_LITE_PLACE = 6
 # BamBuddy's airduct modes; the laser mode (the H2 series' laser module) only the printer sets.
 AIRDUCT_MODES = {0: "cooling", 1: "heating", 2: "laser"}
 
@@ -316,9 +322,34 @@ def ventilation_speed(data: PrinterData) -> int:
     return max((_speed(data, fan) for fan in ventilation_fans(data)), default=0)
 
 
-def ventilating(data: PrinterData) -> bool:
+class ChamberSent:
+    """What the integration just told a printer's chamber, for the locks:
+    the printer reports a command seconds later, and until then the report
+    would refuse the next step of a change it just allowed. Only a command
+    BamBuddy took counts, and only for `SENT_HOLD` seconds: after them the
+    report decides, whether the printer took it or not."""
+
+    def __init__(self, clock: Callable[[], float]) -> None:
+        self._clock = clock
+        self._held: dict[str, tuple[float, Any]] = {}
+
+    def note(self, **values: Any) -> None:
+        """`target`, `ventilating` or `airduct`, as sent just now."""
+        now = self._clock()
+        self._held.update({name: (now, value) for name, value in values.items()})
+
+    def get(self, name: str, read: Any) -> Any:
+        """The value sent within the hold, else `read`, the report's."""
+        held = self._held.get(name)
+        return held[1] if held is not None and self._clock() - held[0] < SENT_HOLD else read
+
+
+NOTHING_SENT = ChamberSent(float)
+
+
+def ventilating(data: PrinterData, sent: ChamberSent = NOTHING_SENT) -> bool:
     """The airduct on cooling and a ventilation fan running."""
-    return data.airduct == "cooling" and ventilation_speed(data) > 0
+    return sent.get("airduct", data.airduct) == "cooling" and bool(sent.get("ventilating", ventilation_speed(data) > 0))
 
 
 def unit_extruder(data: PrinterData, ams_id: int) -> Any:
@@ -333,17 +364,17 @@ def nozzle_side(extruder: Any) -> str:
     return "left" if str(extruder) == "1" else "right"
 
 
-def chamber_heats(data: PrinterData) -> bool:
+def chamber_heats(data: PrinterData, sent: ChamberSent = NOTHING_SENT) -> bool:
     """The chamber is heated: a target above 0 where BamBuddy reports a
     heater, else (the P2S) the airduct on heating, which keeps the warmth."""
     if data.has_chamber_heater():
-        return chamber_target_set(data)
-    return data.has_airduct() and data.airduct == "heating"
+        return chamber_target_set(data, sent)
+    return data.has_airduct() and sent.get("airduct", data.airduct) == "heating"
 
 
-def chamber_target_set(data: PrinterData) -> bool:
+def chamber_target_set(data: PrinterData, sent: ChamberSent = NOTHING_SENT) -> bool:
     """The chamber heater has a target above 0."""
-    target = data.temperatures.get("chamber_target")
+    target = sent.get("target", data.temperatures.get("chamber_target"))
     return is_number(target) and target > 0
 
 
@@ -661,14 +692,14 @@ def ams_type_by_place(unit: dict[str, Any]) -> bool:
     """Whether a unit's place tells its type without BamBuddy's module type:
     an AMS HT (ids 128-135), the A2L's AMS Lite (place 6)."""
     unit_id = unit.get("id", 0)
-    return isinstance(unit_id, int) and (unit_id >= AMS_HT_FIRST_ID or unit_id == 6)
+    return isinstance(unit_id, int) and (unit_id >= AMS_HT_FIRST_ID or unit_id == AMS_LITE_PLACE)
 
 
 def ams_label(unit_id: int) -> str:
     """An AMS unit's place, lettered as Bambu Lab and BamBuddy do: AMS A-D,
     AMS HT A-H; an A2L's AMS Lite (unit 6) "AMS Lite", without a letter
     (BamBuddy's amsHelpers.ts): an AMS at place 0 is AMS A beside it."""
-    if unit_id == 6:
+    if unit_id == AMS_LITE_PLACE:
         return "AMS Lite"
     kind = "AMS HT" if unit_id >= AMS_HT_FIRST_ID else "AMS"
     return f"{kind} {chr(ord('A') + ams_number(unit_id) - 1)}"
@@ -681,7 +712,7 @@ AMS_MODELS = ("AMS", "AMS 2 Pro", "AMS HT", "AMS Lite")
 def ams_letter(unit_id: int) -> str | None:
     """A place's letter as on the printer (`ams_label`), in small: a-d, AMS
     HT a-h; none for the A2L's AMS Lite."""
-    return None if unit_id == 6 else ams_label(unit_id)[-1].lower()
+    return None if unit_id == AMS_LITE_PLACE else ams_label(unit_id)[-1].lower()
 
 
 def ams_object_id(model: str, printer_key: str, unit_id: int, serial: str | None, key: str) -> str:
@@ -831,7 +862,7 @@ def ams_model(unit: dict[str, Any], printer: PrinterData) -> str:
     if module == "ams":
         return "AMS"
     # BamBuddy's type once it reads the AMS Lite's version (maziggy/bambuddy#3348).
-    if module == "ams_f1" or unit_id == 6:
+    if module == "ams_f1" or unit_id == AMS_LITE_PLACE:
         return "AMS Lite"
     return "AMS Lite" if unit_id == 0 and model_key(printer.model) in {"A1", "A1 MINI"} else "AMS"
 
@@ -868,8 +899,8 @@ def ams_number(unit_id: int) -> int:
     """The unit's place among its kind, from 1: AMS 1-4, AMS HT 1-8, an
     A2L's AMS Lite (BamBuddy's id 6) as 1."""
     if unit_id >= AMS_HT_FIRST_ID:
-        return unit_id - 127
-    if unit_id == 6:
+        return unit_id - AMS_HT_FIRST_ID + 1
+    if unit_id == AMS_LITE_PLACE:
         return 1
     return unit_id + 1
 
@@ -880,7 +911,7 @@ def tray_id(unit_id: int, slot: int) -> int:
     an AMS HT."""
     if unit_id >= AMS_HT_FIRST_ID:
         return unit_id
-    if unit_id == 6:
+    if unit_id == AMS_LITE_PLACE:
         return 24 + slot
     return unit_id * 4 + slot
 

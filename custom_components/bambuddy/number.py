@@ -155,19 +155,23 @@ class BamBuddyTemperature(BamBuddyDescribedEntity, NumberEntity):
 
     async def async_set_native_value(self, value: float) -> None:
         coordinator, description, target = self.coordinator, self.entity_description, round(value)
-        if description.key != "chamber_target" or target <= 0 or not self.data.has_airduct():
+        if description.key != "chamber_target":
             await async_run_command(coordinator, partial(description.set_fn, coordinator.client, coordinator.printer_id, target))
             return
+        sent = coordinator.chamber_sent
+        heats = target > 0 and self.data.has_airduct()
 
         async def heat() -> None:
             # As Bambu's start G-code: the airduct on heating first -- where a
             # print or a filament change does not keep the mode it set.
             data = coordinator.data
-            if not data.job_running and not data.changing_filament and data.airduct != "heating":
+            if heats and not data.job_running and not data.changing_filament and sent.get("airduct", data.airduct) != "heating":
                 await coordinator.client.set_airduct_mode(coordinator.printer_id, "heating")
+                sent.note(airduct="heating")
             await description.set_fn(coordinator.client, coordinator.printer_id, target)
+            sent.note(target=target)
 
-        await async_run_command(coordinator, heat, check=may_heat_chamber)
+        await async_run_command(coordinator, heat, check=partial(may_heat_chamber, sent=sent) if heats else None)
 
 
 class BamBuddyAutoOffTemperature(BamBuddyAutoOffPart, RestoreNumber):

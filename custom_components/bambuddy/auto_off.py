@@ -38,10 +38,10 @@ ENTITIES = (("switch", "auto_off"), ("switch", "auto_off_every_print"), ("number
 # switch off; done: it switched off (or the plug went off meanwhile);
 # skipped: "not this time"; failed_print: the print failed or was stopped,
 # the printer stays on; gave_up: within two hours the printer never got
-# ready (a hot nozzle, drying, a filament change, a target, BamBuddy lost it),
-# or the plug never took the switch-off; bambuddy: BamBuddy's own auto off is
-# on for the plug, ours stands aside.
-type Phase = Literal["idle", "waiting", "done", "skipped", "failed_print", "gave_up", "bambuddy"]
+# ready (a hot nozzle, drying, a filament change, a target, BamBuddy lost it);
+# plug_failed: the plug refused the switch-off for ten minutes; bambuddy:
+# BamBuddy's own auto off is on for the plug, ours stands aside.
+type Phase = Literal["idle", "waiting", "done", "skipped", "failed_print", "gave_up", "plug_failed", "bambuddy"]
 PHASES: tuple[str, ...] = get_args(Phase.__value__)
 
 # What a wait waits for, for the card: the nozzle to cool, the AMS to dry or
@@ -55,7 +55,8 @@ MIN_TEMPERATURE = 30
 MAX_TEMPERATURE = 100
 # It stops waiting after so long.
 WAIT_LIMIT = timedelta(hours=2)
-# A switch-off the plug does not take: tried with every update for so long.
+# A switch-off the plug does not take: tried again this often, for so long.
+RETRY_GAP = timedelta(seconds=30)
 RETRY_LIMIT = timedelta(minutes=10)
 # A read of the plug right after the switch-off may still say on: only one
 # later counts as switched on again.
@@ -127,6 +128,7 @@ class AutoOff:
         # never a FINISH found at the start or after a reconnect.
         self._job_seen = False
         self._failing_since: datetime | None = None
+        self._retry_at: datetime | None = None
         # A switch-off on its way: "not this time" can no longer stop it.
         self.switching = False
         self._listeners: list[Callable[[], None]] = []
@@ -164,6 +166,7 @@ class AutoOff:
         self.since = dt_util.utcnow()
         self.waiting_for = None
         self._failing_since = None
+        self._retry_at = None
         self._notify()
 
     # What the user does
@@ -281,9 +284,10 @@ class AutoOff:
         if not self.armed:
             self._set("idle")
             return
-        if (self.since is not None and now - self.since > WAIT_LIMIT) or (
-            self._failing_since is not None and now - self._failing_since > RETRY_LIMIT
-        ):
+        if self._failing_since is not None and now - self._failing_since > RETRY_LIMIT:
+            self._end("plug_failed")
+            return
+        if self.since is not None and now - self.since > WAIT_LIMIT:
             self._end("gave_up")
             return
         if plug is None or not self._belongs(plug):
@@ -303,7 +307,7 @@ class AutoOff:
         if shown != self.waiting_for:
             self.waiting_for = shown
             self._notify()
-        if waiting is not None or self.switching:
+        if waiting is not None or self.switching or (self._retry_at is not None and now < self._retry_at):
             return
         self.switching = True
         self._notify()
@@ -325,15 +329,20 @@ class AutoOff:
             reread = PrinterData(self.printer.info, status, None, None)
             if self.phase != "waiting" or not self.armed or blocker(reread, self.threshold) is not None:
                 return
-            self.plugs.note_command()
+            if self._failing_since is None:
+                # Only a first try can change the plug: a read under way
+                # stays good while the plug keeps refusing.
+                self.plugs.note_command()
             await self.plugs.client.control_plug(plug.id, False)
         except BamBuddyError as err:
             _LOGGER.debug("Switching the plug %s off after the print failed: %s", plug.name, err)
             if isinstance(err, (BamBuddyAuthError, BamBuddyPermissionError)):
                 # Whether the key is the cause: the guard checks it.
                 self.plugs.config_entry.runtime_data.key.async_read_refused(err)
+            now = dt_util.utcnow()
             if self._failing_since is None:
-                self._failing_since = dt_util.utcnow()
+                self._failing_since = now
+            self._retry_at = now + RETRY_GAP
             self.waiting_for = "plug"
             return
         finally:

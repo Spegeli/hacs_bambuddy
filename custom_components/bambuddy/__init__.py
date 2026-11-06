@@ -55,6 +55,7 @@ from .coordinator import (
     BamBuddyPrinterCoordinator,
     BamBuddyUpdateCoordinator,
     ams_identifier,
+    ams_identifier_prefix,
     async_raise_missing_issue,
     async_remove_printer,
     async_schedule_reload,
@@ -407,7 +408,7 @@ def _remove_stale_devices(hass: HomeAssistant, entry: ConfigEntry) -> None:
     plugs' are `_follow_plug_identities`'s."""
     keys = {stored_key(printer) for printer in entry.options.get(CONF_PRINTERS, [])}
     configured = {printer_identifier(entry.entry_id, key)[1] for key in keys}
-    units = tuple(ams_identifier(entry.entry_id, key, "")[1] for key in keys)
+    units = tuple(ams_identifier_prefix(entry.entry_id, key) for key in keys)
     registry = dr.async_get(hass)
     plug_prefix = device_prefix(entry.entry_id)
     for device in dr.async_entries_for_config_entry(registry, entry.entry_id):

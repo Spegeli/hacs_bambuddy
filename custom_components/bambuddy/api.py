@@ -13,6 +13,7 @@ from urllib.parse import urlsplit, urlunsplit
 import aiohttp
 
 from .const import MANAGE_INVENTORY, OPTIONAL_PERMISSIONS, REQUIRED_SCOPES
+from .models import is_int
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -312,7 +313,7 @@ class BamBuddyClient:
         return [
             printer
             for printer in await self._list("/printers/")
-            if isinstance(printer, dict) and isinstance(printer.get("id"), int) and not isinstance(printer.get("id"), bool)
+            if isinstance(printer, dict) and is_int(printer.get("id"))
         ]
 
     async def get_printer(self, printer_id: int) -> dict[str, Any]:
@@ -370,9 +371,10 @@ class BamBuddyClient:
         return [profile for profile in profiles if isinstance(profile, dict)] if isinstance(profiles, list) else []
 
     async def get_smart_plugs(self) -> list[dict[str, Any]]:
-        """BamBuddy's smart plugs, from its database. The answer holds a
-        plug's address and login: never logged."""
-        return await self._list("/smart-plugs/")
+        """BamBuddy's smart plugs, from its database, an entry that is no
+        plug with a number left out. The answer holds a plug's address and
+        login: never logged."""
+        return [plug for plug in await self._list("/smart-plugs/") if isinstance(plug, dict) and isinstance(plug.get("id"), int)]
 
     async def get_spools(self) -> list[dict[str, Any]]:
         """BamBuddy's spool inventory, archived spools left out (no paging).
