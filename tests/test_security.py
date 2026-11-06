@@ -33,6 +33,7 @@ from tests.conftest import (
     printer_uid,
     set_up,
 )
+from tests.helpers import handshake_refusal, open_options, with_plugs
 
 # The client's own socket call, before the tests' mock takes its place.
 _OPEN_SOCKET = BamBuddyClient.open_socket
@@ -56,7 +57,7 @@ async def test_no_secret_reaches_the_debug_log(
     bambuddy_api.get_printers.return_value = printers
     bambuddy_api.get_printer.side_effect = lambda printer_id: next(item for item in printers if item["id"] == printer_id)
     bambuddy_api.get_auth_status.return_value = {"auth_enabled": False, "requires_setup": False}
-    bambuddy_api.get_smart_plugs.return_value = load_fixture("smart_plugs.json")
+    with_plugs(bambuddy_api)
     entry = await set_up(hass, X1C, H2D)
 
     await past_polls(hass, freezer, 7)
@@ -139,4 +140,3 @@ async def test_configures_live_test_never_names_the_token(
 
     assert WS_TOKEN not in caplog.text
     assert "token=" not in caplog.text
-from tests.helpers import handshake_refusal, open_options

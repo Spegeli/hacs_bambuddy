@@ -14,9 +14,11 @@ from homeassistant.core import HomeAssistant
 from custom_components.bambuddy.api import BamBuddyConnectionError, BamBuddyPermissionError
 from custom_components.bambuddy.inventory import BamBuddyInventoryCoordinator, Spool, spool_of, spool_types
 from custom_components.bambuddy.key import KeyGuard
+from custom_components.bambuddy.inventory import INVENTORY_ATTRIBUTES
 from custom_components.bambuddy.sensor import BamBuddyAmsSlotSensor, BamBuddyPrinterSensor
 
 from tests.conftest import H2D, X1C, ams_uid, load_fixture, next_refresh, printer_uid, set_up, state_of
+from tests.helpers import spool_row, with_inventory
 
 
 async def _refresh(hass: HomeAssistant, inventory: BamBuddyInventoryCoordinator) -> None:
@@ -224,7 +226,8 @@ async def test_the_inventory_is_read_once_a_minute(
 
 def test_inventory_attributes_are_not_recorded() -> None:
     """The spool changes with each print: kept out of the recorder."""
-    names = {"inventory_spool", "inventory_assignable"}
+    names = set(INVENTORY_ATTRIBUTES)
+    assert names == {"inventory_spool", "inventory_assignable"}
     assert names <= BamBuddyAmsSlotSensor._unrecorded_attributes
     assert names <= BamBuddyPrinterSensor._unrecorded_attributes
 
@@ -237,4 +240,3 @@ async def test_no_inventory_no_attributes(hass: HomeAssistant, bambuddy_api: Sim
     attributes = _slot(hass, entry, 3).attributes
     assert "inventory_spool" not in attributes
     assert "inventory_assignable" not in attributes
-from tests.helpers import spool_row, with_inventory

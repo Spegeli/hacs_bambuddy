@@ -25,17 +25,18 @@ from tests.conftest import (
     A1_MINI,
     X1C,
     entity_id,
-    load_fixture,
     make_entry,
+    no_entity,
     plug_identifier_of,
     plug_unique_id,
     set_up,
     setup_integration,
+    state_at,
     switch_off_uid,
 )
-from tests.helpers import plug_info, plug_list, reload_entry, with_plugs
+from tests.helpers import plug_info, plug_list, plugs_but, reload_entry, with_plugs
 
-# Home Assistant restores a deleted entity's settings from 2025.x on; the floor only its registry id.
+# Home Assistant restores a deleted entity's settings; the floor, 2025.5, only its registry id.
 _RESTORES_SETTINGS = "area_id" in attr.fields_dict(er.DeletedRegistryEntry)
 
 
@@ -43,6 +44,13 @@ def _registry_id(hass: HomeAssistant, entity: str) -> str:
     entry = er.async_get(hass).async_get(entity)
     assert entry is not None
     return entry.id
+
+
+def _twelve_instead_of_three(bambuddy_api: SimpleNamespace, **fields: Any) -> None:
+    """BamBuddy lists a plug 12 where plug 3 was."""
+    bambuddy_api.plug_statuses["12"] = dict(bambuddy_api.plug_statuses["3"])
+    twelve = {**plug_info(3), "id": 12, "created_at": "2026-10-20T09:00:00", **fields}
+    bambuddy_api.get_smart_plugs.return_value = [*plugs_but(3), twelve]
 
 
 def _device_id(hass: HomeAssistant, entry_id: str, plug_id: int) -> str:
@@ -82,8 +90,8 @@ async def test_a_source_change_keeps_the_device_and_brings_new_entities(hass: Ho
     await reload_entry(hass, entry.entry_id)
 
     assert _device_id(hass, entry.entry_id, 3) == device
-    assert er.async_get(hass).async_get_entity_id("switch", DOMAIN, old) is None
-    assert er.async_get(hass).async_get_entity_id("switch", DOMAIN, plug_unique_id(hass, entry.entry_id, 3, "power")) is not None
+    assert no_entity(hass, "switch", old)
+    assert entity_id(hass, "switch", plug_unique_id(hass, entry.entry_id, 3, "power"))
 
 
 async def test_a_plug_created_again_is_a_new_device_with_the_same_entities(hass: HomeAssistant, bambuddy_api: SimpleNamespace) -> None:
@@ -113,15 +121,13 @@ async def test_another_server_other_source_is_new(hass: HomeAssistant, bambuddy_
     entry = await set_up(hass, X1C)
     device = _device_id(hass, entry.entry_id, 3)
     old = plug_unique_id(hass, entry.entry_id, 3, "power")
-    bambuddy_api.plug_statuses["12"] = dict(bambuddy_api.plug_statuses["3"])
-    twelve = {**plug_info(3), "id": 12, "ip_address": "192.0.2.212", "created_at": "2026-10-20T09:00:00"}
-    bambuddy_api.get_smart_plugs.return_value = [plug for plug in load_fixture("smart_plugs.json") if plug["id"] != 3] + [twelve]
+    _twelve_instead_of_three(bambuddy_api, ip_address="192.0.2.212")
 
     await reload_entry(hass, entry.entry_id)
 
     assert dr.async_get(hass).async_get(device) is None
-    assert er.async_get(hass).async_get_entity_id("switch", DOMAIN, old) is None
-    assert er.async_get(hass).async_get_entity_id("switch", DOMAIN, plug_unique_id(hass, entry.entry_id, 12, "power")) is not None
+    assert no_entity(hass, "switch", old)
+    assert entity_id(hass, "switch", plug_unique_id(hass, entry.entry_id, 12, "power"))
 
 
 async def test_another_server_with_the_same_tasmota_keeps_its_entities(hass: HomeAssistant, bambuddy_api: SimpleNamespace) -> None:
@@ -132,9 +138,7 @@ async def test_another_server_with_the_same_tasmota_keeps_its_entities(hass: Hom
     switch = entity_id(hass, "switch", plug_unique_id(hass, entry.entry_id, 3, "power"))
     registry_id = _registry_id(hass, switch)
     events = async_capture_events(hass, er.EVENT_ENTITY_REGISTRY_UPDATED)
-    bambuddy_api.plug_statuses["12"] = dict(bambuddy_api.plug_statuses["3"])
-    twelve = {**plug_info(3), "id": 12, "created_at": "2026-10-20T09:00:00"}
-    bambuddy_api.get_smart_plugs.return_value = [plug for plug in load_fixture("smart_plugs.json") if plug["id"] != 3] + [twelve]
+    _twelve_instead_of_three(bambuddy_api)
 
     await reload_entry(hass, entry.entry_id)
 
@@ -172,8 +176,7 @@ async def test_the_switch_off_survives_its_plug_created_again(hass: HomeAssistan
 
     mine = er.async_get(hass).async_get("switch.my_switch_off")
     assert mine is not None and mine.device_id == _device_id(hass, entry.entry_id, 3)
-    state = hass.states.get("switch.my_switch_off")
-    assert state is not None and state.state == "on"
+    assert state_at(hass, "switch.my_switch_off").state == "on"
 
 
 async def test_beta_plugs_are_set_up_anew(hass: HomeAssistant, bambuddy_api: SimpleNamespace) -> None:
@@ -189,8 +192,8 @@ async def test_beta_plugs_are_set_up_anew(hass: HomeAssistant, bambuddy_api: Sim
     await setup_integration(hass, entry)
 
     assert dr.async_get(hass).async_get(device.id) is None
-    assert [registry.async_get_entity_id("switch", DOMAIN, f"{entry.entry_id}_plug3_{key}") for key in ("power", "auto_off")] == [None, None]
-    assert registry.async_get_entity_id("switch", DOMAIN, plug_unique_id(hass, entry.entry_id, 3, "power")) is not None
+    assert all(no_entity(hass, "switch", f"{entry.entry_id}_plug3_{key}") for key in ("power", "auto_off"))
+    assert entity_id(hass, "switch", plug_unique_id(hass, entry.entry_id, 3, "power"))
 
 
 async def test_nothing_is_removed_while_the_list_cannot_be_read(hass: HomeAssistant, bambuddy_api: SimpleNamespace) -> None:
@@ -217,7 +220,7 @@ async def test_a_plug_gone_across_a_read_comes_back_with_its_settings(hass: Home
     er.async_get(hass).async_update_entity(switch, new_entity_id="switch.my_plug", name="Mine")
     bambuddy_api.get_smart_plugs.return_value = plug_list(**{"3": {"printer_id": None}})
     await reload_entry(hass, entry.entry_id)
-    assert er.async_get(hass).async_get_entity_id("switch", DOMAIN, unique_id) is None
+    assert no_entity(hass, "switch", unique_id)
 
     with_plugs(bambuddy_api)
     await reload_entry(hass, entry.entry_id)

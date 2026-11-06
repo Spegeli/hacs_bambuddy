@@ -14,6 +14,7 @@ from custom_components.bambuddy import cards
 from custom_components.bambuddy.cards import CARD_FILE, CARD_URL, async_register_card, card_digest
 
 from tests.conftest import X1C, set_up
+from tests.helpers import reload_entry
 
 
 def _frontend(hass: HomeAssistant) -> Mock:
@@ -89,7 +90,7 @@ def test_the_readme_documents_what_the_bundle_takes() -> None:
     bundle = CARD_FILE.read_text(encoding="utf-8")
 
     forms = (Path(__file__).parent.parent / "cards" / "src" / "forms.ts").read_text(encoding="utf-8")
-    declared = re.search(r"const OPTIONS: Record<string, Validator> = \{(.*?)\n\};", forms, flags=re.DOTALL)
+    declared = re.search(r"const OPTIONS = \{(.*?)\n\} satisfies", forms, flags=re.DOTALL)
     assert declared
     assert options == re.findall(r"^  (\w+):", declared.group(1), flags=re.MULTILINE)
     assert len(options) == 14
@@ -98,4 +99,3 @@ def test_the_readme_documents_what_the_bundle_takes() -> None:
     assert "bambuddy-printer-card" in bundle
     assert "custom:bambuddy-printer-card" in section
     assert "#-dashboard-card" in bundle
-from tests.helpers import reload_entry

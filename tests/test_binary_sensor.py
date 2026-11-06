@@ -21,7 +21,7 @@ from tests.conftest import (
     INTEGRATION,
     X1C,
     ams_uid,
-    as_model,
+    entity_id,
     instance_uid,
     load_fixture,
     make_entry,
@@ -34,7 +34,7 @@ from tests.conftest import (
     setup_integration,
     state_of,
 )
-from tests.helpers import reload_entry
+from tests.helpers import as_model, reload_entry
 
 
 @pytest.mark.parametrize(
@@ -106,8 +106,8 @@ async def test_a_wired_network_sensor_left_from_1x_goes_where_there_is_no_port(
 
     await setup_integration(hass, entry)
 
-    assert registry.async_get_entity_id("binary_sensor", DOMAIN, printer_uid(entry, "wired_network", X1C)) is not None
-    assert registry.async_get_entity_id("binary_sensor", DOMAIN, printer_uid(entry, "wired_network", A1_MINI)) is None
+    assert entity_id(hass, "binary_sensor", printer_uid(entry, "wired_network", X1C))
+    assert no_entity(hass, "binary_sensor", printer_uid(entry, "wired_network", A1_MINI))
 
 
 async def test_a_stalled_countdown_is_no_drying(

@@ -1,7 +1,7 @@
 """The tables the integration and the dashboard card both hold: alike.
 
 The card offers what the integration's actions take -- HMS answers,
-materials, drying, extrusion and switch-off limits. Each side keeps its own
+the filament list, drying, extrusion, ventilation and switch-off limits. Each side keeps its own
 copy (the card has no access to the integration's Python); these tests
 fail the day one copy changes without the other.
 """

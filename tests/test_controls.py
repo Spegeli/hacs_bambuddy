@@ -2,9 +2,7 @@
 light -- what each sends, and when a printer cannot take it."""
 from __future__ import annotations
 
-import json
 import logging
-from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 
@@ -13,7 +11,6 @@ import pytest
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError, ServiceValidationError
 from homeassistant.helpers import entity_registry as er
-from pytest_homeassistant_custom_component.common import async_fire_time_changed
 
 from custom_components.bambuddy.api import (
     BamBuddyApiError,
@@ -27,21 +24,17 @@ from tests.conftest import (
     H2D,
     P1S,
     X1C,
-    as_model,
     entity_id,
     load_fixture,
-    make_entry,
     next_refresh,
     no_entity,
     printer_uid,
     set_up,
-    setup_integration,
     state_at,
     state_of,
+    translations,
 )
-from tests.helpers import reauth_flows
-
-_TRANSLATIONS = Path(__file__).parents[1] / "custom_components" / "bambuddy" / "translations"
+from tests.helpers import as_model, reauth_flows
 
 
 async def _call(hass: HomeAssistant, domain: str, service: str, entity_id: str, **data: Any) -> None:
@@ -62,8 +55,7 @@ async def _call(hass: HomeAssistant, domain: str, service: str, entity_id: str, 
 async def test_each_button_sends_its_command(
     hass: HomeAssistant, bambuddy_api: SimpleNamespace, printer: int, key: str, method: str
 ) -> None:
-    entry = make_entry(hass, printer)
-    await setup_integration(hass, entry)
+    entry = await set_up(hass, printer)
 
     await _call(hass, "button", "press", entity_id(hass, "button", printer_uid(entry, key, printer)))
 
@@ -86,8 +78,7 @@ async def test_a_button_at_the_wrong_time_says_why(
 ) -> None:
     """Pressed when it makes no sense, a button sends nothing and tells why;
     it stays available -- an unavailable Pause would look broken."""
-    entry = make_entry(hass, printer)
-    await setup_integration(hass, entry)
+    entry = await set_up(hass, printer)
     entity = entity_id(hass, "button", printer_uid(entry, key, printer))
 
     with pytest.raises(ServiceValidationError) as raised:
@@ -138,9 +129,7 @@ async def test_a_command_reads_the_status_again_soon(
     calls = bambuddy_api.get_status.await_count
 
     await _call(hass, "button", "press", entity_id(hass, "button", printer_uid(entry, "pause")))
-    freezer.tick(2)
-    async_fire_time_changed(hass)
-    await hass.async_block_till_done()
+    await next_refresh(hass, freezer, 2)
 
     assert bambuddy_api.get_status.await_count == calls + 1
 
@@ -148,9 +137,7 @@ async def test_a_command_reads_the_status_again_soon(
     # (Home Assistant's refresh request waits that long after the last).
     bambuddy_api.statuses[X1C]["chamber_light"] = False
     await _call(hass, "light", "turn_off", entity_id(hass, "light", printer_uid(entry, "chamber_light")))
-    freezer.tick(2)
-    async_fire_time_changed(hass)
-    await hass.async_block_till_done()
+    await next_refresh(hass, freezer, 2)
 
     assert bambuddy_api.get_status.await_count == calls + 2
     assert state_of(hass, "light", printer_uid(entry, "chamber_light")).state == "off"
@@ -167,9 +154,7 @@ async def test_a_command_reads_again_after_four_seconds(
     pause = entity_id(hass, "button", printer_uid(entry, "pause"))
 
     async def later(seconds: float) -> int:
-        freezer.tick(seconds)
-        async_fire_time_changed(hass)
-        await hass.async_block_till_done()
+        await next_refresh(hass, freezer, seconds)
         return bambuddy_api.get_status.await_count - calls
 
     await _call(hass, "button", "press", pause)
@@ -304,8 +289,7 @@ async def test_the_target_temperatures(
     method: str,
     args: tuple[int, ...],
 ) -> None:
-    entry = make_entry(hass, printer)
-    await setup_integration(hass, entry)
+    entry = await set_up(hass, printer)
     entity = entity_id(hass, "number", printer_uid(entry, key, printer))
 
     await _call(hass, "number", "set_value", entity, value=value)
@@ -410,7 +394,7 @@ async def test_the_x2d_names_its_auxiliary_fans_by_side(hass: HomeAssistant, bam
         assert state_at(hass, entity).attributes["friendly_name"].endswith(name), key
         registered = registry.async_get(entity)
         assert registered is not None and registered.translation_key == translation, key
-    german = json.loads((_TRANSLATIONS / "de.json").read_text(encoding="utf-8"))["entity"]["fan"]
+    german = translations("de")["entity"]["fan"]
     assert (german["left_auxiliary_fan"]["name"], german["right_auxiliary_fan"]["name"]) == ("Linker Zusatzlüfter", "Rechter Zusatzlüfter")
 
 
@@ -495,8 +479,7 @@ async def test_the_filament_backup_unknown_to_bambuddy(hass: HomeAssistant, bamb
     switches."""
     entry = await set_up(hass, A1_MINI)
     entity = entity_id(hass, "switch", printer_uid(entry, "ams_filament_backup", A1_MINI))
-    state = hass.states.get(entity)
-    assert state is not None
+    state = state_at(hass, entity)
     assert (state.state, state.attributes.get("assumed_state")) == ("unknown", True)
 
     await _call(hass, "switch", "turn_on", entity)
@@ -629,8 +612,7 @@ async def test_the_laser_airduct_mode_is_shown_not_offered(
     entry = await set_up(hass, H2D)
     entity = entity_id(hass, "select", printer_uid(entry, "airduct_mode", H2D))
 
-    state = hass.states.get(entity)
-    assert state is not None
+    state = state_at(hass, entity)
     assert (state.state, state.attributes["options"]) == ("laser", ["cooling", "heating", "laser"])
     await _call(hass, "select", "select_option", entity, option="laser")
     bambuddy_api.set_airduct_mode.assert_not_awaited()

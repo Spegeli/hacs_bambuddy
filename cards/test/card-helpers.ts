@@ -48,32 +48,32 @@ export function tapBeside(card: FakeCard): void {
 }
 
 /** The fixtures' printers by a short name, each with its device id. */
-export const PRINTERS = {
+export const PRINTERS: Record<"x1c" | "h2d" | "a1mini" | "p1s" | "offline" | "readOnly", readonly [(spec?: Partial<PrinterSpec>) => FakeDevice[], string]> = {
   x1c: [x1c, "dev-x1c"],
   h2d: [h2d, "dev-h2d"],
   a1mini: [a1mini, "dev-a1mini"],
   p1s: [p1s, "dev-p1s"],
   offline: [offlineP1s, "dev-p1s"],
   readOnly: [readOnlyX1c, "dev-x1c"],
-} as const satisfies Record<string, readonly [() => FakeDevice[], string]>;
+};
 
 /** A key pressed on an element of the card: the keyboard is there. */
 export const keyPress = (element: Element, key = "Tab"): boolean => element.dispatchEvent(new KeyboardEvent("keydown", { key, bubbles: true, composed: true }));
 
 /** One of the fixtures' printers on a card: its own devices unless others
  * are given, the card's options in `config`. */
-export async function cardFor(
-  name: keyof typeof PRINTERS,
-  options: { config?: Record<string, unknown>; devices?: FakeDevice[]; printer?: Partial<PrinterSpec> } & Partial<
+export async function cardFor<Name extends keyof typeof PRINTERS>(
+  name: Name,
+  options: { config?: Record<string, unknown>; devices?: FakeDevice[]; printer?: Name extends "offline" ? never : Partial<PrinterSpec> } & Partial<
     Pick<FakeHassOptions, "language" | "admin" | "callService">
   > = {},
 ): Promise<{ card: FakeCard; hass: FakeHass }> {
   const [devices, printer] = PRINTERS[name];
   const { config = {}, devices: given, printer: spec, ...hass } = options;
-  return mountFor(given ?? (devices as (spec?: Partial<PrinterSpec>) => FakeDevice[])(spec), printer, config, hass);
+  return mountFor(given ?? devices(spec), printer, config, hass);
 }
 
-export const withX1c = async (overrides: Partial<PrinterSpec>, config: Record<string, unknown> = {}) => cardFor("x1c", { config, printer: overrides });
+export const withX1c = (overrides: Partial<PrinterSpec>, config: Record<string, unknown> = {}, language = "en") => cardFor("x1c", { config, printer: overrides, language });
 
 /** The card as Home Assistant's card editor shows it: in its dialog. */
 export async function previewOf(
@@ -263,11 +263,11 @@ export async function leaveFullscreenWorld(): Promise<void> {
 
 export const historyMark = (): unknown => (history.state as { bambuddyFullscreen?: unknown } | null)?.bambuddyFullscreen;
 
-/** Past the card's wait for BamBuddy's data (30 s, its NO_DATA_WAIT_MS): a
- * test that takes the data away now and wants the no-data texts. The tests'
- * clock is a faked Date. */
-export async function pastTheWait(card: FakeCard): Promise<void> {
-  vi.setSystemTime(Date.now() + 30_000);
+/** Past the card's wait for BamBuddy's data (30 s, its NO_DATA_WAIT_MS, or
+ * `ms` later): a test that takes the data away now and wants the no-data
+ * texts. The tests' clock is a faked Date. */
+export async function pastTheWait(card: FakeCard, ms = 30_000): Promise<void> {
+  vi.setSystemTime(Date.now() + ms);
   card.requestUpdate();
   await settle(card);
 }

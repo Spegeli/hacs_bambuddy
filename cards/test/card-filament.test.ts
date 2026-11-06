@@ -8,6 +8,7 @@ import { ICONS } from "../src/icons";
 import {
   a1mini,
   amsDevice,
+  changeEntities,
   h2d,
   IDLE_H2D,
   keepEntities,
@@ -16,7 +17,7 @@ import {
   type FakeCard,
   type FakeDevice,
 } from "./fixtures";
-import { button, declarations, find, findAll, hasButton, NBSP, press, shownText, showView, styleText, text, update } from "./helpers";
+import { button, declarations, find, findAll, hasButton, moreInfoIds, NBSP, press, shownText, showView, styleText, text, update } from "./helpers";
 import { cardFor, confirmDialog, loadButtons, previewOf, useCardPage, withX1c } from "./card-helpers";
 
 useCardPage();
@@ -281,10 +282,7 @@ describe("the filament view", () => {
   });
 
   it("offers no drying where the printer starts it only from its own screen, and says so", async () => {
-    const devices = h2d({ status: "idle", hms: [] }).map((device) => ({
-      ...device,
-      entities: device.entities.map((entity) => (entity.key === "drying" ? { ...entity, attributes: { ...entity.attributes, remote_start: false } } : entity)),
-    }));
+    const devices = changeEntities(h2d(IDLE_H2D), (entity) => entity.key === "drying", (entity) => ({ ...entity.attributes, remote_start: false }));
     const { card } = await cardFor("h2d", { config: { start_view: "filament" }, devices });
     const rows = findAll(card, ".drying");
     expect(rows.length).toBeGreaterThan(0);
@@ -374,7 +372,7 @@ describe("the filament view", () => {
     const { card } = await cardFor("offline");
     await showView(card, "Filament");
     expect(find(card, ".unit")).toBeNull();
-    expect(text(find(card, ".job .job-info"))).toBe("The printer is offline. Check that it is switched on and connected to BamBuddy.");
+    expect(text(find(card, ".job .job-info"))).toBe("The printer is offline. Check that it is turned on and connected to BamBuddy.");
     const preview = await previewOf("offline", { start_view: "filament", ams_folding: "folded" });
     // Folded as the option says; the external spool unknown.
     expect(findAll<HTMLButtonElement>(preview, "button.unit-head").map((head) => head.getAttribute("aria-expanded"))).toEqual(["false"]);
@@ -410,8 +408,7 @@ describe("the filament view", () => {
   it("opens a slot's more-info dialog", async () => {
     const { card } = await cardFor("a1mini");
     await showView(card, "Filament");
-    const opened: string[] = [];
-    card.addEventListener("hass-more-info", (event) => opened.push((event as CustomEvent<{ entityId: string }>).detail.entityId));
+    const opened = moreInfoIds(card);
     findAll(card, ".slot-main")[1]?.click();
     expect(opened).toEqual(["sensor.dev-a1mini_ams_0_slot_2"]);
   });
@@ -472,7 +469,7 @@ describe("a filament change", () => {
 
   it("waits with loading, moving and the nozzle choice; heating stays, cooling waits", async () => {
     for (const state of CHANGING) {
-      const { card } = await cardFor("h2d", { printer: { status: "idle", hms: [], amsStatus: state } });
+      const { card } = await cardFor("h2d", { printer: { ...IDLE_H2D, amsStatus: state } });
       await showView(card, "Filament");
       // Waiting is normal during a change: a note, no warning.
       expect(findAll(card, ".note").map(text), state).toEqual([WAIT]);
@@ -497,7 +494,7 @@ describe("a filament change", () => {
 
   it("locks nothing while the AMS reads, assists or calibrates", async () => {
     for (const state of ["reading_rfid", "assist", "calibrating", "idle"]) {
-      const { card } = await cardFor("h2d", { printer: { status: "idle", hms: [], amsStatus: state } });
+      const { card } = await cardFor("h2d", { printer: { ...IDLE_H2D, amsStatus: state } });
       await showView(card, "Filament");
       expect(find(card, ".note"), state).toBeNull();
       expect(findAll<HTMLButtonElement>(card, ".slot .btn").every((item) => !item.disabled), state).toBe(true);
@@ -537,7 +534,7 @@ describe("a filament change", () => {
   });
 
   it("says it in German", async () => {
-    const { card } = await cardFor("h2d", { language: "de", printer: { status: "idle", hms: [], amsStatus: "purging" } });
+    const { card } = await cardFor("h2d", { language: "de", printer: { ...IDLE_H2D, amsStatus: "purging" } });
     await showView(card, "Filament");
     expect(text(find(card, ".note"))).toBe("Warte, bis der Filamentwechsel fertig ist.");
     await showView(card, "Steuerung");

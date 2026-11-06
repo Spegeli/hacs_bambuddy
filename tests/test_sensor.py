@@ -13,7 +13,6 @@ from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers import entity_registry as er
 
 from custom_components.bambuddy.api import BamBuddyApiError
-from custom_components.bambuddy.const import DOMAIN
 
 from tests.conftest import (
     A1_MINI,
@@ -22,7 +21,6 @@ from tests.conftest import (
     X1C,
     X1E,
     ams_uid,
-    as_model,
     entity_id,
     instance_uid,
     load_fixture,
@@ -38,6 +36,7 @@ from tests.conftest import (
     state_at,
     state_of,
 )
+from tests.helpers import as_model
 
 
 @pytest.mark.parametrize(
@@ -367,8 +366,8 @@ async def test_an_ams_unit_gets_what_its_type_allows_once_it_is_known(
     status["ams"][0]["module_type"] = "n3f"
     await next_refresh(hass, freezer)
 
-    assert registry.async_get_entity_id("binary_sensor", DOMAIN, ams_uid(entry, 0, "drying", H2D)) is not None
-    assert registry.async_get_entity_id("sensor", DOMAIN, ams_uid(entry, 0, "drying_remaining_time", H2D)) is not None
+    assert entity_id(hass, "binary_sensor", ams_uid(entry, 0, "drying", H2D))
+    assert entity_id(hass, "sensor", ams_uid(entry, 0, "drying_remaining_time", H2D))
     # Each once: the next poll adds nothing again.
     count = len(er.async_entries_for_config_entry(registry, entry.entry_id))
     await next_refresh(hass, freezer)
@@ -388,7 +387,8 @@ async def test_drying_shows_also_where_it_starts_only_at_the_printer(
     status["drying_screen_only"] = screen_only
     entry = await set_up(hass, P1S)
 
-    state_of(hass, "sensor", ams_uid(entry, 0, "drying_remaining_time", P1S))
+    # The drying time sensor is there too.
+    assert entity_id(hass, "sensor", ams_uid(entry, 0, "drying_remaining_time", P1S))
     drying = state_of(hass, "binary_sensor", ams_uid(entry, 0, "drying", P1S))
     assert drying.attributes["remote_start"] is remote
 

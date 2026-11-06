@@ -5,22 +5,23 @@ auxiliary fan and, with the kit, its exhaust fan -- and what does not go
 together with heating the chamber locks the other."""
 from __future__ import annotations
 
-import json
 from types import SimpleNamespace
 from typing import Any
 
 import pytest
+from freezegun.api import FrozenDateTimeFactory
 from homeassistant.core import HomeAssistant
-from homeassistant.exceptions import ServiceValidationError
+from homeassistant.exceptions import HomeAssistantError, ServiceValidationError
 
 from custom_components.bambuddy import fan as fan_module
-from tests.conftest import INTEGRATION, X1C, as_model, entity_id, no_entity, placeholders, printer_uid, set_up, state_at
+from custom_components.bambuddy.api import BamBuddyApiError
+from tests.conftest import X1C, entity_id, no_entity, placeholders, printer_uid, set_up, state_at, translations
+from tests.helpers import as_model
 
 
 def placeholders_of(key: str) -> frozenset[str]:
     """The placeholders a refusal's English text uses: a refusal passes those, no more."""
-    texts = json.loads((INTEGRATION / "translations" / "en.json").read_text(encoding="utf-8"))["exceptions"]
-    return placeholders(texts[key]["message"])
+    return placeholders(translations("en")["exceptions"][key]["message"])
 
 
 _FANS = ("cooling_fan_speed", "big_fan1_speed", "big_fan2_speed", "heatbreak_fan_speed")
@@ -379,6 +380,121 @@ async def test_keep_warm_waits_on_the_ventilation(hass: HomeAssistant, bambuddy_
     assert raised.value.translation_key == "ventilation_on"
     assert set(raised.value.translation_placeholders or {}) == placeholders_of("ventilation_on")
     bambuddy_api.set_airduct_mode.assert_not_awaited()
+
+
+async def _select(hass: HomeAssistant, entity: str, option: str) -> None:
+    await hass.services.async_call("select", "select_option", {"entity_id": entity, "option": option}, blocking=True)
+
+
+async def test_heater_off_then_ventilation_at_once(hass: HomeAssistant, bambuddy_api: SimpleNamespace) -> None:
+    """The printer has not reported the 0 yet: what was just sent counts."""
+    vent_state(bambuddy_api, "H2D", chamber_target=50, airduct_mode=1)
+    entry = await set_up(hass, X1C)
+    await _set_chamber(hass, entity_id(hass, "number", printer_uid(entry, "chamber_target")), 0)
+
+    await _call(hass, "turn_on", entity_id(hass, "fan", printer_uid(entry, "ventilation")))
+
+    bambuddy_api.set_fan_speed.assert_awaited()
+
+
+async def test_ventilation_off_then_chamber_target_at_once(hass: HomeAssistant, bambuddy_api: SimpleNamespace) -> None:
+    vent_state(bambuddy_api, "H2D", big_fan2_speed=60)
+    entry = await set_up(hass, X1C)
+    await _call(hass, "turn_off", entity_id(hass, "fan", printer_uid(entry, "ventilation")))
+
+    await _set_chamber(hass, entity_id(hass, "number", printer_uid(entry, "chamber_target")), 40)
+
+    bambuddy_api.set_chamber_temperature.assert_awaited()
+
+
+async def test_keep_warm_off_then_ventilation_at_once(hass: HomeAssistant, bambuddy_api: SimpleNamespace) -> None:
+    """The P2S: heating mode is what keeps the chamber warm. Cooling was sent,
+    so it is not sent twice."""
+    vent_state(bambuddy_api, "P2S", airduct_mode=1)
+    entry = await set_up(hass, X1C)
+    await _select(hass, entity_id(hass, "select", printer_uid(entry, "airduct_mode")), "cooling")
+
+    await _call(hass, "turn_on", entity_id(hass, "fan", printer_uid(entry, "ventilation")))
+
+    bambuddy_api.set_airduct_mode.assert_awaited_once()
+    bambuddy_api.set_fan_speed.assert_awaited()
+
+
+async def test_the_lock_returns_when_the_printer_did_not_take_it(
+    hass: HomeAssistant, bambuddy_api: SimpleNamespace, freezer: FrozenDateTimeFactory
+) -> None:
+    vent_state(bambuddy_api, "H2D", chamber_target=50, airduct_mode=1)
+    entry = await set_up(hass, X1C)
+    await _set_chamber(hass, entity_id(hass, "number", printer_uid(entry, "chamber_target")), 0)
+
+    freezer.tick(6)
+    with pytest.raises(ServiceValidationError) as caught:
+        await _call(hass, "turn_on", entity_id(hass, "fan", printer_uid(entry, "ventilation")))
+
+    assert caught.value.translation_key == "chamber_heating"
+
+
+async def test_a_ventilation_just_started_can_be_turned_off(hass: HomeAssistant, bambuddy_api: SimpleNamespace) -> None:
+    """The printer still reports heating mode: the way off is not silent."""
+    vent_state(bambuddy_api, "H2D", airduct_mode=1)
+    entity = await _ventilation(hass)
+    await _call(hass, "turn_on", entity)
+    bambuddy_api.set_fan_speed.reset_mock()
+
+    await _call(hass, "turn_off", entity)
+
+    bambuddy_api.set_fan_speed.assert_awaited()
+
+
+async def test_ventilation_right_after_a_target_sends_cooling_again(hass: HomeAssistant, bambuddy_api: SimpleNamespace) -> None:
+    """Heating mode went out a moment ago and the printer still reports
+    cooling: the H2's fans would be ignored without cooling sent again."""
+    vent_state(bambuddy_api, "H2D")
+    entry = await set_up(hass, X1C)
+    chamber = entity_id(hass, "number", printer_uid(entry, "chamber_target"))
+    await _set_chamber(hass, chamber, 45)
+    await _set_chamber(hass, chamber, 0)
+    bambuddy_api.set_airduct_mode.reset_mock()
+
+    await _call(hass, "turn_on", entity_id(hass, "fan", printer_uid(entry, "ventilation")))
+
+    bambuddy_api.set_airduct_mode.assert_awaited_once_with(X1C, "cooling")
+    bambuddy_api.set_fan_speed.assert_awaited()
+
+
+async def test_a_ventilation_that_failed_on_its_second_fan_holds_the_first(hass: HomeAssistant, bambuddy_api: SimpleNamespace) -> None:
+    """One fan runs: a chamber target waits for the report."""
+    vent_state(bambuddy_api, "X2D", big_fan1_speed=0)
+    entry = await set_up(hass, X1C)
+    bambuddy_api.set_fan_speed.side_effect = [None, BamBuddyApiError(500, "no")]
+    with pytest.raises(HomeAssistantError):
+        await _call(hass, "turn_on", entity_id(hass, "fan", printer_uid(entry, "ventilation")))
+
+    assert entry.runtime_data.printers[X1C].chamber_sent.get("ventilating", False) is True
+
+
+async def test_cooling_goes_right_after_the_target_went_to_zero(hass: HomeAssistant, bambuddy_api: SimpleNamespace) -> None:
+    vent_state(bambuddy_api, "H2D", chamber_target=50, airduct_mode=1)
+    entry = await set_up(hass, X1C)
+    await _set_chamber(hass, entity_id(hass, "number", printer_uid(entry, "chamber_target")), 0)
+
+    await _select(hass, entity_id(hass, "select", printer_uid(entry, "airduct_mode")), "cooling")
+
+    bambuddy_api.set_airduct_mode.assert_awaited_once()
+
+
+async def test_a_target_that_failed_halfway_holds_the_mode_it_sent(hass: HomeAssistant, bambuddy_api: SimpleNamespace) -> None:
+    """Heating mode went out, the target did not: the printer is told heating
+    now, and ventilation waits on that -- the target it never got does not count."""
+    vent_state(bambuddy_api, "H2D")
+    entry = await set_up(hass, X1C)
+    bambuddy_api.set_chamber_temperature.side_effect = BamBuddyApiError(500, "no")
+    with pytest.raises(HomeAssistantError):
+        await _set_chamber(hass, entity_id(hass, "number", printer_uid(entry, "chamber_target")), 40)
+    sent = hass.config_entries.async_get_entry(entry.entry_id).runtime_data.printers[X1C].chamber_sent
+
+    assert sent.get("airduct", "cooling") == "heating"
+    assert sent.get("target", 0) == 0
 
 
 async def test_keep_warm_goes_off(hass: HomeAssistant, bambuddy_api: SimpleNamespace) -> None:

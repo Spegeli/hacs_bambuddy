@@ -18,7 +18,7 @@ import {
   type FakeHass,
   type FakeHassOptions,
 } from "./fixtures";
-import { defineFor, find, findAll, restoreDefined, settle, showView, text } from "./helpers";
+import { chooseOption, defineFor, editSlot, find, findAll, restoreDefined, settle, showView, text } from "./helpers";
 
 // --- The world: a slot, its spools, a camera ----------------------------------
 
@@ -59,8 +59,7 @@ async function openScan(world: World = {}): Promise<FakeCard> {
   if (world.app) (hass as unknown as { auth: unknown }).auth = { external: { config: { hasBarCodeScanner: 1 }, fireMessage: world.app.fireMessage } };
   const card = await mountCard(hass, { printer: "dev-x1c", ...world.config });
   await showView(card, "Filament");
-  (findAll(card, ".slot")[world.row ?? 2]?.querySelector(".btn.edit") as HTMLButtonElement).click();
-  await settle(card);
+  await editSlot(card, world.row ?? 2);
   findAll<HTMLButtonElement>(card, "dialog [role=tab]").find((tab) => text(tab) === "Aus dem Inventar")?.click();
   await settle(card);
   await settle(card);
@@ -194,10 +193,7 @@ describe("the live camera", () => {
   it("Kamera schließen brings everything back as it was and stops the camera", async () => {
     const { tracks } = camera();
     const card = await openScan();
-    const material = find<HTMLSelectElement>(card, "dialog #inv-material") as HTMLSelectElement;
-    material.value = "PETG";
-    material.dispatchEvent(new Event("change"));
-    await settle(card);
+    await chooseOption(card, "#inv-material", "PETG");
     await startScan(card);
     dialogButton(card, "Kamera schließen")?.click();
     await settle(card);
@@ -338,10 +334,7 @@ describe("after a scan", () => {
 
   it("the filters go, the search names the spool, and it is chosen alone", async () => {
     const card = await scanned("http://192.168.178.23:8000/inventory?spool=3", async (card) => {
-      const material = find<HTMLSelectElement>(card, "dialog #inv-material") as HTMLSelectElement;
-      material.value = "PETG";
-      material.dispatchEvent(new Event("change"));
-      await settle(card);
+      await chooseOption(card, "#inv-material", "PETG");
     });
     expect(find(card, "dialog .inv-camera")).toBeNull();
     expect(find<HTMLSelectElement>(card, "dialog #inv-material")?.value).toBe("");
@@ -353,6 +346,14 @@ describe("after a scan", () => {
     expect(text(line)).toBe("Spule Nr. 3 gescannt");
     expect(text(find(card, "dialog .inv-say"))).toBe("Spule Nr. 3 gescannt");
     expect(dialogButton(card, "Zuweisen")?.disabled).toBe(false);
+  });
+
+  it("a search's jump to the top stays out of the list a scan left", async () => {
+    const card = await scanned("http://192.168.178.23:8000/inventory?spool=3");
+    const list = find<HTMLElement>(card, "dialog .inv-list") as HTMLElement;
+    list.scrollTop = 120;
+    await settle(card);
+    expect(list.scrollTop).toBe(120);
   });
 
   it("a spool that does not fit is shown, not chosen", async () => {
@@ -371,17 +372,14 @@ describe("after a scan", () => {
   it("a spool in another slot names where it is taken from", async () => {
     const card = await scanned("2");
     expect(rowNames(card)).toEqual(["Bambu PLA Basic"]);
-    expect(text(card.shadowRoot?.querySelector("dialog .inv-panel"))).toContain("AMS\u00a0A, Fach 1");
+    expect(text(find(card, "dialog .inv-panel"))).toContain("AMS\u00a0A, Fach 1");
   });
 
   it("an unknown spool is said, the list untouched", async () => {
     const card = await scanned("99", async (card) => {
-      const material = find<HTMLSelectElement>(card, "dialog #inv-material") as HTMLSelectElement;
-      material.value = "PLA";
-      material.dispatchEvent(new Event("change"));
-      await settle(card);
+      await chooseOption(card, "#inv-material", "PLA");
     });
-    expect(text(card.shadowRoot?.querySelector("dialog .inv-panel"))).toContain("BamBuddy hat keine Spule Nr. 99.");
+    expect(text(find(card, "dialog .inv-panel"))).toContain("BamBuddy hat keine Spule Nr. 99.");
     expect(find<HTMLSelectElement>(card, "dialog #inv-material")?.value).toBe("PLA");
     expect(search(card)?.value).toBe("");
     // The slot's own spool, chosen before, is chosen no more.
@@ -398,10 +396,7 @@ describe("after a scan", () => {
     expect(find(card, "dialog .inv-scanned")).toBeNull();
 
     const again = await scanned("99");
-    const material = find<HTMLSelectElement>(again, "dialog #inv-material") as HTMLSelectElement;
-    material.value = "PETG";
-    material.dispatchEvent(new Event("change"));
-    await settle(again);
+    await chooseOption(again, "#inv-material", "PETG");
     expect(text(again.shadowRoot?.querySelector("dialog .inv-panel"))).not.toContain("Nr. 99");
   });
 
@@ -449,6 +444,20 @@ describe("in the app", () => {
     }));
     expect(find(card, "dialog .inv-camera")).toBeNull();
     expect(find(card, "dialog .inv-list")).not.toBeNull();
+  });
+
+  it("a search typed just before says nothing over the scan", async () => {
+    const card = await openScan({ app: { fireMessage: vi.fn() } });
+    vi.useFakeTimers();
+    const field = search(card) as HTMLInputElement;
+    field.value = "PLA";
+    field.dispatchEvent(new Event("input"));
+    await card.updateComplete;
+    scanButton(card)?.click();
+    await vi.advanceTimersByTimeAsync(1000);
+    await card.updateComplete;
+    vi.useRealTimers();
+    expect(text(find(card, "dialog .inv-say"))).toBe("");
   });
 
   it("a scanned label chooses its spool", async () => {
@@ -845,7 +854,7 @@ describe("a scan's search and the next scan", () => {
     await scanOnce(card, "999");
     expect(search(card)?.value).toBe("");
     expect(rowNames(card)).toHaveLength(6);
-    expect(text(card.shadowRoot?.querySelector("dialog .inv-panel"))).toContain("BamBuddy hat keine Spule Nr. 999.");
+    expect(text(find(card, "dialog .inv-panel"))).toContain("BamBuddy hat keine Spule Nr. 999.");
   });
 
   it("a search the user typed stays", async () => {

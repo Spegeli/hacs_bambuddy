@@ -89,6 +89,12 @@ def load_fixture(name: str) -> Any:
     return json.loads((_FIXTURES / name).read_text(encoding="utf-8"))
 
 
+def translations(language: str) -> dict[str, Any]:
+    """The integration's texts in this language (custom_components/bambuddy/translations)."""
+    texts: dict[str, Any] = json.loads((INTEGRATION / "translations" / f"{language}.json").read_text(encoding="utf-8"))
+    return texts
+
+
 def _status_of(statuses: dict[int, Any], printer_id: int) -> Any:
     """A printer's status as the mock BamBuddy has it; one it lacks answers 404, as BamBuddy does."""
     if printer_id not in statuses:
@@ -99,6 +105,16 @@ def _status_of(statuses: dict[int, Any], printer_id: int) -> Any:
 def printer_info(printer_id: int) -> dict[str, Any]:
     """BamBuddy's answer for one printer of tests/fixtures/printers.json."""
     return next(p for p in load_fixture("printers.json") if p["id"] == printer_id)
+
+
+def status_never(printer_id: int, **fields: Any) -> dict[str, Any]:
+    """BamBuddy's answer for a printer it never reached (tests/fixtures/status_never.json), under this number."""
+    return {**load_fixture("status_never.json"), "id": printer_id, **fields}
+
+
+def printers_only(*printer_ids: int) -> list[dict[str, Any]]:
+    """BamBuddy's printer list with only these printers."""
+    return [p for p in load_fixture("printers.json") if p["id"] in printer_ids]
 
 
 def printers_but(*printer_ids: int) -> list[dict[str, Any]]:
@@ -123,15 +139,6 @@ def ams_key(printer_id: int, ams_id: int) -> str:
     units = load_fixture(_STATUSES[printer_id]).get("ams") or []
     unit = next((u for u in units if u["id"] == ams_id), {})
     return str(unit.get("serial_number") or ams_id)
-
-
-def as_model(bambuddy_api: SimpleNamespace, model: str | None, printer_id: int = X1C) -> None:
-    """The printer's place listed as another model."""
-    printers = load_fixture("printers.json")
-    for printer in printers:
-        if printer["id"] == printer_id:
-            printer["model"] = model
-    bambuddy_api.get_printers.return_value = printers
 
 
 def printer_entry(printer_id: int) -> dict[str, Any]:
@@ -383,6 +390,11 @@ def device_id(hass: HomeAssistant, entry: MockConfigEntry, identifier: str) -> s
     raise AssertionError(identifier)
 
 
+def printer_device_id(hass: HomeAssistant, entry: MockConfigEntry, printer_id: int = X1C) -> str:
+    """The registry ID of a printer's device."""
+    return device_id(hass, entry, printer_device(entry, printer_id))
+
+
 def state_at(hass: HomeAssistant, entity: str) -> Any:
     """The state object of an entity found by its entity ID."""
     state = hass.states.get(entity)
@@ -490,9 +502,7 @@ def check_flow_texts() -> Iterator[None]:
     errors and sections, a menu's option labels, and the abort reason.
     Read from translations/en.json, which equals strings.json (test_strings).
     """
-    english = json.loads(
-        (INTEGRATION / "translations" / "en.json").read_text(encoding="utf-8")
-    )
+    english = translations("en")
     problems: list[tuple] = []
     original = FlowManager._async_handle_step
 

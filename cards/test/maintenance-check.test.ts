@@ -6,6 +6,7 @@ import { en } from "../src/translations/en";
 import {
   MAINTENANCE_TASKS,
   maintenanceSpec,
+  mountFor,
   offlineP1s,
   unreachable,
   x1c,
@@ -19,13 +20,14 @@ import {
   find,
   findAll,
   hasButton,
+  root,
   settle,
   shownText,
   text,
   update,
 } from "./helpers";
-import { pastTheWait, useCardPage } from "./card-helpers";
-import { chip, chips, menuItem, mount, openMenu, withX1c } from "./feature-helpers";
+import { pastTheWait, useCardPage, withX1c } from "./card-helpers";
+import { chip, chips, menuItem, openMenu } from "./feature-helpers";
 
 useCardPage();
 
@@ -133,29 +135,29 @@ describe("checking the connection", () => {
 
   it("says what to do where a check fails on its own", async () => {
     const alone = { overall: "warnings", checks: [{ id: "port_mqtt", status: "pass", params: {} }, { id: "port_ftps", status: "warn", params: {} }] };
-    const { card } = await mount(offlineP1s(), "dev-p1s", {}, { callService: answering(alone) });
+    const { card } = await mountFor(offlineP1s(), "dev-p1s", {}, { callService: answering(alone) });
     button(card, "Check connection").click();
     await settle(card);
     expect(findAll(card, ".check-item").map(shownText)).toEqual(["File transfer (port 990) Not reachable: BamBuddy cannot send prints. Unblock port 990."]);
   });
 
   it("is offered in the offline view, not while BamBuddy gives no data", async () => {
-    const { card } = await mount(offlineP1s(), "dev-p1s");
+    const { card } = await mountFor(offlineP1s(), "dev-p1s");
     expect(hasButton(card, "Check connection")).toBe(true);
-    const silent = await mount(unreachable(offlineP1s()), "dev-p1s");
+    const silent = await mountFor(unreachable(offlineP1s()), "dev-p1s");
     expect(hasButton(silent.card, "Check connection")).toBe(false);
   });
 
   it("is in the menu always, and waits while BamBuddy gives no data", async () => {
     const { card } = await withX1c({});
     expect((await menuItem(card, "Check connection")).disabled).toBe(false);
-    const silent = await mount(unreachable(x1c()), "dev-x1c");
+    const silent = await mountFor(unreachable(x1c()), "dev-x1c");
     expect((await menuItem(silent.card, "Check connection")).disabled).toBe(true);
   });
 
   it("runs while the dialog says so, then gives the verdict and what to do", async () => {
     let answer: (value: unknown) => void = () => undefined;
-    const { card, hass } = await mount(offlineP1s(), "dev-p1s", {}, {
+    const { card, hass } = await mountFor(offlineP1s(), "dev-p1s", {}, {
       callService: async (call) => (call.service === "run_diagnostic" ? new Promise((resolve) => (answer = resolve)) : undefined),
     });
     button(card, "Check connection").click();
@@ -180,7 +182,7 @@ describe("checking the connection", () => {
 
   it("checks again on a tap, and says when it could not run", async () => {
     let calls = 0;
-    const failing = await mount(x1c(), "dev-x1c", {}, {
+    const failing = await mountFor(x1c(), "dev-x1c", {}, {
       callService: async (call) => {
         if (call.service !== "run_diagnostic") return undefined;
         calls += 1;
@@ -198,7 +200,7 @@ describe("checking the connection", () => {
   });
 
   it("counts what needs attention", async () => {
-    const { card } = await mount(x1c(), "dev-x1c", {}, {
+    const { card } = await mountFor(x1c(), "dev-x1c", {}, {
       callService: answering({ overall: "warnings", checks: [{ id: "network_mode", status: "warn", params: { mode: "bridge", runtime: "docker" } }] }),
     });
     (await menuItem(card, "Check connection")).click();
@@ -210,7 +212,7 @@ describe("checking the connection", () => {
 
 describe("the connection check's words, closer", () => {
   const check = async (checks: unknown[], overall?: string, language = "en"): Promise<FakeCard> => {
-    const { card } = await mount(x1c(), "dev-x1c", {}, {
+    const { card } = await mountFor(x1c(), "dev-x1c", {}, {
       language,
       callService: async (call) => (call.service === "run_diagnostic" ? { response: { ...(overall ? { overall } : {}), checks } } : undefined),
     });
@@ -284,7 +286,7 @@ describe("the connection check's words, closer", () => {
 
   it("counts the seconds while it runs, and drops an answer for a dialog closed meanwhile", async () => {
     let answer: (value: unknown) => void = () => undefined;
-    const { card } = await mount(x1c(), "dev-x1c", {}, {
+    const { card } = await mountFor(x1c(), "dev-x1c", {}, {
       callService: async (call) => (call.service === "run_diagnostic" ? new Promise((resolve) => (answer = resolve)) : undefined),
     });
     (await menuItem(card, "Check connection")).click();
@@ -310,6 +312,27 @@ describe("the maintenance dialog while BamBuddy does not answer", () => {
     await pastTheWait(card);
     expect(text(find(card, "dialog"))).toContain("No data from BamBuddy");
     expect(text(find(card, "dialog"))).not.toContain("No maintenance tasks.");
+  });
+});
+
+describe("the maintenance dialog's focus once a task is marked", () => {
+  it("gives the focus back to the row's Done once the task is marked, or failed", async () => {
+    for (const fails of [false, true]) {
+      const { card } = await mountFor(x1c({ maintenance: maintenanceSpec() }), "dev-x1c", { header_chips: ["maintenance"] }, {
+        callService: async (call) => {
+          if (fails && call.service === "mark_maintenance_done") throw { message: "BamBuddy refused" };
+          return undefined;
+        },
+      });
+      findAll<HTMLButtonElement>(card, ".pills .pill")[0]?.click();
+      await card.updateComplete;
+      (find(card, '.maint-done[data-task="12"]') as HTMLButtonElement).click();
+      await settle(card);
+      [...(find(card, ".maint-confirm")?.querySelectorAll<HTMLButtonElement>("button") ?? [])].at(-1)?.click();
+      await settle(card);
+      await settle(card);
+      expect(root(card).activeElement, String(fails)).toBe(find(card, '.maint-done[data-task="12"]'));
+    }
   });
 });
 

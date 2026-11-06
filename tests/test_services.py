@@ -1,5 +1,6 @@
 """The actions: moving the axes, homing, extruding, loading and unloading
-filament, drying -- and when a printer must not take them."""
+filament, drying, answering HMS messages, skipping objects, the connection
+check -- and when a printer must not take them."""
 from __future__ import annotations
 
 from types import SimpleNamespace
@@ -13,8 +14,8 @@ from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError, ServiceValidationError
 
 from custom_components.bambuddy.api import BamBuddyApiError, BamBuddyConnectionError
-from custom_components.bambuddy.const import DOMAIN
 from custom_components.bambuddy.models import HMS_ANSWERS
+from custom_components.bambuddy.services import SCHEMAS
 
 from tests.conftest import (
     A1_MINI,
@@ -27,21 +28,16 @@ from tests.conftest import (
     device_id,
     entity_id,
     load_fixture,
-    make_entry,
     next_refresh,
-    printer_device,
+    printer_device_id,
     printer_key,
     printer_name,
     printer_uid,
     printers_but,
     set_up,
-    setup_integration,
+    state_of,
 )
 from tests.helpers import call_action, reload_entry, timed_out
-
-
-def _printer(hass: HomeAssistant, entry: Any, printer_id: int) -> str:
-    return device_id(hass, entry, printer_device(entry, printer_id))
 
 
 def _ams(hass: HomeAssistant, entry: Any, printer_id: int, unit: int) -> str:
@@ -61,7 +57,7 @@ async def test_moving_an_axis(
 ) -> None:
     entry = await set_up(hass, A1_MINI)
 
-    await call_action(hass, "move_axis", device_id=_printer(hass, entry, A1_MINI), axis=axis, distance=10)
+    await call_action(hass, "move_axis", device_id=printer_device_id(hass, entry, A1_MINI), axis=axis, distance=10)
 
     getattr(bambuddy_api, method).assert_awaited_once_with(*args)
 
@@ -69,13 +65,12 @@ async def test_moving_an_axis(
 @pytest.mark.parametrize("printer", [X1C, P1S])
 async def test_nothing_moves_during_a_print(hass: HomeAssistant, bambuddy_api: SimpleNamespace, printer: int) -> None:
     """BamBuddy would put the move into the running (or paused) job."""
-    entry = make_entry(hass, printer)
-    await setup_integration(hass, entry)
+    entry = await set_up(hass, printer)
 
     with pytest.raises(ServiceValidationError) as raised:
-        await call_action(hass, "move_axis", device_id=_printer(hass, entry, printer), axis="x", distance=1)
+        await call_action(hass, "move_axis", device_id=printer_device_id(hass, entry, printer), axis="x", distance=1)
     with pytest.raises(ServiceValidationError):
-        await call_action(hass, "home_axes", device_id=_printer(hass, entry, printer))
+        await call_action(hass, "home_axes", device_id=printer_device_id(hass, entry, printer))
 
     assert raised.value.translation_key == "job_running"
     bambuddy_api.jog_xy.assert_not_awaited()
@@ -85,7 +80,7 @@ async def test_nothing_moves_during_a_print(hass: HomeAssistant, bambuddy_api: S
 async def test_homing(hass: HomeAssistant, bambuddy_api: SimpleNamespace) -> None:
     entry = await set_up(hass, A1_MINI)
 
-    await call_action(hass, "home_axes", device_id=_printer(hass, entry, A1_MINI))
+    await call_action(hass, "home_axes", device_id=printer_device_id(hass, entry, A1_MINI))
 
     bambuddy_api.home_axes.assert_awaited_once_with(A1_MINI)
 
@@ -94,14 +89,14 @@ async def test_a_too_long_move_is_refused(hass: HomeAssistant, bambuddy_api: Sim
     entry = await set_up(hass, A1_MINI)
 
     with pytest.raises(vol.Invalid):
-        await call_action(hass, "move_axis", device_id=_printer(hass, entry, A1_MINI), axis="z", distance=250)
+        await call_action(hass, "move_axis", device_id=printer_device_id(hass, entry, A1_MINI), axis="z", distance=250)
 
 
 async def test_extruding_needs_a_hot_nozzle(
     hass: HomeAssistant, bambuddy_api: SimpleNamespace, freezer: FrozenDateTimeFactory
 ) -> None:
     entry = await set_up(hass, A1_MINI)
-    device = _printer(hass, entry, A1_MINI)
+    device = printer_device_id(hass, entry, A1_MINI)
 
     with pytest.raises(ServiceValidationError) as raised:
         await call_action(hass, "extrude", device_id=device, distance=10)
@@ -124,7 +119,7 @@ async def test_a_two_nozzle_printer_extrudes_with_the_active_nozzle(
     status["temperatures"].update({"nozzle": 30.0, "nozzle_2": 230.0})
     await next_refresh(hass, freezer)
 
-    await call_action(hass, "extrude", device_id=_printer(hass, entry, H2D), distance=10)
+    await call_action(hass, "extrude", device_id=printer_device_id(hass, entry, H2D), distance=10)
 
     bambuddy_api.jog_extruder.assert_awaited_once_with(H2D, 10.0)
 
@@ -179,7 +174,7 @@ async def test_something_else_is_no_slot(hass: HomeAssistant, bambuddy_api: Simp
 async def test_unloading(hass: HomeAssistant, bambuddy_api: SimpleNamespace) -> None:
     entry = await set_up(hass, A1_MINI)
 
-    await call_action(hass, "unload_filament", device_id=_printer(hass, entry, A1_MINI))
+    await call_action(hass, "unload_filament", device_id=printer_device_id(hass, entry, A1_MINI))
 
     bambuddy_api.unload_filament.assert_awaited_once_with(A1_MINI)
 
@@ -252,10 +247,10 @@ async def test_drying_only_where_and_as_hot_as_a_unit_can(hass: HomeAssistant, b
 @pytest.mark.parametrize("action", ["move_axis", "extrude"])
 async def test_a_distance_of_0_is_refused_in_words(hass: HomeAssistant, bambuddy_api: SimpleNamespace, action: str) -> None:
     entry = await set_up(hass, A1_MINI)
-    data = {"device_id": _printer(hass, entry, A1_MINI), "distance": 0, **({"axis": "x"} if action == "move_axis" else {})}
+    data = {"device_id": printer_device_id(hass, entry, A1_MINI), "distance": 0, **({"axis": "x"} if action == "move_axis" else {})}
 
     with pytest.raises(ServiceValidationError) as raised:
-        await hass.services.async_call(DOMAIN, action, data, blocking=True)
+        await call_action(hass, action, **data)
 
     assert raised.value.translation_key == "zero_distance"
 
@@ -264,7 +259,7 @@ async def test_a_printer_is_no_ams(hass: HomeAssistant, bambuddy_api: SimpleName
     entry = await set_up(hass, H2D)
 
     with pytest.raises(ServiceValidationError) as raised:
-        await call_action(hass, "stop_drying", device_id=_printer(hass, entry, H2D))
+        await call_action(hass, "stop_drying", device_id=printer_device_id(hass, entry, H2D))
 
     assert raised.value.translation_key == "not_an_ams"
 
@@ -282,11 +277,10 @@ async def test_answering_an_hms_message(hass: HomeAssistant, bambuddy_api: Simpl
     """As on the printer's screen: an answer the printer offers for the
     message, sent with its full code and its job."""
     entry = await set_up(hass, P1S)
-    sensor = hass.states.get(entity_id(hass, "sensor", printer_uid(entry, "hms_status", P1S)))
-    assert sensor is not None
+    sensor = state_of(hass, "sensor", printer_uid(entry, "hms_status", P1S))
     assert [error["actions"] for error in sensor.attributes["errors"]] == [["RESUME_PRINTING"], []]
 
-    await call_action(hass, "answer_hms", device_id=_printer(hass, entry, P1S), code="0700_2000_0002_0012", action="RESUME_PRINTING")
+    await call_action(hass, "answer_hms", device_id=printer_device_id(hass, entry, P1S), code="0700_2000_0002_0012", action="RESUME_PRINTING")
 
     bambuddy_api.execute_hms_action.assert_awaited_once_with(P1S, "0700200000020012", "RESUME_PRINTING", "498765432")
 
@@ -307,7 +301,7 @@ async def test_an_hms_answer_the_printer_does_not_offer_is_refused(
     entry = await set_up(hass, P1S)
 
     with pytest.raises(ServiceValidationError) as raised:
-        await call_action(hass, "answer_hms", device_id=_printer(hass, entry, P1S), code=code, action=action)
+        await call_action(hass, "answer_hms", device_id=printer_device_id(hass, entry, P1S), code=code, action=action)
 
     assert raised.value.translation_key == key
     bambuddy_api.execute_hms_action.assert_not_awaited()
@@ -321,8 +315,8 @@ async def test_only_answers_that_send_something_are_listed(hass: HomeAssistant, 
     bambuddy_api.statuses[P1S] = status
     entry = await set_up(hass, P1S)
 
-    sensor = hass.states.get(entity_id(hass, "sensor", printer_uid(entry, "hms_status", P1S)))
-    assert sensor is not None and sensor.attributes["errors"][0]["actions"] == ["RESUME_PRINTING", "STOP_PRINTING"]
+    sensor = state_of(hass, "sensor", printer_uid(entry, "hms_status", P1S))
+    assert sensor.attributes["errors"][0]["actions"] == ["RESUME_PRINTING", "STOP_PRINTING"]
 
 
 async def test_an_hms_answer_the_printer_does_not_take_says_so(hass: HomeAssistant, bambuddy_api: SimpleNamespace) -> None:
@@ -331,7 +325,7 @@ async def test_an_hms_answer_the_printer_does_not_take_says_so(hass: HomeAssista
     bambuddy_api.execute_hms_action.side_effect = BamBuddyApiError(400, "Failed to execute HMS action")
 
     with pytest.raises(ServiceValidationError) as raised:
-        await call_action(hass, "answer_hms", device_id=_printer(hass, entry, P1S), code="0700_2000_0002_0012", action="RESUME_PRINTING")
+        await call_action(hass, "answer_hms", device_id=printer_device_id(hass, entry, P1S), code="0700_2000_0002_0012", action="RESUME_PRINTING")
 
     assert raised.value.translation_key == "hms_answer_not_taken"
 
@@ -344,7 +338,7 @@ async def test_stopping_through_an_hms_answer_reads_the_printer_first(hass: Home
     status["hms_errors"] = []
 
     with pytest.raises(ServiceValidationError) as raised:
-        await call_action(hass, "answer_hms", device_id=_printer(hass, entry, P1S), code="0700_2000_0002_0012", action="STOP_PRINTING")
+        await call_action(hass, "answer_hms", device_id=printer_device_id(hass, entry, P1S), code="0700_2000_0002_0012", action="STOP_PRINTING")
 
     assert raised.value.translation_key == "hms_not_current"
     bambuddy_api.execute_hms_action.assert_not_awaited()
@@ -358,7 +352,7 @@ async def test_an_offline_printer_takes_no_action(
     await next_refresh(hass, freezer)
 
     with pytest.raises(ServiceValidationError) as raised:
-        await call_action(hass, "unload_filament", device_id=_printer(hass, entry, X1C))
+        await call_action(hass, "unload_filament", device_id=printer_device_id(hass, entry, X1C))
 
     assert raised.value.translation_key == "printer_offline"
 
@@ -389,14 +383,41 @@ async def test_loading_the_external_spool(hass: HomeAssistant, bambuddy_api: Sim
     bambuddy_api.load_filament.assert_awaited_once_with(A1_MINI, 254)
 
 
+@pytest.mark.parametrize(
+    ("action", "fields", "field"),
+    [
+        ("mark_maintenance_done", {"device_id": "d"}, "task_id"),
+        ("assign_spool", {"entity_id": "sensor.slot"}, "spool_id"),
+        ("set_filament", {"entity_id": "sensor.slot"}, "k_profile"),
+    ],
+)
+def test_a_number_field_takes_whole_numbers_only(action: str, fields: dict[str, Any], field: str) -> None:
+    """A fraction would be cut off and name another spool, task or profile."""
+    schema = SCHEMAS[action]
+    assert schema({**fields, field: "2"})[field] == 2
+    assert schema({**fields, field: 2.0})[field] == 2
+    for wrong in (2.5, True, "2.5", "two", None, [2]):
+        with pytest.raises(vol.Invalid):
+            schema({**fields, field: wrong})
+
+
+def test_the_objects_to_skip_are_whole_numbers() -> None:
+    schema = SCHEMAS["skip_objects"]
+    assert schema({"device_id": "d", "objects": ["87", 121.0]})["objects"] == [87, 121]
+    with pytest.raises(vol.Invalid):
+        schema({"device_id": "d", "objects": [2.5]})
+
+
+def test_drying_takes_its_numbers_as_before() -> None:
+    assert SCHEMAS["start_drying"]({"device_id": "d", "temperature": 55.5, "duration": "4"}) == {"device_id": "d", "temperature": 55, "duration": 4}
+
+
 async def test_the_objects_of_the_running_print(hass: HomeAssistant, bambuddy_api: SimpleNamespace) -> None:
     """For the dashboard card and for scripts: which objects there are, and
     which are skipped already."""
     entry = await set_up(hass, X1C)
 
-    response = await hass.services.async_call(
-        DOMAIN, "get_print_objects", {"device_id": _printer(hass, entry, X1C)}, blocking=True, return_response=True
-    )
+    response = await call_action(hass, "get_print_objects", device_id=printer_device_id(hass, entry, X1C), response=True)
 
     assert response == {
         "objects": [
@@ -410,7 +431,7 @@ async def test_the_objects_of_the_running_print(hass: HomeAssistant, bambuddy_ap
 async def test_skipping_objects(hass: HomeAssistant, bambuddy_api: SimpleNamespace) -> None:
     entry = await set_up(hass, X1C)
 
-    await call_action(hass, "skip_objects", device_id=_printer(hass, entry, X1C), objects=[87, 121])
+    await call_action(hass, "skip_objects", device_id=printer_device_id(hass, entry, X1C), objects=[87, 121])
 
     bambuddy_api.skip_objects.assert_awaited_once_with(X1C, [87, 121])
 
@@ -419,15 +440,9 @@ async def test_skipping_needs_a_print(hass: HomeAssistant, bambuddy_api: SimpleN
     entry = await set_up(hass, A1_MINI)
 
     with pytest.raises(ServiceValidationError) as raised:
-        await call_action(hass, "skip_objects", device_id=_printer(hass, entry, A1_MINI), objects=[87])
+        await call_action(hass, "skip_objects", device_id=printer_device_id(hass, entry, A1_MINI), objects=[87])
     with pytest.raises(ServiceValidationError):
-        await hass.services.async_call(
-            DOMAIN,
-            "get_print_objects",
-            {"device_id": _printer(hass, entry, A1_MINI)},
-            blocking=True,
-            return_response=True,
-        )
+        await call_action(hass, "get_print_objects", device_id=printer_device_id(hass, entry, A1_MINI), response=True)
 
     assert raised.value.translation_key == "not_printing"
     bambuddy_api.skip_objects.assert_not_awaited()
@@ -439,9 +454,7 @@ async def test_objects_bambuddy_cannot_read(hass: HomeAssistant, bambuddy_api: S
     bambuddy_api.get_print_objects.side_effect = BamBuddyApiError(500, "Could not download 3MF file")
 
     with pytest.raises(HomeAssistantError) as raised:
-        await hass.services.async_call(
-            DOMAIN, "get_print_objects", {"device_id": _printer(hass, entry, X1C)}, blocking=True, return_response=True
-        )
+        await call_action(hass, "get_print_objects", device_id=printer_device_id(hass, entry, X1C), response=True)
 
     # A read, not a command BamBuddy refused.
     assert raised.value.translation_key == "read_failed"
@@ -465,7 +478,7 @@ async def test_no_action_during_a_filament_change(
     await next_refresh(hass, freezer)
 
     with pytest.raises(ServiceValidationError) as raised:
-        await call_action(hass, action, device_id=_printer(hass, entry, A1_MINI), **data)
+        await call_action(hass, action, device_id=printer_device_id(hass, entry, A1_MINI), **data)
 
     assert raised.value.translation_key == "filament_change"
 
@@ -474,12 +487,10 @@ async def test_a_paused_print_can_change_filament(hass: HomeAssistant, bambuddy_
     """A colour change by hand: pause, unload, load, resume. Moving stays
     locked: the print would shift."""
     entry = await set_up(hass, P1S)
-    printer = _printer(hass, entry, P1S)
+    printer = printer_device_id(hass, entry, P1S)
 
     await call_action(hass, "unload_filament", device_id=printer)
-    await hass.services.async_call(
-        DOMAIN, "load_filament", {"entity_id": entity_id(hass, "sensor", ams_uid(entry, 0, "slot_2", P1S))}, blocking=True
-    )
+    await call_action(hass, "load_filament", entity_id=entity_id(hass, "sensor", ams_uid(entry, 0, "slot_2", P1S)))
     with pytest.raises(ServiceValidationError) as raised:
         await call_action(hass, "home_axes", device_id=printer)
 
@@ -492,7 +503,7 @@ async def test_a_running_print_keeps_its_filament(hass: HomeAssistant, bambuddy_
     entry = await set_up(hass, X1C)
 
     with pytest.raises(ServiceValidationError) as raised:
-        await call_action(hass, "unload_filament", device_id=_printer(hass, entry, X1C))
+        await call_action(hass, "unload_filament", device_id=printer_device_id(hass, entry, X1C))
 
     assert raised.value.translation_key == "pause_first"
     bambuddy_api.unload_filament.assert_not_awaited()
@@ -510,7 +521,7 @@ async def test_a_slot_of_an_ams_plugged_in_elsewhere(
     bambuddy_api.statuses[A1_MINI]["ams"][0]["id"] = 1
     await next_refresh(hass, freezer)
 
-    await hass.services.async_call(DOMAIN, "load_filament", {"entity_id": slot}, blocking=True)
+    await call_action(hass, "load_filament", entity_id=slot)
 
     bambuddy_api.load_filament.assert_awaited_once_with(A1_MINI, 4)
 
@@ -545,14 +556,14 @@ async def test_a_printer_bambuddy_does_not_list_now_points_to_its_repair(
     """Its device waits under Repairs: an action on it, or on one of its AMS
     units, says so -- not that it is no printer."""
     entry = await set_up(hass, X1C, A1_MINI)
-    printer = device_id(hass, entry, printer_device(entry, A1_MINI))
+    printer = printer_device_id(hass, entry, A1_MINI)
     unit = _ams(hass, entry, A1_MINI, 0)
     bambuddy_api.get_printers.return_value = printers_but(A1_MINI)
     await reload_entry(hass, entry.entry_id)
 
     for service, device in (("home_axes", printer), ("stop_drying", unit)):
         with pytest.raises(ServiceValidationError) as raised:
-            await hass.services.async_call(DOMAIN, service, {"device_id": device}, blocking=True)
+            await call_action(hass, service, device_id=device)
         assert raised.value.translation_key == "printer_not_listed"
         assert raised.value.translation_placeholders == {"printer": printer_name(A1_MINI)}
 
@@ -568,7 +579,7 @@ async def test_an_unplugged_unit_is_named_as_such(
     await next_refresh(hass, freezer)
 
     with pytest.raises(ServiceValidationError) as raised:
-        await hass.services.async_call(DOMAIN, "stop_drying", {"device_id": unit}, blocking=True)
+        await call_action(hass, "stop_drying", device_id=unit)
 
     assert raised.value.translation_key == "ams_not_reported"
     assert raised.value.translation_placeholders == {"printer": "Workshop"}
@@ -584,7 +595,7 @@ async def test_a_slot_of_a_printer_bambuddy_does_not_list_now_points_to_its_repa
 
     for action, data in (("load_filament", {}), ("set_filament", {"filament": "GFL99"})):
         with pytest.raises(ServiceValidationError) as raised:
-            await hass.services.async_call(DOMAIN, action, {"entity_id": slot, **data}, blocking=True)
+            await call_action(hass, action, entity_id=slot, **data)
         assert raised.value.translation_key == "printer_not_listed"
 
 
@@ -595,9 +606,7 @@ async def test_a_read_that_times_out_is_no_command(hass: HomeAssistant, bambuddy
     bambuddy_api.get_print_objects.side_effect = timeout
 
     with pytest.raises(HomeAssistantError) as raised:
-        await hass.services.async_call(
-            DOMAIN, "get_print_objects", {"device_id": _printer(hass, entry, X1C)}, blocking=True, return_response=True
-        )
+        await call_action(hass, "get_print_objects", device_id=printer_device_id(hass, entry, X1C), response=True)
 
     assert raised.value.translation_key == "update_timeout"
 
@@ -613,7 +622,7 @@ async def test_drying_started_on_the_screen_stops_there(hass: HomeAssistant, bam
     entry = await set_up(hass, P1S)
 
     with pytest.raises(ServiceValidationError) as raised:
-        await hass.services.async_call(DOMAIN, "stop_drying", {"device_id": _ams(hass, entry, P1S, 0)}, blocking=True)
+        await call_action(hass, "stop_drying", device_id=_ams(hass, entry, P1S, 0))
 
     assert raised.value.translation_key == "dry_stop_on_screen"
     bambuddy_api.stop_drying.assert_not_awaited()
@@ -626,9 +635,7 @@ async def test_checking_the_connection(hass: HomeAssistant, bambuddy_api: Simple
     bambuddy_api.statuses[X1C] = load_fixture("status_offline.json")
     await next_refresh(hass, freezer)
 
-    response = await hass.services.async_call(
-        DOMAIN, "run_diagnostic", {"device_id": _printer(hass, entry, X1C)}, blocking=True, return_response=True
-    )
+    response = await call_action(hass, "run_diagnostic", device_id=printer_device_id(hass, entry, X1C), response=True)
 
     assert response is not None
     assert response["overall"] == "problems"
@@ -643,9 +650,7 @@ async def test_a_connection_check_bambuddy_cannot_run(hass: HomeAssistant, bambu
     bambuddy_api.get_diagnostic.side_effect = BamBuddyConnectionError("refused")
 
     with pytest.raises(HomeAssistantError) as raised:
-        await hass.services.async_call(
-            DOMAIN, "run_diagnostic", {"device_id": _printer(hass, entry, X1C)}, blocking=True, return_response=True
-        )
+        await call_action(hass, "run_diagnostic", device_id=printer_device_id(hass, entry, X1C), response=True)
 
     assert raised.value.translation_key == "cannot_connect"
 
@@ -656,9 +661,7 @@ async def test_a_connection_check_bambuddy_fails(hass: HomeAssistant, bambuddy_a
     bambuddy_api.get_diagnostic.side_effect = BamBuddyApiError(500, "Simulated failure")
 
     with pytest.raises(HomeAssistantError) as raised:
-        await hass.services.async_call(
-            DOMAIN, "run_diagnostic", {"device_id": _printer(hass, entry, X1C)}, blocking=True, return_response=True
-        )
+        await call_action(hass, "run_diagnostic", device_id=printer_device_id(hass, entry, X1C), response=True)
 
     assert (raised.value.translation_key, raised.value.translation_placeholders) == ("read_failed", {"error": "Simulated failure"})
 
@@ -822,7 +825,7 @@ async def test_an_hms_answer_to_an_offline_printer_says_offline(
     await next_refresh(hass, freezer)
 
     with pytest.raises(ServiceValidationError) as raised:
-        await call_action(hass, "answer_hms", device_id=_printer(hass, entry, P1S), code=code, action=action)
+        await call_action(hass, "answer_hms", device_id=printer_device_id(hass, entry, P1S), code=code, action=action)
 
     assert raised.value.translation_key == "printer_offline"
 
@@ -833,7 +836,7 @@ async def test_an_hms_answer_the_printer_did_not_acknowledge_is_said_so(hass: Ho
     bambuddy_api.execute_hms_action.side_effect = BamBuddyApiError(502, "Printer did not acknowledge HMS action within 2.5s")
 
     with pytest.raises(ServiceValidationError) as raised:
-        await call_action(hass, "answer_hms", device_id=_printer(hass, entry, P1S), code="0700_2000_0002_0012", action="RESUME_PRINTING")
+        await call_action(hass, "answer_hms", device_id=printer_device_id(hass, entry, P1S), code="0700_2000_0002_0012", action="RESUME_PRINTING")
 
     assert raised.value.translation_key == "hms_answer_not_taken"
 
@@ -854,6 +857,6 @@ async def test_an_hms_answer_bambuddy_fails_says_the_command_failed(hass: HomeAs
     bambuddy_api.execute_hms_action.side_effect = BamBuddyApiError(404, "Printer not found")
 
     with pytest.raises(HomeAssistantError) as raised:
-        await call_action(hass, "answer_hms", device_id=_printer(hass, entry, P1S), code="0700_2000_0002_0012", action="RESUME_PRINTING")
+        await call_action(hass, "answer_hms", device_id=printer_device_id(hass, entry, P1S), code="0700_2000_0002_0012", action="RESUME_PRINTING")
 
     assert raised.value.translation_key == "command_failed"

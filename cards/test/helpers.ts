@@ -118,9 +118,9 @@ export function moreInfoIds(card: EventTarget): string[] {
   return ids;
 }
 
-/** Opens the slot dialog of the Filament tab's row `row` (its ✏️). */
+/** Opens the slot dialog of the Filament tab's row `row` (its ✏️); -1 the last row. */
 export async function editSlot(card: FakeCard, row: number): Promise<void> {
-  (findAll(card, ".slot")[row]?.querySelector(".btn.edit") as HTMLButtonElement).click();
+  (findAll(card, ".slot").at(row)?.querySelector(".btn.edit") as HTMLButtonElement).click();
   await settle(card);
 }
 

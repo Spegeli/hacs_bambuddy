@@ -12,6 +12,8 @@ from custom_components.bambuddy import filaments
 from custom_components.bambuddy.filament_types import printer_filament_type
 from custom_components.bambuddy.inventory import Spool, spool_fit, spool_of
 
+from tests.helpers import spool_row
+
 
 X1C_AMS = filaments.Slot("X1C", "0.4", True, frozenset({0}), {0: "HS00"})
 X1C_EXTERNAL = filaments.Slot("X1C", "0.4", False, frozenset({0}), {0: "HS00"})
@@ -110,4 +112,3 @@ def test_a_pla_spool_is_not_for_a_tpu_nozzle() -> None:
 def test_the_refusals_read_as_a_fit(why: str | None, fit: str | None) -> None:
     with patch.object(filaments, "refusal", return_value=why):
         assert spool_fit(_spool(material="PLA"), X1C_AMS) == fit
-from tests.helpers import spool_row

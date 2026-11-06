@@ -2,8 +2,6 @@ import { describe, expect, it, vi } from "vitest";
 
 import "../src/index";
 import { ICONS } from "../src/icons";
-import { unitModel } from "../src/parts";
-import type { AmsRefs } from "../src/types";
 import { a1mini, IDLE_H2D, keepEntities, x1c, type FakeCard, type FakeDevice } from "./fixtures";
 import { button, declarations, find, findAll, hasButton, NBSP, press, root, settle, shownText, showView, styleText, text, update } from "./helpers";
 import { cardFor, confirmDialog, keyPress, previewOf, useCardPage, withX1c } from "./card-helpers";
@@ -75,7 +73,7 @@ describe("the views", () => {
 describe("the groups of choices: speed, active nozzle, step", () => {
   /** A key pressed on the card's focused element. */
   const key = (card: FakeCard, name: string): void => {
-    root(card).activeElement?.dispatchEvent(new KeyboardEvent("keydown", { key: name, bubbles: true, composed: true }));
+    keyPress(root(card).activeElement as Element, name);
   };
 
   it("stop the tab key at the chosen option, and move the focus by the arrow keys without choosing", async () => {
@@ -305,7 +303,7 @@ describe("the control view", () => {
     await showView(card, "Control");
     expect(find(card, ".pad")).toBeNull();
     expect(find(card, ".heating")).toBeNull();
-    expect(text(find(card, ".job .job-info"))).toBe("The printer is offline. Check that it is switched on and connected to BamBuddy.");
+    expect(text(find(card, ".job .job-info"))).toBe("The printer is offline. Check that it is turned on and connected to BamBuddy.");
     // With the picture, as the Status tab's offline view.
     expect(find(card, ".job .picture")).not.toBeNull();
     const preview = await previewOf("offline", { start_view: "control" });
@@ -318,15 +316,6 @@ describe("the control view", () => {
     await expect(showView(card, "Control")).rejects.toThrowError(/no tab "Control"/);
     expect(find(card, ".note")).toBeNull();
     expect(find(card, ".pad")).toBeNull();
-  });
-});
-
-describe("an AMS unit's model chip", () => {
-  it("is left out where the unit's name is its model", () => {
-    const lite = { name: "AMS Lite", model: "AMS Lite" } as AmsRefs;
-    const ams = { name: "AMS A", model: "AMS" } as AmsRefs;
-    expect(unitModel([ams, lite], lite)).toBeUndefined();
-    expect(unitModel([ams, lite], ams)).toBe("AMS");
   });
 });
 
@@ -501,6 +490,24 @@ describe("the heating section", () => {
     expect(hasButton(card, `Nozzle: heat to 200${NBSP}°C`)).toBe(true);
   });
 
+  it("takes a filament's range only when it is a real one: both ends numbers, the top not below the bottom, the bottom above zero", async () => {
+    const { card, hass } = await cardFor("a1mini");
+    await showView(card, "Control");
+    const start = async (attributes: Record<string, unknown>): Promise<boolean[]> => {
+      await update(card, hass.withState("sensor.a1_mini_active_filament", "PLA Basic", attributes));
+      return [hasButton(card, `Nozzle: heat to 220${NBSP}°C`), hasButton(card, `Nozzle: heat to 200${NBSP}°C`)];
+    };
+    // A range of one temperature is a range.
+    expect(await start({ nozzle_temp_min: 200, nozzle_temp_max: 200 })).toEqual([false, true]);
+    // Without a bottom above zero, or an end that is no number, the card does not guess.
+    expect(await start({ nozzle_temp_min: 0, nozzle_temp_max: 400 })).toEqual([true, false]);
+    expect(await start({ nozzle_temp_max: 300 })).toEqual([true, false]);
+    expect(await start({ nozzle_temp_min: 100 })).toEqual([true, false]);
+    expect(await start({ nozzle_temp_min: "100", nozzle_temp_max: 300 })).toEqual([true, false]);
+    expect(await start({ nozzle_temp_min: 100, nozzle_temp_max: "300" })).toEqual([true, false]);
+    expect(await start({ nozzle_temp_min: 100, nozzle_temp_max: 300 })).toEqual([false, true]);
+  });
+
   it("stops at the number's highest target and turns a heater off below 5 °C", async () => {
     vi.useFakeTimers();
     const { card, hass } = await cardFor("h2d", { printer: IDLE_H2D });
@@ -652,7 +659,7 @@ describe("the print options", () => {
     await showView(card, "Control");
     await unfold(card);
     expect(text(find(card, ".detection .hint"))).toBe(
-      "On: the printer pauses the print when the detection triggers. A detection switched off stays off for later prints too.",
+      "On: the printer pauses the print when the detection triggers. A detection turned off stays off for later prints too.",
     );
     const { card: german } = await cardFor("a1mini", { language: "de" });
     await showView(german, "Steuerung");
@@ -677,7 +684,7 @@ describe("the print options", () => {
     expect(states(card)).toEqual(["AI print monitoring: true", "First layer inspection: true", "Build plate position detection: false"]);
     expect(toggles(card).every((item) => !item.disabled)).toBe(true);
     expect(text(find(card, ".detection .hint"))).toBe(
-      "On: the printer pauses the print when the detection triggers. Sensitivity as set on the printer. A detection switched off stays off for later prints too.",
+      "On: the printer pauses the print when the detection triggers. Sensitivity as set on the printer. A detection turned off stays off for later prints too.",
     );
     // Only the switch taps: the row is a line to read with its name beside it.
     const row = toggle(card, "Build plate position detection").closest(".det-row") as HTMLElement;
@@ -869,7 +876,7 @@ describe("the print options", () => {
       "Druckplattenerkennung",
       "Spaghetti-Erkennung",
       "Auswurfschacht-Überwachung",
-      "Erkennung von Düsenklumpen",
+      "Erkennung von Düsenverklumpung",
       "Druck-ins-Leere-Erkennung",
     ]);
     const { card: x1 } = await cardFor("x1c", { language: "de" });
@@ -997,9 +1004,11 @@ describe("the active nozzle", () => {
     const { card: printing } = await cardFor("h2d", { language: "de", printer: { status: "printing", hms: [] } });
     await showView(printing, "Steuerung");
     expect(text(find(printing, ".heat-tag"))).toBe("aktiv");
-    await update(card, hass.withState("select.h2d_active_nozzle", "right"));
+    const right = hass.withState("select.h2d_active_nozzle", "right");
+    await update(card, right);
     expect(text(find(card, ".note"))).toBe(`Zum Extrudieren heize die rechte Düse (aktiv) unter „Heizen“ auf mindestens 170${NBSP}°C.`);
-    await update(card, hass.withState("sensor.h2d_left_nozzle_temperature", "120"));
+    // Back to the left nozzle, whose sensor reads 120 °C now.
+    await update(card, right.withState("select.h2d_active_nozzle", "left").withState("sensor.h2d_left_nozzle_temperature", "120"));
     expect(text(find(card, ".note"))).toBe(`Zum Extrudieren heize die linke Düse (aktiv) unter „Heizen“ auf mindestens 170${NBSP}°C.`);
   });
 });

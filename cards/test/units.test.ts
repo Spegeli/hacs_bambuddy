@@ -5,7 +5,7 @@
 import { describe, expect, it, vi } from "vitest";
 
 import "../src/index";
-import { a1mini, h2d, makeHass, mountCard, plugDevice, x1c, type FakeDevice } from "./fixtures";
+import { a1mini, h2d, makeHass, mountCard, withPlugs, x1c, type FakeDevice } from "./fixtures";
 import { button, find, findAll, hasButton, NBSP, shownText, showView, text, update } from "./helpers";
 import { useCardPage } from "./card-helpers";
 
@@ -110,8 +110,7 @@ describe("a Home Assistant in °F", () => {
   it("warns of a hot nozzle and sets the switch-off threshold in °F", async () => {
     vi.useFakeTimers();
     const devices = x1c({ status: "idle", stage: "idle", progress: 0, nozzles: [[60, 0]] });
-    const plug = plugDevice({ printer: devices[0] as FakeDevice, id: 3, name: "Tasmota", watts: 8, autoOff: { armed: true } });
-    const hass = makeHass({ devices: fahrenheit([...devices, plug]) });
+    const hass = makeHass({ devices: fahrenheit(withPlugs(devices, { id: 3, name: "Tasmota", watts: 8, autoOff: { armed: true } })) });
     const card = await mountCard(hass, { printer: "dev-x1c" });
 
     // 60 °C (140 °F) is above the 50 °C a nozzle cools to before its fan may stop.
@@ -132,8 +131,7 @@ describe("a Home Assistant in °F", () => {
   it("notes no hot nozzle at 40 °C (104 °F), and keeps the threshold at its lowest", async () => {
     vi.useFakeTimers();
     const devices = x1c({ status: "idle", stage: "idle", progress: 0, nozzles: [[40, 0]] });
-    const plug = plugDevice({ printer: devices[0] as FakeDevice, id: 3, name: "Tasmota", watts: 8, autoOff: { armed: true } });
-    const hass = makeHass({ devices: fahrenheit([...devices, plug]) });
+    const hass = makeHass({ devices: fahrenheit(withPlugs(devices, { id: 3, name: "Tasmota", watts: 8, autoOff: { armed: true } })) });
     const card = await mountCard(hass, { printer: "dev-x1c" });
     findAll<HTMLButtonElement>(card, ".power .p-row:not(.p-auto) [role=switch]")[0]?.click();
     await card.updateComplete;

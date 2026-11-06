@@ -21,7 +21,7 @@ from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers import issue_registry as ir
 from homeassistant.setup import async_setup_component
-from pytest_homeassistant_custom_component.common import MockConfigEntry, async_fire_time_changed
+from pytest_homeassistant_custom_component.common import MockConfigEntry
 from pytest_homeassistant_custom_component.typing import ClientSessionGenerator, WebSocketGenerator
 
 from custom_components.bambuddy.api import (
@@ -43,9 +43,11 @@ from tests.conftest import (
     X1C,
     ams_device,
     ams_uid,
+    entity_id,
     load_fixture,
     make_entry,
     next_refresh,
+    no_entity,
     past_polls,
     past_the_minute,
     printer_device,
@@ -56,6 +58,7 @@ from tests.conftest import (
     printer_serial,
     printer_uid,
     printers_but,
+    printers_only,
     set_up,
     setup_integration,
     state_of,
@@ -66,6 +69,7 @@ from tests.helpers import (
     devices_by_identifier,
     failure_key,
     home_assistant_stops,
+    listed_with,
     reauth_flows,
     reload_entry,
     remove_device,
@@ -125,10 +129,7 @@ async def test_setup_refuses_a_key_without_every_scope(
     """The integration works only with a key that may do all it does: one
     lacking a scope asks for a new key, with each scope's mark."""
     bambuddy_api.get_auth_me.return_value = load_fixture(fixture)
-    entry = make_entry(hass, X1C)
-
-    await hass.config_entries.async_setup(entry.entry_id)
-    await hass.async_block_till_done()
+    entry = await try_set_up(hass, X1C)
 
     assert entry.state is ConfigEntryState.SETUP_ERROR
     assert (entry.error_reason_translation_key, entry.error_reason_translation_placeholders) == ("key_scopes_missing", marks)
@@ -139,10 +140,7 @@ async def test_setup_refuses_a_key_without_every_scope(
 async def test_setup_refuses_an_unknown_key(hass: HomeAssistant, bambuddy_api: SimpleNamespace) -> None:
     """A 401 twice, a second apart: BamBuddy does not know the key."""
     bambuddy_api.get_auth_me.side_effect = BamBuddyAuthError(401, "Authentication required", "GET /auth/me")
-    entry = make_entry(hass, X1C)
-
-    await hass.config_entries.async_setup(entry.entry_id)
-    await hass.async_block_till_done()
+    entry = await try_set_up(hass, X1C)
 
     assert (entry.state, entry.error_reason_translation_key) == (ConfigEntryState.SETUP_ERROR, "auth_failed")
     # Twice at setup, once more by the reauth dialog (why a new key).
@@ -153,10 +151,7 @@ async def test_setup_refuses_an_unknown_key(hass: HomeAssistant, bambuddy_api: S
 async def test_a_lone_401_at_setup_is_asked_again(hass: HomeAssistant, bambuddy_api: SimpleNamespace) -> None:
     """BamBuddy also answers 401 when its key lookup fails for a moment."""
     bambuddy_api.get_auth_me.side_effect = [BamBuddyAuthError(401, "Authentication required", "GET /auth/me"), load_fixture("auth_me_control.json")]
-    entry = make_entry(hass, X1C)
-
-    await hass.config_entries.async_setup(entry.entry_id)
-    await hass.async_block_till_done()
+    entry = await try_set_up(hass, X1C)
 
     assert entry.state is ConfigEntryState.LOADED
     assert reauth_flows(hass) == []
@@ -164,10 +159,7 @@ async def test_a_lone_401_at_setup_is_asked_again(hass: HomeAssistant, bambuddy_
 
 async def test_setup_refuses_a_deactivated_owner(hass: HomeAssistant, bambuddy_api: SimpleNamespace) -> None:
     bambuddy_api.get_auth_me.side_effect = BamBuddyPermissionError(403, "API key owner is deactivated or no longer exists", "GET /auth/me")
-    entry = make_entry(hass, X1C)
-
-    await hass.config_entries.async_setup(entry.entry_id)
-    await hass.async_block_till_done()
+    entry = await try_set_up(hass, X1C)
 
     assert (entry.state, entry.error_reason_translation_key) == (ConfigEntryState.SETUP_ERROR, "key_owner_inactive")
     assert len(reauth_flows(hass)) == 1
@@ -176,10 +168,7 @@ async def test_setup_refuses_a_deactivated_owner(hass: HomeAssistant, bambuddy_a
 async def test_setup_waits_while_bambuddy_is_away(hass: HomeAssistant, bambuddy_api: SimpleNamespace) -> None:
     """No answer to the key's check: no new key would help."""
     bambuddy_api.get_auth_me.side_effect = BamBuddyConnectionError("GET /auth/me: ClientConnectorError")
-    entry = make_entry(hass, X1C)
-
-    await hass.config_entries.async_setup(entry.entry_id)
-    await hass.async_block_till_done()
+    entry = await try_set_up(hass, X1C)
 
     assert entry.state is ConfigEntryState.SETUP_RETRY
     assert reauth_flows(hass) == []
@@ -188,10 +177,7 @@ async def test_setup_waits_while_bambuddy_is_away(hass: HomeAssistant, bambuddy_
 async def test_an_answer_without_permissions_is_an_error(hass: HomeAssistant, bambuddy_api: SimpleNamespace) -> None:
     """A BamBuddy that renamed the field: an error, not a retry for ever."""
     bambuddy_api.get_auth_me.return_value = {"username": "api-key:bb_x..."}
-    entry = make_entry(hass, X1C)
-
-    await hass.config_entries.async_setup(entry.entry_id)
-    await hass.async_block_till_done()
+    entry = await try_set_up(hass, X1C)
 
     assert (entry.state, entry.error_reason_translation_key) == (ConfigEntryState.SETUP_ERROR, "key_check_unreadable")
     assert reauth_flows(hass) == []
@@ -235,9 +221,7 @@ async def test_the_key_is_checked_with_authentication_off(hass: HomeAssistant, b
     full one works, and the diagnostics say authentication is off."""
     bambuddy_api.get_auth_status.return_value = {"auth_enabled": False, "requires_setup": False}
     bambuddy_api.get_auth_me.return_value = load_fixture("auth_me_read.json")
-    refused = make_entry(hass, X1C)
-    await hass.config_entries.async_setup(refused.entry_id)
-    await hass.async_block_till_done()
+    refused = await try_set_up(hass, X1C)
     assert refused.error_reason_translation_key == "key_scopes_missing"
     await hass.config_entries.async_remove(refused.entry_id)
 
@@ -262,10 +246,7 @@ async def test_setup_failures(
     """The printers' list refused or unreachable after the key's check
     passed: tried again later, no new key asked for."""
     bambuddy_api.get_printers.side_effect = failure
-    entry = make_entry(hass, X1C)
-
-    await hass.config_entries.async_setup(entry.entry_id)
-    await hass.async_block_till_done()
+    entry = await try_set_up(hass, X1C)
 
     assert entry.state is state
     assert reauth_flows(hass) == []
@@ -283,10 +264,7 @@ async def test_a_bambuddy_too_old_is_refused_at_setup(
         bambuddy_api.get_version.side_effect = BamBuddyNotFoundError(404, "Not Found")
     else:
         bambuddy_api.get_version.return_value = version
-    entry = make_entry(hass, X1C)
-
-    await hass.config_entries.async_setup(entry.entry_id)
-    await hass.async_block_till_done()
+    entry = await try_set_up(hass, X1C)
 
     assert entry.state is ConfigEntryState.SETUP_ERROR
     assert entry.reason is not None and "too old" in entry.reason
@@ -315,53 +293,28 @@ async def test_a_printer_bambuddy_no_longer_has_raises_an_issue(
     assert ir.async_get(hass).async_get_issue(DOMAIN, missing_issue(entry.entry_id, printer_key(A1_MINI))) is None
 
 
-async def test_the_missing_printer_s_repair_names_it_as_its_device_does(
-    hass: HomeAssistant, bambuddy_api: SimpleNamespace
-) -> None:
-    """Renamed in BamBuddy since the last start (the device followed), then removed there: the
-    repair names the printer as the user sees it now."""
-    entry = await set_up(hass, X1C, A1_MINI)
-    devices = dr.async_get(hass)
-    device = devices_by_identifier(hass, entry)[printer_device(entry, A1_MINI)]
-    devices.async_update_device(device.id, name="Workbench (A1 Mini / 0309DA471800789)")
-    bambuddy_api.get_printers.return_value = printers_but(A1_MINI)
-
-    await reload_entry(hass, entry.entry_id)
-
-    issue = ir.async_get(hass).async_get_issue(DOMAIN, missing_issue(entry.entry_id, printer_key(A1_MINI)))
-    assert issue is not None
-    assert issue.translation_placeholders == {"printer": "Workbench (A1 Mini / 0309DA471800789)"}
-
-
 async def test_a_missing_printer_comes_back_by_itself(
     hass: HomeAssistant, bambuddy_api: SimpleNamespace, freezer: FrozenDateTimeFactory
 ) -> None:
     """While BamBuddy does not list it, its list is read once a minute; once
     the serial is there again, the entry reloads: the printer is back and
     the issue gone. Nothing missing, nothing more is read."""
-    everything = load_fixture("printers.json")
-    bambuddy_api.get_printers.return_value = [printer for printer in everything if printer["id"] != A1_MINI]
+    bambuddy_api.get_printers.return_value = printers_but(A1_MINI)
     entry = await set_up(hass, X1C, A1_MINI)
     issue_id = missing_issue(entry.entry_id, printer_key(A1_MINI))
     reads = bambuddy_api.get_printers.await_count
 
-    freezer.tick(61)
-    async_fire_time_changed(hass)
-    await hass.async_block_till_done()
+    await next_refresh(hass, freezer, 61)
     assert bambuddy_api.get_printers.await_count == reads + 1
     assert ir.async_get(hass).async_get_issue(DOMAIN, issue_id) is not None
 
-    bambuddy_api.get_printers.return_value = everything
-    freezer.tick(61)
-    async_fire_time_changed(hass)
-    await hass.async_block_till_done()
+    bambuddy_api.get_printers.return_value = load_fixture("printers.json")
+    await next_refresh(hass, freezer, 61)
 
     assert set(entry.runtime_data.printers) == {X1C, A1_MINI}
     assert ir.async_get(hass).async_get_issue(DOMAIN, issue_id) is None
     reads = bambuddy_api.get_printers.await_count
-    freezer.tick(61)
-    async_fire_time_changed(hass)
-    await hass.async_block_till_done()
+    await next_refresh(hass, freezer, 61)
     assert bambuddy_api.get_printers.await_count == reads
 
 
@@ -377,9 +330,7 @@ async def test_a_missing_printer_is_not_looked_for_while_home_assistant_stops(
     reads = bambuddy_api.get_printers.await_count
 
     home_assistant_stops(hass)
-    freezer.tick(61)
-    async_fire_time_changed(hass)
-    await hass.async_block_till_done()
+    await next_refresh(hass, freezer, 61)
 
     assert bambuddy_api.get_printers.await_count == reads
 
@@ -389,8 +340,7 @@ async def test_a_missing_printer_is_not_mistaken_for_another(
 ) -> None:
     """A stored printer without a serial is not matched to another
     printer's record by its old number -- no reload every minute."""
-    everything = load_fixture("printers.json")
-    bambuddy_api.get_printers.return_value = [printer for printer in everything if printer["id"] != A1_MINI]
+    bambuddy_api.get_printers.return_value = printers_but(A1_MINI)
     entry = await set_up(hass, X1C, A1_MINI)
     stored = [dict(printer) for printer in entry.options["printers"]]
     for printer in stored:
@@ -399,12 +349,10 @@ async def test_a_missing_printer_is_not_mistaken_for_another(
     hass.config_entries.async_update_entry(entry, options={**entry.options, "printers": stored})
     await hass.async_block_till_done()
     # BamBuddy renumbers: the X1C now carries the missing printer's old number.
-    bambuddy_api.get_printers.return_value = [{**printer, "id": A1_MINI} for printer in everything if printer["id"] == X1C]
+    bambuddy_api.get_printers.return_value = [{**printer, "id": A1_MINI} for printer in printers_only(X1C)]
     reloads = bambuddy_api.get_version.await_count
 
-    freezer.tick(61)
-    async_fire_time_changed(hass)
-    await hass.async_block_till_done()
+    await next_refresh(hass, freezer, 61)
 
     assert bambuddy_api.get_version.await_count == reloads
 
@@ -416,9 +364,7 @@ async def test_looking_for_a_missing_printer_survives_a_failing_list(
     entry = await set_up(hass, X1C, A1_MINI)
     bambuddy_api.get_printers.side_effect = BamBuddyConnectionError("GET /printers/: ClientConnectorError")
 
-    freezer.tick(61)
-    async_fire_time_changed(hass)
-    await hass.async_block_till_done()
+    await next_refresh(hass, freezer, 61)
 
     assert entry.state is ConfigEntryState.LOADED
     assert ir.async_get(hass).async_get_issue(DOMAIN, missing_issue(entry.entry_id, printer_key(A1_MINI))) is not None
@@ -475,7 +421,8 @@ async def test_an_ams_unit_the_printer_reports_stays(
 async def test_a_device_of_an_entry_that_did_not_load(
     hass: HomeAssistant, bambuddy_api: SimpleNamespace, hass_ws_client: WebSocketGenerator
 ) -> None:
-    """While BamBuddy cannot be reached, nothing reports a unit: its old
+    """While BamBuddy cannot be reached -- already its version cannot be read
+    -- Home Assistant tries again later and nothing reports a unit: its old
     device may go."""
     bambuddy_api.get_version.side_effect = BamBuddyConnectionError("refused")
     entry = await try_set_up(hass, X1C)
@@ -673,16 +620,6 @@ async def test_a_printer_renumbered_while_running_is_found_by_its_serial(
     assert state_of(hass, "sensor", printer_uid(entry, "status")).state == "printing"
 
 
-async def test_an_unreachable_bambuddy_is_tried_again(hass: HomeAssistant, bambuddy_api: SimpleNamespace) -> None:
-    """Already its version cannot be read: Home Assistant tries again later."""
-    bambuddy_api.get_version.side_effect = BamBuddyConnectionError("refused")
-    entry = make_entry(hass, X1C)
-
-    await hass.config_entries.async_setup(entry.entry_id)
-
-    assert entry.state is ConfigEntryState.SETUP_RETRY
-
-
 async def test_an_error_bambuddy_answers_with_is_no_unreachable_bambuddy(
     hass: HomeAssistant, bambuddy_api: SimpleNamespace, freezer: FrozenDateTimeFactory
 ) -> None:
@@ -788,10 +725,7 @@ async def test_ams_units_keep_their_entities_when_swapped(
 async def test_a_renumbered_printer_is_found_by_its_serial(hass: HomeAssistant, bambuddy_api: SimpleNamespace) -> None:
     """A new BamBuddy, a restored database: BamBuddy numbers its printers
     anew, the serial number finds them -- devices and entities stay."""
-    printers = load_fixture("printers.json")
-    x1c = next(printer for printer in printers if printer["id"] == X1C)
-    x1c["id"] = 9
-    bambuddy_api.get_printers.return_value = printers
+    listed_with(bambuddy_api, X1C, id=9)
     bambuddy_api.statuses[9] = bambuddy_api.statuses[X1C]
     entry = make_entry(hass, X1C)
 
@@ -875,9 +809,7 @@ async def test_the_repair_removes_the_missing_printer_not_its_new_number(
     """A restored BamBuddy has only the A1 Mini, now under the X1C's old
     number: the repair for the missing X1C must not hit the A1 Mini."""
     entry = make_entry(hass, A1_MINI, X1C)
-    printers = load_fixture("printers.json")
-    a1_mini = next(printer for printer in printers if printer["id"] == A1_MINI)
-    bambuddy_api.get_printers.return_value = [{**a1_mini, "id": X1C}]
+    bambuddy_api.get_printers.return_value = [{**printers_only(A1_MINI)[0], "id": X1C}]
     bambuddy_api.statuses[X1C] = load_fixture("status_a1mini.json")
     await setup_integration(hass, entry)
     assert await async_setup_component(hass, "repairs", {})
@@ -928,14 +860,13 @@ async def test_a_unit_with_a_serial_waits_for_its_type(
     status["firmware_version"] = None
     status["ams"][0]["module_type"] = ""
     entry = await set_up(hass, H2D)
-    registry = er.async_get(hass)
-    assert registry.async_get_entity_id("sensor", DOMAIN, ams_uid(entry, 0, "slot_1", H2D)) is None
+    assert no_entity(hass, "sensor", ams_uid(entry, 0, "slot_1", H2D))
 
     status["ams"][0]["module_type"] = "n3f"
     status["firmware_version"] = firmware
     await next_refresh(hass, freezer)
 
-    assert registry.async_get_entity_id("sensor", DOMAIN, ams_uid(entry, 0, "slot_1", H2D)) == (
+    assert entity_id(hass, "sensor", ams_uid(entry, 0, "slot_1", H2D)) == (
         "sensor.ams_2_pro_19c06a000000001_slot_1"
     )
 
@@ -947,7 +878,7 @@ async def test_an_ams_ht_does_not_wait_for_its_type(hass: HomeAssistant, bambudd
     status["ams"][1]["module_type"] = ""
     entry = await set_up(hass, H2D)
 
-    assert er.async_get(hass).async_get_entity_id("sensor", DOMAIN, ams_uid(entry, 128, "humidity", H2D)) == (
+    assert entity_id(hass, "sensor", ams_uid(entry, 128, "humidity", H2D)) == (
         "sensor.ams_ht_19f06a000000002_humidity"
     )
 
@@ -987,9 +918,7 @@ async def test_two_stored_printers_never_become_one(hass: HomeAssistant, bambudd
     hass.config_entries.async_update_entry(
         entry, options={"printers": [{"printer_id": 9, "printer_name": "old"}, printer_entry(X1C)]}
     )
-    printers = load_fixture("printers.json")
-    x1c = next(printer for printer in printers if printer["id"] == X1C)
-    bambuddy_api.get_printers.return_value = [{**x1c, "id": 9}]
+    listed_with(bambuddy_api, X1C, id=9)
     bambuddy_api.statuses[9] = bambuddy_api.statuses[X1C]
 
     await setup_integration(hass, entry)

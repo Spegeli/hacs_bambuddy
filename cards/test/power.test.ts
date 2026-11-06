@@ -14,13 +14,13 @@ import {
   mountCard,
   mountFor,
   offlineP1s,
-  plugDevice,
   unreachable,
   withPlugs,
   x1c,
   x1cWithPlugs,
   type FakeCard,
   type FakeDevice,
+  type FakeEntity,
   type Mounted,
   type PlugSpec,
   type PrinterSpec,
@@ -146,7 +146,7 @@ describe("the block Power", () => {
     toggle(card).click();
     await card.updateComplete;
 
-    expect(dialogTitle(card)).toBe("Switch the printer off?");
+    expect(dialogTitle(card)).toBe("Turn off the printer?");
     expect(text(find(card, "dialog p"))).toContain("“Tasmota – FA3F19” cuts the power");
     (find(card, "dialog .btn.primary, dialog .btn.danger") as HTMLButtonElement).click();
     await card.updateComplete;
@@ -158,7 +158,7 @@ describe("the block Power", () => {
     toggle(card, 1).click();
     await card.updateComplete;
 
-    expect(dialogTitle(card)).toBe("Switch “Shelly – Abluftfilter” off?");
+    expect(dialogTitle(card)).toBe("Turn off “Shelly – Abluftfilter”?");
   });
 
   it("warns in red during a print: off ends it", async () => {
@@ -166,7 +166,7 @@ describe("the block Power", () => {
     toggle(card).click();
     await card.updateComplete;
 
-    expect(dialogTitle(card)).toBe("Cancel the print and switch off?");
+    expect(dialogTitle(card)).toBe("Stop the print and turn off?");
     expect(text(find(card, "dialog p"))).toContain("“Benchy_0.2mm_PLA” is at 62");
     expect(find(card, "dialog .btn.danger")).not.toBeNull();
     expect(text(find(card, "dialog .btn.safe"))).toBe("Keep it on");
@@ -174,8 +174,7 @@ describe("the block Power", () => {
 
   it("names the hot nozzle of two", async () => {
     const devices = h2d({ status: "idle", stage: "idle", progress: 0, nozzles: [[26, 0], [61, 0]], hms: [] });
-    const plug = plugDevice({ printer: devices[0] as FakeDevice, id: 3, name: "Tasmota – FA3F19", watts: 9 });
-    const { card } = await mount([...devices, plug], "dev-h2d");
+    const { card } = await mount(withPlugs(devices, { id: 3, name: "Tasmota – FA3F19", watts: 9 }), "dev-h2d");
     toggle(card).click();
     await card.updateComplete;
 
@@ -232,7 +231,7 @@ describe("the block Power", () => {
 
     expect(findAll(card, ".power button")).toHaveLength(0);
     // Its line says it: no "On" beside it to read as the printer's state.
-    expect(text(find(card, ".power .p-auto"))).toBe(`Switch off after the print After every print, once the nozzle is below 50${NBSP}°C.`);
+    expect(text(find(card, ".power .p-auto"))).toBe(`Turn off after the print After every print, once the nozzle is below 50${NBSP}°C.`);
     expect(find(card, ".power .p-auto .det-state")).toBeNull();
   });
 });
@@ -244,33 +243,70 @@ describe("switching off after the print", () => {
 
   it("says when it will switch off", async () => {
     const every = await mount(armed({ armed: true, everyPrint: true }), "dev-x1c");
-    expect(autoRow(every.card)).toBe(`Switch off after the print After every print, once the nozzle is below 50${NBSP}°C.`);
+    expect(autoRow(every.card)).toBe(`Turn off after the print After every print, once the nozzle is below 50${NBSP}°C.`);
     const next = await mount(armed({ armed: true, temperature: 45 }), "dev-x1c");
-    expect(autoRow(next.card)).toBe(`Switch off after the print After the next print, once the nozzle is below 45${NBSP}°C.`);
+    expect(autoRow(next.card)).toBe(`Turn off after the print After the next print, once the nozzle is below 45${NBSP}°C.`);
     const off = await mount(armed({ armed: false }), "dev-x1c");
-    expect(autoRow(off.card)).toBe("Switch off after the print The printer stays on after the print.");
+    expect(autoRow(off.card)).toBe("Turn off after the print The printer stays on after the print.");
+  });
+
+  it("names the threshold from the number, else from the switch's own attribute, else 50 °C", async () => {
+    const line = async (change: (entity: FakeEntity) => FakeEntity | null): Promise<string> => {
+      const devices = armed({ armed: true, everyPrint: true, temperature: 45 }).map((device) => ({
+        ...device,
+        entities: device.entities.flatMap((entity) => change(entity) ?? []),
+      }));
+      return autoRow((await mount(devices, "dev-x1c")).card);
+    };
+    const below = (value: number): string => `Turn off after the print After every print, once the nozzle is below ${value}${NBSP}°C.`;
+    // The number is the setting; the switch's attribute may lag behind it.
+    expect(await line((entity) => (entity.key === "auto_off_temperature" ? { ...entity, state: "60" } : entity))).toBe(below(60));
+    // Without the number (disabled, say) the switch's attribute says it.
+    expect(await line((entity) => (entity.key === "auto_off_temperature" ? null : entity))).toBe(below(45));
+    // Without either, the integration's default.
+    expect(
+      await line((entity) =>
+        entity.key === "auto_off_temperature" ? null : entity.key === "auto_off" ? { ...entity, attributes: { ...entity.attributes, temperature: null } } : entity,
+      ),
+    ).toBe(below(50));
   });
 
   it("shows the wait, with the nozzle now, and lets this print go", async () => {
     const { card, hass } = await mount(armed({ armed: true, phase: "waiting", since: "2026-10-18T14:05:00+00:00" }, { ...IDLE, status: "finished", nozzles: [[142, 0]] }), "dev-x1c");
 
-    expect(autoRow(card)).toContain("Waiting to switch off");
+    expect(autoRow(card)).toContain("Waiting to turn off");
     expect(autoRow(card)).toContain(`now 142${NBSP}°C`);
-    (findAll<HTMLButtonElement>(card, ".power .p-skip .btn").find((item) => text(item) === "Don't switch off this time") as HTMLButtonElement).click();
+    (findAll<HTMLButtonElement>(card, ".power .p-skip .btn").find((item) => text(item) === "Don't turn off this time") as HTMLButtonElement).click();
     await card.updateComplete;
     expect(hass.calls.at(-1)).toMatchObject({ domain: "button", service: "press", data: { entity_id: "button.dev-x1c_plug_3_auto_off_skip" } });
+  });
+
+  it("an armed switch-off beside BamBuddy's auto off can only be turned off", async () => {
+    const { card, hass } = await mount(
+      x1cWith(IDLE, { id: 3, name: "Tasmota – FA3F19", bambuddyAutoOff: true, autoOff: { armed: true, phase: "bambuddy" } }),
+      "dev-x1c",
+    );
+    const toggle = find<HTMLButtonElement>(card, ".power .p-auto [role=switch]");
+    expect(toggle?.getAttribute("aria-checked")).toBe("true");
+    // Its settings and "not this time" stay out, as beside BamBuddy's own.
+    expect(find(card, ".power .p-auto .p-open")).toBeNull();
+    toggle?.click();
+    await card.updateComplete;
+    expect(hass.calls.at(-1)).toMatchObject({ domain: "switch", service: "turn_off" });
   });
 
   it("tells a failed print, a wait given up, and BamBuddy's own auto off", async () => {
     const failed = await mount(armed({ armed: true, everyPrint: true, phase: "failed_print" }), "dev-x1c");
     expect(autoRow(failed.card)).toContain("Print stopped or failed – the printer stays on this time.");
     const gave = await mount(armed({ armed: true, phase: "gave_up" }), "dev-x1c");
-    expect(autoRow(gave.card)).toContain("Not switched off:");
+    expect(autoRow(gave.card)).toContain("Not turned off:");
+    const refused = await mount(armed({ armed: true, phase: "plug_failed" }), "dev-x1c");
+    expect(autoRow(refused.card)).toContain("the plug did not carry out the command for ten minutes.");
     const bambuddy = await mount(
       x1cWith(IDLE, { id: 3, name: "Tasmota – FA3F19", bambuddyAutoOff: true, autoOff: { armed: false } }),
       "dev-x1c",
     );
-    expect(autoRow(bambuddy.card)).toContain("BamBuddy already switches this plug off after the print (Auto Off). To set it here instead, turn Auto Off off in BamBuddy.");
+    expect(autoRow(bambuddy.card)).toContain("BamBuddy already turns this plug off after the print (Auto Off). To set it here instead, turn Auto Off off in BamBuddy.");
     expect(find(bambuddy.card, ".power .p-auto [role=switch]")).toBeNull();
     // A view-only card sets nothing: no "set it here".
     const view = await mount(
@@ -278,7 +314,7 @@ describe("switching off after the print", () => {
       "dev-x1c",
       { read_only: true },
     );
-    expect(autoRow(view.card)).toContain("BamBuddy already switches this plug off after the print (Auto Off).");
+    expect(autoRow(view.card)).toContain("BamBuddy already turns this plug off after the print (Auto Off).");
     expect(autoRow(view.card)).not.toContain("To set it here");
   });
 
@@ -290,7 +326,7 @@ describe("switching off after the print", () => {
 
     (find(card, ".power .p-auto .p-open") as HTMLButtonElement).click();
     await card.updateComplete;
-    expect(dialogTitle(card)).toBe("Switch off after the print");
+    expect(dialogTitle(card)).toBe("Turn off after the print");
     expect(text(find(card, "dialog .stepper .step-value"))).toBe(`50${NBSP}°C`);
     const choices = findAll<HTMLButtonElement>(card, "dialog [role=radio]");
     // The one-shot first, and the default.
@@ -319,9 +355,9 @@ describe("a printer whose plug is off", () => {
   it("says so and switches it on, instead of checking the connection", async () => {
     const { card, hass } = await mount(off({ state: "off", watts: 0 }), "dev-p1s");
 
-    expect(text(find(card, ".job-info"))).toBe("The printer is off: its plug “Steckdose Garage” is switched off.");
+    expect(text(find(card, ".job-info"))).toBe("The printer is off: its plug “Steckdose Garage” is turned off.");
     const buttons = findAll<HTMLButtonElement>(card, ".offline-actions .btn").map(text);
-    expect(buttons).toEqual(["Switch the printer on"]);
+    expect(buttons).toEqual(["Turn on the printer"]);
     findAll<HTMLButtonElement>(card, ".offline-actions .btn")[0]?.click();
     await card.updateComplete;
     expect(hass.calls.at(-1)).toMatchObject({ domain: "switch", service: "turn_on", data: { entity_id: "switch.dev-p1s_plug_5" } });
@@ -329,7 +365,7 @@ describe("a printer whose plug is off", () => {
 
   it("says when our switch-off turned it off", async () => {
     const { card } = await mount(off({ state: "off", autoOff: { armed: true, phase: "done", since: "2026-10-18T12:07:00+00:00" } }), "dev-p1s");
-    expect(text(find(card, ".job-info"))).toContain("Switched off after the print at 14:07.");
+    expect(text(find(card, ".job-info"))).toContain("Turned off after the print at 14:07.");
   });
 
   it("counts while the printer starts", async () => {
@@ -343,10 +379,10 @@ describe("a printer whose plug is off", () => {
     const drawing = await mount(off({ state: "on", watts: 6, onSince: "2026-10-18T13:00:00Z" }), "dev-p1s");
     expect(text(find(drawing.card, ".job-info"))).toContain(`The plug delivers power (6${NBSP}W), but BamBuddy cannot reach the printer.`);
     // Off and on again: the plug off, after its question.
-    expect(findAll(drawing.card, ".offline-actions .btn").map(text)).toEqual(["Check connection", "Switch the plug off"]);
+    expect(findAll(drawing.card, ".offline-actions .btn").map(text)).toEqual(["Check connection", "Turn off the plug"]);
     findAll<HTMLButtonElement>(drawing.card, ".offline-actions .btn")[1]?.click();
     await drawing.card.updateComplete;
-    expect(dialogTitle(drawing.card)).toBe("Switch the printer off?");
+    expect(dialogTitle(drawing.card)).toBe("Turn off the printer?");
     const zero = await mount(off({ state: "on", watts: 0, lastChanged: "2026-10-18T13:00:00Z" }), "dev-p1s");
     expect(text(find(zero.card, ".job-info"))).toContain("The plug shows 0 W: is the printer's own power switch off?");
   });
@@ -360,7 +396,7 @@ describe("the chip Power", () => {
     expect(chip((await mount(x1cWith({}, { id: 3, name: "T", state: "off" }), "dev-x1c", { header_chips: ["power"] })).card)).toBe("Power off");
     expect(
       chip((await mount(x1cWith(IDLE, { id: 3, name: "T", watts: 6, autoOff: { armed: true, phase: "waiting" } }), "dev-x1c", { header_chips: ["power"] })).card),
-    ).toBe("Waiting to switch off");
+    ).toBe("Waiting to turn off");
     expect(chip((await mount(x1cWith({}, { id: 3, name: "T", state: "unavailable" }), "dev-x1c", { header_chips: ["power"] })).card)).toBe("Plug unreachable");
   });
 
@@ -409,9 +445,9 @@ describe("the editor", () => {
     expect(names).toContain('"value":"power"');
     expect(names).toContain('"name":"show_auto_off"');
     // Each toggle's text says what it does.
-    expect(form.computeLabel({ name: "show_auto_off" })).toBe("“Switch off after the print” row");
+    expect(form.computeLabel({ name: "show_auto_off" })).toBe("“Turn off after the print” row");
     expect(form.computeHelper({ name: "show_auto_off" })).toBe(
-      "Shows or hides the row under the printer's plug in the Power section and the Power chip's dialog. In it you choose whether the printer switches itself off after the print. With the row hidden, it still switches off if set to.",
+      "Shows or hides the row under the printer's plug in the Power section and the Power chip's dialog. In it you choose whether the printer turns itself off after the print. With the row hidden, it still turns off if set to.",
     );
     expect(form.computeHelper({ name: "status_blocks" })).toContain("Power only when BamBuddy links a plug to the printer.");
   });
@@ -430,9 +466,7 @@ describe("a plug's state and the switch-off's row", () => {
   });
 
   it("counts only after the integration saw the plug go on, not after any change", async () => {
-    const devices = offlineP1s();
-    const plug = plugDevice({ printer: devices[0] as FakeDevice, id: 5, name: "Steckdose Garage", state: "on", watts: 6, lastChanged: "2026-10-18T14:09:18Z" });
-    const { card } = await mount([...devices, plug], "dev-p1s");
+    const { card } = await mount(withPlugs(offlineP1s(), { id: 5, name: "Steckdose Garage", state: "on", watts: 6, lastChanged: "2026-10-18T14:09:18Z" }), "dev-p1s");
     expect(text(find(card, ".job-info"))).not.toContain("Printer starting");
   });
 
@@ -453,7 +487,7 @@ describe("a plug's state and the switch-off's row", () => {
       x1cWith({ ...IDLE, status: "finished" }, { id: 3, name: "Tasmota – FA3F19", watts: 6, autoOff: { armed: true, phase: "waiting", switching: true } }),
       "dev-x1c",
     );
-    expect(text(find(card, ".power .p-auto"))).toContain("Switching off …");
+    expect(text(find(card, ".power .p-auto"))).toContain("Turning off …");
     expect(find(card, ".power .p-skip")).toBeNull();
   });
 
@@ -470,7 +504,7 @@ describe("the plug's questions and its chip", () => {
   };
   const askOffline = async (plug: Omit<PlugSpec, "printer" | "id" | "name">): Promise<FakeCard> => {
     const { card } = await mount(offline(plug), "dev-p1s");
-    (findAll<HTMLButtonElement>(card, ".offline-actions .btn").find((item) => text(item) === "Switch the plug off") as HTMLButtonElement).click();
+    (findAll<HTMLButtonElement>(card, ".offline-actions .btn").find((item) => text(item) === "Turn off the plug") as HTMLButtonElement).click();
     await card.updateComplete;
     return card;
   };
@@ -534,7 +568,7 @@ describe("the plug's questions and its chip", () => {
     await card.updateComplete;
     (find(card, "dialog .p-row [role=switch]") as HTMLButtonElement).click();
     await card.updateComplete;
-    expect(dialogTitle(card)).toBe("Switch the printer off?");
+    expect(dialogTitle(card)).toBe("Turn off the printer?");
 
     // Escape in the question: back, the dialog stays open.
     const escape = new Event("cancel", { cancelable: true });
@@ -566,7 +600,7 @@ describe("the plug's questions and its chip", () => {
 
   it("names the printer when this print is let go", async () => {
     const { card } = await mount(x1cWith(IDLE, { id: 3, name: "T", watts: 6, autoOff: { armed: true, everyPrint: true, phase: "skipped" } }), "dev-x1c");
-    expect(text(find(card, ".power .p-auto"))).toContain("The printer stays on this time; it switches off again after the next print.");
+    expect(text(find(card, ".power .p-auto"))).toContain("The printer stays on this time; it turns off again after the next print.");
   });
 
   it("shows a chevron where the settings open", async () => {
@@ -576,7 +610,7 @@ describe("the plug's questions and its chip", () => {
 
   it("lets the offline actions wrap, a long label too, Run go under its name on a narrow card, and the model line wrap", () => {
     const css = styleText();
-    expect(/\.offline-actions\s*\{[^}]*flex-wrap:\s*wrap[^}]*gap:\s*8px/.exec(css)).not.toBeNull();
+    expect(declarations(".offline-actions", css)).toEqual(expect.arrayContaining(["flex-wrap: wrap", "gap: 8px"]));
     expect(declarations(".offline-actions .btn", css)).toContain("white-space: normal");
     // Under 280 px every plug row wraps: its switch or Run under the text.
     expect(atRule("@container (max-width: 280px)")).toMatch(/(^|[}\s])\.p-row\s*\{[^}]*flex-wrap:\s*wrap/);

@@ -8,7 +8,7 @@ import {
   type FakeCard,
 } from "./fixtures";
 import { atRule, button, declarations, find, findAll, hasButton, root, settle, styleText, update } from "./helpers";
-import { cardFor, emulateFocusWithin, fullCard, fullscreenApi, historyMark, leaveFullscreenWorld, pageState, popoverApi, useCardPage } from "./card-helpers";
+import { cardFor, emulateFocusWithin, fullCard, fullscreenApi, historyMark, keyPress, leaveFullscreenWorld, pageState, popoverApi, useCardPage } from "./card-helpers";
 
 useCardPage();
 
@@ -45,10 +45,10 @@ describe("the live view in full screen", () => {
 
   it("keeps a narrow card's chips clear of the full-screen icon", () => {
     const narrow = atRule("@container (max-width: 260px)");
-    const right = /\.live-tags\s*\{[^}]*right:\s*(\d+)px/.exec(narrow);
+    const right = declarations(".live-tags", narrow).find((item) => item.startsWith("right: "));
     // The icon: 6 px from the edge, 36 px wide.
-    expect(Number(right?.[1])).toBeGreaterThanOrEqual(46);
-    expect(styleText()).toMatch(/\.live-full\s*\{[^}]*bottom:\s*6px;[^}]*right:\s*6px;/);
+    expect(parseInt(right?.slice(7) ?? "", 10)).toBeGreaterThanOrEqual(46);
+    expect(declarations(".live-full")).toEqual(expect.arrayContaining(["bottom: 6px", "right: 6px"]));
   });
 });
 
@@ -274,10 +274,9 @@ describe("the live view in the browser's full screen", () => {
 
   it("fills the whole screen, without the card's tools", () => {
     const sheet = styleText();
-    const full = /\.live\.full\s*\{([^}]*)\}/.exec(sheet)?.[1] ?? "";
-    for (const rule of ["position: fixed", "inset: 0", "width: 100%", "height: 100%", "max-height: none", "margin: 0", "border: 0", "padding: 0", "border-radius: 0", "aspect-ratio: auto"]) {
-      expect(full).toContain(rule);
-    }
+    expect(declarations(".live.full", sheet)).toEqual(
+      expect.arrayContaining(["position: fixed", "inset: 0", "width: 100%", "height: 100%", "max-height: none", "margin: 0", "border: 0", "padding: 0", "border-radius: 0", "aspect-ratio: auto"]),
+    );
     expect(declarations(".live.full .live-tools", sheet)).toContain("display: none");
     expect(declarations(".live.full .live-tags", sheet)).toContain("top: max(12px, env(safe-area-inset-top))");
     expect(declarations(".live.full .live-full", sheet)).toEqual(expect.arrayContaining(["bottom: max(6px, env(safe-area-inset-bottom))", "right: max(6px, env(safe-area-inset-right))"]));
@@ -433,12 +432,12 @@ describe("the live view filling the window", () => {
     const dialog = document.createElement("dialog");
     dialog.setAttribute("open", "");
     document.body.append(dialog);
-    dialog.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, composed: true }));
+    keyPress(dialog, "Escape");
     await settle(card);
     expect(live().classList.contains("full")).toBe(true);
     // A dialog that is closed is no reason.
     dialog.removeAttribute("open");
-    dialog.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, composed: true }));
+    keyPress(dialog, "Escape");
     await settle(card);
     expect(live().classList.contains("full")).toBe(false);
   });

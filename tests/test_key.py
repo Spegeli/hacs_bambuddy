@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import AsyncIterator
+from datetime import timedelta
 import logging
 from types import SimpleNamespace
 from typing import Any
@@ -27,10 +28,13 @@ from custom_components.bambuddy.api import (
     BamBuddyConnectionError,
     BamBuddyPermissionError,
 )
+from custom_components.bambuddy.api import KeyScopes
+from custom_components.bambuddy.const import MANAGE_INVENTORY
 from custom_components.bambuddy.coordinator import fetch
 from custom_components.bambuddy.key import KeyCheck, KeyGuard
 
 from tests.conftest import API_KEY, URL, load_fixture, make_entry, next_refresh
+from tests.helpers import home_assistant_stops, reauth_flows
 
 PAUSE = "POST /printers/1/print/pause"
 
@@ -216,7 +220,7 @@ async def test_an_unanswered_check_keeps_what_the_key_may_assign(
     assert guard.can_assign_spools is False
     # The key now lacks a permission: the reauthentication runs to its form within the test.
     await hass.async_block_till_done()
-    assert len(list(entry.async_get_active_flows(hass, {"reauth"}))) == 1
+    assert len(reauth_flows(hass)) == 1
     assert bambuddy_api.get_auth_me.await_count == 4
 
 
@@ -298,6 +302,7 @@ async def test_a_refusal_says_why(
     # while BamBuddy's answers are still the test's.
     await hass.async_block_till_done()
 
+    assert error.translation_domain == "bambuddy"
     assert error.translation_key == key
     assert error.translation_placeholders == placeholders
     assert len(reauth_flows(hass)) == reauths
@@ -395,6 +400,82 @@ async def test_an_ok_check_ends_the_reauth(hass: HomeAssistant, bambuddy_api: Si
     assert reauth_flows(hass) == []
 
 
+async def _confirmed_401(hass: HomeAssistant, bambuddy_api: SimpleNamespace, guard: KeyGuard, freezer: FrozenDateTimeFactory) -> None:
+    bambuddy_api.get_auth_me.side_effect = BamBuddyAuthError(401, "Authentication required", "GET /auth/me")
+    await guard.async_check()
+    await next_refresh(hass, freezer, 61)
+    assert guard.refused
+
+
+async def test_a_read_that_works_after_a_refusal_checks_the_key(
+    hass: HomeAssistant, bambuddy_api: SimpleNamespace, entry: MockConfigEntry, freezer: FrozenDateTimeFactory
+) -> None:
+    """BamBuddy back after an outage that looked like a 401: the repair goes
+    about five seconds later, though the last check is under a minute old."""
+    guard = _guard(hass, entry)
+    await _confirmed_401(hass, bambuddy_api, guard, freezer)
+    await next_refresh(hass, freezer, 10)
+    bambuddy_api.get_auth_me.side_effect = None
+    bambuddy_api.get_auth_me.return_value = load_fixture("auth_me_control.json")
+
+    async def read() -> str:
+        return "answer"
+
+    assert await fetch(read(), entry=SimpleNamespace(runtime_data=SimpleNamespace(key=guard))) == "answer"
+    await next_refresh(hass, freezer, 6)
+
+    assert not guard.refused
+    assert reauth_flows(hass) == []
+
+
+async def test_reads_that_work_ask_at_most_once_a_minute(
+    hass: HomeAssistant, bambuddy_api: SimpleNamespace, entry: MockConfigEntry, freezer: FrozenDateTimeFactory
+) -> None:
+    """Reads answer, the key's own check keeps saying 401: no storm."""
+    guard = _guard(hass, entry)
+    await _confirmed_401(hass, bambuddy_api, guard, freezer)
+    await hass.async_block_till_done()
+    checks = bambuddy_api.get_auth_me.await_count
+
+    for _ in range(5):
+        guard.async_read_worked()
+        await next_refresh(hass, freezer, 10)
+    assert bambuddy_api.get_auth_me.await_count == checks + 1
+
+    await next_refresh(hass, freezer, 15)
+    guard.async_read_worked()
+    await next_refresh(hass, freezer, 6)
+    assert bambuddy_api.get_auth_me.await_count == checks + 2
+
+
+async def test_a_read_that_works_during_a_check_still_asks_after_it(
+    hass: HomeAssistant, bambuddy_api: SimpleNamespace, entry: MockConfigEntry, freezer: FrozenDateTimeFactory
+) -> None:
+    """A check under way can arm no other: the next read asks, not a minute later."""
+    guard = _guard(hass, entry)
+    await _confirmed_401(hass, bambuddy_api, guard, freezer)
+    await hass.async_block_till_done()
+    checks = bambuddy_api.get_auth_me.await_count
+
+    async with guard._lock:
+        guard.async_read_worked()
+    guard.async_read_worked()
+    await next_refresh(hass, freezer, 6)
+
+    assert bambuddy_api.get_auth_me.await_count == checks + 1
+
+
+async def test_a_read_that_works_checks_nothing_while_the_key_is_fine(
+    hass: HomeAssistant, bambuddy_api: SimpleNamespace, entry: MockConfigEntry, freezer: FrozenDateTimeFactory
+) -> None:
+    guard = _guard(hass, entry)
+
+    guard.async_read_worked()
+    await next_refresh(hass, freezer, 6)
+
+    bambuddy_api.get_auth_me.assert_not_awaited()
+
+
 async def test_a_lasting_read_refusal_checks_once_a_minute(
     hass: HomeAssistant, bambuddy_api: SimpleNamespace, entry: MockConfigEntry, freezer: FrozenDateTimeFactory, caplog: pytest.LogCaptureFixture
 ) -> None:
@@ -453,4 +534,69 @@ async def test_a_refused_read_says_the_key_is_doubted_until_confirmed(
     with pytest.raises(UpdateFailed) as later:
         await fetch(refused(), entry=entry)  # type: ignore[arg-type]
     assert later.value.translation_key == "auth_failed"
-from tests.helpers import home_assistant_stops, reauth_flows
+
+
+@pytest.mark.parametrize(
+    ("answer", "outcome"),
+    [
+        (BamBuddyPermissionError(403, "API key owner is deactivated or no longer exists", "GET /auth/me"), "owner"),
+        (BamBuddyConnectionError("GET /auth/me: ClientConnectorError"), "unreachable"),
+    ],
+)
+async def test_every_check_says_when_it_was_made(
+    hass: HomeAssistant, bambuddy_api: SimpleNamespace, entry: MockConfigEntry, answer: Exception, outcome: str
+) -> None:
+    bambuddy_api.get_auth_me.side_effect = answer
+    guard = _guard(hass, entry)
+
+    check = await guard.async_check()
+
+    assert check.outcome == outcome
+    assert abs(check.at - dt_util.utcnow()) < timedelta(seconds=5)
+    assert guard.last is check
+
+
+async def test_what_the_setup_found_is_not_said_again(
+    hass: HomeAssistant, bambuddy_api: SimpleNamespace, entry: MockConfigEntry, caplog: pytest.LogCaptureFixture
+) -> None:
+    """The setup refused a short key already: the same finding later is no news in the log."""
+    bambuddy_api.get_auth_me.return_value = load_fixture("auth_me_default.json")
+    client = BamBuddyClient(URL, API_KEY, async_get_clientsession(hass))
+    guard = KeyGuard(hass, entry, client, KeyCheck(dt_util.utcnow(), "short"))
+    guard.async_start()
+
+    with caplog.at_level(logging.WARNING):
+        await guard.async_check()
+    await hass.async_block_till_done()
+
+    assert "lacks permissions" not in caplog.text
+
+
+async def test_what_the_setups_check_said_about_inventory_holds_until_a_check_answers(
+    hass: HomeAssistant, bambuddy_api: SimpleNamespace, entry: MockConfigEntry
+) -> None:
+    client = BamBuddyClient(URL, API_KEY, async_get_clientsession(hass))
+    first = KeyCheck(dt_util.utcnow(), "ok", KeyScopes({}, frozenset({MANAGE_INVENTORY})))
+    guard = KeyGuard(hass, entry, client, first)
+    guard.async_start()
+    assert guard.can_assign_spools is True
+
+    bambuddy_api.get_auth_me.side_effect = BamBuddyConnectionError("down")
+    await guard.async_check()
+    assert guard.can_assign_spools is True
+
+
+async def test_an_unloaded_guard_warns_of_nothing(
+    hass: HomeAssistant, bambuddy_api: SimpleNamespace, entry: MockConfigEntry, caplog: pytest.LogCaptureFixture
+) -> None:
+    """A check finishing after the unload names no refused route: the entry has a new guard."""
+    bambuddy_api.get_auth_me.return_value = load_fixture("auth_me_control.json")
+    guard = _guard(hass, entry)
+    guard.async_read_refused(BamBuddyPermissionError(403, "Not allowed here", PAUSE))
+    await entry._async_process_on_unload(hass)
+
+    with caplog.at_level(logging.WARNING):
+        check = await guard.async_check()
+
+    assert check.outcome == "ok"
+    assert PAUSE not in caplog.text

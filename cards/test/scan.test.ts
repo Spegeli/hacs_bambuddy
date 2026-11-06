@@ -487,7 +487,10 @@ describe("a foreign code in the frames", () => {
 });
 
 describe("a photo's canvas", () => {
-  afterEach(() => setDecoderForTests(undefined));
+  afterEach(() => {
+    setDecoderForTests(undefined);
+    vi.restoreAllMocks();
+  });
 
   it("is one for every size, and given back at the end", async () => {
     fakeContext();
@@ -503,6 +506,5 @@ describe("a photo's canvas", () => {
     expect(await decodePhoto(new Blob(["x"]))).toBe("no_code");
     expect(made).toHaveLength(1);
     expect([made[0]?.width, made[0]?.height]).toEqual([0, 0]);
-    vi.restoreAllMocks();
   });
 });

@@ -10,6 +10,10 @@ afterEach(() => {
   document.body.innerHTML = "";
 });
 
+/** The names of a form's fields, the groups' fields included. */
+const flat = (fields: readonly Record<string, unknown>[]): string[] =>
+  fields.flatMap((field) => (Array.isArray(field["schema"]) ? flat(field["schema"] as Record<string, unknown>[]) : [field["name"] as string]));
+
 describe("the configuration check", () => {
   it("accepts every option the card documents", () => {
     const config = {
@@ -157,8 +161,6 @@ describe("what the editor shows and writes", () => {
   });
 
   it("fills in a default for every field of the form", () => {
-    const flat = (fields: readonly Record<string, unknown>[]): string[] =>
-      fields.flatMap((field) => (Array.isArray(field["schema"]) ? flat(field["schema"] as Record<string, unknown>[]) : [field["name"] as string]));
     const fields = flat(configForm().schema).filter((name) => name !== "printer");
     // An option the form shows without a default would show an empty field.
     expect(Object.keys(editorData({ type: TYPE })).filter((name) => name !== "type").sort()).toEqual([...fields].sort());
@@ -317,7 +319,7 @@ describe("the visual editor", () => {
     expect(form.computeHelper({ name: "start_view" })).toBeUndefined();
     expect(form.computeLabel({ name: "header_chips" })).toBe("Add chip");
     expect(form.computeHelper({ name: "header_chips" })).toBe(
-      "The chips below the name. Drag a chip where you want it; × hides it. Door, SD card / USB drive and drying appear only while the door is open, the storage is missing or an AMS dries; Power only with a smart plug. An HMS error always shows.",
+      "The chips below the name. Drag a chip where you want it; × hides it. Door, SD card / USB drive and drying appear only while the door is open, the storage is missing or an AMS dries; Power only with a smart plug. An HMS message always shows.",
     );
     expect(form.computeHelper({ name: "control_sections" })).toBe("The sections of the “Control” tab. Drag a section where you want it; × hides it.");
     expect(form.computeHelper({ name: "read_only" })).toBe(
@@ -335,7 +337,7 @@ describe("the visual editor", () => {
     expect(form.computeLabel({ name: "header_chips" })).toBe("Chip hinzufügen");
     expect(form.computeLabel({ name: "read_only" })).toBe("Steuerelemente ausblenden");
     expect(form.computeHelper({ name: "header_chips" })).toBe(
-      "Die Chips unter dem Namen. Ziehe einen Chip an die gewünschte Stelle; × blendet ihn aus. Tür, SD-Karte / USB-Stick und Trocknen erscheinen nur, wenn die Tür offen ist, der Speicher fehlt oder ein AMS trocknet; Strom nur mit einer Steckdose. Eine HMS-Fehlermeldung zeigt die Karte immer.",
+      "Die Chips unter dem Namen. Ziehe einen Chip an die gewünschte Stelle; × blendet ihn aus. Tür, SD-Karte / USB-Stick und Trocknen erscheinen nur, wenn die Tür offen ist, der Speicher fehlt oder ein AMS trocknet; Strom nur mit einer Steckdose. Eine HMS-Meldung zeigt die Karte immer.",
     );
     expect(form.computeHelper({ name: "control_sections" })).toBe("Die Bereiche im Tab „Steuerung“. Ziehe einen Bereich an die gewünschte Stelle; × blendet ihn aus.");
     expect(form.computeHelper({ name: "read_only" })).toBe(
@@ -347,7 +349,7 @@ describe("the visual editor", () => {
     // Each toggle's text says what it does.
     expect(form.computeHelper({ name: "show_control_tab" })).toBe("Blendet den Tab mit Heizen und Lüften, Druckoptionen, Achsen und Extruder ein oder aus.");
     expect(form.computeHelper({ name: "show_filament_tab" })).toBe(
-      "Blendet den Tab mit den AMS-Einheiten und der externen Spule ein oder aus – zum Laden, Entladen, Festlegen und Trocknen des Filaments.",
+      "Blendet den Tab mit den AMS-Einheiten und der externen Spule ein oder aus – zum Laden, Entladen, Einstellen und Trocknen des Filaments.",
     );
     expect(form.computeLabel({ name: "show_auto_off" })).toBe("Zeile „Nach dem Druck ausschalten“");
     expect(form.computeHelper({ name: "show_auto_off" })).toBe(
@@ -366,7 +368,7 @@ describe("the visual editor", () => {
     // Given a hass, its language.
     expect(configForm(makeHass({ language: "en" })).computeLabel({ name: "camera" })).toBe("Live view");
     expect(configForm(makeHass({ language: "en" })).computeHelper({ name: "camera" })).toBe(
-      "On tap: a tap on the camera symbol on the picture starts it. Always: it runs while the dashboard is open, using bandwidth all the time. Never: only the job's picture.",
+      "On tap: a tap on the camera symbol on the picture starts it. Always: it runs while the dashboard is open, using bandwidth all the time. Never: only the job's cover image.",
     );
   });
 });
@@ -391,8 +393,6 @@ describe("every field of the editor", () => {
   } as const;
 
   it("names every field of the form", () => {
-    const flat = (fields: readonly Record<string, unknown>[]): string[] =>
-      fields.flatMap((field) => (Array.isArray(field["schema"]) ? flat(field["schema"] as Record<string, unknown>[]) : [field["name"] as string]));
     expect(Object.keys(FIELDS).sort()).toEqual(flat(configForm().schema).sort());
   });
 

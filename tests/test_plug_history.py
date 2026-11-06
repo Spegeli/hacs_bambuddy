@@ -18,14 +18,13 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers import entity_registry as er
 from homeassistant.util import dt as dt_util
 import pytest
-from pytest_homeassistant_custom_component.common import MockConfigEntry, async_fire_time_changed
+from pytest_homeassistant_custom_component.common import async_fire_time_changed
 from pytest_homeassistant_custom_component.components.recorder.common import async_wait_recording_done
 
 from custom_components.bambuddy import plug_history
-from custom_components.bambuddy.const import DOMAIN
 
-from tests.conftest import A1_MINI, X1C, entity_id, load_fixture, plug_unique_id, printer_entry, set_up, setup_integration
-from tests.helpers import plug_info, plug_list, reload_entry, with_plugs
+from tests.conftest import A1_MINI, X1C, entity_id, make_entry, plug_unique_id, set_up, setup_integration
+from tests.helpers import plug_info, plug_list, plugs_but, reload_entry, with_plugs
 
 GONE = "sensor.bambuddy_smart_plug_abcdef_energy_total"
 
@@ -223,7 +222,7 @@ async def test_a_plug_back_after_a_read_keeps_its_history(
     a = _switch(hass, entry.entry_id, 3)
     await _with_statistic(hass, a)
 
-    bambuddy_api.get_smart_plugs.return_value = [plug for plug in load_fixture("smart_plugs.json") if plug["id"] != 3]
+    bambuddy_api.get_smart_plugs.return_value = plugs_but(3)
     await reload_entry(hass, entry.entry_id)
     assert a in _vanished(hass_storage)
     bambuddy_api.get_smart_plugs.return_value = plug_list(**{"3": {"created_at": "2026-10-20T09:00:00"}})
@@ -247,16 +246,7 @@ async def test_two_entries_swapping_sources_keep_their_histories(
     first = await set_up(hass, X1C)
     x = _switch(hass, first.entry_id, 3)
     bambuddy_api.get_smart_plugs.return_value = plug_list(**{"3": {"ip_address": ip_y}})
-    second = MockConfigEntry(
-        domain=DOMAIN,
-        title="BamBuddy (other.local)",
-        data={"url": "http://other.local:8000", "api_key": "bb_other_key", "verify_ssl": True},
-        options={"printers": [printer_entry(X1C)]},
-        unique_id="http://other.local:8000",
-        version=2,
-        minor_version=2,
-    )
-    second.add_to_hass(hass)
+    second = make_entry(hass, X1C, url="http://other.local:8000", title="BamBuddy (other.local)")
     await setup_integration(hass, second)
     y = _switch(hass, second.entry_id, 3)
     await _with_statistic(hass, x, y)

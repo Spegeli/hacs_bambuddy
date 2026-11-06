@@ -18,6 +18,7 @@ from custom_components.bambuddy.api import (
 )
 
 from tests.conftest import H2D, X1C, ams_uid, entity_id, load_fixture, printer_uid, set_up, state_at
+from tests.helpers import call_action, spool_row, timed_out, with_inventory
 
 
 def _extra(spool_id: int, **fields: Any) -> dict[str, Any]:
@@ -477,4 +478,3 @@ async def test_no_spool_list_with_spoolman(hass: HomeAssistant, bambuddy_api: Si
         await call_action(hass, "get_spools", response=True, entity_id=_slot(hass, entry, 3))
 
     assert raised.value.translation_key == "inventory_not_shown"
-from tests.helpers import call_action, spool_row, timed_out, with_inventory

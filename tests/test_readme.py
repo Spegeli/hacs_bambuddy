@@ -10,6 +10,9 @@ from urllib.parse import quote
 
 _ROOT = Path(__file__).parent.parent
 _README = (_ROOT / "README.md").read_text(encoding="utf-8")
+# The README without its code blocks.
+_PROSE = re.sub(r"```.*?```", "", _README, flags=re.DOTALL)
+_HEADINGS = re.findall(r"^## (.+)$", _README, re.MULTILINE)
 
 
 # --- Links within the README ----------------------------------------------------
@@ -32,11 +35,10 @@ def test_every_link_within_the_readme_finds_its_section():
     """A renamed heading breaks every link to it without a warning on
     GitHub: the requirements link the API key section, the license the
     disclaimer."""
-    text = re.sub(r"```.*?```", "", _README, flags=re.DOTALL)
     sections = {
-        _github_anchor(heading) for heading in re.findall(r"^#{1,6} (.+)$", text, re.MULTILINE)
+        _github_anchor(heading) for heading in re.findall(r"^#{1,6} (.+)$", _PROSE, re.MULTILINE)
     }
-    links = set(re.findall(r"\]\(#([^)\s]+)\)", text))
+    links = set(re.findall(r"\]\(#([^)\s]+)\)", _PROSE))
     assert {"create-an-api-key", "%EF%B8%8F-disclaimer"} <= links
     assert sorted(links - sections) == []
 
@@ -106,8 +108,7 @@ def test_every_mention_of_the_floor_names_the_minimum_of_hacs_json():
 def test_the_issue_forms_link_to_sections_of_the_readme():
     """The bug form's first checkbox and the chooser's contact link send the
     user into the README: a renamed heading would break them unseen."""
-    text = re.sub(r"```.*?```", "", _README, flags=re.DOTALL)
-    sections = {_github_anchor(heading) for heading in re.findall(r"^#{1,6} (.+)$", text, re.MULTILINE)}
+    sections = {_github_anchor(heading) for heading in re.findall(r"^#{1,6} (.+)$", _PROSE, re.MULTILINE)}
     links = {
         link
         for form in sorted((_ROOT / ".github" / "ISSUE_TEMPLATE").glob("*.yml"))
@@ -121,11 +122,10 @@ def test_the_key_needs_all_three_permissions() -> None:
     """The integration refuses a key lacking Read Status, Control Printer or
     Manage Maintenance -- also with BamBuddy's authentication off: the README
     says so, and none of the read-only advice is left."""
-    readme = _README
-    assert "**Read Status**, **Control Printer** and **Manage Maintenance**" in readme
-    assert "Check that you pasted all of it" in readme
+    assert "**Read Status**, **Control Printer** and **Manage Maintenance**" in _README
+    assert "Check that you pasted all of it" in _README
     # The owner given the right back: the stored key checked again.
-    assert "leave the dialog's field empty to check the stored key at once" in readme
+    assert "leave the dialog's field empty to check the stored key at once" in _README
     for gone in (
         "Unsure? Start with this alone",
         "any key works",
@@ -140,26 +140,25 @@ def test_the_key_needs_all_three_permissions() -> None:
         "starts unticked",
         "Copy it again from BamBuddy",
     ):
-        assert gone not in readme, gone
+        assert gone not in _README, gone
 
 
 def test_ams_entity_ids_name_the_unit() -> None:
     """AMS entity IDs carry the unit's model and serial; the AMS Lite's the
     printer's serial and its letter until BamBuddy reports its own (#3348),
     then a notice lists the renamed IDs."""
-    readme = _README
-    assert "_ams_a_humidity" not in readme
-    assert "sensor.ams_2_pro_19c06a000000001_humidity" in readme
-    assert "sensor.ams_lite_0309da000000002_a_slot_1" in readme
-    assert "maziggy/bambuddy/issues/3348" in readme
-    assert "the plain entity IDs; otherwise they end in `_2`" in readme
+    assert "_ams_a_humidity" not in _README
+    assert "sensor.ams_2_pro_19c06a000000001_humidity" in _README
+    assert "sensor.ams_lite_0309da000000002_a_slot_1" in _README
+    assert "maziggy/bambuddy/issues/3348" in _README
+    assert "the plain entity IDs; otherwise they end in `_2`" in _README
     # Known limitations: the AMS Lite until BamBuddy reports its serial.
-    assert "**AMS Lite without its serial number:**" in readme
+    assert "**AMS Lite without its serial number:**" in _README
     # The example names the unit by its device, which follows its place.
-    assert "device_attr(trigger.entity_id, 'name')" in readme
-    assert "an AMS Lite's, for now," in readme
+    assert "device_attr(trigger.entity_id, 'name')" in _README
+    assert "an AMS Lite's, for now," in _README
     # A replacement AMS Lite without a serial stays the same device.
-    assert "an AMS Lite stays the same device while BamBuddy reports no serial" in readme
+    assert "an AMS Lite stays the same device while BamBuddy reports no serial" in _README
 
 
 _APP = "https://github.com/Spegeli/homeassistant-app-bambuddy"
@@ -197,8 +196,7 @@ def test_the_app_section_follows_the_requirements() -> None:
     """Where a reader without a BamBuddy server looks next: the app that runs
     it inside Home Assistant, and the address to enter for it -- named as the
     app's README names its section on the integration."""
-    headings = re.findall(r"^## (.+)$", _README, re.MULTILINE)
-    assert headings[headings.index("📋 Requirements") + 1] == "🧩 Home Assistant App"
+    assert _HEADINGS[_HEADINGS.index("📋 Requirements") + 1] == "🧩 Home Assistant App"
     section = _README[_README.index("## 🧩 Home Assistant App") :]
     section = section[: section.index("\n## ", 1)]
     assert _APP in section and "`http://homeassistant.local:8000`" in section and "`localhost`" in section
@@ -213,8 +211,7 @@ def test_the_pictures_come_right_after_the_features() -> None:
     """Many decide by the pictures whether to install: the card's four
     pictures stand right after the features, and the card's own section
     points up to them instead of showing them again."""
-    headings = re.findall(r"^## (.+)$", _README, re.MULTILINE)
-    assert headings[:3] == ["✨ Features", "📸 Screenshots", "📋 Requirements"]
+    assert _HEADINGS[:3] == ["✨ Features", "📸 Screenshots", "📋 Requirements"]
     assert _section("📸 Screenshots").count("/.github/readme/cards/") == 4
     card = _section("🃏 Dashboard card")
     assert "<img " not in card and "[Screenshots](#-screenshots)" in card
@@ -223,9 +220,8 @@ def test_the_pictures_come_right_after_the_features() -> None:
 def test_the_card_and_the_examples_come_before_the_reference() -> None:
     """What a new user wants first -- the card, then what to automate --
     before the lists to look things up in: the entities and the actions."""
-    headings = re.findall(r"^## (.+)$", _README, re.MULTILINE)
     order = ["⚙️ Configuration", "🃏 Dashboard card", "🤖 Automation examples", "📊 Entities", "🎛️ Actions", "⬆️ Upgrading from a date version"]
-    assert [headings.index(heading) for heading in order] == sorted(headings.index(heading) for heading in order)
+    assert [_HEADINGS.index(heading) for heading in order] == sorted(_HEADINGS.index(heading) for heading in order)
 
 
 def test_the_reference_folds_and_its_headings_stay_outside() -> None:
@@ -325,4 +321,4 @@ def test_the_readme_names_manage_inventory_as_optional() -> None:
 
 def test_the_readme_names_the_camera_modes_as_the_editor_does() -> None:
     """On a tap of its camera button, always, never: the editor's three words."""
-    assert "| `camera` | `tap`, `always`, `off` | `tap` | The live view: on a tap of its camera button, always while the dashboard is open, or never (the job's picture then) |" in _README
+    assert "| `camera` | `tap`, `always`, `off` | `tap` | The live view: on a tap of its camera button, always while the dashboard is open, or never (the job's cover image then) |" in _README

@@ -9,7 +9,7 @@ from typing import Any
 import aiohttp
 from multidict import CIMultiDict, CIMultiDictProxy
 import yarl
-from homeassistant.config_entries import SOURCE_REAUTH
+from homeassistant.config_entries import SOURCE_REAUTH, SOURCE_USER
 from homeassistant.core import HomeAssistant
 from homeassistant.data_entry_flow import FlowResultType
 from homeassistant.helpers import device_registry as dr
@@ -21,7 +21,7 @@ from pytest_homeassistant_custom_component.typing import WebSocketGenerator
 
 from custom_components.bambuddy.api import BamBuddyConnectionError
 from custom_components.bambuddy.const import DOMAIN
-from tests.conftest import load_fixture
+from tests.conftest import API_KEY, X1C, load_fixture
 
 
 async def reload_entry(hass: HomeAssistant, entry_id: str, *, wait_background_tasks: bool = False) -> None:
@@ -38,6 +38,11 @@ def plug_list(**changes: dict[str, Any]) -> list[dict[str, Any]]:
 def plug_info(plug_id: int) -> dict[str, object]:
     """One plug of tests/fixtures/smart_plugs.json."""
     return next(dict(plug) for plug in load_fixture("smart_plugs.json") if plug["id"] == plug_id)
+
+
+def plugs_but(*plug_ids: int) -> list[dict[str, Any]]:
+    """BamBuddy's plug list without these plugs."""
+    return [plug for plug in load_fixture("smart_plugs.json") if plug["id"] not in plug_ids]
 
 
 def with_plugs(api: SimpleNamespace) -> None:
@@ -122,11 +127,26 @@ def entity_ids(hass: HomeAssistant, entry: MockConfigEntry) -> dict[str, str]:
     return {item.unique_id: item.entity_id for item in er.async_entries_for_config_entry(er.async_get(hass), entry.entry_id)}
 
 
+def as_model(bambuddy_api: SimpleNamespace, model: str | None, printer_id: int = X1C) -> None:
+    """The printer's place listed as another model."""
+    printers = load_fixture("printers.json")
+    for printer in printers:
+        if printer["id"] == printer_id:
+            printer["model"] = model
+    bambuddy_api.get_printers.return_value = printers
+
+
 def listed_with(bambuddy_api: SimpleNamespace, printer_id: int, **fields: Any) -> None:
     """BamBuddy lists the printer with these fields, in its list and its details."""
     printers = [{**item, **fields} if item["id"] == printer_id else item for item in load_fixture("printers.json")]
     bambuddy_api.get_printers.return_value = printers
     bambuddy_api.get_printer.side_effect = lambda wanted: next(item for item in printers if item["id"] == wanted)
+
+
+def renamed_in_bambuddy(bambuddy_api: SimpleNamespace, printer_id: int, name: str) -> None:
+    """The printer has a new name in BamBuddy: in its list, its details and its status."""
+    listed_with(bambuddy_api, printer_id, name=name)
+    bambuddy_api.statuses[printer_id]["name"] = name
 
 
 def reauth_flows(hass: HomeAssistant) -> list[dict[str, Any]]:
@@ -173,7 +193,7 @@ def handshake_refusal(url: str, status: int, message: str = "Invalid response st
     return aiohttp.WSServerHandshakeError(info, (), status=status, message=message)
 
 
-async def never_answers(*_: Any) -> str:
+async def never_answers(*_: Any, **__: Any) -> str:
     """A request that never comes back."""
     await asyncio.Event().wait()
     raise AssertionError("never answers")
@@ -211,3 +231,54 @@ async def call_action(hass: HomeAssistant, name: str, /, *, response: bool = Fal
     """One of the integration's actions, waited for; its answer with
     `response`. `data` may hold a field named `action` (answer_hms)."""
     return await hass.services.async_call(DOMAIN, name, data, blocking=True, return_response=response)
+
+
+FLOW_INPUT = {"url": "bambuddy.local:8000/", "api_key": API_KEY, "verify_ssl": True}
+
+
+# A second address: another BamBuddy, or the same one moved.
+NEW_URL = "http://192.0.2.99:8000"
+
+
+async def flow_start(hass: HomeAssistant) -> dict[str, Any]:
+    result: dict[str, Any] = await hass.config_entries.flow.async_init(DOMAIN, context={"source": SOURCE_USER})
+    return result
+
+
+async def flow_reconfigure(hass: HomeAssistant, entry: MockConfigEntry) -> dict[str, Any]:
+    result: dict[str, Any] = await entry.start_reconfigure_flow(hass)  # type: ignore[assignment]
+    return result
+
+
+def field_defaults(result: dict[str, Any]) -> dict[str, Any]:
+    """The value each field of a form starts with."""
+    return {str(key): key.default() for key in result["data_schema"].schema}
+
+
+def field_choices(result: dict[str, Any], part: str = "value") -> list[str]:
+    """The values or labels a form's one field offers."""
+    [field] = result["data_schema"].schema
+    return [option[part] for option in result["data_schema"].schema[field].config["options"]]
+
+
+async def flow_submit(hass: HomeAssistant, flow_id: str, data: dict[str, Any]) -> dict[str, Any]:
+    result: dict[str, Any] = await hass.config_entries.flow.async_configure(flow_id, data)
+    return result
+
+
+async def flow_first_step(hass: HomeAssistant, data: dict[str, Any] = FLOW_INPUT) -> dict[str, Any]:
+    """A new entry's flow, its first form sent."""
+    return await flow_submit(hass, (await flow_start(hass))["flow_id"], data)
+
+
+async def flow_at_new_address(hass: HomeAssistant, entry: MockConfigEntry) -> dict[str, Any]:
+    """Reconfigure opened and sent with a new address."""
+    result = await flow_reconfigure(hass, entry)
+    return await flow_submit(hass, result["flow_id"], {**FLOW_INPUT, "url": NEW_URL})
+
+
+async def flow_switch(hass: HomeAssistant, flow_id: str, answer: dict[str, Any]) -> dict[str, Any]:
+    """A new address's second step answered, then its summary confirmed."""
+    result = await flow_submit(hass, flow_id, answer)
+    assert result["step_id"] in ("confirm_same", "confirm_other"), result
+    return await flow_submit(hass, flow_id, {})

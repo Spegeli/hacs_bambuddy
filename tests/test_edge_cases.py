@@ -12,11 +12,7 @@ from freezegun.api import FrozenDateTimeFactory
 import pytest
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError, ServiceValidationError
-from homeassistant.helpers import device_registry as dr
-from homeassistant.helpers import issue_registry as ir
 
-from custom_components.bambuddy.const import DOMAIN
-from custom_components.bambuddy.coordinator import names_issue
 
 from tests.conftest import (
     A1_MINI,
@@ -31,13 +27,13 @@ from tests.conftest import (
     no_entity,
     past_polls,
     past_the_minute,
-    printer_device,
+    printer_device_id,
     printer_info,
-    printer_key,
     printer_uid,
     set_up,
+    status_never,
 )
-from tests.helpers import details_are, timed_out
+from tests.helpers import call_action, details_are, timed_out
 
 
 def _client_never_reached(printer_id: int) -> dict[str, Any]:
@@ -46,10 +42,9 @@ def _client_never_reached(printer_id: int) -> dict[str, Any]:
     PrinterState that never got a message -- connected False, state "unknown",
     temperatures {} (an empty dict, not None), print options at their
     defaults, supports_chamber_heater from the model."""
-    status = load_fixture("status_never.json")
+    status = status_never(printer_id)
     status.update(
         {
-            "id": printer_id,
             "state": "unknown",
             "progress": 0.0,
             "remaining_time": 0,
@@ -63,19 +58,13 @@ def _client_never_reached(printer_id: int) -> dict[str, Any]:
     return status
 
 
-@pytest.mark.parametrize("never", ["no client", "client never heard from"])
 async def test_a_printer_off_at_bambuddys_restart_completes_itself(
-    hass: HomeAssistant, bambuddy_api: SimpleNamespace, freezer: FrozenDateTimeFactory, never: str
+    hass: HomeAssistant, bambuddy_api: SimpleNamespace, freezer: FrozenDateTimeFactory
 ) -> None:
-    """BamBuddy restarted while the printer was off: it answers with its
-    defaults -- temperatures null without a client, empty with one that has
-    not heard from the printer. The first full status reloads the entry once."""
-    if never == "no client":
-        status = load_fixture("status_never.json")
-        status["id"] = H2D
-    else:
-        status = _client_never_reached(H2D)
-    bambuddy_api.statuses[H2D] = status
+    """BamBuddy restarted while the printer was off and has a client that
+    has not heard from it: the temperatures are empty. The first full status
+    reloads the entry once. (Without a client: test_model_changes.)"""
+    bambuddy_api.statuses[H2D] = _client_never_reached(H2D)
     entry = await set_up(hass, H2D)
     keys = (("sensor", "chamber_temp"), ("switch", "ams_filament_backup"))
     assert all(no_entity(hass, domain, printer_uid(entry, key, H2D)) for domain, key in keys)
@@ -104,12 +93,7 @@ async def test_drying_refused_by_its_cause(
     entry = await set_up(hass, P1S)
 
     with pytest.raises(ServiceValidationError) as raised:
-        await hass.services.async_call(
-            DOMAIN,
-            "start_drying",
-            {"device_id": device_id(hass, entry, ams_device(entry, P1S, 0)), "temperature": 55, "duration": 8},
-            blocking=True,
-        )
+        await call_action(hass, "start_drying", device_id=device_id(hass, entry, ams_device(entry, P1S, 0)), temperature=55, duration=8)
 
     assert raised.value.translation_key == key
 
@@ -136,13 +120,7 @@ async def test_reading_the_objects_is_no_command(hass: HomeAssistant, bambuddy_a
     coordinator = entry.runtime_data.printers[X1C]
     before = coordinator._commands
 
-    await hass.services.async_call(
-        DOMAIN,
-        "get_print_objects",
-        {"device_id": device_id(hass, entry, printer_device(entry, X1C))},
-        blocking=True,
-        return_response=True,
-    )
+    await call_action(hass, "get_print_objects", device_id=printer_device_id(hass, entry), response=True)
 
     assert coordinator._commands == before
 
@@ -162,23 +140,6 @@ async def test_a_command_tells_the_coordinator(hass: HomeAssistant, bambuddy_api
     assert coordinator._commands == before + 1
 
 
-async def test_the_names_notice_goes_with_its_entry(
-    hass: HomeAssistant, bambuddy_api: SimpleNamespace, freezer: FrozenDateTimeFactory
-) -> None:
-    entry = await set_up(hass, X1C)
-    printer = dr.async_get(hass).async_get(device_id(hass, entry, printer_device(entry, X1C)))
-    assert printer is not None
-    dr.async_get(hass).async_update_device(printer.id, name_by_user="Mine")
-    await past_the_minute(hass, freezer)
-    issue_id = names_issue(entry.entry_id, printer_key(X1C))
-    assert ir.async_get(hass).async_get_issue(DOMAIN, issue_id) is not None
-
-    await hass.config_entries.async_remove(entry.entry_id)
-    await hass.async_block_till_done()
-
-    assert ir.async_get(hass).async_get_issue(DOMAIN, issue_id) is None
-
-
 async def test_the_replaced_refusal_names_this_printer(
     hass: HomeAssistant, bambuddy_api: SimpleNamespace, freezer: FrozenDateTimeFactory
 ) -> None:
@@ -192,10 +153,8 @@ async def test_the_replaced_refusal_names_this_printer(
 
     with patch.object(hass.config_entries, "async_schedule_reload"):
         await past_the_minute(hass, freezer)
-        device = dr.async_get(hass).async_get(device_id(hass, entry, printer_device(entry, X1C)))
-        assert device is not None
         with pytest.raises(ServiceValidationError) as raised:
-            await hass.services.async_call(DOMAIN, "home_axes", {"device_id": device.id}, blocking=True)
+            await call_action(hass, "home_axes", device_id=printer_device_id(hass, entry))
 
     assert raised.value.translation_placeholders == {"printer": "Workshop"}
 
@@ -213,10 +172,8 @@ async def test_another_name_under_the_number_is_checked_at_once(
     bambuddy_api.statuses[X1C] = {**load_fixture("status_a1mini.json"), "name": a1_mini["name"]}
     with patch.object(hass.config_entries, "async_schedule_reload"):
         await next_refresh(hass, freezer)
-        device = dr.async_get(hass).async_get(device_id(hass, entry, printer_device(entry, X1C)))
-        assert device is not None
         with pytest.raises(ServiceValidationError):
-            await hass.services.async_call(DOMAIN, "home_axes", {"device_id": device.id}, blocking=True)
+            await call_action(hass, "home_axes", device_id=printer_device_id(hass, entry))
 
     bambuddy_api.home_axes.assert_not_awaited()
 

@@ -16,18 +16,19 @@ from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers import entity_registry as er
-from pytest_homeassistant_custom_component.common import MockConfigEntry
 from pytest_homeassistant_custom_component.typing import WebSocketGenerator
 import pytest
 
 from custom_components.bambuddy.api import (
     BamBuddyApiError,
+    BamBuddyAuthError,
     BamBuddyConnectionError,
     BamBuddyError,
     BamBuddyPermissionError,
 )
 from custom_components.bambuddy.const import DOMAIN
 from custom_components.bambuddy.coordinator import find_device
+from custom_components.bambuddy.key import KeyGuard
 from custom_components.bambuddy.plug_coordinator import BamBuddyPlugCoordinator
 from custom_components.bambuddy.diagnostics import async_get_config_entry_diagnostics, async_get_device_diagnostics
 from custom_components.bambuddy import plug_identity
@@ -43,16 +44,16 @@ from tests.conftest import (
     load_fixture,
     make_entry,
     next_refresh,
+    no_entity,
     plug_digest,
     plug_identifier_of,
     plug_unique_id,
     printer_device,
-    printer_entry,
     set_up,
     setup_integration,
     state_at,
 )
-from tests.helpers import plug_info, plug_list, reload_entry, remove_device, timed_out, with_plugs
+from tests.helpers import plug_info, plug_list, plugs_but, reload_entry, remove_device, timed_out, with_plugs
 
 
 def _digest(plug_id: int) -> str:
@@ -189,10 +190,8 @@ async def test_two_plugs_on_one_source_get_2(hass: HomeAssistant, bambuddy_api: 
 async def test_the_lower_number_keeps_the_plain_id(hass: HomeAssistant, bambuddy_api: SimpleNamespace) -> None:
     """BamBuddy lists its plugs by name: plug 8 ("Desk plug") before plug 3.
     The second by number gets the _2, not the second by name."""
-    plugs = load_fixture("smart_plugs.json")
-    shared = next(plug for plug in plugs if plug["id"] == 3)["ip_address"]
-    by_name = sorted(({**plug, "ip_address": shared} if plug["id"] == 8 else plug for plug in plugs), key=lambda plug: str(plug["name"]))
-    bambuddy_api.get_smart_plugs.return_value = by_name
+    plugs = plug_list(**{"8": {"ip_address": plug_info(3)["ip_address"]}})
+    bambuddy_api.get_smart_plugs.return_value = sorted(plugs, key=lambda plug: str(plug["name"]))
     entry = await set_up(hass, X1C, A1_MINI)
     digest = _digest(3)
 
@@ -205,16 +204,7 @@ async def test_the_same_plug_in_two_entries(hass: HomeAssistant, bambuddy_api: S
     Assistant's _2 for the second, a device in each."""
     with_plugs(bambuddy_api)
     first = await set_up(hass, X1C)
-    second = MockConfigEntry(
-        domain=DOMAIN,
-        title="BamBuddy (other.local)",
-        data={"url": "http://other.local:8000", "api_key": "bb_other_key", "verify_ssl": True},
-        options={"printers": [printer_entry(X1C)]},
-        unique_id="http://other.local:8000",
-        version=2,
-        minor_version=2,
-    )
-    second.add_to_hass(hass)
+    second = make_entry(hass, X1C, url="http://other.local:8000", title="BamBuddy (other.local)")
     await setup_integration(hass, second)
     digest = _digest(3)
 
@@ -260,14 +250,19 @@ def test_bambuddys_own_auto_off() -> None:
 
 def _state(hass: HomeAssistant, domain: str, entry_id: str, plug_id: int, key: str) -> Any:
     """The state of the plug's entity, which must exist."""
-    entity = _plug_entity_id(hass, domain, entry_id, plug_id, key)
-    assert entity is not None, (plug_id, key)
-    return state_at(hass, entity)
+    return state_at(hass, _plug_entity(hass, domain, entry_id, plug_id, key))
 
 
 def _plug_entity_id(hass: HomeAssistant, domain: str, entry_id: str, plug_id: int, key: str) -> str | None:
     unique_id = plugs_of(hass, entry_id).entity_unique_id(plug_id, key)
     return er.async_get(hass).async_get_entity_id(domain, DOMAIN, unique_id) if unique_id else None
+
+
+def _plug_entity(hass: HomeAssistant, domain: str, entry_id: str, plug_id: int, key: str) -> str:
+    """The plug's entity ID, which must exist."""
+    entity = _plug_entity_id(hass, domain, entry_id, plug_id, key)
+    assert entity is not None, (plug_id, key)
+    return entity
 
 
 async def test_each_plug_gets_what_it_can_do(hass: HomeAssistant, bambuddy_api: SimpleNamespace) -> None:
@@ -389,7 +384,7 @@ async def test_a_plug_is_switched_and_read_again(
     the plug and its printer -- now offline in BamBuddy -- are read again."""
     with_plugs(bambuddy_api)
     entry = await set_up(hass, X1C)
-    entity_id = str(_plug_entity_id(hass, "switch", entry.entry_id, 3, "power"))
+    entity_id = _plug_entity(hass, "switch", entry.entry_id, 3, "power")
     statuses, printer_reads = bambuddy_api.get_plug_status.await_count, bambuddy_api.get_status.await_count
 
     await hass.services.async_call("switch", "turn_off", {"entity_id": entity_id}, blocking=True)
@@ -408,16 +403,16 @@ async def test_a_switched_plug_shows_its_new_state_at_once(
     else the card shows a printer starting, or offline with power."""
     with_plugs(bambuddy_api)
     entry = await set_up(hass, X1C)
-    entity_id = str(_plug_entity_id(hass, "switch", entry.entry_id, 3, "power"))
+    entity_id = _plug_entity(hass, "switch", entry.entry_id, 3, "power")
 
     await hass.services.async_call("switch", "turn_off", {"entity_id": entity_id}, blocking=True)
-    off = hass.states.get(entity_id)
-    assert off is not None and (off.state, off.attributes["on_since"]) == ("off", None)
+    off = state_at(hass, entity_id)
+    assert (off.state, off.attributes["on_since"]) == ("off", None)
     assert _state(hass, "sensor", entry.entry_id, 3, "power").state == "0.0"
 
     await hass.services.async_call("switch", "turn_on", {"entity_id": entity_id}, blocking=True)
-    on = hass.states.get(entity_id)
-    assert on is not None and on.state == "on" and on.attributes["on_since"] is not None
+    on = state_at(hass, entity_id)
+    assert on.state == "on" and on.attributes["on_since"] is not None
 
     # The read after it tells what the plug says.
     bambuddy_api.plug_statuses["3"]["state"] = "OFF"
@@ -430,9 +425,9 @@ async def test_an_unreachable_plug_keeps_what_it_is(hass: HomeAssistant, bambudd
     is: the card keeps it in its place, a hidden one hidden."""
     with_plugs(bambuddy_api)
     entry = await set_up(hass, A1_MINI)
-    gone = hass.states.get(str(_plug_entity_id(hass, "switch", entry.entry_id, 8, "power")))
+    gone = state_at(hass, _plug_entity(hass, "switch", entry.entry_id, 8, "power"))
 
-    assert gone is not None and gone.state == "unavailable"
+    assert gone.state == "unavailable"
     assert {key: gone.attributes.get(key) for key in ("powers_printer", "on_printer_card", "bambuddy_auto_off", "plug_type")} == {
         "powers_printer": True,
         "on_printer_card": True,
@@ -448,7 +443,7 @@ async def test_a_script_runs(hass: HomeAssistant, bambuddy_api: SimpleNamespace)
     entry = await set_up(hass, H2D)
 
     await hass.services.async_call(
-        "button", "press", {"entity_id": str(_plug_entity_id(hass, "button", entry.entry_id, 6, "run"))}, blocking=True
+        "button", "press", {"entity_id": _plug_entity(hass, "button", entry.entry_id, 6, "run")}, blocking=True
     )
 
     bambuddy_api.control_plug.assert_awaited_once_with(6, True)
@@ -459,13 +454,12 @@ async def test_a_plug_that_does_not_answer(hass: HomeAssistant, bambuddy_api: Si
     on says so."""
     with_plugs(bambuddy_api)
     entry = await set_up(hass, X1C, A1_MINI)
-    gone = hass.states.get(str(_plug_entity_id(hass, "switch", entry.entry_id, 8, "power")))
-    assert gone is not None and gone.state == "unavailable"
+    assert state_at(hass, _plug_entity(hass, "switch", entry.entry_id, 8, "power")).state == "unavailable"
 
     bambuddy_api.control_plug.side_effect = BamBuddyApiError(503, "Failed to communicate with device")
     with pytest.raises(HomeAssistantError) as caught:
         await hass.services.async_call(
-            "switch", "turn_on", {"entity_id": str(_plug_entity_id(hass, "switch", entry.entry_id, 3, "power"))}, blocking=True
+            "switch", "turn_on", {"entity_id": _plug_entity(hass, "switch", entry.entry_id, 3, "power")}, blocking=True
         )
     assert caught.value.translation_key == "plug_not_answering"
 
@@ -475,19 +469,17 @@ async def test_an_unknown_state_is_assumed(hass: HomeAssistant, bambuddy_api: Si
     with_plugs(bambuddy_api)
     bambuddy_api.plug_statuses["4"]["state"] = None
     entry = await set_up(hass, X1C)
-    state = hass.states.get(str(_plug_entity_id(hass, "switch", entry.entry_id, 4, "power")))
+    state = state_at(hass, _plug_entity(hass, "switch", entry.entry_id, 4, "power"))
 
-    assert state is not None
     assert (state.state, state.attributes.get("assumed_state")) == ("unknown", True)
 
 
 async def test_what_the_card_reads_of_a_plug(hass: HomeAssistant, bambuddy_api: SimpleNamespace) -> None:
     with_plugs(bambuddy_api)
     entry = await set_up(hass, X1C, P1S)
-    printer = hass.states.get(str(_plug_entity_id(hass, "switch", entry.entry_id, 3, "power")))
-    accessory = hass.states.get(str(_plug_entity_id(hass, "switch", entry.entry_id, 4, "power")))
-    garage = hass.states.get(str(_plug_entity_id(hass, "switch", entry.entry_id, 5, "power")))
-    assert printer is not None and accessory is not None and garage is not None
+    printer = state_at(hass, _plug_entity(hass, "switch", entry.entry_id, 3, "power"))
+    accessory = state_at(hass, _plug_entity(hass, "switch", entry.entry_id, 4, "power"))
+    garage = state_at(hass, _plug_entity(hass, "switch", entry.entry_id, 5, "power"))
 
     assert {key: printer.attributes[key] for key in ("powers_printer", "on_printer_card", "bambuddy_auto_off", "plug_type")} == {
         "powers_printer": True,
@@ -571,24 +563,14 @@ async def test_a_plug_bambuddy_deletes_or_unlinks_goes_within_a_minute(
     switch = plug_unique_id(hass, entry.entry_id, 3, "power")
     assert find_device(hass, entry.entry_id, gone) is not None
 
-    listed = load_fixture("smart_plugs.json")
-    bambuddy_api.get_smart_plugs.return_value = (
-        [plug for plug in listed if plug["id"] != 3]
-        if change == "deleted"
-        else [{**plug, "printer_id": None} if plug["id"] == 3 else plug for plug in listed]
-    )
+    bambuddy_api.get_smart_plugs.return_value = plugs_but(3) if change == "deleted" else plug_list(**{"3": {"printer_id": None}})
     await next_refresh(hass, freezer, 61)
     await hass.async_block_till_done()
 
     assert find_device(hass, entry.entry_id, gone) is None
-    assert er.async_get(hass).async_get_entity_id("switch", DOMAIN, switch) is None
+    assert no_entity(hass, "switch", switch)
     # The printer's other plug stays.
     assert find_device(hass, entry.entry_id, plug_identifier_of(hass, entry.entry_id, 4)) is not None
-
-
-def _timed_out() -> BamBuddyConnectionError:
-    err = timed_out("POST /smart-plugs/3/control")
-    return err
 
 
 @pytest.mark.parametrize(
@@ -597,7 +579,7 @@ def _timed_out() -> BamBuddyConnectionError:
         # The key has every scope (the check says so): BamBuddy's own refusal.
         (BamBuddyPermissionError(403, "API key owner does not have 'smart_plugs:control' permission"), "bambuddy_refused"),
         (BamBuddyConnectionError("POST /smart-plugs/3/control: ClientConnectorError"), "cannot_connect"),
-        (_timed_out(), "no_answer"),
+        (timed_out("POST /smart-plugs/3/control"), "no_answer"),
         (BamBuddyApiError(400, "MQTT plugs are monitor-only."), "plug_command_failed"),
     ],
 )
@@ -608,7 +590,7 @@ async def test_why_a_plug_did_not_switch(hass: HomeAssistant, bambuddy_api: Simp
 
     with pytest.raises(HomeAssistantError) as caught:
         await hass.services.async_call(
-            "switch", "turn_off", {"entity_id": str(_plug_entity_id(hass, "switch", entry.entry_id, 3, "power"))}, blocking=True
+            "switch", "turn_off", {"entity_id": _plug_entity(hass, "switch", entry.entry_id, 3, "power")}, blocking=True
         )
 
     assert caught.value.translation_key == key
@@ -633,7 +615,7 @@ async def test_a_plug_switched_on_says_since_when(
     with_plugs(bambuddy_api)
     bambuddy_api.plug_statuses["3"]["state"] = "OFF"
     entry = await set_up(hass, X1C)
-    entity_id = str(_plug_entity_id(hass, "switch", entry.entry_id, 3, "power"))
+    entity_id = _plug_entity(hass, "switch", entry.entry_id, 3, "power")
     assert state_at(hass, entity_id).attributes["on_since"] is None
 
     bambuddy_api.plug_statuses["3"]["state"] = "ON"
@@ -855,7 +837,7 @@ def _new_plug(api: SimpleNamespace, **changes: Any) -> dict[str, Any]:
 async def test_a_new_plug_is_added_without_a_reload(hass: HomeAssistant, bambuddy_api: SimpleNamespace, freezer: FrozenDateTimeFactory) -> None:
     with_plugs(bambuddy_api)
     entry = await set_up(hass, X1C)
-    bambuddy_api.get_smart_plugs.return_value = [*load_fixture("smart_plugs.json"), _new_plug(bambuddy_api)]
+    bambuddy_api.get_smart_plugs.return_value = [*plug_list(), _new_plug(bambuddy_api)]
 
     assert await _reloads_after_a_minute(hass, freezer) == 0
     assert _plug_entity_id(hass, "switch", entry.entry_id, 11, "power") is not None
@@ -866,10 +848,10 @@ async def test_a_plug_added_later_reloads_when_it_changes(
 ) -> None:
     with_plugs(bambuddy_api)
     await set_up(hass, X1C)
-    bambuddy_api.get_smart_plugs.return_value = [*load_fixture("smart_plugs.json"), _new_plug(bambuddy_api)]
+    bambuddy_api.get_smart_plugs.return_value = [*plug_list(), _new_plug(bambuddy_api)]
     assert await _reloads_after_a_minute(hass, freezer) == 0
 
-    bambuddy_api.get_smart_plugs.return_value = [*load_fixture("smart_plugs.json"), _new_plug(bambuddy_api, ip_address="192.0.2.112")]
+    bambuddy_api.get_smart_plugs.return_value = [*plug_list(), _new_plug(bambuddy_api, ip_address="192.0.2.112")]
     assert await _reloads_after_a_minute(hass, freezer) == 1
 
 
@@ -884,3 +866,130 @@ async def test_a_setup_without_the_list_reloads_once_it_is_read(
     with_plugs(bambuddy_api)
 
     assert await _reloads_after_a_minute(hass, freezer, 2) == 1
+
+
+async def test_a_second_command_during_a_read_drops_that_read_too(
+    hass: HomeAssistant, bambuddy_api: SimpleNamespace, freezer: FrozenDateTimeFactory
+) -> None:
+    """Every switch counts, not only the first: a read that began after one command still predates the next."""
+    with_plugs(bambuddy_api)
+    entry = await set_up(hass, X1C)
+    plugs = plugs_of(hass, entry.entry_id)
+    plugs.note_command()
+    reading = bambuddy_api.get_plug_status.side_effect
+
+    async def switched_meanwhile(plug_id: int, patient: bool = True) -> dict[str, Any]:
+        plugs.note_command()
+        status: dict[str, Any] = reading(plug_id, patient)
+        return {**status, "state": "OFF"}
+
+    bambuddy_api.get_plug_status.side_effect = switched_meanwhile
+    await plugs.async_refresh()
+
+    assert plugs.data[3].state is True
+
+
+async def test_a_plug_stays_on_since_it_came_on(hass: HomeAssistant, bambuddy_api: SimpleNamespace, freezer: FrozenDateTimeFactory) -> None:
+    """Only a plug seen going from off to on has a start; staying on changes nothing; off clears it."""
+    with_plugs(bambuddy_api)
+    entry = await set_up(hass, X1C)
+    plugs = plugs_of(hass, entry.entry_id)
+    assert plugs.on_since(3) is None
+    await next_refresh(hass, freezer, 16)
+    assert plugs.on_since(3) is None
+
+    bambuddy_api.plug_statuses["3"]["state"] = "OFF"
+    await next_refresh(hass, freezer, 16)
+    bambuddy_api.plug_statuses["3"]["state"] = "ON"
+    await next_refresh(hass, freezer, 16)
+    came_on = plugs.on_since(3)
+    assert came_on is not None
+    await next_refresh(hass, freezer, 16)
+    assert plugs.on_since(3) == came_on
+
+    bambuddy_api.plug_statuses["3"]["state"] = "OFF"
+    await next_refresh(hass, freezer, 16)
+    assert plugs.on_since(3) is None
+
+
+async def test_the_plug_list_is_not_read_before_the_third_status_read(
+    hass: HomeAssistant, bambuddy_api: SimpleNamespace, freezer: FrozenDateTimeFactory
+) -> None:
+    with_plugs(bambuddy_api)
+    entry = await set_up(hass, X1C)
+    entry.async_on_unload(plugs_of(hass, entry.entry_id).async_add_listener(lambda: None))
+    reads = bambuddy_api.get_smart_plugs.await_count
+
+    await next_refresh(hass, freezer, 16)
+    await next_refresh(hass, freezer, 16)
+    assert bambuddy_api.get_smart_plugs.await_count == reads
+
+    await next_refresh(hass, freezer, 22)
+    assert bambuddy_api.get_smart_plugs.await_count == reads + 1
+
+
+async def test_a_plug_list_the_key_is_refused_goes_to_the_key_guard(
+    hass: HomeAssistant, bambuddy_api: SimpleNamespace, freezer: FrozenDateTimeFactory
+) -> None:
+    with_plugs(bambuddy_api)
+    await set_up(hass, X1C)
+    refusal = BamBuddyAuthError(401, "Authentication required", "GET /smart-plugs/")
+    bambuddy_api.get_smart_plugs.side_effect = refusal
+    with patch.object(KeyGuard, "async_read_refused") as refused:
+        await next_refresh(hass, freezer, 61)
+
+    assert refusal in [call.args[0] for call in refused.call_args_list]
+
+
+async def test_the_unknown_is_asked_about_without_error(hass: HomeAssistant, bambuddy_api: SimpleNamespace) -> None:
+    with_plugs(bambuddy_api)
+    entry = await set_up(hass, X1C)
+    plugs = plugs_of(hass, entry.entry_id)
+    nowhere = Plug(plug_info(9))
+
+    assert plugs.reported(999, "power") is False
+    assert plugs.entity_unique_id(999, "power") is None
+    assert plugs.identifier(999) is None
+    assert plugs.printer_of(nowhere) is None
+    assert plugs.device_name(nowhere) == nowhere.name
+
+
+async def test_a_plug_noted_as_built_joins_only_a_built_list(hass: HomeAssistant, bambuddy_api: SimpleNamespace) -> None:
+    with_plugs(bambuddy_api)
+    entry = await set_up(hass, X1C)
+    plugs = plugs_of(hass, entry.entry_id)
+    assert plugs.built is not None
+
+    plugs.note_built(999)
+    assert 999 not in plugs.built
+
+    plugs.built = None
+    plugs.note_built(3)
+    assert plugs.built is None
+
+
+async def test_another_plug_becoming_the_printers_own_reloads(
+    hass: HomeAssistant, bambuddy_api: SimpleNamespace, freezer: FrozenDateTimeFactory
+) -> None:
+    """Two plugs power the printer; BamBuddy's pick changes with nothing else about either."""
+    bambuddy_api.get_smart_plugs.return_value = plug_list(**{"4": {"controls_printer_power": True}})
+    await set_up(hass, X1C)
+
+    bambuddy_api.get_smart_plugs.return_value = plug_list(**{"4": {"controls_printer_power": True}, "3": {"enabled": False}})
+    assert await _reloads_after_a_minute(hass, freezer) == 1
+
+
+async def test_a_plug_listed_before_a_renamed_one_does_not_hide_the_rename(
+    hass: HomeAssistant, bambuddy_api: SimpleNamespace, freezer: FrozenDateTimeFactory
+) -> None:
+    """Plug 9 is linked to no printer here and has no device: the plugs after it in the list are still followed."""
+    bambuddy_api.get_smart_plugs.return_value = [plug_info(9), *plugs_but(9)]
+    entry = await set_up(hass, X1C)
+
+    bambuddy_api.get_smart_plugs.return_value = [
+        {**p, "name": "Renamed"} if p["id"] == 3 else p for p in bambuddy_api.get_smart_plugs.return_value
+    ]
+    await next_refresh(hass, freezer, 61)
+
+    device = find_device(hass, entry.entry_id, plug_identifier_of(hass, entry.entry_id, 3))
+    assert device is not None and "Renamed" in (device.name or "")

@@ -34,10 +34,8 @@ from tests.helpers import (
 )
 
 
-async def test_a_1x_entry_with_a_read_only_key_asks_for_a_new_one(hass: HomeAssistant, bambuddy_api: SimpleNamespace) -> None:
-    """1.x worked with Read Status alone: after the migration Home Assistant
-    asks for a key with all three; with one, the entry loads."""
-    bambuddy_api.get_auth_me.return_value = load_fixture("auth_me_read.json")
+def _entry_1x(hass: HomeAssistant) -> MockConfigEntry:
+    """An entry as 1.x stored it: host and port."""
     entry = MockConfigEntry(
         domain=DOMAIN,
         title="BamBuddy (bambuddy.local)",
@@ -47,6 +45,29 @@ async def test_a_1x_entry_with_a_read_only_key_asks_for_a_new_one(hass: HomeAssi
         version=1,
     )
     entry.add_to_hass(hass)
+    return entry
+
+
+def _entry_2_1(hass: HomeAssistant, *printer_ids: int) -> MockConfigEntry:
+    """An entry as 2.1 stored it: its printers by BamBuddy's numbers."""
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        title="BamBuddy (bambuddy.local)",
+        data={"url": URL, "api_key": API_KEY, "verify_ssl": True},
+        options={"printers": [{"printer_id": printer_id, "printer_name": printer_name(printer_id)} for printer_id in printer_ids]},
+        unique_id=URL,
+        version=2,
+        minor_version=1,
+    )
+    entry.add_to_hass(hass)
+    return entry
+
+
+async def test_a_1x_entry_with_a_read_only_key_asks_for_a_new_one(hass: HomeAssistant, bambuddy_api: SimpleNamespace) -> None:
+    """1.x worked with Read Status alone: after the migration Home Assistant
+    asks for a key with all three; with one, the entry loads."""
+    bambuddy_api.get_auth_me.return_value = load_fixture("auth_me_read.json")
+    entry = _entry_1x(hass)
 
     await hass.config_entries.async_setup(entry.entry_id)
     await hass.async_block_till_done()
@@ -61,15 +82,7 @@ async def test_a_1x_entry_with_a_read_only_key_asks_for_a_new_one(hass: HomeAssi
 async def test_migration_from_version_1(hass: HomeAssistant, bambuddy_api: SimpleNamespace) -> None:
     """1.x stored host and port: 2.0 makes them a URL, and the entities it
     merged or replaced leave the registry; the others keep their IDs."""
-    entry = MockConfigEntry(
-        domain=DOMAIN,
-        title="BamBuddy (bambuddy.local)",
-        data={"host": "bambuddy.local", "port": 8000, "api_key": API_KEY, "version": "0.2.4.5"},
-        options={"printers": [{"printer_id": X1C, "printer_name": printer_name(X1C)}]},
-        unique_id="bambuddy_bambuddy.local_8000",
-        version=1,
-    )
-    entry.add_to_hass(hass)
+    entry = _entry_1x(hass)
     dr.async_get(hass).async_get_or_create(
         config_entry_id=entry.entry_id,
         identifiers={(DOMAIN, f"{entry.entry_id}_printer_{X1C}")},
@@ -118,16 +131,7 @@ async def test_migration_to_serial_numbers(hass: HomeAssistant, bambuddy_api: Si
     """2.1 knew printers and AMS units by BamBuddy's numbers: 2.2 by their
     serial numbers, from the device registry. Entity IDs, and so their
     history, stay."""
-    entry = MockConfigEntry(
-        domain=DOMAIN,
-        title="BamBuddy (bambuddy.local)",
-        data={"url": URL, "api_key": API_KEY, "verify_ssl": True},
-        options={"printers": [{"printer_id": X1C, "printer_name": printer_name(X1C)}]},
-        unique_id=URL,
-        version=2,
-        minor_version=1,
-    )
-    entry.add_to_hass(hass)
+    entry = _entry_2_1(hass, X1C)
     devices = dr.async_get(hass)
     printer = devices.async_get_or_create(
         config_entry_id=entry.entry_id,
@@ -164,21 +168,7 @@ async def test_migration_keeps_a_unit_seen_twice_apart(hass: HomeAssistant, bamb
     its serial: the second keeps its place, and the migration goes through.
     A printer never set up has no device to rename; setup finds it by its
     number."""
-    entry = MockConfigEntry(
-        domain=DOMAIN,
-        title="BamBuddy (bambuddy.local)",
-        data={"url": URL, "api_key": API_KEY, "verify_ssl": True},
-        options={
-            "printers": [
-                {"printer_id": X1C, "printer_name": printer_name(X1C)},
-                {"printer_id": A1_MINI, "printer_name": printer_name(A1_MINI)},
-            ]
-        },
-        unique_id=URL,
-        version=2,
-        minor_version=1,
-    )
-    entry.add_to_hass(hass)
+    entry = _entry_2_1(hass, X1C, A1_MINI)
     devices = dr.async_get(hass)
     devices.async_get_or_create(
         config_entry_id=entry.entry_id,

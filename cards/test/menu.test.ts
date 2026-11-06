@@ -5,7 +5,7 @@ import "../src/index";
 import { ICONS } from "../src/icons";
 import type { Hass } from "../src/types";
 import { instanceDevice, keepEntities, makeHass, mountCard, unreachable, x1c, type FakeCard, type FakeDevice } from "./fixtures";
-import { cardFor, useCardPage } from "./card-helpers";
+import { cardFor, keyPress, useCardPage } from "./card-helpers";
 import {
   button,
   find,
@@ -19,8 +19,6 @@ import {
   update,
 } from "./helpers";
 import { iconOf, MINUS, pill, rows } from "./header-helpers";
-
-/** The open dialog's rows: label and value. */
 
 /** The lines of a two-nozzle printer's nozzle row in the printer information. */
 const nozzleLinesOf = (card: FakeCard, label: string): Element[] => {
@@ -38,7 +36,7 @@ describe("the menu", () => {
     await settle(card);
   };
   const key = async (card: FakeCard, name: string, target?: Element | null): Promise<void> => {
-    (target ?? (root(card).activeElement as HTMLElement)).dispatchEvent(new KeyboardEvent("keydown", { key: name, bubbles: true, composed: true }));
+    keyPress(target ?? (root(card).activeElement as HTMLElement), name);
     await settle(card);
   };
 
@@ -223,10 +221,10 @@ describe("the menu", () => {
 });
 
 describe("the printer information", () => {
-  const openInfo = async (card: FakeCard): Promise<void> => {
+  const openInfo = async (card: FakeCard, label = "Printer information"): Promise<void> => {
     (find(card, ".menu-btn") as HTMLButtonElement).click();
     await settle(card);
-    await press(card, "Printer information");
+    await press(card, label);
   };
   let clipboard: { writeText: ReturnType<typeof vi.fn> } | undefined;
 
@@ -370,9 +368,7 @@ describe("the printer information", () => {
 
   it("says it in German", async () => {
     const { card } = await cardFor("h2d", { language: "de" });
-    (find(card, ".menu-btn") as HTMLButtonElement).click();
-    await settle(card);
-    await press(card, "Druckerinformationen");
+    await openInfo(card, "Druckerinformationen");
     expect(text(find(card, "dialog h2"))).toBe("Druckerinformationen");
     expect(rows(card).map(([label]) => label)).toEqual([
       "Name in BamBuddy",
@@ -395,15 +391,11 @@ describe("the printer information", () => {
     await press(card, "Seriennummer kopieren");
     expect(text(find(card, "dialog .sent"))).toBe("Kopiert");
     const { card: wifi } = await cardFor("x1c", { language: "de" });
-    (find(wifi, ".menu-btn") as HTMLButtonElement).click();
-    await settle(wifi);
-    await press(wifi, "Druckerinformationen");
+    await openInfo(wifi, "Druckerinformationen");
     expect(Object.fromEntries(rows(wifi))["Netzwerk"]).toBe(`WLAN · ${MINUS}52${NBSP}dBm`);
     expect(Object.fromEntries(rows(wifi))["Düse"]).toBe(`0,4${NBSP}mm · Gehärteter Stahl`);
     const { card: off } = await cardFor("a1mini", { language: "de", printer: { developerMode: "off" } });
-    (find(off, ".menu-btn") as HTMLButtonElement).click();
-    await settle(off);
-    await press(off, "Druckerinformationen");
+    await openInfo(off, "Druckerinformationen");
     expect(Object.fromEntries(rows(off))["Entwicklermodus"]).toBe("Aus Der Drucker nimmt keine Befehle an.");
   });
 });

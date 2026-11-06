@@ -7,12 +7,16 @@ import "../src/index";
 import { findPrinter } from "../src/discovery";
 import { ICONS } from "../src/icons";
 import { button, declarations, find, findAll, moreInfoIds, NBSP, styleText, update } from "./helpers";
-import { h2d, makeHass, mountCard, x1c, type FakeCard, type FakeHass } from "./fixtures";
+import { h2d, makeHass, mountCard, x1c, type FakeCard, type FakeDevice, type FakeHass } from "./fixtures";
 
 afterEach(() => {
   vi.useRealTimers();
   document.body.innerHTML = "";
 });
+
+/** The H2D or the X1C, idle, with these overrides. */
+const idleDevices = (printer: "h2d" | "x1c", spec: Parameters<typeof h2d>[0]): FakeDevice[] =>
+  printer === "h2d" ? h2d({ status: "idle", stage: "idle", ...spec }) : x1c({ status: "idle", stage: "idle", ...spec });
 
 const VENT = "fan.h2d_ventilation";
 /** What the ventilation row shows, and its + button. */
@@ -104,12 +108,12 @@ describe("heating and ventilation in one block", () => {
   type Spec = Parameters<typeof h2d>[0];
   async function block(spec: Spec, options: { language?: string; read_only?: boolean; printer?: "h2d" | "x1c" } = {}): Promise<{ card: FakeCard; hass: FakeHass }> {
     const printer = options.printer ?? "h2d";
-    const devices = printer === "h2d" ? h2d({ status: "idle", stage: "idle", ...spec }) : x1c({ status: "idle", stage: "idle", ...spec });
+    const devices = idleDevices(printer, spec);
     const hass = makeHass({ devices, ...(options.language ? { language: options.language } : {}) });
     const card = await mountCard(hass, { printer: `dev-${printer}`, start_view: "control", ...(options.read_only ? { read_only: true } : {}) });
     return { card, hass };
   }
-  const part = (card: FakeCard): Element | null => card.shadowRoot?.querySelector(".vent-part") ?? null;
+  const part = (card: FakeCard): Element | null => find(card, ".vent-part");
   const ventRow = (card: FakeCard): Element | null => part(card)?.querySelector(".heat-row") ?? null;
   const chamberRow = (card: FakeCard): Element | undefined =>
     findAll(card, ".heating > .heat-rows .heat-row").find((row) => row.querySelector(".heat-text")?.textContent === "Kammer");
@@ -253,8 +257,7 @@ describe("heating and ventilation in one block", () => {
     ventRow(vent.card)?.querySelector<HTMLButtonElement>(".heat-off")?.click();
     await vent.card.updateComplete;
     expect(buttonsOf(chamberRow(vent.card)).filter((item) => !item.classList.contains("heat-off")).every((item) => item.disabled)).toBe(true);
-    vent.card.hass = vent.hass.withState(VENT, "off", { percentage: 0, fans: ["exhaust"] });
-    await vent.card.updateComplete;
+    await update(vent.card, vent.hass.withState(VENT, "off", { percentage: 0, fans: ["exhaust"] }));
     expect(buttonsOf(chamberRow(vent.card)).some((item) => !item.disabled)).toBe(true);
   });
 
@@ -323,7 +326,7 @@ describe("heating and ventilation in one block", () => {
 describe("the chamber tile in the Status tab says what the chamber does", () => {
   type Spec = Parameters<typeof h2d>[0];
   async function tile(spec: Spec, printer: "h2d" | "x1c" = "h2d", language = "de"): Promise<Element | undefined> {
-    const devices = printer === "h2d" ? h2d({ status: "idle", stage: "idle", ...spec }) : x1c({ status: "idle", stage: "idle", ...spec });
+    const devices = idleDevices(printer, spec);
     const card = await mountCard(makeHass({ devices, language }), { printer: `dev-${printer}`, start_view: "status" });
     return findAll(card, ".temp").find((item) => /Kammer|Chamber/.test(item.querySelector(".temp-head")?.textContent ?? ""));
   }
@@ -360,7 +363,7 @@ describe("the chamber tile in the Status tab says what the chamber does", () => 
 
   it("opens what it shows: the ventilation while ventilated, else the target, the sensor where there is none or the card only shows", async () => {
     async function opened(spec: Spec, printer: "h2d" | "x1c" = "h2d", config: Record<string, unknown> = {}): Promise<string[]> {
-      const devices = printer === "h2d" ? h2d({ status: "idle", stage: "idle", ...spec }) : x1c({ status: "idle", stage: "idle", ...spec });
+      const devices = idleDevices(printer, spec);
       const card = await mountCard(makeHass({ devices, language: "de" }), { printer: `dev-${printer}`, start_view: "status", ...config });
       const seen = moreInfoIds(card);
       (findAll(card, ".temp").find((item) => /Kammer/.test(item.querySelector(".temp-head")?.textContent ?? "")) as HTMLButtonElement | undefined)?.click();

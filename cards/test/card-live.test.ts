@@ -4,8 +4,6 @@ import "../src/index";
 
 import {
   h2d,
-  makeHass,
-  mountCard,
   x1c,
   type FakeCard,
 } from "./fixtures";
@@ -94,8 +92,7 @@ describe("the live view", () => {
   });
 
   it("ends the old printer's stream when the card is set to another", async () => {
-    const hass = makeHass({ devices: [...x1c(), ...h2d()] });
-    const card = await mountCard(hass, { printer: "dev-x1c", camera: "always" });
+    const { card } = await cardFor("x1c", { devices: [...x1c(), ...h2d()], config: { camera: "always" } });
     expect(find(card, "img.stream")?.getAttribute("src")).toContain("camera.x1c_camera");
     card.setConfig({ type: "custom:bambuddy-printer-card", printer: "dev-h2d", camera: "always" });
     await settle(card);
@@ -363,7 +360,7 @@ describe("the job's picture large", () => {
     await settle(card);
   };
   const closeCover = async (card: FakeCard): Promise<void> => {
-    button(card, "Close the job's picture").click();
+    button(card, "Close the cover image").click();
     await settle(card);
   };
 
@@ -496,7 +493,7 @@ describe("the job's picture large", () => {
     const { card } = await cardFor("x1c");
     (find(card, "button.picture-open") as HTMLButtonElement).focus();
     await openCover(card);
-    expect(root(card).activeElement).toBe(button(card, "Close the job's picture"));
+    expect(root(card).activeElement).toBe(button(card, "Close the cover image"));
     await closeCover(card);
     expect(root(card).activeElement).toBe(find(card, "button.picture-open"));
   });
@@ -505,14 +502,14 @@ describe("the job's picture large", () => {
     const { card } = await cardFor("x1c");
     (find(card, "button.picture-open") as HTMLButtonElement).focus();
     await openCover(card);
-    const close = button(card, "Close the job's picture");
-    close.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, composed: true }));
+    const close = button(card, "Close the cover image");
+    keyPress(close, "Escape");
     await settle(card);
     expect(big(card)).toBeNull();
     expect(root(card).activeElement).toBe(find(card, "button.picture-open"));
     // Escape on the small cover while the large one shows does the same.
     await openCover(card);
-    (find(card, "button.picture-open") as HTMLButtonElement).dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, composed: true }));
+    keyPress(find(card, "button.picture-open") as HTMLButtonElement, "Escape");
     await settle(card);
     expect(big(card)).toBeNull();
   });
@@ -538,7 +535,7 @@ describe("the job's picture large", () => {
     expect(find(card, ".cover-close")?.getAttribute("aria-label")).toBe("Vorschaubild schließen");
     expect(big(card)?.getAttribute("alt")).toBe("");
     const { card: en } = await cardFor("x1c");
-    expect(find(en, "button.picture-open")?.getAttribute("aria-label")).toBe("Show the job's picture large");
+    expect(find(en, "button.picture-open")?.getAttribute("aria-label")).toBe("Show the cover image large");
   });
 
   it("is a plain picture in a preview", async () => {

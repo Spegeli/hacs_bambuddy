@@ -26,8 +26,6 @@ import { iconOf, MINUS, pill, rows } from "./header-helpers";
 
 const toneOf = (element: Element | null): string | undefined => [...(element?.classList ?? [])].find((name) => name.startsWith("tone-"));
 
-/** The open dialog's rows: label and value. */
-
 useCardPage();
 
 describe("the title", () => {
@@ -147,13 +145,14 @@ describe("the head's chips", () => {
   });
 
   it("open the network sensor's more-info dialog", async () => {
-    const opened: string[] = [];
+    const opened: string[][] = [];
     for (const name of ["x1c", "h2d"] as const) {
       const { card } = await cardFor(name);
-      card.addEventListener("hass-more-info", (event) => opened.push((event as CustomEvent<{ entityId: string }>).detail.entityId));
+      const ids = moreInfoIds(card);
       pill(card, "network")?.click();
+      opened.push(ids);
     }
-    expect(opened).toEqual(["sensor.x1c_wifi_signal", "binary_sensor.h2d_wired_network"]);
+    expect(opened.flat()).toEqual(["sensor.x1c_wifi_signal", "binary_sensor.h2d_wired_network"]);
   });
 
   it("say OK without HMS messages, else how many there are in the colour of the worst", async () => {
@@ -241,7 +240,7 @@ describe("the head's chips", () => {
   it("are no longer an HMS banner in the status view", async () => {
     const { card } = await cardFor("p1s");
     expect(find(card, ".body .hms")).toBeNull();
-    expect(hasButton(card, "Clear HMS errors")).toBe(false);
+    expect(hasButton(card, "Clear HMS messages")).toBe(false);
   });
 
   it("say it in German", async () => {
@@ -298,7 +297,7 @@ describe("the HMS line", () => {
     expect(toneOf(line(failed))).toBe("tone-info");
     // A count without the list.
     await update(failed, hass.withState("sensor.x1c_hms_errors", "2", {}));
-    expect(text(line(failed))).toBe("HMS errors: 2");
+    expect(text(line(failed))).toBe("HMS messages: 2");
     // Paused without a message: nothing to say.
     const { card: paused } = await cardFor("h2d", { printer: { hms: [] } });
     expect(line(paused)).toBeNull();
@@ -335,9 +334,9 @@ describe("the HMS dialog", () => {
     expect(findAll(card, "dialog .hms-code").map(text)).toEqual(["0300_0100_0001_0001", "0300_1200_0002_0001", "0500_0400_0003_0002"]);
     // Clearing does not fix the problem: said where it is offered.
     expect(findAll(card, "dialog .dlg-note").map(text)).toEqual(["Clearing only removes the message: errors the printer still sees come back."]);
-    expect(findAll(card, "dialog .dlg-actions .btn").map(text)).toEqual(["Close", "Clear HMS errors"]);
+    expect(findAll(card, "dialog .dlg-actions .btn").map(text)).toEqual(["Close", "Clear HMS messages"]);
     expect(root(card).activeElement).toBe(find(card, "dialog .btn.safe"));
-    await press(card, "Clear HMS errors");
+    await press(card, "Clear HMS messages");
     expect(hass.calls.at(-1)).toMatchObject({ domain: "button", service: "press", data: { entity_id: "button.p1s_clear_hms_errors" } });
     expect(find(card, "dialog")).toBeNull();
     expect(text(find(card, ".sent"))).toBe("Sent");
@@ -431,7 +430,7 @@ describe("the HMS dialog", () => {
     pill(card, "hms")?.click();
     await card.updateComplete;
     // Clearing does not answer the printer: the answers stand out.
-    expect(find(card, "dialog .dlg-actions .btn.tonal")?.textContent?.trim()).toBe("Clear HMS errors");
+    expect(find(card, "dialog .dlg-actions .btn.tonal")?.textContent?.trim()).toBe("Clear HMS messages");
     expect(findAll(card, "dialog .dlg-note").map(text)).toContain("Check the print, then answer here as on the printer's screen.");
     // The question takes the focus to its safe button.
     button(card, "Stop printing").focus();
@@ -478,7 +477,7 @@ describe("the HMS dialog", () => {
     expect(find(card, "dialog .dlg-note")).toBeNull();
     await update(card, hass.withState("sensor.x1c_hms_errors", "1", { errors: [{ code: "0x0300010000010001", severity: "error", description: "Hot." }] }));
     expect(findAll(card, "dialog .hms-text").map(text)).toEqual(["Hot."]);
-    expect(findAll(card, "dialog .dlg-actions .btn").map(text)).toEqual(["Close", "Clear HMS errors"]);
+    expect(findAll(card, "dialog .dlg-actions .btn").map(text)).toEqual(["Close", "Clear HMS messages"]);
     // A code BamBuddy shortened, an unknown severity, a code that is no text.
     await update(card, hass.withState("sensor.x1c_hms_errors", "2", { errors: [{ code: "0500400E", severity: "fatal", description: "" }, { code: 5 }] }));
     expect(findAll(card, "dialog .hms-text").map(text)).toEqual(Array(2).fill("HMS message: BamBuddy has no text for this code."));
@@ -486,7 +485,7 @@ describe("the HMS dialog", () => {
     expect(findAll(card, "dialog .hms-item").map((item) => item.classList.contains("sev-warning"))).toEqual([true, true]);
     // A count without the list.
     await update(card, hass.withState("sensor.x1c_hms_errors", "2", {}));
-    expect(text(find(card, "dialog .hms-empty"))).toBe("HMS errors: 2");
+    expect(text(find(card, "dialog .hms-empty"))).toBe("HMS messages: 2");
     await press(card, "Close");
     expect(find(card, "dialog")).toBeNull();
   });
@@ -522,7 +521,7 @@ describe("the HMS dialog", () => {
     await german.updateComplete;
     expect(text(find(german, "dialog h2"))).toBe("Meldungen des Druckers (HMS)");
     expect(findAll(german, "dialog .dlg-note").map(text)).toEqual([
-      "Prüfe den Druck. Setze ihn danach fort oder stoppe ihn.",
+      "Prüfe den Druck. Setze ihn danach fort oder brich ihn ab.",
       "Löschen entfernt nur die Meldung: Fehler, die der Drucker weiter sieht, meldet er erneut.",
     ]);
   });
@@ -546,7 +545,7 @@ describe("the HMS dialog", () => {
     expect(text(find(card, "dialog h2"))).toBe("Meldungen des Druckers (HMS)");
     expect(findAll(card, "dialog .hms-text").map(text).at(-1)).toBe("Hinweis: BamBuddy hat keinen Text zu diesem Code.");
     expect(text(find(card, "dialog .dlg-note"))).toBe("Löschen entfernt nur die Meldung: Fehler, die der Drucker weiter sieht, meldet er erneut.");
-    expect(findAll(card, "dialog .dlg-actions .btn").map(text)).toEqual(["Schließen", "HMS-Fehler löschen"]);
+    expect(findAll(card, "dialog .dlg-actions .btn").map(text)).toEqual(["Schließen", "HMS-Meldungen löschen"]);
     const { card: none } = await cardFor("x1c", { language: "de" });
     pill(none, "hms")?.click();
     await none.updateComplete;

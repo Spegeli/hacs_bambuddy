@@ -6,6 +6,7 @@ import { ICONS } from "../src/icons";
 import {
   amsDevice,
   h2d,
+  inactive,
   instanceDevice,
   keepEntities,
   makeHass,
@@ -20,8 +21,8 @@ import {
   type FakeHass,
   type FakeHassOptions,
 } from "./fixtures";
-import { button, cardText, declarations, find, findAll, hasButton, NBSP, press, root, settle, showView, styleText, text, update } from "./helpers";
-import { cardFor, confirmDialog, tapBeside, useCardPage, withX1c } from "./card-helpers";
+import { button, cardText, declarations, find, findAll, hasButton, moreInfoIds, NBSP, press, root, settle, showView, styleText, text, update } from "./helpers";
+import { cardFor, confirmDialog, pastTheWait, tapBeside, useCardPage, withX1c } from "./card-helpers";
 
 /** A fan tile's full label as it shows: without the colon only its name reads. */
 function fullLabel(label: Element | null): string {
@@ -38,14 +39,8 @@ describe("waiting for BamBuddy's data", () => {
   const notYet = (hass: FakeHass, prefix: string): FakeHass =>
     ({ ...hass, states: Object.fromEntries(Object.entries(hass.states).filter(([id]) => !id.includes(prefix))) }) as FakeHass;
   /** The printer's entities unavailable since now: BamBuddy stopped answering, or a reload. */
-  const goneNow = (devices: FakeDevice[]): FakeDevice[] =>
-    devices.map((device) => ({ ...device, entities: device.entities.map((entity) => ({ ...entity, state: "unavailable", attributes: {}, lastChanged: new Date().toISOString() })) }));
+  const goneNow = (devices: FakeDevice[]): FakeDevice[] => unreachable(devices, new Date().toISOString());
   const NO_DATA = "No data from BamBuddy. Check that BamBuddy is running, and under Settings → Devices & services whether it asks for a new API key.";
-  const later = async (card: FakeCard, ms: number): Promise<void> => {
-    vi.setSystemTime(Date.now() + ms);
-    card.requestUpdate();
-    await settle(card);
-  };
 
   it("waits with a neutral text while the printer's entities are not there yet", async () => {
     const { card, hass } = await cardFor("x1c", { language: "de" });
@@ -63,22 +58,22 @@ describe("waiting for BamBuddy's data", () => {
   it("says there is no data once the wait ran out", async () => {
     const { card, hass } = await cardFor("x1c");
     await update(card, notYet(hass, ".x1c_"));
-    await later(card, 29_000);
+    await pastTheWait(card, 29_000);
     expect(text(find(card, ".job-info"))).toBe("Waiting for data from BamBuddy …");
-    await later(card, 1_000);
+    await pastTheWait(card, 1_000);
     expect(text(find(card, ".job-info"))).toBe(NO_DATA);
   });
 
   it("shows the printer as soon as its data comes during the wait, and waits anew after", async () => {
     const { card, hass } = await cardFor("x1c");
     await update(card, notYet(hass, ".x1c_"));
-    await later(card, 7_000);
+    await pastTheWait(card, 7_000);
     await update(card, hass.withDevices(x1c()));
     expect(text(find(card, ".state"))).toBe("Printing");
     await update(card, hass.withDevices(goneNow(x1c())));
-    await later(card, 25_000);
+    await pastTheWait(card, 25_000);
     expect(text(find(card, ".job-info"))).toBe("Waiting for data from BamBuddy …");
-    await later(card, 5_000);
+    await pastTheWait(card, 5_000);
     expect(text(find(card, ".job-info"))).toBe(NO_DATA);
   });
 
@@ -86,7 +81,7 @@ describe("waiting for BamBuddy's data", () => {
     const { card } = await cardFor("x1c", { devices: goneNow(x1c()) });
     expect(text(find(card, ".job-info"))).toBe("Waiting for data from BamBuddy …");
     // An outage that began a minute ago: the wait is over already.
-    const old = goneNow(x1c()).map((device) => ({ ...device, entities: device.entities.map((entity) => ({ ...entity, lastChanged: new Date(Date.now() - 60_000).toISOString() })) }));
+    const old = unreachable(x1c(), new Date(Date.now() - 60_000).toISOString());
     const { card: reloaded } = await cardFor("x1c", { devices: old });
     expect(text(find(reloaded, ".job-info"))).toBe(NO_DATA);
   });
@@ -521,10 +516,10 @@ describe("the status view", () => {
 
   it("asks in German with words that cannot be mixed up", async () => {
     const { card } = await cardFor("x1c", { language: "de" });
-    await press(card, "Druck stoppen");
-    expect(text(find(card, "dialog h2"))).toBe("Druck stoppen?");
+    await press(card, "Druck abbrechen");
+    expect(text(find(card, "dialog h2"))).toBe("Druck abbrechen?");
     expect(text(find(card, "dialog p"))).toBe("Der Druck lässt sich danach nicht fortsetzen.");
-    expect(findAll(card, "dialog .dlg-actions .btn").map(text)).toEqual(["Weiterdrucken", "Druck stoppen"]);
+    expect(findAll(card, "dialog .dlg-actions .btn").map(text)).toEqual(["Weiterdrucken", "Druck abbrechen"]);
   });
 
   it("closes a dialog on a tap beside it and on Escape", async () => {
@@ -643,9 +638,7 @@ describe("the status view", () => {
     await update(named, hass.withState("sensor.a1_mini_active_filament", "PLA Basic"));
     expect(cardText(named)).not.toContain(NOTE);
     // Two nozzles: what "nothing loaded" means there is not clear.
-    const devices = h2d();
-    for (const device of devices) for (const entity of device.entities) if (entity.attributes?.["active"] === true) entity.attributes["active"] = false;
-    const { card: dual } = await cardFor("h2d", { devices });
+    const { card: dual } = await cardFor("h2d", { devices: inactive(h2d()) });
     expect(cardText(dual)).not.toContain(NOTE);
     const { card: german } = await cardFor("a1mini", { language: "de", printer: { status: "paused" } });
     expect(cardText(german)).toContain("Kein Filament geladen. Lade eines im Tab „Filament“, bevor du fortsetzt.");
@@ -747,7 +740,7 @@ describe("the status view", () => {
     // The warning is the state: no line besides it.
     expect(find(card, ".state")).toBeNull();
     expect(find(card, ".dot")?.classList.contains("on")).toBe(false);
-    expect(text(find(card, ".job-info"))).toBe("The printer is offline. Check that it is switched on and connected to BamBuddy.");
+    expect(text(find(card, ".job-info"))).toBe("The printer is offline. Check that it is turned on and connected to BamBuddy.");
     expect(find(card, ".temps")).toBeNull();
     expect(find(card, ".fans")).toBeNull();
     expect(find(card, ".ams-strip")).toBeNull();
@@ -875,7 +868,7 @@ describe("the status view", () => {
     expect(hasButton(card, "Chamber light")).toBe(false);
     expect(findAll(card, ".temp-target")).toHaveLength(0);
     expect(findAll(card, ".fan").map((fan) => text(fan.querySelector(".fan-label.short:not(.sr-only)")))).toEqual(["Hotend"]);
-    const { card: idle } = await cardFor("readOnly", { devices: readOnlyX1c({ status: "idle", plateClearNeeded: true }) });
+    const { card: idle } = await cardFor("readOnly", { printer: { status: "idle", plateClearNeeded: true } });
     expect(find(idle, ".controls")).toBeNull();
     expect(findAll(idle, ".note")).toHaveLength(0);
     expect(hasButton(idle, "Plate cleared")).toBe(false);
@@ -887,7 +880,6 @@ describe("the status view", () => {
     const [printer, ams] = x1c() as [FakeDevice, FakeDevice];
     const noPause = keepEntities(printer, (entity) => entity.key !== "pause");
     const { card } = await cardFor("x1c", { devices: [noPause, ams] });
-    expect(cardText(card)).not.toContain("Controls need an API key");
     expect(hasButton(card, "Pause print")).toBe(false);
     expect(hasButton(card, "Stop print")).toBe(true);
     expect(findAll(card, "[role=tab]").map(text)).toEqual(["Status", "Control", "Filament"]);
@@ -895,7 +887,6 @@ describe("the status view", () => {
     const onlyLight = keepEntities(printer, (entity) => !/^(button|select|number|fan|switch)\./.test(entity.entityId) || entity.key === "refresh_status");
     const { card: light } = await cardFor("x1c", { devices: [onlyLight, ams] });
     expect(hasButton(light, "Chamber light")).toBe(true);
-    expect(cardText(light)).not.toContain("Controls need an API key");
   });
 
   it("puts the plate notice after the offline warning and its connection check", async () => {
@@ -931,8 +922,7 @@ describe("the status view", () => {
 
   it("opens the more-info dialog of a target, a sensor and a fan", async () => {
     const { card } = await cardFor("x1c");
-    const opened: string[] = [];
-    card.addEventListener("hass-more-info", (event) => opened.push((event as CustomEvent<{ entityId: string }>).detail.entityId));
+    const opened = moreInfoIds(card);
     for (const tile of findAll(card, ".temp")) tile.click();
     findAll(card, ".fan")[0]?.click();
     expect(opened).toEqual(["number.x1c_nozzle_target_temperature", "number.x1c_bed_target_temperature", "sensor.x1c_chamber_temperature", "fan.x1c_part_cooling_fan"]);
@@ -1080,7 +1070,7 @@ describe("skipping objects", () => {
       box.click();
       await german.updateComplete;
     }
-    expect(text(find(german, "dialog .dlg-warn"))).toBe("Um alle Objekte zu überspringen, stoppe stattdessen den Druck.");
+    expect(text(find(german, "dialog .dlg-warn"))).toBe("Um alle Objekte zu überspringen, brich stattdessen den Druck ab.");
     expect(findAll<HTMLButtonElement>(german, "dialog .dlg-actions .btn")[1]?.disabled).toBe(true);
   });
 
@@ -1198,7 +1188,7 @@ describe("a printer whose developer mode is off", () => {
     }
     const { card: offline } = await cardFor("offline");
     expect(cardText(offline)).not.toContain(HINT);
-    const { card: readOnly } = await cardFor("readOnly", { devices: readOnlyX1c({ developerMode: "off" }) });
+    const { card: readOnly } = await cardFor("readOnly", { printer: { developerMode: "off" } });
     expect(cardText(readOnly)).not.toContain(HINT);
     const { card: plain } = await withX1c({ developerMode: "off" }, { read_only: true });
     expect(cardText(plain)).not.toContain(HINT);

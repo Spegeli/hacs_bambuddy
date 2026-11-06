@@ -9,7 +9,6 @@ import pytest
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import ServiceValidationError
 from homeassistant.helpers import device_registry as dr
-from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers import issue_registry as ir
 
 from custom_components.bambuddy.api import (
@@ -17,7 +16,7 @@ from custom_components.bambuddy.api import (
     BamBuddyConnectionError,
 )
 from custom_components.bambuddy.const import DOMAIN
-from custom_components.bambuddy.coordinator import find_device, names_issue
+from custom_components.bambuddy.coordinator import find_device, missing_issue, names_issue
 
 from tests.conftest import (
     A1_MINI,
@@ -26,17 +25,16 @@ from tests.conftest import (
     X1C,
     ams_device,
     ams_uid,
-    as_model,
+    entity_id,
     instance_uid,
-    load_fixture,
     make_entry,
     next_refresh,
     past_polls,
     past_the_minute,
     plug_identifier_of,
     printer_device,
+    printer_device_id,
     printer_entry,
-    printer_info,
     printer_key,
     printer_name,
     printer_serial,
@@ -45,12 +43,7 @@ from tests.conftest import (
     set_up,
     setup_integration,
 )
-from tests.helpers import (
-    details_are,
-    devices_by_identifier,
-    listed_with,
-    reload_entry,
-)
+from tests.helpers import as_model, call_action, devices_by_identifier, reload_entry, renamed_in_bambuddy, with_plugs
 
 
 async def test_a_name_given_in_home_assistant_is_explained(
@@ -106,9 +99,7 @@ async def test_the_log_names_a_printer_as_bambuddy_does(
     assert "Error fetching bambuddy Workshop data" in caplog.text
     assert "bambuddy printer 1" not in caplog.text
     bambuddy_api.get_status.side_effect = reads
-    printer = printer_info(X1C)
-    details_are(bambuddy_api, {**printer, "name": "Lab"})
-    bambuddy_api.statuses[X1C]["name"] = "Lab"
+    renamed_in_bambuddy(bambuddy_api, X1C, "Lab")
     await next_refresh(hass, freezer)
     assert entry.runtime_data.printers[X1C].name == "bambuddy Lab"
 
@@ -223,9 +214,7 @@ async def test_a_name_changed_in_bambuddy_follows_at_the_next_refresh(
     renames its devices at once, not at the next minute."""
     entry = await set_up(hass, X1C)
     await past_the_minute(hass, freezer)
-    printer = printer_info(X1C)
-    details_are(bambuddy_api, {**printer, "name": "Lab"})
-    bambuddy_api.statuses[X1C]["name"] = "Lab"
+    renamed_in_bambuddy(bambuddy_api, X1C, "Lab")
     runtime_reads = bambuddy_api.get_runtime.await_count
 
     await next_refresh(hass, freezer)
@@ -243,7 +232,7 @@ async def test_an_ams_lite_without_a_serial_gets_the_printers_serial_and_its_let
     printer's serial and the place's letter stand in."""
     entry = await set_up(hass, A1_MINI)
 
-    assert er.async_get(hass).async_get_entity_id("sensor", DOMAIN, ams_uid(entry, 0, "slot_1", A1_MINI)) == (
+    assert entity_id(hass, "sensor", ams_uid(entry, 0, "slot_1", A1_MINI)) == (
         "sensor.ams_lite_0309da000000002_a_slot_1"
     )
 
@@ -254,7 +243,7 @@ async def test_the_a2l_s_ams_lite_has_no_letter(hass: HomeAssistant, bambuddy_ap
     bambuddy_api.statuses[A1_MINI]["ams"][0]["id"] = 6
     entry = await set_up(hass, A1_MINI)
 
-    assert er.async_get(hass).async_get_entity_id("sensor", DOMAIN, ams_uid(entry, 6, "slot_1", A1_MINI)) == (
+    assert entity_id(hass, "sensor", ams_uid(entry, 6, "slot_1", A1_MINI)) == (
         "sensor.ams_lite_0309da000000002_slot_1"
     )
 
@@ -286,6 +275,21 @@ async def test_the_names_notice_goes_with_its_printer(
     assert ir.async_get(hass).async_get_issue(DOMAIN, names_issue(entry.entry_id, printer_key(X1C))) is None
 
 
+async def test_the_names_notice_goes_with_its_entry(
+    hass: HomeAssistant, bambuddy_api: SimpleNamespace, freezer: FrozenDateTimeFactory
+) -> None:
+    entry = await set_up(hass, X1C)
+    dr.async_get(hass).async_update_device(printer_device_id(hass, entry), name_by_user="Mine")
+    await past_the_minute(hass, freezer)
+    issue_id = names_issue(entry.entry_id, printer_key(X1C))
+    assert ir.async_get(hass).async_get_issue(DOMAIN, issue_id) is not None
+
+    await hass.config_entries.async_remove(entry.entry_id)
+    await hass.async_block_till_done()
+
+    assert ir.async_get(hass).async_get_issue(DOMAIN, issue_id) is None
+
+
 async def test_a_stored_printers_names_notice_survives_a_reload(
     hass: HomeAssistant, bambuddy_api: SimpleNamespace, freezer: FrozenDateTimeFactory
 ) -> None:
@@ -305,8 +309,8 @@ async def test_a_stored_printers_names_notice_survives_a_reload(
 async def test_a_missing_printer_is_named_the_same_everywhere(
     hass: HomeAssistant, bambuddy_api: SimpleNamespace, freezer: FrozenDateTimeFactory
 ) -> None:
-    """Renamed in BamBuddy since the last start, then gone: the stored name follows its device's, so
-    the repair's dialog and an action's refusal say what its title says."""
+    """Renamed in BamBuddy since the last start (the device followed), then gone: the stored name
+    follows its device's, so the repair, its dialog and an action's refusal say what its title says."""
     entry = await set_up(hass, X1C, A1_MINI)
     device = devices_by_identifier(hass, entry)[printer_device(entry, A1_MINI)]
     dr.async_get(hass).async_update_device(device.id, name="Kitchen (A1 Mini / 0309DA000000002)")
@@ -314,10 +318,13 @@ async def test_a_missing_printer_is_named_the_same_everywhere(
 
     await reload_entry(hass, entry.entry_id)
 
+    issue = ir.async_get(hass).async_get_issue(DOMAIN, missing_issue(entry.entry_id, printer_key(A1_MINI)))
+    assert issue is not None
+    assert issue.translation_placeholders == {"printer": "Kitchen (A1 Mini / 0309DA000000002)"}
     stored = next(p for p in entry.options["printers"] if p["serial_number"] == printer_serial(A1_MINI))
     assert stored["printer_name"] == "Kitchen (A1 Mini / 0309DA000000002)"
     with pytest.raises(ServiceValidationError) as raised:
-        await hass.services.async_call(DOMAIN, "home_axes", {"device_id": device.id}, blocking=True)
+        await call_action(hass, "home_axes", device_id=device.id)
     assert raised.value.translation_placeholders == {"printer": "Kitchen (A1 Mini / 0309DA000000002)"}
 
 
@@ -325,7 +332,7 @@ async def test_plug_and_bambuddy_devices_keep_a_name_given_in_home_assistant(
     hass: HomeAssistant, bambuddy_api: SimpleNamespace, freezer: FrozenDateTimeFactory
 ) -> None:
     """Only the printers and their AMS units follow BamBuddy's names."""
-    bambuddy_api.get_smart_plugs.return_value = load_fixture("smart_plugs.json")
+    with_plugs(bambuddy_api)
     entry = await set_up(hass, X1C)
     registry = dr.async_get(hass)
     devices = [find_device(hass, entry.entry_id, identifier) for identifier in (plug_identifier_of(hass, entry.entry_id, 3), (DOMAIN, entry.entry_id))]
@@ -375,8 +382,7 @@ async def test_the_name_notice_keeps_its_names_over_a_reload_and_follows_a_renam
     assert issue is not None
     assert issue.translation_placeholders["given"] == "My printer\n- My AMS"
 
-    listed_with(bambuddy_api, X1C, name="Garage")
-    bambuddy_api.statuses[X1C]["name"] = "Garage"
+    renamed_in_bambuddy(bambuddy_api, X1C, "Garage")
     await past_polls(hass, freezer, 7)
     issue = ir.async_get(hass).async_get_issue(DOMAIN, issue_id)
     assert issue is not None
@@ -388,34 +394,33 @@ async def test_new_entity_ids_follow_model_and_serial(hass: HomeAssistant, bambu
     serial number and the entity's key."""
     hass.config.language = "de"
     entry = await set_up(hass, H2D)
-    registry = er.async_get(hass)
 
-    assert registry.async_get_entity_id("sensor", DOMAIN, printer_uid(entry, "status", H2D)) == (
+    assert entity_id(hass, "sensor", printer_uid(entry, "status", H2D)) == (
         "sensor.h2d_0948ad000000004_print_status"
     )
     # An AMS unit's: what stays for it -- its own model and serial, no place.
-    assert registry.async_get_entity_id("sensor", DOMAIN, ams_uid(entry, 0, "slot_1", H2D)) == (
+    assert entity_id(hass, "sensor", ams_uid(entry, 0, "slot_1", H2D)) == (
         "sensor.ams_2_pro_19c06a000000001_slot_1"
     )
-    assert registry.async_get_entity_id("sensor", DOMAIN, ams_uid(entry, 128, "humidity", H2D)) == (
+    assert entity_id(hass, "sensor", ams_uid(entry, 128, "humidity", H2D)) == (
         "sensor.ams_ht_19f06a000000002_humidity"
     )
-    assert registry.async_get_entity_id("binary_sensor", DOMAIN, ams_uid(entry, 128, "drying", H2D)) == (
+    assert entity_id(hass, "binary_sensor", ams_uid(entry, 128, "drying", H2D)) == (
         "binary_sensor.ams_ht_19f06a000000002_drying"
     )
-    assert registry.async_get_entity_id("sensor", DOMAIN, ams_uid(entry, 128, "drying_remaining_time", H2D)) == (
+    assert entity_id(hass, "sensor", ams_uid(entry, 128, "drying_remaining_time", H2D)) == (
         "sensor.ams_ht_19f06a000000002_drying_remaining_time"
     )
-    assert registry.async_get_entity_id("update", DOMAIN, printer_uid(entry, "firmware", H2D)) == (
+    assert entity_id(hass, "update", printer_uid(entry, "firmware", H2D)) == (
         "update.h2d_0948ad000000004_firmware"
     )
     # The instance's: BamBuddy and the key -- not its address, which may change.
-    assert registry.async_get_entity_id("sensor", DOMAIN, instance_uid(entry, "total_prints")) == (
+    assert entity_id(hass, "sensor", instance_uid(entry, "total_prints")) == (
         "sensor.bambuddy_total_prints"
     )
-    assert registry.async_get_entity_id("binary_sensor", DOMAIN, instance_uid(entry, "connected")) == (
+    assert entity_id(hass, "binary_sensor", instance_uid(entry, "connected")) == (
         "binary_sensor.bambuddy_online"
     )
-    assert registry.async_get_entity_id("update", DOMAIN, instance_uid(entry, "bambuddy_update")) == (
+    assert entity_id(hass, "update", instance_uid(entry, "bambuddy_update")) == (
         "update.bambuddy_update"
     )

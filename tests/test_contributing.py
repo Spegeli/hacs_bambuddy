@@ -1,4 +1,5 @@
-"""CONTRIBUTING.md: every link to one of its sections finds that section.
+"""CONTRIBUTING.md: every link to one of its sections finds that section,
+its tables list every module, and it says what the tests hold it to.
 
 A section that moves keeps its anchor, one that is renamed loses it, and
 a link to a lost anchor fails without a sound: GitHub opens the top of the
@@ -26,40 +27,34 @@ def _anchor(heading: str) -> str:
 
 
 def _sections() -> set[str]:
-    text = _CONTRIBUTING
-    return {_anchor(heading) for heading in re.findall(r"^#{2,3} (.+)$", text, re.MULTILINE)}
+    return {_anchor(heading) for heading in re.findall(r"^#{2,3} (.+)$", _CONTRIBUTING, re.MULTILINE)}
 
 
 def test_every_link_within_contributing_finds_its_section():
-    text = _CONTRIBUTING
-    links = set(re.findall(r"\]\(#([^)]+)\)", text))
+    links = set(re.findall(r"\]\(#([^)]+)\)", _CONTRIBUTING))
     assert links
     assert sorted(links - _sections()) == []
 
 
 def test_contributing_says_a_short_key_is_refused() -> None:
-    text = _CONTRIBUTING
-    assert "| `key.py` |" in text
-    assert "a key lacking Read Status, Control Printer or Manage Maintenance is refused" in text
-    assert "with a key that has only **Read Status**" not in text
+    assert "| `key.py` |" in _CONTRIBUTING
+    assert "a key lacking Read Status, Control Printer or Manage Maintenance is refused" in _CONTRIBUTING
+    assert "with a key that has only **Read Status**" not in _CONTRIBUTING
 
 
 def test_the_module_table_lists_every_module() -> None:
     """Each module of the integration has its row."""
-    contributing = _CONTRIBUTING
-    named = _first_cells(contributing)
+    named = _first_cells(_CONTRIBUTING)
     modules = sorted(path.name for path in (_ROOT / "custom_components" / "bambuddy").glob("*.py"))
     assert [name for name in modules if name not in named] == []
 
 
 def test_contributing_says_how_ams_entity_ids_are_made() -> None:
-    contributing = _CONTRIBUTING
-    assert "`models.ams_object_id`" in contributing
+    assert "`models.ams_object_id`" in _CONTRIBUTING
 
 
 def test_the_card_table_lists_every_module() -> None:
     """Each module of the dashboard card has its row."""
-    contributing = _CONTRIBUTING
-    named = _first_cells(contributing)
+    named = _first_cells(_CONTRIBUTING)
     modules = sorted(path.name for path in (_ROOT / "cards" / "src").glob("*.ts"))
     assert [name for name in modules if name not in named] == []

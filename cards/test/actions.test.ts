@@ -32,6 +32,25 @@ describe("why an action failed", () => {
     expect(await errorText(hass, new Error("Plain"))).toBe("Plain");
   });
 
+  it("asks the backend for the integration's exceptions, and only where both domain and key are given", async () => {
+    const loaded: unknown[][] = [];
+    const watched = makeHass({ translations: { "component.bambuddy.exceptions.printer_busy.message": "Busy" } });
+    const load = watched.loadBackendTranslation;
+    watched.loadBackendTranslation = async (...args: Parameters<typeof load>) => {
+      loaded.push(args);
+      return load(...args);
+    };
+    expect(await errorText(watched, { translation_domain: "bambuddy", translation_key: "printer_busy" })).toBe("Busy");
+    expect(loaded).toEqual([["exceptions", "bambuddy"]]);
+    expect(await errorText(watched, { message: "Only a domain", translation_domain: "bambuddy" })).toBe("Only a domain");
+    expect(await errorText(watched, { message: "Only a key", translation_key: "printer_busy" })).toBe("Only a key");
+    expect(loaded).toHaveLength(1);
+  });
+
+  it("is a general text where the message is no text", async () => {
+    expect(await errorText(makeHass(), { message: 42 })).toBe("That did not work. Try again in a moment.");
+  });
+
   it("is a general text where there is nothing else", async () => {
     expect(await errorText(hass, { translation_domain: "bambuddy", translation_key: "other" })).toBe("Das hat nicht geklappt. Versuche es gleich noch einmal.");
     expect(await errorText(makeHass(), "nope")).toBe("That did not work. Try again in a moment.");

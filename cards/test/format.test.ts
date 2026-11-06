@@ -150,7 +150,7 @@ describe("colours", () => {
   });
 });
 
-describe("the edges a mutation test found", () => {
+describe("the edges of power, durations, colours and file names", () => {
   const hass = makeHass();
 
   it("shows power in kW from 1000 W on, not from 1001 W", () => {

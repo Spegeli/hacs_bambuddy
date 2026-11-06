@@ -15,7 +15,6 @@ import {
   mountCard,
   mountFor,
   offlineP1s,
-  plugDevice,
   readOnlyX1c,
   withPlugs,
   x1c,
@@ -24,7 +23,7 @@ import {
   type FakeDevice,
   type FakeHassOptions,
 } from "./fixtures";
-import { button, editSlot, find, findAll, NBSP, press, root, settle, showView, styleText, text } from "./helpers";
+import { button, chooseOption, declarations, editSlot, find, findAll, hasButton, NBSP, press, root, settle, showView, text } from "./helpers";
 
 afterEach(() => {
   document.body.innerHTML = "";
@@ -48,22 +47,18 @@ describe("the printer's plug, as BamBuddy picks it", () => {
   });
 
   it("is the marked one in the offline view too", async () => {
-    const devices = offlineP1s();
-    const printer = devices[0] as FakeDevice;
     const card = await mount(
-      [...devices, plugDevice({ printer, id: 2, name: "Abluft", state: "on", watts: 12, main: false }), plugDevice({ printer, id: 5, name: "Steckdose Garage", state: "off", main: true })],
+      withPlugs(offlineP1s(), { id: 2, name: "Abluft", state: "on", watts: 12, main: false }, { id: 5, name: "Steckdose Garage", state: "off", main: true }),
       "dev-p1s",
     );
-    expect(text(find(card, ".job-info"))).toBe("The printer is off: its plug “Steckdose Garage” is switched off.");
+    expect(text(find(card, ".job-info"))).toBe("The printer is off: its plug “Steckdose Garage” is turned off.");
   });
 });
 
 describe("a printer that is offline", () => {
   it("keeps its other plugs in reach: an accessory's row and switch, not the printer's plug", async () => {
-    const devices = offlineP1s();
-    const printer = devices[0] as FakeDevice;
     const card = await mount(
-      [...devices, plugDevice({ printer, id: 5, name: "Steckdose Garage", state: "off" }), plugDevice({ printer, id: 2, name: "Abluft", state: "on", watts: 30, powersPrinter: false })],
+      withPlugs(offlineP1s(), { id: 5, name: "Steckdose Garage", state: "off" }, { id: 2, name: "Abluft", state: "on", watts: 30, powersPrinter: false }),
       "dev-p1s",
     );
     expect(rows(card)).toEqual([`Abluft On · 30${NBSP}W`]);
@@ -80,7 +75,7 @@ describe("a plug that does not report its state", () => {
     await press(card, "Turn on “Tasmota”");
     expect(hass.calls.at(-1)).toMatchObject({ domain: "switch", service: "turn_on", data: { entity_id: "switch.dev-x1c_plug_3" } });
     await press(card, "Turn off “Tasmota”");
-    expect(text(find(card, "dialog h2"))).toBe("Switch the printer off?");
+    expect(text(find(card, "dialog h2"))).toBe("Turn off the printer?");
   });
 
   it("marks the press while it is sent, as every control does", async () => {
@@ -97,19 +92,14 @@ describe("a plug that does not report its state", () => {
 
 describe("the switch-off after the print", () => {
   it("says it switched the plug off while the integration says so: through a restart, not once the plug was on again", async () => {
-    const off = (phase: string): FakeDevice[] => {
-      const devices = offlineP1s();
-      return [
-        ...devices,
-        // Written anew by a restart of Home Assistant the next morning.
-        plugDevice({ printer: devices[0] as FakeDevice, id: 5, name: "Steckdose Garage", state: "off", lastChanged: "2026-10-17T03:00:00+00:00", autoOff: { armed: false, phase, since: "2026-10-16T12:07:00+00:00" } }),
-      ];
-    };
+    const off = (phase: string): FakeDevice[] =>
+      // Written anew by a restart of Home Assistant the next morning.
+      withPlugs(offlineP1s(), { id: 5, name: "Steckdose Garage", state: "off", lastChanged: "2026-10-17T03:00:00+00:00", autoOff: { armed: false, phase, since: "2026-10-16T12:07:00+00:00" } });
     const ours = await mount(off("done"), "dev-p1s");
-    expect(text(find(ours, ".job-info"))).toContain("Switched off after the print");
+    expect(text(find(ours, ".job-info"))).toContain("Turned off after the print");
     // Switched on again since (and off by hand): the integration went back to idle.
     const later = await mount(off("idle"), "dev-p1s");
-    expect(text(find(later, ".job-info"))).not.toContain("Switched off after the print");
+    expect(text(find(later, ".job-info"))).not.toContain("Turned off after the print");
   });
 
   it("does not offer to set it here where the key cannot", async () => {
@@ -126,7 +116,7 @@ describe("the switch-off after the print", () => {
     // The stepper says what it changes.
     const group = find(card, "dialog .stepper") as HTMLElement;
     expect(group.getAttribute("role")).toBe("group");
-    expect(text(root(card).getElementById(group.getAttribute("aria-labelledby") ?? ""))).toBe("Switch off once the nozzle is cooler than");
+    expect(text(root(card).getElementById(group.getAttribute("aria-labelledby") ?? ""))).toBe("Turn off once the nozzle is cooler than");
     // In the middle of the dialog, as the frame rate's; the text stays left.
     expect(group.classList.contains("centered")).toBe(true);
     // The stepper sends once the taps stop: the fake clock goes past its wait.
@@ -174,10 +164,7 @@ describe("a slot's tools", () => {
     const card = await mountCard(hass, { printer: "dev-x1c" });
     await showView(card, "Filament");
     await editSlot(card, 2);
-    const select = find<HTMLSelectElement>(card, "dialog select#fil-k") as HTMLSelectElement;
-    select.value = "-1";
-    select.dispatchEvent(new Event("change"));
-    await settle(card);
+    await chooseOption(card, "select#fil-k", "-1");
     await press(card, "Set");
     expect(hass.calls.at(-1)).toMatchObject({ service: "set_filament", data: { k_profile: -1 } });
   });
@@ -201,18 +188,14 @@ describe("a slot's tools", () => {
     const spool = { name: "TPU 95A HF", type: "TPU", color: "#FF6A13", remaining: null, trayId: 254 };
     const card = await mount(a1mini({ status: "idle", stage: "idle", externalSpools: [spool] }), "dev-a1mini", {}, { callService: failing });
     await showView(card, "Filament");
-    (findAll(card, ".slot").at(-1)?.querySelector(".btn.edit") as HTMLButtonElement).click();
-    await settle(card);
+    await editSlot(card, -1);
     expect(text(find(card, "dialog .k-hint"))).toBe("The printer did not list its K profiles: the spool keeps its own.");
     expect([...(find<HTMLSelectElement>(card, "dialog select#fil-k") as HTMLSelectElement).options].map((option) => option.text)[0]).toBe("Keep the spool's own");
 
     const blank = await mount(idleX1c(), "dev-x1c", {}, { callService: failing });
     await showView(blank, "Filament");
     await editSlot(blank, 3);
-    const select = find<HTMLSelectElement>(blank, "dialog select#fil-k") as HTMLSelectElement;
-    select.value = "-1";
-    select.dispatchEvent(new Event("change"));
-    await settle(blank);
+    await chooseOption(blank, "select#fil-k", "-1");
     expect(text(find(blank, "dialog .dlg-need"))).toBe("Choose a filament too.");
   });
 });
@@ -239,7 +222,7 @@ describe("the names of a slot's and a unit's buttons", () => {
 
 describe("narrow cards", () => {
   it("let a plug's buttons wrap inside its box", () => {
-    expect(styleText()).toMatch(/\.p-set \.btn \{[^}]*max-width: 100%;[^}]*white-space: normal;/);
+    expect(declarations(".p-set .btn")).toEqual(expect.arrayContaining(["max-width: 100%", "white-space: normal"]));
   });
 });
 
@@ -251,7 +234,7 @@ describe("the backup's unknown state in German", () => {
   });
 });
 
-describe("the plug, the cold-nozzle hint, the backup and the menu", () => {
+describe("the plug, the cold-nozzle hint and the menu", () => {
   it("finds the printer's own plug in the chip's dialog while the printer is offline", async () => {
     const devices = offlineP1s();
     const card = await mount(withPlugs(devices, { id: 5, name: "Power meter", kind: "state", watts: 156 }), "dev-p1s", { header_chips: ["power"] });
@@ -283,7 +266,7 @@ describe("the printer's own plug while the printer is offline", () => {
   it("stays in the Power block where the offline view says nothing of it: a plug without a state, an unreachable one", async () => {
     const devices = offlineP1s();
     const card = await mount(withPlugs(devices, { id: 5, name: "REST Drucker", state: "unknown" }), "dev-p1s");
-    expect(findAll(card, "button").some((item) => item.getAttribute("aria-label") === "Turn on “REST Drucker”")).toBe(true);
+    expect(hasButton(card, "Turn on “REST Drucker”")).toBe(true);
     const gone = offlineP1s();
     const unreachable = await mount(withPlugs(gone, { id: 5, name: "Tasmota Drucker", state: "unavailable" }), "dev-p1s");
     expect(rows(unreachable).some((row) => row.startsWith("Tasmota Drucker"))).toBe(true);
@@ -314,7 +297,7 @@ describe("a plug's question comes back to its own button", () => {
     button(card, "Keep it on").click();
     await settle(card);
     await settle(card);
-    expect((root(card) as ShadowRoot).activeElement?.getAttribute("aria-label")).toBe("Turn off “Abluft”");
+    expect(root(card).activeElement?.getAttribute("aria-label")).toBe("Turn off “Abluft”");
   });
 
   it("shows the toggle busy while the off its question sent runs", async () => {
@@ -322,7 +305,7 @@ describe("a plug's question comes back to its own button", () => {
     const card = await mount(x1cWithPlugs(IDLE, { id: 3, name: "Tasmota", state: "on" }), "dev-x1c", {}, { callService: () => new Promise((resolve) => (finish = resolve)) });
     (find(card, ".power [role=switch]") as HTMLButtonElement).click();
     await settle(card);
-    button(card, "Switch off").click();
+    button(card, "Turn off").click();
     await card.updateComplete;
     expect(find(card, ".power [role=switch]")?.getAttribute("aria-busy")).toBe("true");
     finish(undefined);
@@ -330,7 +313,7 @@ describe("a plug's question comes back to its own button", () => {
   });
 });
 
-/** The other slots not feeding: the one the test picks is. */
+/** The printer's K profiles, as the integration answers the action. */
 const PROFILES = {
   nozzle_diameter: "0.4",
   current: -1,
@@ -363,8 +346,7 @@ describe("each of a slot's texts", () => {
     );
     const card = await mount(devices, "dev-h2d");
     await showView(card, "Filament");
-    (findAll(card, ".slot")[0]?.querySelector(".btn.edit") as HTMLButtonElement).click();
-    await settle(card);
+    await editSlot(card, 0);
     expect(findAll(card, "dialog .dlg-note").map(text)).toContain(
       "Re-reading the chip works only while no filament is loaded. Filament from the right external spool is loaded now: unload it first.",
     );
@@ -373,8 +355,7 @@ describe("each of a slot's texts", () => {
   it("offers a slot without a filament only the printer's default K", async () => {
     const card = await mount(inactive(x1c({ status: "idle", stage: "idle" })), "dev-x1c", {}, { callService: answering });
     await showView(card, "Filament");
-    (findAll(card, ".slot")[3]?.querySelector(".btn.edit") as HTMLButtonElement).click();
-    await settle(card);
+    await editSlot(card, 3);
     // No filament chosen: no profile is the filament's yet.
     expect([...(find<HTMLSelectElement>(card, "dialog select#fil-k") as HTMLSelectElement).options].map((option) => option.text)).toEqual(["Printer's default (K 0.020)"]);
     expect(text(find(card, "dialog .k-hint"))).toBe("If unsure, leave this as it is.");
@@ -385,7 +366,7 @@ describe("a view-only card's offline view", () => {
   it("offers nothing to switch", async () => {
     const devices = offlineP1s();
     const card = await mount(withPlugs(devices, { id: 5, name: "Steckdose Garage", state: "off", watts: 0 }), "dev-p1s", { read_only: true });
-    expect(text(find(card, ".job-info"))).toBe("The printer is off: its plug “Steckdose Garage” is switched off.");
+    expect(text(find(card, ".job-info"))).toBe("The printer is off: its plug “Steckdose Garage” is turned off.");
     expect(findAll(card, ".offline-actions .btn").map(text)).toEqual([]);
   });
 });

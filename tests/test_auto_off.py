@@ -6,6 +6,7 @@ paused print, on stale values, or beside BamBuddy's own auto off."""
 from __future__ import annotations
 
 import asyncio
+import logging
 from datetime import timedelta
 from types import SimpleNamespace
 from typing import Any
@@ -17,13 +18,14 @@ from homeassistant.exceptions import ServiceValidationError
 from homeassistant.helpers import entity_registry as er
 from homeassistant.util import dt as dt_util, slugify
 from homeassistant.util.unit_system import US_CUSTOMARY_SYSTEM
-from pytest_homeassistant_custom_component.common import mock_restore_cache, mock_restore_cache_with_extra_data
+from pytest_homeassistant_custom_component.common import MockConfigEntry, mock_restore_cache, mock_restore_cache_with_extra_data
 import pytest
 
 from custom_components.bambuddy.api import BamBuddyApiError, BamBuddyConnectionError, BamBuddyPermissionError
+from custom_components.bambuddy.auto_off import blocker
 from custom_components.bambuddy.const import DOMAIN
 from custom_components.bambuddy.coordinator import find_device
-from custom_components.bambuddy.models import display_model
+from custom_components.bambuddy.models import PrinterData, display_model
 
 from tests.conftest import (
     A1_MINI,
@@ -31,8 +33,8 @@ from tests.conftest import (
     P1S,
     X1C,
     entity_id,
-    load_fixture,
     next_refresh,
+    no_entity,
     plug_identifier_of,
     plug_unique_id,
     printer_info,
@@ -41,7 +43,7 @@ from tests.conftest import (
     state_at,
     switch_off_uid,
 )
-from tests.helpers import plug_list, reload_entry, with_plugs
+from tests.helpers import plug_info, plug_list, reload_entry, with_plugs
 
 # The X1C's plug: Tasmota, powers the printer, BamBuddy's own auto off off.
 PLUG = 3
@@ -61,9 +63,7 @@ def _unique_id(hass: HomeAssistant, entry_id: str, key: str, plug_id: int = PLUG
     if key in _SWITCH_OFF_KEYS:
         entry = hass.config_entries.async_get_entry(entry_id)
         assert entry is not None
-        plugs = entry.runtime_data.plugs
-        printer = plugs.printers[plugs.data[plug_id].printer_id or -1]
-        return f"{entry_id}_switchoff_{printer.key}_{key}"
+        return switch_off_uid(entry, key, entry.runtime_data.plugs.data[plug_id].printer_id)
     return plug_unique_id(hass, entry_id, plug_id, key)
 
 
@@ -80,6 +80,17 @@ def _switch_off_entity_id(domain: str, key: str, printer_id: int = X1C) -> str:
 async def _tick(hass: HomeAssistant, freezer: FrozenDateTimeFactory, seconds: float = 16) -> None:
     """Past the plugs' next read (every 15 s)."""
     await next_refresh(hass, freezer, seconds)
+
+
+async def _failing_once(hass: HomeAssistant, bambuddy_api: SimpleNamespace, freezer: FrozenDateTimeFactory) -> MockConfigEntry:
+    """A finished print, and the plug refuses the first try."""
+    entry = await set_up(hass, X1C)
+    await _arm(hass, entry.entry_id)
+    bambuddy_api.control_plug.side_effect = BamBuddyApiError(503, "Failed to communicate with device")
+    _printer(bambuddy_api, state="FINISH", nozzle=30.0)
+    await _tick(hass, freezer)
+    assert bambuddy_api.control_plug.await_count == 1
+    return entry
 
 
 async def _every_print(hass: HomeAssistant, entry_id: str, plug_id: int = PLUG) -> None:
@@ -122,10 +133,9 @@ async def test_the_entities_of_a_printers_plug(hass: HomeAssistant, bambuddy_api
     """Off by default; only after the next print, below 50 °C."""
     entry = await set_up(hass, X1C)
 
-    armed = hass.states.get(_entity_id(hass, entry.entry_id, "switch", "auto_off"))
-    every = hass.states.get(_entity_id(hass, entry.entry_id, "switch", "auto_off_every_print"))
-    temperature = hass.states.get(_entity_id(hass, entry.entry_id, "number", "auto_off_temperature"))
-    assert armed is not None and every is not None and temperature is not None
+    armed = state_at(hass, _entity_id(hass, entry.entry_id, "switch", "auto_off"))
+    every = state_at(hass, _entity_id(hass, entry.entry_id, "switch", "auto_off_every_print"))
+    temperature = state_at(hass, _entity_id(hass, entry.entry_id, "number", "auto_off_temperature"))
     assert (armed.state, armed.attributes["phase"], every.state, temperature.state) == ("off", "idle", "off", "50.0")
     assert (temperature.attributes["min"], temperature.attributes["max"], temperature.attributes["unit_of_measurement"]) == (30, 100, "°C")
     # Only on the plug that powers the printer: not its accessory.
@@ -288,6 +298,7 @@ async def test_10_a_failing_switch_off_is_tried_again_then_given_up(
     bambuddy_api.control_plug.side_effect = BamBuddyApiError(503, "Failed to communicate with device")
     _printer(bambuddy_api, state="FINISH", nozzle=30.0)
     await _tick(hass, freezer)
+    await _tick(hass, freezer, 31)
     await _tick(hass, freezer)
     assert bambuddy_api.control_plug.await_count >= 2
     assert _phase(hass, entry.entry_id) == "waiting"
@@ -295,10 +306,51 @@ async def test_10_a_failing_switch_off_is_tried_again_then_given_up(
     assert _attribute(hass, entry.entry_id, "waiting_for") == "plug"
 
     await _tick(hass, freezer, 11 * 60)
-    assert _phase(hass, entry.entry_id) == "gave_up"
+    assert _phase(hass, entry.entry_id) == "plug_failed"
     tries = bambuddy_api.control_plug.await_count
     await _tick(hass, freezer)
     assert bambuddy_api.control_plug.await_count == tries
+
+
+async def test_a_refused_switch_off_tries_again_after_30_seconds(
+    hass: HomeAssistant, bambuddy_api: SimpleNamespace, freezer: FrozenDateTimeFactory
+) -> None:
+    await _failing_once(hass, bambuddy_api, freezer)
+    for _ in range(5):
+        await _tick(hass, freezer, 5)
+    assert bambuddy_api.control_plug.await_count == 1
+
+    await _tick(hass, freezer, 7)
+    await _tick(hass, freezer)
+    assert bambuddy_api.control_plug.await_count == 2
+
+
+async def test_a_retry_drops_no_plug_read(hass: HomeAssistant, bambuddy_api: SimpleNamespace, freezer: FrozenDateTimeFactory) -> None:
+    """Only a first try can change the plug: a read under way stays good
+    while the plug keeps refusing."""
+    entry = await _failing_once(hass, bambuddy_api, freezer)
+    plugs = entry.runtime_data.plugs
+    commands = plugs._commands
+
+    await _tick(hass, freezer, 31)
+    await _tick(hass, freezer)
+
+    assert bambuddy_api.control_plug.await_count == 2
+    assert plugs._commands == commands
+
+
+async def test_a_reload_while_failing_tries_again_at_once(
+    hass: HomeAssistant, bambuddy_api: SimpleNamespace, freezer: FrozenDateTimeFactory
+) -> None:
+    """The gap and the ten minutes are memory only: the wait goes on with a
+    first try, one try, and counts anew."""
+    entry = await _failing_once(hass, bambuddy_api, freezer)
+
+    await reload_entry(hass, entry.entry_id)
+    await _tick(hass, freezer)
+
+    assert bambuddy_api.control_plug.await_count == 2
+    assert _phase(hass, entry.entry_id) == "waiting"
 
 
 async def test_11_bambuddys_own_auto_off_comes_first(hass: HomeAssistant, bambuddy_api: SimpleNamespace, freezer: FrozenDateTimeFactory) -> None:
@@ -461,8 +513,7 @@ async def test_the_threshold_survives_a_restart_in_fahrenheit(hass: HomeAssistan
     )
     entry = await set_up(hass, X1C)
 
-    state = hass.states.get(_entity_id(hass, entry.entry_id, "number", "auto_off_temperature"))
-    assert state is not None
+    state = state_at(hass, _entity_id(hass, entry.entry_id, "number", "auto_off_temperature"))
     assert (round(float(state.state), 1), state.attributes["unit_of_measurement"]) == (107.6, "°F")
 
 
@@ -539,8 +590,7 @@ async def test_a_wait_older_than_the_limit_is_over_after_a_restart(
     _printer(bambuddy_api, state="FINISH", nozzle=30.0)
     await set_up(hass, X1C)
 
-    state = hass.states.get(entity_id)
-    assert state is not None
+    state = state_at(hass, entity_id)
     assert (state.state, state.attributes["phase"]) == (armed, "gave_up")
     assert state.attributes["since"] != since
     assert not _switched_off(bambuddy_api)
@@ -634,27 +684,38 @@ async def test_a_printer_home_assistant_cannot_read_never_switches_off(
     assert _attribute(hass, entry.entry_id, "waiting_for") == "printer"
 
 
-async def test_a_print_started_just_before_the_switch_off_stops_it(
-    hass: HomeAssistant, bambuddy_api: SimpleNamespace, freezer: FrozenDateTimeFactory
-) -> None:
-    """It reads the printer once more right before it switches."""
+async def _decided_cool_then(
+    hass: HomeAssistant, bambuddy_api: SimpleNamespace, freezer: FrozenDateTimeFactory, during: Any = None, answer: Any = None
+) -> Any:
+    """A finished print, cool at the poll; `during` runs while the read right
+    before the off is under way, `answer` makes what that read finds."""
     entry = await set_up(hass, X1C)
     await _arm(hass, entry.entry_id)
     _printer(bambuddy_api, state="FINISH", nozzle=120.0)
     await _tick(hass, freezer)
     _printer(bambuddy_api, nozzle=30.0)
-    started = {**bambuddy_api.statuses[X1C], "state": "PREPARE"}
     reads = 0
     real = bambuddy_api.get_status.side_effect
 
     async def status(printer_id: int) -> dict[str, Any]:
         nonlocal reads
         reads += 1
-        # The poll still sees it standing; the read right before the off a new job.
-        return dict(started) if reads > 1 else dict(real(printer_id))
+        if reads > 1 and during is not None:
+            await during(entry)
+        found = dict(real(printer_id))
+        return answer(found) if reads > 1 and answer is not None else found
 
     bambuddy_api.get_status.side_effect = status
     await _tick(hass, freezer)
+    return entry
+
+
+async def test_a_print_started_just_before_the_switch_off_stops_it(
+    hass: HomeAssistant, bambuddy_api: SimpleNamespace, freezer: FrozenDateTimeFactory
+) -> None:
+    """It reads the printer once more right before it switches."""
+    # The poll still sees it standing; the read right before the off a new job.
+    await _decided_cool_then(hass, bambuddy_api, freezer, answer=lambda status: {**status, "state": "PREPARE"})
 
     assert not _switched_off(bambuddy_api)
 
@@ -662,49 +723,13 @@ async def test_a_print_started_just_before_the_switch_off_stops_it(
 async def test_the_last_reads_nozzle_decides(hass: HomeAssistant, bambuddy_api: SimpleNamespace, freezer: FrozenDateTimeFactory) -> None:
     """The poll saw it cool; the read right before the off finds the nozzle
     hot again (a reheat): it waits, the plug stays on."""
-    entry = await set_up(hass, X1C)
-    await _arm(hass, entry.entry_id)
-    _printer(bambuddy_api, state="FINISH", nozzle=120.0)
-    await _tick(hass, freezer)
-    _printer(bambuddy_api, nozzle=30.0)
-    hot = {**bambuddy_api.statuses[X1C], "temperatures": {**bambuddy_api.statuses[X1C]["temperatures"], "nozzle": 120.0}}
-    reads = 0
-    real = bambuddy_api.get_status.side_effect
-
-    async def status(printer_id: int) -> dict[str, Any]:
-        nonlocal reads
-        reads += 1
-        return dict(hot) if reads > 1 else dict(real(printer_id))
-
-    bambuddy_api.get_status.side_effect = status
-    await _tick(hass, freezer)
+    entry = await _decided_cool_then(
+        hass, bambuddy_api, freezer, answer=lambda status: {**status, "temperatures": {**status["temperatures"], "nozzle": 120.0}}
+    )
 
     assert not _switched_off(bambuddy_api)
     assert _phase(hass, entry.entry_id) == "waiting"
     assert _attribute(hass, entry.entry_id, "switching") is False
-
-
-async def _decided_cool_then(hass: HomeAssistant, bambuddy_api: SimpleNamespace, freezer: FrozenDateTimeFactory, during: Any) -> Any:
-    """A finished print, cool at the poll; `during` runs while the read right
-    before the off is under way."""
-    entry = await set_up(hass, X1C)
-    await _arm(hass, entry.entry_id)
-    _printer(bambuddy_api, state="FINISH", nozzle=120.0)
-    await _tick(hass, freezer)
-    _printer(bambuddy_api, nozzle=30.0)
-    reads = 0
-    real = bambuddy_api.get_status.side_effect
-
-    async def status(printer_id: int) -> dict[str, Any]:
-        nonlocal reads
-        reads += 1
-        if reads > 1:
-            await during(entry)
-        return dict(real(printer_id))
-
-    bambuddy_api.get_status.side_effect = status
-    await _tick(hass, freezer)
-    return entry
 
 
 async def test_switched_off_by_the_user_while_it_reads_the_printer(
@@ -723,17 +748,17 @@ async def test_switched_off_by_the_user_while_it_reads_the_printer(
 async def test_a_plug_that_keeps_failing_is_given_up_ten_minutes_after_its_first_failure(
     hass: HomeAssistant, bambuddy_api: SimpleNamespace, freezer: FrozenDateTimeFactory
 ) -> None:
-    """Tried at every plug read; counted from the first failure, not the last."""
+    """Tried again every 30 seconds; counted from the first failure, not the last."""
     entry = await set_up(hass, X1C)
     await _arm(hass, entry.entry_id)
     bambuddy_api.control_plug.side_effect = BamBuddyApiError(503, "Failed to communicate with device")
     _printer(bambuddy_api, state="FINISH", nozzle=30.0)
     for _ in range(45):
         await _tick(hass, freezer)
-        if _phase(hass, entry.entry_id) == "gave_up":
+        if _phase(hass, entry.entry_id) == "plug_failed":
             break
 
-    assert _phase(hass, entry.entry_id) == "gave_up"
+    assert _phase(hass, entry.entry_id) == "plug_failed"
 
 
 async def test_the_printer_is_read_soon_after_the_switch_off(
@@ -809,8 +834,7 @@ async def test_not_this_time_is_too_late_once_it_switches(
     # A read now, not in a background task: the switch-off's own one waits.
     await entry.runtime_data.printers[X1C].async_refresh()
     await hass.async_block_till_done()
-    skip = hass.states.get(_entity_id(hass, entry.entry_id, "button", "auto_off_skip"))
-    assert skip is not None and skip.state == "unavailable"
+    assert state_at(hass, _entity_id(hass, entry.entry_id, "button", "auto_off_skip")).state == "unavailable"
 
     release.set()
     await hass.async_block_till_done(wait_background_tasks=True)
@@ -832,7 +856,7 @@ async def test_a_switch_off_the_key_may_not_send_gives_up(
     assert bambuddy_api.get_auth_me.await_count > checked
     await _tick(hass, freezer, 11 * 60)
 
-    assert _phase(hass, entry.entry_id) == "gave_up"
+    assert _phase(hass, entry.entry_id) == "plug_failed"
     assert not hass.config_entries.flow.async_progress_by_handler(DOMAIN)
 
 
@@ -976,8 +1000,7 @@ async def test_a_restart_keeps_done_while_the_plug_is_off(hass: HomeAssistant, b
     entry = await set_up(hass, X1C)
     await _tick(hass, freezer)
     await _tick(hass, freezer, 120)
-    state = hass.states.get(entity_id)
-    assert state is not None
+    state = state_at(hass, entity_id)
     assert (state.attributes["phase"], state.attributes["since"]) == ("done", since)
 
     bambuddy_api.plug_statuses[str(PLUG)]["state"] = "ON"
@@ -1056,25 +1079,20 @@ async def test_a_wait_restored_for_another_printer_starts_over(
     assert _phase(hass, entry.entry_id) == "idle"
 
 
-# Our switch-off's entities: (domain, key).
 def _second_plug(api: SimpleNamespace, **changes: Any) -> dict[str, Any]:
     """A second plug that powers the X1C: a Home Assistant plug, of which
     BamBuddy lets a printer have several (a Tasmota only one)."""
-    template = next(plug for plug in load_fixture("smart_plugs.json") if plug["id"] == 5)
+    template = plug_info(5)
     api.plug_statuses["11"] = {"state": "ON", "reachable": True, "device_name": "Second", "energy": None}
     return {**template, "id": 11, "name": "Second", "printer_id": X1C, "ha_entity_id": "switch.second", "auto_off": False, **changes}
 
 
 def _switch_off_of(hass: HomeAssistant, entry_id: str, plug_id: int) -> list[str | None]:
     """The printer's switch-off entities that sit on this plug's device."""
-    registry = er.async_get(hass)
     device = find_device(hass, entry_id, plug_identifier_of(hass, entry_id, plug_id))
-    found: list[str | None] = []
-    for domain, key in SWITCH_OFF:
-        entity_id = registry.async_get_entity_id(domain, DOMAIN, _unique_id(hass, entry_id, key, plug_id))
-        entity = registry.async_get(entity_id) if entity_id else None
-        found.append(entity_id if entity is not None and device is not None and entity.device_id == device.id else None)
-    return found
+    on_it = er.async_entries_for_device(er.async_get(hass), device.id, include_disabled_entities=True) if device else []
+    by_unique_id = {entity.unique_id: entity.entity_id for entity in on_it}
+    return [by_unique_id.get(_unique_id(hass, entry_id, key, plug_id)) for _, key in SWITCH_OFF]
 
 
 async def test_only_the_printers_own_plug_switches_it_off_after_the_print(hass: HomeAssistant, bambuddy_api: SimpleNamespace) -> None:
@@ -1087,7 +1105,7 @@ async def test_only_the_printers_own_plug_switches_it_off_after_the_print(hass: 
     assert None not in _switch_off_of(hass, entry.entry_id, PLUG)
     assert _switch_off_of(hass, entry.entry_id, 11) == [None] * 4
     # Its own switch stays.
-    assert er.async_get(hass).async_get_entity_id("switch", DOMAIN, plug_unique_id(hass, entry.entry_id, 11, "power")) is not None
+    assert entity_id(hass, "switch", plug_unique_id(hass, entry.entry_id, 11, "power"))
 
 
 async def test_the_switch_off_follows_bambuddys_pick_of_the_printers_plug(
@@ -1135,8 +1153,7 @@ async def test_a_swap_leaves_each_printer_its_settings(hass: HomeAssistant, bamb
     await _arm(hass, entry.entry_id)
     await _every_print(hass, entry.entry_id)
     await _set_threshold(hass, entry.entry_id, 40)
-    plugs = load_fixture("smart_plugs.json")
-    three, eight = (next(plug["ip_address"] for plug in plugs if plug["id"] == number) for number in (3, 8))
+    three, eight = (plug_info(number)["ip_address"] for number in (3, 8))
     bambuddy_api.get_smart_plugs.return_value = plug_list(**{"3": {"ip_address": eight}, "8": {"ip_address": three}})
 
     await reload_entry(hass, entry.entry_id)
@@ -1178,7 +1195,85 @@ async def test_a_printer_without_an_own_plug_loses_its_switch_off(
 
     await reload_entry(hass, entry.entry_id)
 
-    registry = er.async_get(hass)
-    assert [
-        registry.async_get_entity_id(domain, DOMAIN, switch_off_uid(entry, key)) for domain, key in SWITCH_OFF
-    ] == [None] * 4
+    assert all(no_entity(hass, domain, switch_off_uid(entry, key)) for domain, key in SWITCH_OFF)
+
+
+def _read(model: str = "X1C", **status: Any) -> PrinterData:
+    """A printer standing still and cool, with what is given changed."""
+    temperatures = {"nozzle": 30.0, "nozzle_target": 0.0, "bed_target": 0.0, "chamber_target": 0.0, **status.pop("temperatures", {})}
+    return PrinterData(info={"model": model}, status={"connected": True, "state": "FINISH", "temperatures": temperatures, **status})
+
+
+@pytest.mark.parametrize(
+    ("status", "waiting"),
+    [
+        ({}, None),
+        ({"connected": False}, "printer"),
+        ({"state": "RUNNING"}, "printer"),
+        ({"ams_status_main": 1}, "filament"),
+        ({"ams": [{"dry_time": 60}]}, "drying"),
+        ({"temperatures": {"nozzle_target": 1.0}}, "heating"),
+        ({"temperatures": {"nozzle_2_target": 200.0}}, "heating"),
+        ({"temperatures": {"bed_target": 60.0}}, "heating"),
+        ({"temperatures": {"chamber_target": 45.0}}, "heating"),
+        ({"temperatures": {"nozzle_target": None, "bed_target": "hot"}}, None),
+        ({"temperatures": {"nozzle": 49.9}}, None),
+        ({"temperatures": {"nozzle": 50.0}}, "nozzle"),
+        ({"temperatures": {"nozzle": "warm"}}, "nozzle"),
+        ({"temperatures": {"nozzle": None}}, "nozzle"),
+    ],
+)
+def test_what_keeps_the_printer_from_being_switched_off(status: dict[str, Any], waiting: str | None) -> None:
+    assert blocker(_read(**status), 50.0) == waiting
+
+
+def test_a_dual_nozzle_printers_second_nozzle_counts_when_unknown_or_hot() -> None:
+    dual = {"nozzle": 30.0, "nozzle_2": 30.0}
+    assert blocker(_read("H2D", temperatures=dual), 50.0) is None
+    assert blocker(_read("H2D", temperatures={**dual, "nozzle_2": 50.0}), 50.0) == "nozzle"
+    assert blocker(_read("H2D", temperatures={**dual, "nozzle_2": None}), 50.0) == "nozzle"
+
+
+async def test_a_fresh_switch_off_has_nothing_pending(hass: HomeAssistant, bambuddy_api: SimpleNamespace) -> None:
+    entry = await set_up(hass, X1C)
+    assert _attribute(hass, entry.entry_id, "waiting_for") is None
+    assert _attribute(hass, entry.entry_id, "since") is None
+    assert _attribute(hass, entry.entry_id, "switching") is False
+
+
+async def test_a_finish_after_an_unknown_start_does_not_arm(
+    hass: HomeAssistant, bambuddy_api: SimpleNamespace, freezer: FrozenDateTimeFactory
+) -> None:
+    """No job was seen: the FINISH that comes is not the end of one."""
+    _printer(bambuddy_api, state="unknown", nozzle=30.0)
+    entry = await set_up(hass, X1C)
+    await _arm(hass, entry.entry_id)
+    _printer(bambuddy_api, state="FINISH", nozzle=30.0)
+    await _tick(hass, freezer)
+
+    assert _phase(hass, entry.entry_id) == "idle"
+    assert not _switched_off(bambuddy_api)
+
+
+async def test_the_plug_shows_off_at_once_after_the_switch_off(
+    hass: HomeAssistant, bambuddy_api: SimpleNamespace, freezer: FrozenDateTimeFactory
+) -> None:
+    entry = await set_up(hass, X1C)
+    await _arm(hass, entry.entry_id)
+    _printer(bambuddy_api, state="FINISH", nozzle=30.0)
+    await _tick(hass, freezer)
+
+    assert _switched_off(bambuddy_api)
+    assert entry.runtime_data.plugs.data[PLUG].state is False
+
+
+async def test_the_switch_off_logs_the_nozzle_it_saw(
+    hass: HomeAssistant, bambuddy_api: SimpleNamespace, freezer: FrozenDateTimeFactory, caplog: pytest.LogCaptureFixture
+) -> None:
+    caplog.set_level(logging.INFO, logger="custom_components.bambuddy.auto_off")
+    entry = await set_up(hass, X1C)
+    await _arm(hass, entry.entry_id)
+    _printer(bambuddy_api, state="FINISH", nozzle=33.0)
+    await _tick(hass, freezer)
+
+    assert "off after the print: nozzle 33.0 °C, below 50.0 °C" in caplog.text

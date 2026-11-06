@@ -480,7 +480,7 @@ class _Upstream:
     is the camera's."""
 
     status = 200
-    headers = {"Content-Type": "multipart/x-mixed-replace;boundary=frame"}
+    headers = _MJPEG
 
     def __init__(self, frames: int, fps: float, clock: list[float], on_read: Callable[[], None]) -> None:
         self._frames, self._fps, self._clock, self._on_read = frames, fps, clock, on_read
@@ -492,7 +492,7 @@ class _Upstream:
             return b""
         self._frames -= 1
         self._clock[0] += 1 / self._fps
-        return b"--frame\r\nContent-Type: image/jpeg\r\n\r\njpeg\r\n"
+        return _FRAME
 
     def release(self) -> None:
         pass

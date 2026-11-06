@@ -322,7 +322,7 @@ export interface PrinterSpec {
   bed: Pair;
   chamber?: Pair;
   hotendFan?: number;
-  hms?: { code: string; severity: string; description: string | null }[];
+  hms?: { code: string; severity: string; description: string | null; actions?: string[] }[];
   online?: boolean;
   plateClearNeeded?: boolean;
   /** The developer mode sensor: on (default), off, unknown, or none. */
@@ -953,9 +953,6 @@ export function offlineP1s(): FakeDevice[] {
   return [printer, ams];
 }
 
-/** The devices while BamBuddy does not answer: the integration's poll
- * fails, and every entity of the printer and its AMS units is unavailable,
- * the print status and the Online sensor too, without their attributes. */
 /** Since an hour before the tests' clock: the card's wait for data is long over. */
 const LONG_AGO = "2026-10-16T07:00:00Z";
 
@@ -975,8 +972,12 @@ export function changeEntities(
 /** A copy of the device with only the entities `keep` keeps. */
 export const keepEntities = (device: FakeDevice, keep: (entity: FakeEntity) => boolean): FakeDevice => ({ ...device, entities: device.entities.filter(keep) });
 
-export const unreachable = (devices: FakeDevice[]): FakeDevice[] =>
-  devices.map((device) => ({ ...device, entities: device.entities.map((entity) => ({ ...entity, state: "unavailable", attributes: {}, lastChanged: LONG_AGO })) }));
+/** The devices while BamBuddy does not answer: the integration's poll
+ * fails, and every entity of the printer and its AMS units is unavailable,
+ * the print status and the Online sensor too, without their attributes --
+ * since an hour before the tests' clock, or since `since`. */
+export const unreachable = (devices: FakeDevice[], since: string = LONG_AGO): FakeDevice[] =>
+  devices.map((device) => ({ ...device, entities: device.entities.map((entity) => ({ ...entity, state: "unavailable", attributes: {}, lastChanged: since })) }));
 
 /** The devices whose entities the integration does not set up -- a printer
  * BamBuddy no longer lists, or every device of an entry not loaded: Home
@@ -1006,10 +1007,10 @@ export interface FakeCard extends HTMLElement {
   requestUpdate(): void;
 }
 
-/** The card as a dashboard creates it: element, configuration, hass. */
 /** The card's type, as a dashboard names it. */
 export const TYPE = "custom:bambuddy-printer-card";
 
+/** The card as a dashboard creates it: element, configuration, hass. */
 export async function mountCard(hass: FakeHass, config: Record<string, unknown>): Promise<FakeCard> {
   const card = document.createElement("bambuddy-printer-card") as FakeCard;
   card.setConfig({ type: TYPE, ...config });
@@ -1136,12 +1137,12 @@ export function plugDevice(spec: PlugSpec): FakeDevice {
   return { id: `${spec.printer.id}-plug-${spec.id}`, name: `${shortName(spec.printer)} ${spec.name} (Smart Plug)`, model: "Tasmota", via: spec.printer.id, entities };
 }
 
-/** The X1C -- printing, unless its overrides say otherwise -- with the plugs given. */
 /** The devices with plugs linked to their printer (the first device). */
 export function withPlugs(devices: FakeDevice[], ...plugs: Omit<PlugSpec, "printer">[]): FakeDevice[] {
   return [...devices, ...plugs.map((spec) => plugDevice({ printer: devices[0] as FakeDevice, ...spec }))];
 }
 
+/** The X1C -- printing, unless its overrides say otherwise -- with the plugs given. */
 export const x1cWithPlugs = (printer: Partial<PrinterSpec>, ...plugs: Omit<PlugSpec, "printer">[]): FakeDevice[] => withPlugs(x1c(printer), ...plugs);
 
 // --- BamBuddy's spool inventory ---------------------------------------------

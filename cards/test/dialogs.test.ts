@@ -35,7 +35,7 @@ describe("a control in a dialog that goes after its own press", () => {
     const card = await mountCard(hass, { printer: "dev-x1c", header_chips: ["power"] });
     (find(card, ".pill.power-chip") as HTMLButtonElement).click();
     await card.updateComplete;
-    const skip = button(card, "Don't switch off this time");
+    const skip = button(card, "Don't turn off this time");
     skip.focus();
     keyPress(skip, "Enter");
     skip.click();
@@ -61,7 +61,7 @@ describe("the switch-off's settings opened from the power dialog", () => {
     keyPress(row, "Enter");
     row.click();
     await settle(card);
-    expect(text(find(card, "dialog h2"))).toBe("Switch off after the print");
+    expect(text(find(card, "dialog h2"))).toBe("Turn off after the print");
     expect(root(card).activeElement).toBe(find(card, "dialog .dlg-actions .btn.safe"));
     (find(card, "dialog .dlg-actions .btn.safe") as HTMLButtonElement).click();
     await settle(card);
@@ -73,7 +73,7 @@ describe("the switch-off's settings opened from the power dialog", () => {
 describe("the HMS dialog while the printer goes offline", () => {
   it("says the printer is offline, not that there are no messages", async () => {
     const errors = [{ code: "0700_2000_0002_0012", severity: "error", description: "AMS A Slot 2 filament has run out.", actions: ["FILAMENT_LOAD_RESUME"] }];
-    const hass = makeHass({ devices: p1s({ status: "paused", stage: "paused_by_user", hms: errors as never }) });
+    const hass = makeHass({ devices: p1s({ status: "paused", stage: "paused_by_user", hms: errors }) });
     const card = await mountCard(hass, { printer: "dev-p1s" });
     (find(card, ".pill.hms") as HTMLButtonElement).click();
     await card.updateComplete;
@@ -103,8 +103,8 @@ describe("the chips' names start with what they show", () => {
     const hass = makeHass({ devices: withPlugs(devices, { id: 3, name: "Tasmota", state: "off" }) });
     const card = await mountCard(hass, { printer: "dev-x1c", header_chips: ["hms", "power"] });
     for (const chip of findAll(card, ".pills > button")) {
-      const shown = text(chip).replace(/ /g, " ").toLowerCase();
-      const name = (chip.getAttribute("aria-label") ?? "").replace(/ /g, " ").toLowerCase();
+      const shown = text(chip).replace(/\u00a0/g, " ").toLowerCase();
+      const name = (chip.getAttribute("aria-label") ?? "").replace(/\u00a0/g, " ").toLowerCase();
       expect(name.startsWith(shown), `"${name}" for "${shown}"`).toBe(true);
     }
   });
@@ -231,8 +231,7 @@ describe("the radio groups of keeping warm and of the switch-off", () => {
   });
 
   it("the same for the switch-off's choice", async () => {
-    const devices = x1c({ status: "finished", stage: "idle", nozzles: [[142, 0]] });
-    const hass = makeHass({ devices: withPlugs(devices, { id: 3, name: "Tasmota", watts: 182, autoOff: { armed: true, phase: "waiting", since: "2026-10-18T14:05:00+00:00" } }) });
+    const hass = makeHass({ devices: waitingX1c() });
     const card = await mountCard(hass, { printer: "dev-x1c", header_chips: ["power"] });
     (find(card, ".pill.power-chip") as HTMLButtonElement).click();
     await card.updateComplete;
@@ -253,7 +252,7 @@ describe("a chip's name for one message, and the USB drive's dialog", () => {
   it("names one HMS message in the singular, in English and German", async () => {
     const one = [{ code: "0700_2000_0002_0012", severity: "warning", description: "One.", actions: [] }];
     for (const [language, name] of [["en", "1 HMS message"], ["de", "1 HMS-Meldung"]] as const) {
-      const card = await mountCard(makeHass({ devices: p1s({ status: "paused", stage: "paused_by_user", hms: one as never }), language }), { printer: "dev-p1s" });
+      const card = await mountCard(makeHass({ devices: p1s({ status: "paused", stage: "paused_by_user", hms: one }), language }), { printer: "dev-p1s" });
       expect(find(card, ".pill.hms")?.getAttribute("aria-label")).toBe(name);
       card.remove();
     }

@@ -1,6 +1,6 @@
 // BamBuddy's spool inventory in the card (#21): a slot's assigned spool in
 // the Filament tab and the Status strip.
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import "../src/index";
 import { ICONS } from "../src/icons";
@@ -22,6 +22,7 @@ import {
   type FakeHassOptions,
 } from "./fixtures";
 import { atRule, chooseOption, declarations, editSlot, find, findAll, NBSP, root, settle, showView, styleText, text } from "./helpers";
+import { keyPress } from "./card-helpers";
 
 afterEach(() => {
   document.body.innerHTML = "";
@@ -523,20 +524,12 @@ describe("the inventory tab", () => {
     expect([...vendor.options].map((option) => option.text)).toEqual(["Alle", "Bambu", "eSUN", "Geeetech", "Sunlu"]);
     expect([...material.options].map((option) => option.text)).toEqual(["Alle", "PETG", "PLA", "TPU"]);
 
-    material.value = "PETG";
-    material.dispatchEvent(new Event("change"));
-    await settle(card);
+    await chooseOption(card, "#inv-material", "PETG");
     expect(rows(card).map(rowName)).toEqual(["eSUN PETG"]);
-    material.value = "";
-    material.dispatchEvent(new Event("change"));
-    await settle(card);
-    vendor.value = "geeetech";
-    vendor.dispatchEvent(new Event("change"));
-    await settle(card);
+    await chooseOption(card, "#inv-material", "");
+    await chooseOption(card, "#inv-vendor", "geeetech");
     expect(rows(card).map((row) => Number(row.dataset["spool"]))).toEqual([1, 5, 6, 7, 8, 9, 10, 11]);
-    vendor.value = "";
-    vendor.dispatchEvent(new Event("change"));
-    await settle(card);
+    await chooseOption(card, "#inv-vendor", "");
 
     const search = find<HTMLInputElement>(card, "dialog #inv-search") as HTMLInputElement;
     for (const [query, ids] of [
@@ -807,7 +800,7 @@ describe("a chip spool and the inventory", () => {
   });
 });
 
-describe("after the live check", () => {
+describe("the filters, the search and the list's details", () => {
   it("draws the filters as the card's selects", async () => {
     const more = [5, 6, 7, 8, 9].map((id) => listed({ id, name: "Geeetech PLA", material: "PLA" }));
     const card = await openInventory([...FOUR, ...more]);
@@ -850,20 +843,14 @@ describe("after the live check", () => {
       listed({ id: 7, name: "GEEETECH PETG", brand: "GEEETECH", material: "PETG" }),
     ];
     const card = await openInventory([...FOUR, ...more]);
-    const material = find<HTMLSelectElement>(card, "dialog #inv-material") as HTMLSelectElement;
-    material.value = "PETG";
-    material.dispatchEvent(new Event("change"));
-    await settle(card);
+    await chooseOption(card, "#inv-material", "PETG");
     expect([...(find<HTMLSelectElement>(card, "dialog #inv-vendor") as HTMLSelectElement).options].map((option) => option.text)).toEqual(["Alle", "eSUN", "Geeetech"]);
   });
 
   it("a filter the other no longer leaves goes back to Alle", async () => {
     const more = [listed({ id: 5, name: "Geeetech PLA", brand: "Geeetech", material: "PLA" }), listed({ id: 7, name: "eSUN ePLA", brand: "eSUN", material: "ePLA" })];
     const card = await openInventory([...FOUR, ...more]);
-    const vendor = find<HTMLSelectElement>(card, "dialog #inv-vendor") as HTMLSelectElement;
-    vendor.value = "geeetech";
-    vendor.dispatchEvent(new Event("change"));
-    await settle(card);
+    await chooseOption(card, "#inv-vendor", "geeetech");
     // The inventory changed meanwhile: the material chosen before has none of this vendor.
     const material = find<HTMLSelectElement>(card, "dialog #inv-material") as HTMLSelectElement;
     expect([...material.options].map((option) => option.value)).not.toContain("ePLA");
@@ -941,6 +928,104 @@ describe("after the live check", () => {
   it("writes color as the card does", () => {
     expect(en.inv_note_change).toBe("Another color or another type (PETG instead of PLA, say) ends the spool's assignment.");
     expect(en.inv_search).toBe("Name, color, location, no.");
+  });
+});
+
+describe("the list after a new search or filter", () => {
+  const MANY = Array.from({ length: 8 }, (_, index) => listed({ id: index + 1, name: `Spule ${index + 1}`, material: index ? "PLA" : "PETG" }));
+  const box = (card: FakeCard): HTMLElement => find<HTMLElement>(card, "dialog .inv-list") as HTMLElement;
+  const said = (card: FakeCard): string => text(find(card, "dialog .inv-say"));
+  const type = async (card: FakeCard, query: string): Promise<void> => {
+    const search = find<HTMLInputElement>(card, "dialog #inv-search") as HTMLInputElement;
+    search.value = query;
+    search.dispatchEvent(new Event("input"));
+    await card.updateComplete;
+    await Promise.resolve();
+  };
+  const later = async (card: FakeCard, ms: number): Promise<void> => {
+    await vi.advanceTimersByTimeAsync(ms);
+    await card.updateComplete;
+  };
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("goes to its top on a new search", async () => {
+    const card = await openInventory(MANY);
+    box(card).scrollTop = 300;
+    await type(card, "Spule");
+    expect(box(card).scrollTop).toBe(0);
+  });
+
+  it("goes to its top on a new filter", async () => {
+    const card = await openInventory(MANY);
+    box(card).scrollTop = 300;
+    await chooseOption(card, "#inv-material", "PLA");
+    expect(box(card).scrollTop).toBe(0);
+  });
+
+  it("says what it found a second after the last change", async () => {
+    const card = await openInventory(MANY);
+    vi.useFakeTimers();
+    await type(card, "Spule");
+    expect(said(card)).toBe("");
+    await later(card, 900);
+    await type(card, "PLA");
+    await later(card, 900);
+    expect(said(card)).toBe("");
+    await later(card, 100);
+    expect(said(card)).toBe("7 Spulen gefunden.");
+
+    await type(card, "PETG");
+    expect(said(card)).toBe("");
+    await later(card, 1000);
+    expect(said(card)).toBe("1 Spule gefunden.");
+
+    await type(card, "xyz");
+    await later(card, 1000);
+    expect(said(card)).toBe("Keine Spule passt zur Suche.");
+  });
+
+  it("leaves no timer behind a dialog closed in the meantime", async () => {
+    const card = await openInventory(MANY);
+    vi.useFakeTimers();
+    await type(card, "Spule");
+    dialogButton(card, "Abbrechen")?.click();
+    await card.updateComplete;
+    expect(vi.getTimerCount()).toBe(0);
+    expect(find(card, "dialog[open]")).toBeNull();
+  });
+
+  it("says nothing of a search into another slot's dialog opened within its second", async () => {
+    const devices = assign(assign(x1c(), SLOTS[2] as string, GEEETECH), SLOTS[3] as string, null);
+    const card = await openInventory(MANY, { devices });
+    vi.useFakeTimers();
+    await type(card, "Spule");
+    await later(card, 500);
+    // The other slot's dialog comes while the search's second still runs.
+    (findAll(card, ".slot")[3]?.querySelector(".btn.edit") as HTMLButtonElement).click();
+    await card.updateComplete;
+    tabs(card).find((item) => text(item) === "Aus dem Inventar")?.click();
+    await later(card, 100);
+    expect(text(find(card, "dialog h2"))).toContain("Fach 4");
+    expect(rows(card)).toHaveLength(MANY.length);
+    await later(card, 900);
+    expect(said(card)).toBe("");
+    // Its own search says what it found.
+    await type(card, "PETG");
+    await later(card, 1000);
+    expect(said(card)).toBe("1 Spule gefunden.");
+  });
+
+  it("takes #84 as the spool's number, #abc as text", async () => {
+    const card = await openInventory([...MANY, listed({ id: 84, name: "Nummer", material: "PLA" }), listed({ id: 85, name: "Farbe #abc", material: "PLA" })]);
+    await type(card, "#84");
+    await settle(card);
+    expect(rows(card).map(rowName)).toEqual(["Nummer"]);
+    await type(card, "#abc");
+    await settle(card);
+    expect(rows(card).map(rowName)).toEqual(["Farbe #abc"]);
   });
 });
 
@@ -1024,7 +1109,7 @@ describe("the spool list by keyboard", () => {
     for (const row of all.filter((item) => item.getAttribute("aria-disabled") === "true")) expect(row.tabIndex).toBe(-1);
     // From there the arrows move on.
     stop.focus();
-    stop.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowDown", bubbles: true, composed: true }));
+    keyPress(stop, "ArrowDown");
     await settle(card);
     expect(root(card).activeElement).not.toBe(stop);
     expect((root(card).activeElement as HTMLElement).getAttribute("aria-disabled")).toBe("false");
@@ -1080,10 +1165,7 @@ describe("room for the spool list", () => {
 
   it("counts the filters set on the folded button", async () => {
     const card = await openInventory(FIVE);
-    const material = find<HTMLSelectElement>(card, "dialog #inv-material") as HTMLSelectElement;
-    material.value = "PLA";
-    material.dispatchEvent(new Event("change"));
-    await settle(card);
+    await chooseOption(card, "#inv-material", "PLA");
     find<HTMLButtonElement>(card, "dialog .inv-filter")?.click();
     await settle(card);
     const button = find(card, "dialog .inv-filter");

@@ -10,14 +10,15 @@ import {
   MAINTENANCE_TASKS,
   maintenanceSpec,
   makeHass,
+  mountFor,
   unreachable,
   x1c,
   type FakeCard,
   type FakeDevice,
 } from "./fixtures";
 import { atRule, button, cssRule, declarations, find, findAll, moreInfoIds, NBSP, root, settle, shownText, styleText, text, update } from "./helpers";
-import { useCardPage } from "./card-helpers";
-import { chip, chips, menuItem, mount, withX1c } from "./feature-helpers";
+import { useCardPage, withX1c } from "./card-helpers";
+import { chip, chips, menuItem } from "./feature-helpers";
 
 useCardPage();
 
@@ -67,7 +68,7 @@ describe("the new chips", () => {
   it("show maintenance also with the printer offline, not while BamBuddy gives no data", async () => {
     const offline = await withX1c({ ...all, online: false }, { header_chips: ["maintenance"] });
     expect(chips(offline.card)).toEqual(["Maintenance: 3 due"]);
-    const silent = await mount(unreachable(x1c(all)), "dev-x1c", { header_chips: ["maintenance"] });
+    const silent = await mountFor(unreachable(x1c(all)), "dev-x1c", { header_chips: ["maintenance"] });
     expect(chips(silent.card)).toEqual([]);
   });
 
@@ -97,12 +98,12 @@ describe("the new chips", () => {
     // The open dialog follows: the card is in.
     expect(text(find(card, "dialog p"))).toBe("The SD card is in: BamBuddy can send prints again.");
     expect(text(find(card, "dialog h2"))).toBe("SD card");
-    const usb = await mount(h2d({ storage: "off", storageUsb: true }), "dev-h2d", { header_chips: ["storage"] });
+    const usb = await mountFor(h2d({ storage: "off", storageUsb: true }), "dev-h2d", { header_chips: ["storage"] });
     expect(chips(usb.card)).toEqual(["No USB drive"]);
   });
 
   it("show drying as one chip, with the longest time left, for every unit that dries", async () => {
-    const { card, hass } = await mount(h2d(), "dev-h2d", { header_chips: ["drying"] });
+    const { card, hass } = await mountFor(h2d(), "dev-h2d", { header_chips: ["drying"] });
     expect(chips(card)).toEqual([`Drying 3${NBSP}h${NBSP}20${NBSP}min`]);
     const both = hass.withState("binary_sensor.dev-h2d_ams_128_drying", "on").withState("sensor.dev-h2d_ams_128_drying_remaining_time", "320");
     await update(card, both);
@@ -123,7 +124,7 @@ describe("the new chips", () => {
   });
 
   it("open the drying unit's details without a Filament tab", async () => {
-    const { card } = await mount(h2d(), "dev-h2d", { header_chips: ["drying"], show_filament_tab: false });
+    const { card } = await mountFor(h2d(), "dev-h2d", { header_chips: ["drying"], show_filament_tab: false });
     const ids = moreInfoIds(card);
     chip(card, `Drying 3${NBSP}h${NBSP}20${NBSP}min`).click();
     // The time it shows.
@@ -131,7 +132,7 @@ describe("the new chips", () => {
   });
 
   it("say it in German", async () => {
-    const { card } = await mount(h2d({ door: "on", storage: "off", storageUsb: true, maintenance: maintenanceSpec({ state: "ok", tasks: [] }) }), "dev-h2d", {
+    const { card } = await mountFor(h2d({ door: "on", storage: "off", storageUsb: true, maintenance: maintenanceSpec({ state: "ok", tasks: [] }) }), "dev-h2d", {
       header_chips: ["maintenance", "door", "storage", "drying"],
     }, { language: "de" });
     expect(chips(card)).toEqual(["Wartung OK", "Tür offen", "Kein USB-Stick", `Trocknet 3${NBSP}Std.${NBSP}20${NBSP}Min.`]);
@@ -174,7 +175,7 @@ describe("keeping the chamber warm (an airduct printer without a chamber heater,
       ["Off", false],
       ["On", true],
     ]);
-    expect(text(section(card))).toContain("While the chamber is ventilated, it cannot be kept warm. First switch the chamber off under Ventilation below.");
+    expect(text(section(card))).toContain("While the chamber is ventilated, it cannot be kept warm. First turn off the chamber under Ventilation below.");
     const german = await withX1c(ventilated, { start_view: "control" }, "de");
     expect(text(section(german.card))).toContain("Solange die Kammer gelüftet wird, lässt sie sich nicht warm halten. Schalte zuerst unten unter „Lüften“ die Kammer aus.");
     // The keyboard comes in on the choice it has.
@@ -238,7 +239,7 @@ describe("the AMS filament backup", () => {
 
   it("marks the choice on its way, and takes no second", async () => {
     let finish: () => void = () => undefined;
-    const { card, hass } = await mount(x1c({ filamentBackup: "unknown" }), "dev-x1c", { start_view: "filament" }, {
+    const { card, hass } = await mountFor(x1c({ filamentBackup: "unknown" }), "dev-x1c", { start_view: "filament" }, {
       callService: () => new Promise((resolve) => (finish = () => resolve(undefined))),
     });
     const on = (): HTMLButtonElement => findAll<HTMLButtonElement>(card, ".backup .backup-set button")[1] as HTMLButtonElement;
@@ -260,13 +261,13 @@ describe("the AMS filament backup", () => {
   });
 
   it("says which spools back up on a printer with two nozzles", async () => {
-    const { card } = await mount(h2d({ filamentBackup: "off" }), "dev-h2d", { start_view: "filament" });
+    const { card } = await mountFor(h2d({ filamentBackup: "off" }), "dev-h2d", { start_view: "filament" });
     expect(text(row(card))).toContain("With two nozzles, only spools on the same side.");
   });
 
   it("is not there on a printer without an AMS unit now (one was plugged in before)", async () => {
     const [printer] = x1c({ filamentBackup: "on" });
-    const { card } = await mount([printer as FakeDevice], "dev-x1c", { start_view: "filament" });
+    const { card } = await mountFor([printer as FakeDevice], "dev-x1c", { start_view: "filament" });
     expect(find(card, ".unit")).not.toBeNull();
     expect(row(card)).toBeNull();
   });
@@ -279,7 +280,7 @@ describe("the AMS filament backup", () => {
 
 describe("the maintenance dialog, the connection check and the backup's unknown state", () => {
   it("says why the container network and the printer's own checks were not run", async () => {
-    const { card } = await mount(x1c(), "dev-x1c", {}, {
+    const { card } = await mountFor(x1c(), "dev-x1c", {}, {
       callService: async (call) =>
         call.service === "run_diagnostic"
           ? {
@@ -308,7 +309,7 @@ describe("the maintenance dialog, the connection check and the backup's unknown 
   });
 
   it("shows a failed Done inside the maintenance dialog, and the task list stays", async () => {
-    const { card } = await mount(x1c({ maintenance: maintenanceSpec() }), "dev-x1c", { header_chips: ["maintenance"] }, {
+    const { card } = await mountFor(x1c({ maintenance: maintenanceSpec() }), "dev-x1c", { header_chips: ["maintenance"] }, {
       callService: async (call) => {
         if (call.service === "mark_maintenance_done") throw { message: "BamBuddy refused" };
         return undefined;
@@ -366,14 +367,14 @@ describe("the maintenance dialog, the connection check and the backup's unknown 
     const described = (group.getAttribute("aria-describedby") ?? "").split(" ").map((id) => text(root(card).getElementById(id)));
     expect(described).toEqual([
       "When a spool runs out, the printer continues with a matching spool from the AMS: same brand, material and color.",
-      "State unknown: BamBuddy does not report it for this printer. Switching it on or off still works.",
+      "State unknown: BamBuddy does not report it for this printer. Turning it on or off still works.",
     ]);
   });
 
   it("counts the seconds again when the card comes back during a check", async () => {
     vi.useFakeTimers({ toFake: ["Date", "setInterval", "clearInterval"] });
     vi.setSystemTime(new Date("2026-10-16T08:00:00Z"));
-    const { card } = await mount(x1c(), "dev-x1c", {}, {
+    const { card } = await mountFor(x1c(), "dev-x1c", {}, {
       callService: async (call) => (call.service === "run_diagnostic" ? new Promise(() => undefined) : undefined),
     });
     (await menuItem(card, "Check connection")).click();
@@ -388,7 +389,7 @@ describe("the maintenance dialog, the connection check and the backup's unknown 
   });
 
   it("opens an open dialog modal again when the card comes back", async () => {
-    const { card } = await mount(x1c(), "dev-x1c");
+    const { card } = await mountFor(x1c(), "dev-x1c");
     (await menuItem(card, "Printer information")).click();
     await card.updateComplete;
     const modal = vi.spyOn(HTMLDialogElement.prototype, "showModal");
@@ -407,7 +408,7 @@ describe("the maintenance dialog, the connection check and the backup's unknown 
 describe("the dialogs' details", () => {
   it("keeps the focus in the dialog while it checks again, in one live region without the seconds", async () => {
     let answer: (value: unknown) => void = () => undefined;
-    const { card } = await mount(x1c(), "dev-x1c", {}, {
+    const { card } = await mountFor(x1c(), "dev-x1c", {}, {
       callService: async (call) => (call.service === "run_diagnostic" ? new Promise((resolve) => (answer = resolve)) : undefined),
     });
     (await menuItem(card, "Check connection")).click();
@@ -427,7 +428,7 @@ describe("the dialogs' details", () => {
   });
 
   it("says a failed check as an alert, as the other dialogs' errors", async () => {
-    const { card } = await mount(x1c(), "dev-x1c", {}, {
+    const { card } = await mountFor(x1c(), "dev-x1c", {}, {
       callService: async (call) => {
         if (call.service === "run_diagnostic") throw { message: "BamBuddy refused" };
         return undefined;
@@ -439,7 +440,7 @@ describe("the dialogs' details", () => {
   });
 
   it("colours the folded lines by their meaning", async () => {
-    const { card } = await mount(x1c(), "dev-x1c", {}, {
+    const { card } = await mountFor(x1c(), "dev-x1c", {}, {
       callService: async (call) =>
         call.service === "run_diagnostic"
           ? { response: { overall: "ok", checks: [{ id: "port_mqtt", status: "pass", params: {} }, { id: "subnet", status: "skip", params: {} }] } }
@@ -484,27 +485,6 @@ describe("the dialogs' details", () => {
   });
 });
 
-describe("the maintenance dialog's focus once a task is marked", () => {
-  it("gives the focus back to the row's Done once the task is marked, or failed", async () => {
-    for (const fails of [false, true]) {
-      const { card } = await mount(x1c({ maintenance: maintenanceSpec() }), "dev-x1c", { header_chips: ["maintenance"] }, {
-        callService: async (call) => {
-          if (fails && call.service === "mark_maintenance_done") throw { message: "BamBuddy refused" };
-          return undefined;
-        },
-      });
-      findAll<HTMLButtonElement>(card, ".pills .pill")[0]?.click();
-      await card.updateComplete;
-      (find(card, '.maint-done[data-task="12"]') as HTMLButtonElement).click();
-      await settle(card);
-      [...(find(card, ".maint-confirm")?.querySelectorAll<HTMLButtonElement>("button") ?? [])].at(-1)?.click();
-      await settle(card);
-      await settle(card);
-      expect(root(card).activeElement, String(fails)).toBe(find(card, '.maint-done[data-task="12"]'));
-    }
-  });
-});
-
 describe("the tabs on a narrow card", () => {
   it("carry an icon each, and their name as a tooltip and for a screen reader", async () => {
     const { card } = await withX1c({});
@@ -521,41 +501,41 @@ describe("the narrow card at 168 px", () => {
 
   it("keeps the step's three choices whole: on a line of their own from 280 px down", () => {
     const narrow = atRule("@container (max-width: 280px)");
-    expect(narrow).toMatch(cssRule("\\.step-row", "flex-wrap: wrap;"));
-    expect(narrow).toMatch(cssRule("\\.step-row \\.seg", "flex: 1 0 100%;"));
+    expect(declarations(".step-row", narrow)).toContain("flex-wrap: wrap");
+    expect(declarations(".step-row .seg", narrow)).toContain("flex: 1 0 100%");
   });
 
   it("puts an AMS unit's colours two a row, so the fourth stays in its box", () => {
     const tiny = atRule("@container (max-width: 200px)");
     expect(tiny).toMatch(cssRule("\\.ams-slots", "display: grid;[^}]*grid-template-columns: repeat\\(2, auto\\);"));
     // A slot's sub line wraps rather than being cut (from 280 px down).
-    expect(atRule("@container (max-width: 280px)")).toMatch(cssRule("\\.slot-sub", "white-space: normal;"));
+    expect(declarations(".slot-sub", atRule("@container (max-width: 280px)"))).toContain("white-space: normal");
   });
 
   it("gives each heater room above the line below it", () => {
     const half = atRule("@container (max-width: 280px)");
-    expect(half).toMatch(cssRule("\\.heat-row", "padding-bottom: 8px;"));
-    expect(half).toMatch(cssRule("\\.heat-row \\+ \\.heat-row", "padding-top: 6px;"));
+    expect(declarations(".heat-row", half)).toContain("padding-bottom: 8px");
+    expect(declarations(".heat-row + .heat-row", half)).toContain("padding-top: 6px");
   });
 
   it("marks the active nozzle only during a job, in the Status tab and the Control tab", async () => {
     // Idle, "active" beside Off would read as on: the Control tab's select says which one is chosen.
-    const idle = await mount(h2d({ status: "idle", stage: "idle", hms: [] }), "dev-h2d");
+    const idle = await mountFor(h2d({ status: "idle", stage: "idle", hms: [] }), "dev-h2d");
     expect(findAll(idle.card, ".temps .temp").slice(0, 2).map((tile) => text(tile.querySelector(".temp-head")))).toEqual(["Left nozzle", "Right nozzle"]);
-    const control = await mount(h2d({ status: "idle", stage: "idle", hms: [] }), "dev-h2d", { start_view: "control" });
+    const control = await mountFor(h2d({ status: "idle", stage: "idle", hms: [] }), "dev-h2d", { start_view: "control" });
     expect(text(find(control.card, ".heat-row .heat-label"))).toBe("Left nozzle");
-    const printing = await mount(h2d(), "dev-h2d", { start_view: "control" });
+    const printing = await mountFor(h2d(), "dev-h2d", { start_view: "control" });
     expect(text(find(printing.card, ".heat-row .heat-label"))).toBe("Left nozzle active");
   });
 
   it("marks the active nozzle in the Status tab too", async () => {
-    const { card } = await mount(h2d(), "dev-h2d");
+    const { card } = await mountFor(h2d(), "dev-h2d");
     const tiles = findAll(card, ".temps .temp");
     expect(tiles.slice(0, 2).map((tile) => [text(tile.querySelector(".temp-head")), tile.getAttribute("aria-label")?.includes("active")])).toEqual([
       ["Left nozzle active", true],
       ["Right nozzle", false],
     ]);
-    const german = await mount(h2d({ activeNozzle: "right" }), "dev-h2d", {}, { language: "de" });
+    const german = await mountFor(h2d({ activeNozzle: "right" }), "dev-h2d", {}, { language: "de" });
     expect(findAll(german.card, ".temps .temp").slice(0, 2).map((tile) => text(tile.querySelector(".temp-head")))).toEqual(["Linke Düse", "Rechte Düse aktiv"]);
   });
 });
@@ -566,14 +546,14 @@ describe("the temperature a unit dries at (where it fits)", () => {
     const unit = devices.find((device) => device.model === "AMS 2 Pro") as FakeDevice;
     const drying = unit.entities.find((entity) => entity.key === "drying") as { attributes?: Record<string, unknown> };
     drying.attributes = { target_temperature: 65 };
-    const { card } = await mount(devices, "dev-h2d", { start_view: "filament" }, { language: "de" });
+    const { card } = await mountFor(devices, "dev-h2d", { start_view: "filament" }, { language: "de" });
     expect(text(find(card, ".drying span"))).toBe(`Trocknet bei 65${NBSP}°C · noch${NBSP}3${NBSP}Std.${NBSP}20${NBSP}Min.`);
   });
 });
 
 describe("the drying chip on a narrow card", () => {
   it("puts its time, bold, on a line of its own rather than leave a separator hanging", async () => {
-    const { card } = await mount(h2d(), "dev-h2d", { header_chips: ["drying"] });
+    const { card } = await mountFor(h2d(), "dev-h2d", { header_chips: ["drying"] });
     const chip = find(card, ".pills .dry-chip") as HTMLElement;
     expect([...(chip.querySelector(".dry-text")?.children ?? [])].map((part) => [part.className, text(part)])).toEqual([
       ["", "Drying"],
@@ -623,7 +603,7 @@ describe("Hide controls shows states", () => {
   });
 
   it("keeps no Control tab where the key cannot control: nothing to show", async () => {
-    const { card } = await mount(x1c({ control: false }), "dev-x1c", hidden);
+    const { card } = await mountFor(x1c({ control: false }), "dev-x1c", hidden);
     expect(findAll(card, "[role=tab]").map(text)).toEqual(["Status", "Filament"]);
   });
 });

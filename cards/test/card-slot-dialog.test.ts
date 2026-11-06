@@ -5,7 +5,9 @@ import "../src/index";
 
 
 import {
+  changeEntities,
   idleX1c,
+  keepEntities,
   OFFER,
   offerFor,
   x1c,
@@ -122,7 +124,6 @@ describe("setting a slot's filament", () => {
     expect(text(find(card, "dialog .other-color"))).toBe("Other color …");
     expect(text(find(card, "dialog .fil-head .fil-title"))).toBe("Slot profile");
     expect(text(find(card, "dialog .fil-head .fil-help"))).toBe("The profiles Bambu Studio comes with, for this printer, its nozzle and this slot. Your own profiles are not here; set those on the printer or in BamBuddy.");
-    expect(text(find(card, "dialog"))).not.toContain("For spools without a chip");
     expect(findAll(card, "dialog .dlg-actions .btn").map(text)).toEqual(["Cancel", "Set"]);
     expect(root(card).activeElement).toBe(find(card, "dialog .btn.safe"));
     // Nothing changed yet.
@@ -267,8 +268,6 @@ describe("setting a slot's filament", () => {
     await editSlot(card, 2);
     expect(vendors(card)).toBeNull();
     expect(findAll(card, "dialog .dlg-note").map(text)).toContain("Bambu Studio offers no filament for this slot with the nozzle that feeds it. A profile can be set on the printer or in BamBuddy.");
-    // No promise of a new filament beside it.
-    expect(findAll(card, "dialog .dlg-note").map(text)).not.toContain("For spools without a chip. You can choose what Bambu Studio offers for this printer, its nozzle and this slot. Other profiles can be set on the printer or in BamBuddy.");
     // The slot's own filament stays; its colour can change.
     await pick(card, "Red");
     await confirmDialog(card);
@@ -309,7 +308,6 @@ describe("setting a slot's filament", () => {
     expect(texts(vendors(failed))).toEqual(["Keep the current profile"]);
     expect(vendors(failed).disabled).toBe(true);
     expect(findAll(failed, "dialog .dlg-note").map(text)).toContain("The filament list did not arrive. To ask again, close the dialog and open it once more.");
-    expect(findAll(failed, "dialog .dlg-note").map(text)).not.toContain("For spools without a chip. You can choose what Bambu Studio offers for this printer, its nozzle and this slot. Other profiles can be set on the printer or in BamBuddy.");
     // The colour can still change.
     expect(swatches(failed).length).toBeGreaterThan(0);
     await press(failed, "Cancel");
@@ -491,6 +489,8 @@ describe("a slot's tools: K profile, chip, reset", () => {
   };
   const kAnswering = async (call: { service: string }): Promise<unknown> => (call.service === "get_k_profiles" ? { response: PROFILES } : undefined);
   const kSelect = (card: FakeCard): HTMLSelectElement => find<HTMLSelectElement>(card, "dialog select#fil-k") as HTMLSelectElement;
+  const kOptions = (card: FakeCard): string[] => [...kSelect(card).options].map((option) => option.text);
+  const kGroups = (card: FakeCard): string[] => [...kSelect(card).querySelectorAll("optgroup")].map((group) => group.label);
 
   it("resets an external spool as a spool, and loads it from the external spool", async () => {
     const { card } = await cardFor("a1mini");
@@ -528,16 +528,14 @@ describe("a slot's tools: K profile, chip, reset", () => {
     const spool = { name: "TPU 95A HF", type: "TPU", color: "#FF6A13", remaining: null, trayId: 254, active: true };
     const { card } = await cardFor("a1mini", { printer: { status: "paused", externalSpools: [spool] } });
     await showView(card, "Filament");
-    (findAll(card, ".slot").at(-1)?.querySelector(".btn.edit") as HTMLButtonElement).click();
-    await settle(card);
+    await editSlot(card, -1);
     await press(card, "Reset spool");
     expect(text(find(card, "dialog p"))).toBe("Its material and color are cleared. The paused print takes its filament from this spool.");
 
     // Printing from the AMS (the spool in use has no pencil while it feeds).
     const { card: printing } = await cardFor("a1mini", { printer: { status: "printing", externalSpools: [{ ...spool, active: false }] } });
     await showView(printing, "Filament");
-    (findAll(printing, ".slot").at(-1)?.querySelector(".btn.edit") as HTMLButtonElement).click();
-    await settle(printing);
+    await editSlot(printing, -1);
     expect(findAll(printing, "dialog .dlg-note").map(text)).toContain("Pause the print first to reset the spool.");
   });
 
@@ -556,15 +554,13 @@ describe("a slot's tools: K profile, chip, reset", () => {
     // Nothing to warn of: what to do when unsure.
     expect(text(find(card, "dialog .k-hint"))).toBe("If unsure, leave this as it is.");
     // Only those filed under its filament (Generic PLA), as Bambu Studio offers them.
-    expect([...kSelect(card).querySelectorAll("optgroup")].map((group) => group.label)).toEqual(["Matching PLA"]);
-    expect([...kSelect(card).options].map((option) => option.text)).toEqual([
+    expect(kGroups(card)).toEqual(["Matching PLA"]);
+    expect(kOptions(card)).toEqual([
       "Printer's default (K 0.020)",
       "Generic PLA (K 0.020)",
       "Grey PLA matte (K 0.018)",
     ]);
-    kSelect(card).value = "3";
-    kSelect(card).dispatchEvent(new Event("change"));
-    await card.updateComplete;
+    await choose(card, kSelect(card), "3");
     const set = setButton(card);
     expect(set.disabled).toBe(false);
     set.click();
@@ -578,7 +574,7 @@ describe("a slot's tools: K profile, chip, reset", () => {
     const { card } = await cardFor("x1c", { devices: idleX1c(), callService: none });
     await showView(card, "Filament");
     await editSlot(card, 2);
-    expect([...kSelect(card).options].map((option) => option.text)).toEqual(["Printer's default (K 0.020)"]);
+    expect(kOptions(card)).toEqual(["Printer's default (K 0.020)"]);
     expect(text(find(card, "dialog #k-hint"))).toBe(
       `No K profiles of your own are saved on the printer for the 0.4${NBSP}mm nozzle diameter. Profiles of your own, for example from the flow dynamics calibration in Bambu Studio or from BamBuddy, show here. Until then the printer uses its default.`,
     );
@@ -654,13 +650,11 @@ describe("a slot's tools: K profile, chip, reset", () => {
     const { card, hass } = await cardFor("x1c", { devices: idleX1c(), callService: kAnswering });
     await showView(card, "Filament");
     await editSlot(card, 2);
-    kSelect(card).value = "1";
-    kSelect(card).dispatchEvent(new Event("change"));
-    await card.updateComplete;
+    await choose(card, kSelect(card), "1");
     await filament(card, "GFG99");
     // The PLA profile chosen goes; Generic PETG's own comes, and only it.
     expect(kSelect(card).value).toBe("2");
-    expect([...kSelect(card).options].map((option) => option.text)).toEqual(["Printer's default (K 0.020)", "Generic PETG (K 0.035)"]);
+    expect(kOptions(card)).toEqual(["Printer's default (K 0.020)", "Generic PETG (K 0.035)"]);
     setButton(card).click();
     await settle(card);
     expect(hass.calls.at(-1)?.data).toEqual({ entity_id: SLOT_3, filament: "GFG99", k_profile: 2 });
@@ -674,14 +668,11 @@ describe("a slot's tools: K profile, chip, reset", () => {
     const { card } = await cardFor("x1c", { devices: idleX1c(), callService: kAnswering });
     await showView(card, "Filament");
     await editSlot(card, 2);
-    const vendorSelect = find<HTMLSelectElement>(card, "dialog select#fil-vendor") as HTMLSelectElement;
-    vendorSelect.value = "Bambu Lab";
-    vendorSelect.dispatchEvent(new Event("change"));
-    await card.updateComplete;
+    await vendor(card, "Bambu Lab");
     // Bambu PLA Basic: no profile filed under it; "Generic PLA" is no match.
     await filament(card, "GFA00");
     expect(kSelect(card).value).toBe("-1");
-    expect([...kSelect(card).options].map((option) => option.text)).toEqual(["Printer's default (K 0.020)"]);
+    expect(kOptions(card)).toEqual(["Printer's default (K 0.020)"]);
   });
 
   it("keeps the slot's own K profile when the filament goes back to Keep", async () => {
@@ -712,8 +703,7 @@ describe("a slot's tools: K profile, chip, reset", () => {
 
   it("numbers a slot by its own number, also when another slot's sensor is disabled", async () => {
     const devices = idleX1c();
-    const ams = devices[1] as FakeDevice;
-    ams.entities = ams.entities.filter((entity) => entity.entityId !== "sensor.dev-x1c_ams_0_slot_2");
+    devices[1] = keepEntities(devices[1] as FakeDevice, (entity) => entity.entityId !== "sensor.dev-x1c_ams_0_slot_2");
     const { card } = await cardFor("x1c", { devices });
     await showView(card, "Filament");
     await editSlot(card, 1);
@@ -728,7 +718,7 @@ describe("a slot's tools: K profile, chip, reset", () => {
     const { card } = await cardFor("x1c", { devices: idleX1c(), callService: failing });
     await showView(card, "Filament");
     await editSlot(card, 2);
-    expect([...kSelect(card).options].map((option) => option.text)).toEqual(["Keep the slot's own", "Printer's default (K 0.020)"]);
+    expect(kOptions(card)).toEqual(["Keep the slot's own", "Printer's default (K 0.020)"]);
     expect(kSelect(card).value).toBe("keep");
     expect(text(find(card, "dialog .k-hint"))).toBe("The printer did not list its K profiles: the slot keeps its own.");
   });
@@ -739,15 +729,7 @@ describe("a slot's tools: K profile, chip, reset", () => {
     return undefined;
   };
   // The slot named as the integration names it (its Bambu Studio profile).
-  const named = (): FakeDevice[] => {
-    const all = idleX1c();
-    for (const entity of (all[1] as FakeDevice).entities) {
-      if (entity.entityId === SLOT_3 && "attributes" in entity && entity.attributes) entity.attributes = { ...entity.attributes, name: "Generic PLA" };
-    }
-    return all;
-  };
-  const kOptions = (card: FakeCard): string[] => [...kSelect(card).options].map((option) => option.text);
-  const kGroups = (card: FakeCard): string[] => [...kSelect(card).querySelectorAll("optgroup")].map((group) => group.label);
+  const named = (): FakeDevice[] => changeEntities(idleX1c(), (entity) => entity.entityId === SLOT_3, (entity) => ({ ...entity.attributes, name: "Generic PLA" }));
 
   it("names the K group as the Filament field does, kept or chosen", async () => {
     const { card } = await cardFor("x1c", { devices: named(), callService: ownK(3) });
@@ -808,7 +790,7 @@ describe("a slot's tools: K profile, chip, reset", () => {
     const { card } = await cardFor("x1c", { devices: idleX1c(), callService: own });
     await showView(card, "Filament");
     await editSlot(card, 2);
-    expect([...kSelect(card).options].map((option) => option.text)[0]).toBe("Keep K profile no. 7");
+    expect(kOptions(card)[0]).toBe("Keep K profile no. 7");
     expect(text(find(card, "dialog .k-hint"))).toBe("If unsure, leave this as it is.");
   });
 });

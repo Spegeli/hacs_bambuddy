@@ -16,7 +16,7 @@ import {
   withPlugs,
   x1c,
 } from "./fixtures";
-import { atRule, button, find, findAll, NBSP, press, settle, showView, styleText, text, update } from "./helpers";
+import { atRule, button, editSlot, find, findAll, NBSP, press, settle, showView, styleText, text, update } from "./helpers";
 
 afterEach(() => {
   document.body.innerHTML = "";
@@ -89,8 +89,7 @@ describe("dialogs, said whole", () => {
     const devices = idleX1c();
     const card = await mountCard(makeHass({ devices }), { printer: "dev-x1c" });
     await showView(card, "Filament");
-    (findAll(card, ".slot")[2]?.querySelector(".btn.edit") as HTMLButtonElement).click();
-    await settle(card);
+    await editSlot(card, 2);
     const select = find(card, "dialog select#fil-k") as HTMLSelectElement;
     // What the field holds, then its hint.
     const [about, hintId] = (select.getAttribute("aria-describedby") ?? "").split(" ");

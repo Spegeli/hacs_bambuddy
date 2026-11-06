@@ -28,14 +28,14 @@ from tests.conftest import (
     load_fixture,
     make_entry,
     past_the_minute,
-    printer_device,
+    printer_device_id,
     printer_serial,
     printers_but,
     set_up,
     setup_integration,
     try_set_up,
 )
-from tests.helpers import with_plugs
+from tests.helpers import with_inventory, with_plugs
 
 
 async def test_no_secret_reaches_the_diagnostics(hass: HomeAssistant, bambuddy_api: SimpleNamespace) -> None:
@@ -75,6 +75,19 @@ async def test_no_secret_reaches_the_diagnostics(hass: HomeAssistant, bambuddy_a
     assert diagnostics["printers"]["1"]["status"]["state"] == "RUNNING"
 
 
+async def test_no_job_name_reaches_the_diagnostics(hass: HomeAssistant, bambuddy_api: SimpleNamespace) -> None:
+    """A file's name is the user's own words too; the printer's name stays."""
+    bambuddy_api.statuses[X1C].update(subtask_name="Secret_Bracket", gcode_file="/data/Secret_Bracket.gcode", current_print="Secret_Bracket")
+    entry = await set_up(hass, X1C)
+
+    diagnostics = await async_get_config_entry_diagnostics(hass, entry)
+
+    status = diagnostics["printers"]["1"]["status"]
+    assert {status[field] for field in ("subtask_name", "gcode_file", "current_print")} == {"**REDACTED**"}
+    assert status["name"] != "**REDACTED**"
+    assert "Secret_Bracket" not in json.dumps(diagnostics)
+
+
 async def test_no_place_or_plug_name_reaches_the_diagnostics(hass: HomeAssistant, bambuddy_api: SimpleNamespace) -> None:
     """A printer's location is the user's own text (a room, an address), a
     plug's device name the switch's or the Home Assistant entity's name: the
@@ -99,7 +112,7 @@ async def test_no_place_or_plug_name_reaches_the_diagnostics(hass: HomeAssistant
 async def test_a_printers_device_diagnostics(hass: HomeAssistant, bambuddy_api: SimpleNamespace) -> None:
     entry = await set_up(hass, X1C, H2D)
     registry = dr.async_get(hass)
-    printer = registry.async_get(device_id(hass, entry, printer_device(entry, H2D)))
+    printer = registry.async_get(printer_device_id(hass, entry, H2D))
     instance = registry.async_get(device_id(hass, entry, entry.entry_id))
     assert printer is not None and instance is not None
 
@@ -133,8 +146,7 @@ async def test_the_diagnostics_tell_the_live_connection(hass: HomeAssistant, bam
 async def test_the_diagnostics_tell_the_inventory(hass: HomeAssistant, bambuddy_api: SimpleNamespace) -> None:
     """Whether the inventory is shown and which spool sits where -- by numbers:
     no spool name, no owner's note."""
-    bambuddy_api.get_spools.return_value = load_fixture("inventory_spools.json")
-    bambuddy_api.get_spool_assignments.return_value = load_fixture("inventory_assignments.json")
+    with_inventory(bambuddy_api)
     entry = await set_up(hass, X1C)
 
     diagnostics = await async_get_config_entry_diagnostics(hass, entry)
@@ -189,9 +201,7 @@ async def test_the_download_names_no_serial_through_the_repairs(
     entry = make_entry(hass, X1C, A1_MINI)
     bambuddy_api.get_printers.return_value = printers_but(A1_MINI)
     await setup_integration(hass, entry)
-    workshop = dr.async_get(hass).async_get(device_id(hass, entry, printer_device(entry, X1C)))
-    assert workshop is not None
-    dr.async_get(hass).async_update_device(workshop.id, name_by_user="My printer")
+    dr.async_get(hass).async_update_device(printer_device_id(hass, entry), name_by_user="My printer")
     await past_the_minute(hass, freezer)
     assert await async_setup_component(hass, "diagnostics", {})
     client = await hass_client()
@@ -207,7 +217,7 @@ async def test_the_download_names_no_serial_through_the_repairs(
 async def test_device_diagnostics_of_an_entry_that_did_not_load(hass: HomeAssistant, bambuddy_api: SimpleNamespace) -> None:
     """The entry's part then, without a secret."""
     entry = await set_up(hass, X1C)
-    device = dr.async_get(hass).async_get(device_id(hass, entry, printer_device(entry, X1C)))
+    device = dr.async_get(hass).async_get(printer_device_id(hass, entry))
     assert device is not None
     await hass.config_entries.async_unload(entry.entry_id)
     await hass.async_block_till_done()

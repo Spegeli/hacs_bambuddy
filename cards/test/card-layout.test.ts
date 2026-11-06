@@ -12,16 +12,16 @@ import {
   mountCard,
   offlineP1s,
   p1s,
-  plugDevice,
   readOnlyX1c,
   unreachable,
+  withPlugs,
   x1c,
   type FakeCard,
   type FakeDevice,
   type FakeHass,
 } from "./fixtures";
-import { atRule, button, declarations, find, findAll, hasButton, NBSP, press, root, settle, showView, styleText, text, update } from "./helpers";
-import { cardFor, loadButtons, mountPreview, previewOf, samples, useCardPage, withX1c } from "./card-helpers";
+import { atRule, button, declarations, find, findAll, hasButton, moreInfoIds, NBSP, press, root, settle, showView, styleText, text, update } from "./helpers";
+import { cardFor, keyPress, loadButtons, mountPreview, previewOf, samples, useCardPage, withX1c } from "./card-helpers";
 
 useCardPage();
 
@@ -87,8 +87,7 @@ describe("drawing again", () => {
   it("with an AMS unit plugged in again or unplugged, though the registries stay as they were", async () => {
     const [printer, ams] = x1c() as [FakeDevice, FakeDevice];
     const gone = amsDevice({ printer, amsId: 1, model: "AMS", slots: [{ name: "PLA Basic", type: "PLA", color: "#FF0000", trayId: 4 }], online: false });
-    const hass = makeHass({ devices: [printer, ams, gone] });
-    const card = await mountCard(hass, { printer: "dev-x1c" });
+    const { card, hass } = await cardFor("x1c", { devices: [printer, ams, gone] });
     // Unplugged: every slot of the unit unavailable while the printer is online.
     expect(findAll(card, ".ams-name").map(text)).toEqual(["AMS A", "Ext"]);
     // Plugged in again: its slot reports a filament.
@@ -137,7 +136,7 @@ describe("in German", () => {
     const { card } = await cardFor("x1c", { language: "de" });
     expect(text(find(card, ".state"))).toBe("Druckt");
     expect(findAll(card, ".meta span").map(text)).toEqual(["Schicht 123 / 250", "noch 1 Std. 23 Min.", "Ende 14:35"]);
-    expect(findAll(card, ".ctl-buttons .btn").map(text)).toEqual(["Druck pausieren", "Druck stoppen", "Objekte überspringen"]);
+    expect(findAll(card, ".ctl-buttons .btn").map(text)).toEqual(["Druck pausieren", "Druck abbrechen", "Objekte überspringen"]);
     expect(text(find(card, ".speed-label"))).toBe("Druckgeschwindigkeit");
     expect(findAll(card, ".speed .opt").map(text)).toEqual(["Leise", "Standard", "Sport", "Ludicrous"]);
   });
@@ -172,7 +171,7 @@ describe("the card the user composes", () => {
   /** A chip's kind, by the class that names it. */
   const chipKind = (pill: Element): string | undefined => [...pill.classList].find((name) => (HEADER_CHIPS as readonly string[]).includes(name));
 
-  it("shows only the chips the user chose, in their order, and an HMS error whatever they are", async () => {
+  it("shows only the chips the user chose, in their order, and an HMS message whatever they are", async () => {
     const { card } = await cardFor("x1c", { config: { header_chips: ["firmware"] } });
     expect(findAll(card, ".pill").map((pill) => chipKind(pill))).toEqual(["firmware"]);
     const { card: ordered } = await cardFor("p1s");
@@ -210,8 +209,7 @@ describe("the card the user composes", () => {
     expect(findAll(card, "[role=tab]").map(text)).toEqual(["Status", "Control", "Filament"]);
     expect(findAll(card, ".note")).toHaveLength(0);
     // A temperature opens its sensor -- not its target, which could be set there.
-    const opened: string[] = [];
-    card.addEventListener("hass-more-info", (event) => opened.push((event as CustomEvent<{ entityId: string }>).detail.entityId));
+    const opened = moreInfoIds(card);
     findAll<HTMLButtonElement>(card, ".temp")[0]?.click();
     expect(opened).toEqual(["sensor.x1c_nozzle_temperature"]);
     await showView(card, "Filament");
@@ -402,7 +400,7 @@ describe("a press that takes its own control away", () => {
     const { card, hass } = await withX1c({ status: "finished", stage: "idle", progress: 100, remaining: 0, plateClearNeeded: true });
     const plate = button(card, "Plate cleared");
     plate.focus();
-    plate.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true, composed: true }));
+    keyPress(plate, "Enter");
     plate.click();
     await settle(card);
     await update(card, hass.withState("binary_sensor.x1c_plate_clear_needed", "off"));
@@ -583,7 +581,7 @@ describe("the preview in the editor", () => {
       edited.push(card);
     }
     // The offline printer's Control tab as on the dashboard.
-    expect(text(find(edited[1] as FakeCard, ".job .job-info"))).toBe("The printer is offline. Check that it is switched on and connected to BamBuddy.");
+    expect(text(find(edited[1] as FakeCard, ".job .job-info"))).toBe("The printer is offline. Check that it is turned on and connected to BamBuddy.");
   });
 });
 
@@ -634,13 +632,12 @@ describe("the preview's examples", () => {
 
 describe("the editor's preview of an offline printer's Power block", () => {
   it("shows it as it is: the plugs the card shows now are no example", async () => {
-    const devices = offlineP1s();
-    const printer = devices[0] as FakeDevice;
-    const card = await previewOf("offline", { status_blocks: ["power"] }, "en", [
-      ...devices,
-      plugDevice({ printer, id: 5, name: "Steckdose Garage", state: "off" }),
-      plugDevice({ printer, id: 2, name: "Abluft", state: "on", watts: 30, powersPrinter: false }),
-    ]);
+    const card = await previewOf(
+      "offline",
+      { status_blocks: ["power"] },
+      "en",
+      withPlugs(offlineP1s(), { id: 5, name: "Steckdose Garage", state: "off" }, { id: 2, name: "Abluft", state: "on", watts: 30, powersPrinter: false }),
+    );
     expect(samples(card)).toEqual([]);
     expect(findAll(card, ".power .p-row").map(text)).toEqual([`Abluft On · 30${NBSP}W`]);
   });

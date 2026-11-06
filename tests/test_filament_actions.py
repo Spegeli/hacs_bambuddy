@@ -11,7 +11,6 @@ from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import ServiceValidationError
 
 from custom_components.bambuddy import services
-from custom_components.bambuddy.const import DOMAIN
 
 from tests.conftest import (
     A1_MINI,
@@ -19,20 +18,35 @@ from tests.conftest import (
     P1S,
     X1C,
     ams_uid,
-    as_model,
     entity_id,
     load_fixture,
-    make_entry,
     next_refresh,
     printer_uid,
     set_up,
-    setup_integration,
 )
-from tests.helpers import call_action
+from tests.helpers import as_model, call_action
 
 
 async def _get_k_profiles(hass: HomeAssistant, slot: str) -> Any:
-    return await call_action(hass, "get_k_profiles", response=True, entity_id=slot)
+    return await call_action(hass, "get_k_profiles", response=True, entity_id=entity_id(hass, "sensor", slot))
+
+
+async def _slot_action(hass: HomeAssistant, action: str, slot: str) -> None:
+    await call_action(hass, action, entity_id=entity_id(hass, "sensor", slot))
+
+
+async def _set_filament(hass: HomeAssistant, slot: str, **data: Any) -> None:
+    await call_action(hass, "set_filament", entity_id=entity_id(hass, "sensor", slot), **data)
+
+
+async def _get_filaments(hass: HomeAssistant, slot: str) -> dict[str, Any]:
+    response = await call_action(hass, "get_filaments", response=True, entity_id=entity_id(hass, "sensor", slot))
+    assert isinstance(response, dict)
+    return response
+
+
+def _offered(response: dict[str, Any]) -> set[str]:
+    return {item["id"] for vendor in response["vendors"] for item in vendor["filaments"]}
 
 
 async def test_setting_a_colour_on_an_offline_printer_says_offline(
@@ -73,7 +87,7 @@ async def test_a_slots_k_profiles(hass: HomeAssistant, bambuddy_api: SimpleNames
     slot's own one named."""
     entry = await set_up(hass, X1C)
 
-    response = await _get_k_profiles(hass, entity_id(hass, "sensor", ams_uid(entry, 0, "slot_2")))
+    response = await _get_k_profiles(hass, ams_uid(entry, 0, "slot_2"))
 
     bambuddy_api.get_kprofiles.assert_awaited_once_with(X1C, "0.4")
     assert response == {
@@ -94,7 +108,7 @@ async def test_an_empty_answer_at_once_is_the_printers_answer(hass: HomeAssistan
     bambuddy_api.get_kprofiles.return_value = []
     entry = await set_up(hass, A1_MINI)
 
-    response = await _get_k_profiles(hass, entity_id(hass, "sensor", ams_uid(entry, 0, "slot_2", A1_MINI)))
+    response = await _get_k_profiles(hass, ams_uid(entry, 0, "slot_2", A1_MINI))
 
     assert response is not None
     assert (response["profiles"], response["answered"]) == ([], True)
@@ -108,7 +122,7 @@ async def test_an_empty_list_after_bambuddys_retries_is_no_answer(
     within about 11 s."""
     bambuddy_api.get_kprofiles.return_value = []
     entry = await set_up(hass, A1_MINI)
-    slot = entity_id(hass, "sensor", ams_uid(entry, 0, "slot_2", A1_MINI))
+    slot = ams_uid(entry, 0, "slot_2", A1_MINI)
     clock = iter([100.0, 116.2, 200.0, 213.9])
     monkeypatch.setattr(services, "_monotonic", lambda: next(clock))
 
@@ -124,7 +138,7 @@ async def test_bambuddys_504_is_no_answer(hass: HomeAssistant, bambuddy_api: Sim
     client gives as None: no profiles, not answered -- however fast."""
     bambuddy_api.get_kprofiles.return_value = None
     entry = await set_up(hass, A1_MINI)
-    slot = entity_id(hass, "sensor", ams_uid(entry, 0, "slot_2", A1_MINI))
+    slot = ams_uid(entry, 0, "slot_2", A1_MINI)
 
     response = await _get_k_profiles(hass, slot)
 
@@ -139,7 +153,7 @@ async def test_a_two_nozzle_printers_k_profiles_are_its_nozzles(hass: HomeAssist
     """The H2D's AMS HT feeds the left nozzle: its calibrations only."""
     entry = await set_up(hass, H2D)
 
-    response = await _get_k_profiles(hass, entity_id(hass, "sensor", ams_uid(entry, 128, "slot_1", H2D)))
+    response = await _get_k_profiles(hass, ams_uid(entry, 128, "slot_1", H2D))
 
     assert response["profiles"] == [  # type: ignore[index]
         {"index": 1, "name": "Generic ABS", "k_value": 0.024, "filament_id": "GFB99", "nozzle": "left"}
@@ -180,10 +194,6 @@ async def test_a_k_profile_the_printer_does_not_have_is_refused(hass: HomeAssist
 
     assert raised.value.translation_key == "k_profile_unknown"
     bambuddy_api.configure_slot.assert_not_awaited()
-
-
-async def _slot_action(hass: HomeAssistant, action: str, unique_id: str) -> None:
-    await hass.services.async_call(DOMAIN, action, {"entity_id": entity_id(hass, "sensor", unique_id)}, blocking=True)
 
 
 async def test_resetting_a_slot(hass: HomeAssistant, bambuddy_api: SimpleNamespace) -> None:
@@ -259,7 +269,7 @@ async def test_a_unit_on_both_nozzles_gets_every_k_profile(hass: HomeAssistant, 
     bambuddy_api.statuses[H2D]["ams_extruder_map"] = {}
     entry = await set_up(hass, H2D)
 
-    response = await _get_k_profiles(hass, entity_id(hass, "sensor", ams_uid(entry, 0, "slot_1", H2D)))
+    response = await _get_k_profiles(hass, ams_uid(entry, 0, "slot_1", H2D))
 
     assert [item["nozzle"] for item in response["profiles"]] == [None, None, None, None]  # type: ignore[index,union-attr]
 
@@ -268,7 +278,7 @@ async def test_a_k_profile_just_listed_is_set_without_asking_again(hass: HomeAss
     """The printer may not answer a second time (BamBuddy then
     gives an empty list after 16 s); the list the card showed holds."""
     entry = await set_up(hass, A1_MINI)
-    slot = entity_id(hass, "sensor", ams_uid(entry, 0, "slot_2", A1_MINI))
+    slot = ams_uid(entry, 0, "slot_2", A1_MINI)
     await _get_k_profiles(hass, slot)
     bambuddy_api.get_kprofiles.return_value = []
 
@@ -304,7 +314,7 @@ async def test_profiles_that_came_late_are_an_answer(
     clock = iter([100.0, 117.0])
     monkeypatch.setattr(services, "_monotonic", lambda: next(clock))
 
-    response = await _get_k_profiles(hass, entity_id(hass, "sensor", ams_uid(entry, 0, "slot_2", A1_MINI)))
+    response = await _get_k_profiles(hass, ams_uid(entry, 0, "slot_2", A1_MINI))
 
     assert response is not None and response["profiles"] and response["answered"] is True
 
@@ -317,12 +327,6 @@ async def test_a_chip_is_read_in_a_pause_with_nothing_loaded(hass: HomeAssistant
     await _slot_action(hass, "refresh_rfid", ams_uid(entry, 0, "slot_2", P1S))
 
     bambuddy_api.refresh_rfid.assert_awaited_once_with(P1S, 0, 1)
-
-
-async def _set_filament(hass: HomeAssistant, slot: str, **data: Any) -> None:
-    await hass.services.async_call(
-        DOMAIN, "set_filament", {"entity_id": entity_id(hass, "sensor", slot), **data}, blocking=True
-    )
 
 
 async def test_a_new_colour_keeps_the_slot_s_filament(hass: HomeAssistant, bambuddy_api: SimpleNamespace) -> None:
@@ -503,18 +507,6 @@ async def test_a_colour_alone_keeps_a_foreign_id(
     assert (kwargs["tray_info_idx"], kwargs["setting_id"]) == ("GFNLS03", "")
 
 
-async def _get_filaments(hass: HomeAssistant, slot: str) -> dict[str, Any]:
-    response = await hass.services.async_call(
-        DOMAIN, "get_filaments", {"entity_id": entity_id(hass, "sensor", slot)}, blocking=True, return_response=True
-    )
-    assert isinstance(response, dict)
-    return response
-
-
-def _offered(response: dict[str, Any]) -> set[str]:
-    return {item["id"] for vendor in response["vendors"] for item in vendor["filaments"]}
-
-
 async def test_get_filaments_answers_the_slots_offer(hass: HomeAssistant, bambuddy_api: SimpleNamespace) -> None:
     entry = await set_up(hass, A1_MINI)
 
@@ -654,8 +646,7 @@ async def test_the_external_spool_gets_its_filament(
     """The spool on the holder: BamBuddy's AMS 255, left 0, right 1 -- with
     the diameter of the nozzle it feeds (an H2D's left nozzle: 0.6 mm here;
     BamBuddy's nozzles[0] is the right one)."""
-    entry = make_entry(hass, printer_id)
-    await setup_integration(hass, entry)
+    entry = await set_up(hass, printer_id)
     if printer_id == H2D:
         bambuddy_api.statuses[H2D]["nozzles"][1]["nozzle_diameter"] = "0.6"
         await next_refresh(hass, freezer)
@@ -688,8 +679,7 @@ async def test_a_slot_that_cannot_take_a_filament(
     data: dict[str, Any],
     refusal: str,
 ) -> None:
-    entry = make_entry(hass, printer_id)
-    await setup_integration(hass, entry)
+    entry = await set_up(hass, printer_id)
     bambuddy_api.statuses[printer_id].update(change)
     await next_refresh(hass, freezer)
 

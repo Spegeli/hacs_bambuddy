@@ -63,7 +63,7 @@ describe("texts in a state's colour", () => {
   const mix = (a: Rgb, b: Rgb, share: number): Rgb => a.map((value, index) => share * value + (1 - share) * (b[index] as number));
   /** The share of a rule's color-mix: `property: color-mix(in srgb, var(--x) N%, ...)`. */
   const share = (selector: string, property: string, variable: string): number => {
-    const found = new RegExp(`(^|[}/])\\s*${selector}\\s*\\{[^}]*${property}: color-mix\\(in srgb, var\\(${variable}\\) (\\d+)%`).exec(styleText());
+    const found = ownRule(selector, `${property}: color-mix\\(in srgb, var\\(${variable}\\) (\\d+)%`).exec(styleText());
     expect(found, `${selector} ${property}`).not.toBeNull();
     return Number(found?.[2]) / 100;
   };
@@ -161,8 +161,6 @@ describe("the dialogs", () => {
 });
 
 describe("the layout of a narrow card and on a touch screen", () => {
-  /** A rule of a style sheet's part: its selector right after a rule or the start. */
-
   it("puts a notice's button below its text where both do not fit side by side", () => {
     const sheet = styleText();
     expect(declarations(".callout", sheet)).toContain("flex-wrap: wrap");

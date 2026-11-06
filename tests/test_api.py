@@ -2,7 +2,6 @@
 what becomes of BamBuddy's answer."""
 from __future__ import annotations
 
-import asyncio
 import logging
 from typing import Any, cast
 from unittest.mock import AsyncMock, patch
@@ -26,6 +25,7 @@ from custom_components.bambuddy.api import (
 )
 
 from tests.conftest import API_KEY, SHORT_KEYS, STREAM_TOKEN, URL, load_fixture
+from tests.helpers import handshake_refusal, never_answers
 
 API = f"{URL}/api/v1"
 
@@ -106,6 +106,7 @@ async def test_the_version_is_read_without_the_key(
         ("get_maintenance", (1,), "GET", f"{API}/maintenance/printers/1"),
         ("get_diagnostic", (1,), "GET", f"{API}/printers/1/diagnostic"),
         ("get_spoolman_status", (), "GET", f"{API}/spoolman/status"),
+        ("get_plug_status", (3,), "GET", f"{API}/smart-plugs/3/status"),
     ],
 )
 async def test_each_read_reaches_its_path_with_the_key(
@@ -510,22 +511,17 @@ async def test_the_smart_plugs_are_read(hass: HomeAssistant, aioclient_mock: Aio
     assert await _client(hass).get_smart_plugs() == [{"id": 3, "name": "X1C plug", "printer_id": 1}]
 
 
+async def test_an_entry_that_is_no_plug_with_a_number_is_left_out(hass: HomeAssistant, aioclient_mock: AiohttpClientMocker) -> None:
+    aioclient_mock.get(f"{API}/smart-plugs/", json=[{"id": 3}, "odd", {"name": "no id"}, {"id": "4"}])
+
+    assert await _client(hass).get_smart_plugs() == [{"id": 3}]
+
+
 async def test_a_plug_list_that_is_no_list_is_refused(hass: HomeAssistant, aioclient_mock: AiohttpClientMocker) -> None:
     aioclient_mock.get(f"{API}/smart-plugs/", json={"detail": "odd"})
 
     with pytest.raises(BamBuddyApiError):
         await _client(hass).get_smart_plugs()
-
-
-async def test_a_plugs_status_may_take_half_a_minute(hass: HomeAssistant) -> None:
-    """BamBuddy asks the plug itself: a Home Assistant plug with energy
-    sensors takes several calls of up to ten seconds each."""
-    client = _client(hass)
-    with patch.object(client, "_request", AsyncMock(return_value={"state": "ON", "reachable": True})) as request:
-        assert await client.get_plug_status(3) == {"state": "ON", "reachable": True}
-
-    assert request.await_args is not None
-    assert request.await_args.args == ("GET", "/smart-plugs/3/status")
 
 
 @pytest.mark.parametrize(("on", "action"), [(True, "on"), (False, "off")])
@@ -747,9 +743,9 @@ class _Session:
         self.closed = closed
 
 
-def _socket_client(ws_connect: AsyncMock, *, closed: bool = False) -> BamBuddyClient:
+def _socket_client(ws_connect: AsyncMock, *, closed: bool = False, url: str = URL) -> BamBuddyClient:
     """A client whose session only opens sockets."""
-    return BamBuddyClient(URL, API_KEY, cast(aiohttp.ClientSession, _Session(ws_connect, closed=closed)))
+    return BamBuddyClient(url, API_KEY, cast(aiohttp.ClientSession, _Session(ws_connect, closed=closed)))
 
 
 async def test_the_live_token(hass: HomeAssistant, aioclient_mock: AiohttpClientMocker) -> None:
@@ -785,7 +781,7 @@ async def test_the_socket_opens_with_the_token(url: str) -> None:
     socket = object()
     ws_connect = AsyncMock(return_value=socket)
 
-    assert await BamBuddyClient(url, API_KEY, _Session(ws_connect)).open_socket("abc") is socket  # type: ignore[arg-type]
+    assert await _socket_client(ws_connect, url=url).open_socket("abc") is socket
 
     ws_connect.assert_awaited_once()
     assert ws_connect.await_args is not None
@@ -839,10 +835,5 @@ async def test_no_socket_once_the_session_closed() -> None:
 
 async def test_a_handshake_that_hangs_gives_up() -> None:
     """aiohttp's own limit for the upgrade is the session's five minutes."""
-
-    async def hang(*_args: Any, **_kwargs: Any) -> None:
-        await asyncio.Event().wait()
-
     with patch("custom_components.bambuddy.api._WS_HANDSHAKE_TIMEOUT", 0.01), pytest.raises(BamBuddyConnectionError):
-        await _socket_client(AsyncMock(side_effect=hang)).open_socket("abc")
-from tests.helpers import handshake_refusal
+        await _socket_client(AsyncMock(side_effect=never_answers)).open_socket("abc")

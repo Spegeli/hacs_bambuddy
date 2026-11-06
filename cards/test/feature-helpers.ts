@@ -1,26 +1,6 @@
 // The helpers features, maintenance-check and ams-strip tests share: a mounted card, its chips, its menu.
-import {
-  mountFor,
-  x1c,
-  type FakeCard,
-  type FakeDevice,
-  type FakeHassOptions,
-  type Mounted,
-  type PrinterSpec,
-} from "./fixtures";
+import type { FakeCard } from "./fixtures";
 import { find, findAll, text } from "./helpers";
-
-export async function mount(
-  devices: FakeDevice[],
-  printer: string,
-  config: Record<string, unknown> = {},
-  options: { language?: string; callService?: FakeHassOptions["callService"] } = {},
-): Promise<Mounted> {
-  return mountFor(devices, printer, config, options);
-}
-
-export const withX1c = (overrides: Partial<PrinterSpec>, config: Record<string, unknown> = {}, language = "en"): Promise<Mounted> =>
-  mount(x1c(overrides), "dev-x1c", config, { language });
 
 export const chips = (card: FakeCard): string[] => findAll(card, ".pills .pill").map(text);
 
