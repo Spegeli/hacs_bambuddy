@@ -54,15 +54,33 @@ type FilamentActions = Pick<
   | "unassign"
 >;
 
+/** How long after a search or filter the list says what it found. */
+const LIST_SAID_AFTER = 1000;
+
 export class FilamentSession {
   private kSlowTimer?: ReturnType<typeof setTimeout>;
   /** The slot dialog's opens, counted: each its own answers. */
   private asks = 0;
 
+  private listTimer?: ReturnType<typeof setTimeout>;
+
   constructor(private readonly host: FilamentHost) {}
 
+  /** A dialog another card left, here anew: a fresh ask -- what the old card
+   * was still waiting for answers it, not this one. */
+  askAgain(left: FilamentDialog): void {
+    const ask = this.nextAsk();
+    this.host.setDialog({ ...left, ask });
+    if (left.offer === "loading") void this.loadOffer(left.entityId, ask);
+    if (left.kprofiles === "loading") {
+      void this.loadKProfiles(left.entityId, ask);
+      this.armKSlow(left.entityId, ask);
+    }
+    if (left.spools === "loading") void this.loadSpools(left.entityId, ask);
+  }
+
   /** A new ask: what an earlier open still waits for answers that one, not this. */
-  nextAsk(): number {
+  private nextAsk(): number {
     return ++this.asks;
   }
 
@@ -101,7 +119,7 @@ export class FilamentSession {
   }
 
   /** The K field says the printer is slow once K_SLOW_MS passed without its profiles. */
-  armKSlow(entityId: string, ask: number): void {
+  private armKSlow(entityId: string, ask: number): void {
     clearTimeout(this.kSlowTimer);
     this.kSlowTimer = setTimeout(() => this.markKSlow(entityId, ask), K_SLOW_MS);
   }
@@ -114,7 +132,7 @@ export class FilamentSession {
     void this.loadSpools(dialog.entityId, ask);
   }
 
-  async loadSpools(entityId: string, ask: number): Promise<void> {
+  private async loadSpools(entityId: string, ask: number): Promise<void> {
     // Asked once more on its own, as BamBuddy's own page does: a moment's
     // hiccup then never shows.
     let found: FilamentDialog["spools"] = "failed";
@@ -139,6 +157,22 @@ export class FilamentSession {
     }
   }
 
+  /** The list changed by a search or filter: it starts at its top, and says
+   * what it found once the typing paused. */
+  private listChanged(open: FilamentDialog): void {
+    clearTimeout(this.listTimer);
+    this.listTimer = setTimeout(() => this.placeAnswer(open.entityId, open.ask, (dialog) => ({ ...dialog, listSaid: true })), LIST_SAID_AFTER);
+    void this.host.updateComplete().then(() => {
+      const list = this.host.root().querySelector<HTMLElement>("dialog .inv-list");
+      if (list) list.scrollTop = 0;
+    });
+  }
+
+  /** The dialog ends: nothing is said into the next one. */
+  stop(): void {
+    clearTimeout(this.listTimer);
+  }
+
   /** The printer has not answered for a while: the K field says BamBuddy
    * asks again -- also in a dialog a question parked meanwhile. */
   private markKSlow(entityId: string, ask: number): void {
@@ -147,13 +181,13 @@ export class FilamentSession {
   }
 
   /** The slot dialog of this open: a late answer to an earlier one stays out. */
-  private isAsk(dialog: Dialog | undefined, entityId: string, ask: number): dialog is FilamentDialog {
+  private isAsk(dialog: Dialog | undefined, entityId: string, ask: number | undefined): dialog is FilamentDialog {
     return dialog?.kind === "filament" && dialog.entityId === entityId && dialog.ask === ask;
   }
 
   /** An answer for this open goes into its dialog where it shows, and into
    * the one a question parked; whether the dialog shown took it. */
-  private placeAnswer(entityId: string, ask: number, change: (open: FilamentDialog) => FilamentDialog): boolean {
+  private placeAnswer(entityId: string, ask: number | undefined, change: (open: FilamentDialog) => FilamentDialog): boolean {
     const dialog = this.host.dialog();
     const shown = this.isAsk(dialog, entityId, ask);
     if (shown) this.host.setDialog(change(dialog));
@@ -164,7 +198,7 @@ export class FilamentSession {
 
   /** What Bambu Studio offers the open filament dialog's slot: the slot's
    * own profile placed under its vendor once it comes. */
-  async loadOffer(entityId: string, ask: number): Promise<void> {
+  private async loadOffer(entityId: string, ask: number): Promise<void> {
     let found: FilamentDialog["offer"];
     try {
       found = (await filamentOffer(this.host.hass(), entityId)) ?? "failed";
@@ -182,7 +216,7 @@ export class FilamentSession {
 
   /** The printer's K profiles for the open filament dialog's slot: none
    * where the printer gives none, or the call fails. */
-  async loadKProfiles(entityId: string, ask: number): Promise<void> {
+  private async loadKProfiles(entityId: string, ask: number): Promise<void> {
     let found: FilamentDialog["kprofiles"];
     try {
       found = await kProfiles(this.host.hass(), entityId);
@@ -306,7 +340,7 @@ export class FilamentSession {
     filterSpools: (field: "vendor" | "material" | "location", value: string) => {
       const dialog = this.host.dialog();
       if (dialog?.kind !== "filament") return;
-      const { vendorFilter: _vendor, materialFilter: _material, locationFilter: _location, scanned: _scanned, scanUnknown: _unknown, ...rest } = dialog;
+      const { vendorFilter: _vendor, materialFilter: _material, locationFilter: _location, scanned: _scanned, scanUnknown: _unknown, listSaid: _said, ...rest } = dialog;
       const vendorFilter = field === "vendor" ? value : dialog.vendorFilter;
       const materialFilter = field === "material" ? value : dialog.materialFilter;
       const locationFilter = field === "location" ? value : dialog.locationFilter;
@@ -316,12 +350,14 @@ export class FilamentSession {
         ...(materialFilter ? { materialFilter } : {}),
         ...(locationFilter ? { locationFilter } : {}),
       });
+      this.listChanged(dialog);
     },
     searchSpools: (text: string) => {
       const dialog = this.host.dialog();
       if (dialog?.kind !== "filament") return;
-      const { scanned: _scanned, scanUnknown: _unknown, searchByScan: _byScan, ...rest } = dialog;
+      const { scanned: _scanned, scanUnknown: _unknown, searchByScan: _byScan, listSaid: _said, ...rest } = dialog;
       this.host.setDialog({ ...rest, search: text });
+      this.listChanged(dialog);
     },
     toggleFilters: () => {
       const dialog = this.host.dialog();

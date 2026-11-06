@@ -83,8 +83,8 @@ export type Dialog = ({ kind: "confirm" } & Confirmation) | DryingDialog | SkipD
 
 export type { CheckDialog, MaintenanceDialog };
 
-/** What the dialogs call: the card's own, then the slot dialog's
- * (filament-session.ts), then the label scan's (scan-session.ts); the
+/** What the dialogs call: the card's own (card.ts, card-dialogs.ts), then
+ * the slot dialog's (filament-session.ts), then the label scan's (scan-session.ts); the
  * maintenance and check dialogs' own members come with their types. */
 export interface DialogActions extends MaintenanceActions, CheckActions {
   // The card's.

@@ -81,6 +81,8 @@ export interface FilamentDialog {
   kSlow?: boolean;
   /** This open of the dialog: answers to an earlier one go elsewhere. */
   ask?: number;
+  /** A search or filter paused: the list says what it found. */
+  listSaid?: boolean;
   /** The K profile chosen: KEEP, "-1" the default, or a profile's index. */
   kprofile?: string;
   /** Which way the slot is set: its filament, or a spool of BamBuddy's inventory. */
@@ -241,11 +243,12 @@ function kField(hass: Hass, dialog: FilamentDialog, actions: DialogActions): Tem
   const state = dialog.kprofiles;
   const profiles = typeof state === "object" ? state.profiles : [];
   const current = typeof state === "object" ? state.current : -1;
-  const kept = keeping(dialog) && chosenFilament(dialog) === undefined;
+  const chosen = chosenFilament(dialog);
+  const kept = keeping(dialog) && chosen === undefined;
   const id = profileId(dialog);
   const matching = id === undefined ? [] : profiles.filter((profile) => profile.filamentId === id);
   // As the Filament field names it, kept or chosen; the slot's own name where the offer lacks it.
-  const name = chosenFilament(dialog)?.name ?? keptName(dialog) ?? dialog.keep ?? "";
+  const name = chosen?.name ?? keptName(dialog) ?? dialog.keep ?? "";
   const label = (profile: KProfile): string => `${profile.name} (K ${formatFixed(hass, profile.k, 3)})`;
   const listed = kept ? profiles.find((profile) => profile.index === current) : undefined;
   // The slot's own: by its name, by its number where the printer did not
@@ -311,7 +314,7 @@ export const selectValue = directive(SelectValue);
  * the vendor field where the offer lacks it (a user's own, an unknown id). */
 function filamentFields(hass: Hass, dialog: FilamentDialog, actions: DialogActions): TemplateResult {
   const offer = dialog.offer;
-  if (typeof offer === "object" && offer.vendors.length === 0) return dialogNote(t(hass, "offer_empty"));
+  if (noOffer(dialog)) return dialogNote(t(hass, "offer_empty"));
   const vendors = typeof offer === "object" ? offer.vendors : [];
   const own = ownVendor(dialog);
   // The slot's filament in the vendor field: its profile is not in the offer (or the offer not here).
@@ -384,7 +387,7 @@ function slotTools(ctx: CardContext, dialog: FilamentDialog, actions: DialogActi
     ? t(hass, "rfid_unload_hint", { slots: slot })
     : spool < 0
       ? undefined
-      : t(hass, refs.externalSpools.length > 1 ? (spool === 0 ? "rfid_unload_hint_left" : "rfid_unload_hint_right") : "rfid_unload_hint_external");
+      : t(hass, refs.externalSpools.length > 1 ? `rfid_unload_hint_${sideAt(spool)}` : "rfid_unload_hint_external");
   return html`<div class="slot-tools">
       ${dialog.ams ? actionButton({ label: t(hass, "rfid_read"), iconName: "sync", disabled: running || unloadFirst !== undefined, onClick: actions.refreshRfid }) : nothing}
       ${dialog.empty

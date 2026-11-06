@@ -24,7 +24,7 @@ import {
 } from "./format";
 import { icon } from "./icons";
 import { t, type TextKey } from "./i18n";
-import { actionButton, hottestNozzle, noData, note, radioKeys, radioLeave, radioStop, stateWord, stepControl, switchButton, type CardContext, type Confirmation } from "./parts";
+import { actionButton, hottestNozzle, noData, note, radioKeys, radioLeave, radioStop, sideAt, stateWord, stepControl, switchButton, type CardContext, type Confirmation } from "./parts";
 import type { Hass, PlugRefs } from "./types";
 
 /** How long the card counts after the printer's plug went on, before it
@@ -79,9 +79,6 @@ const plugState = (ctx: CardContext, plug: PlugRefs): string => stateOf(ctx.hass
 /** The card switches plugs: not Hide controls (each caller checks that the
  * plug has a switch). */
 const canSwitch = (ctx: CardContext): boolean => !ctx.settings.readOnly;
-
-/** The hot-nozzle note: of two nozzles, the side (left first). */
-const HOT_NOTES: TextKey[] = ["plug_off_hot_left", "plug_off_hot_right"];
 
 /** What a wait waits for, in the card's words (the nozzle: its temperature). */
 const WAITING: Record<string, TextKey> = {
@@ -173,7 +170,7 @@ function offQuestion(ctx: CardContext, plug: PlugRefs): Confirmation {
     text: t(hass, "plug_off_text_printer", { plug: plug.name }),
     ...(hot
       ? {
-          note: t(hass, ctx.refs.nozzles.length > 1 ? (HOT_NOTES[hot.index] as TextKey) : "plug_off_hot", {
+          note: t(hass, ctx.refs.nozzles.length > 1 ? `plug_off_hot_${sideAt(hot.index)}` : "plug_off_hot", {
             temperature: formatTemperatureOf(hass, hot.sensor, hot.value),
           }),
           noteTone: "warning" as const,
@@ -300,6 +297,7 @@ function autoOffRow(ctx: CardContext, plug: PlugRefs): TemplateResult | typeof n
         : t(hass, "auto_off_waiting", { temperature, now: now === undefined ? "—" : formatTemperatureOf(hass, now.sensor, now.value) });
   } else if (auto?.phase === "failed_print") sub = t(hass, auto.every ? "auto_off_failed" : "auto_off_failed_next");
   else if (auto?.phase === "gave_up") sub = t(hass, "auto_off_gave_up");
+  else if (auto?.phase === "plug_failed") sub = t(hass, "auto_off_plug_failed");
   else if (auto?.phase === "skipped" && auto.armed) sub = t(hass, "auto_off_skipped");
   else if (auto?.armed) sub = t(hass, auto.every ? "auto_off_every" : "auto_off_next", { temperature });
   else sub = t(hass, "auto_off_disarmed");
@@ -307,7 +305,9 @@ function autoOffRow(ctx: CardContext, plug: PlugRefs): TemplateResult | typeof n
   const text = html`<span class="p-name">${title}</span>
     <span class="p-sub">${sub}</span>`;
   // Shown only, its line says it all: no state word beside it.
-  const control = settable ? toggleButton(ctx, plug.autoOff as string, t(hass, "auto_off_title"), () => ctx.toggleSwitch(plug.autoOff as string)) : nothing;
+  // Beside BamBuddy's own only the way off: ours cannot be turned on then.
+  const switchable = canSwitch(ctx) && !!plug.autoOff && (!bambuddy || !!auto?.armed);
+  const control = switchable ? toggleButton(ctx, plug.autoOff as string, t(hass, "auto_off_title"), () => ctx.toggleSwitch(plug.autoOff as string)) : nothing;
   const skip = waitingNow && settable && !auto?.switching && plug.autoOffSkip && stateOf(hass, plug.autoOffSkip)?.state !== "unavailable"
     ? actionButton({
         label: t(hass, "auto_off_skip"),

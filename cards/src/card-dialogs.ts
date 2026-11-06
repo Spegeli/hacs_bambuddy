@@ -11,8 +11,8 @@ import type { AmsRefs, Hass, HassEntityState, PrinterRefs } from "./types";
 
 /** How long "Copied" shows. */
 const COPIED_MS = 3_000;
-/** The seconds' tick of a running check. */
-const TICK_MS = 1000;
+/** The redraw of a count while it runs (a plug starting, a connection check). */
+export const TICK_MS = 1000;
 
 const clamp = (value: number, min: number, max: number): number => Math.min(max, Math.max(min, value));
 
@@ -41,10 +41,12 @@ export class DialogFlows {
     if (dialog?.kind === "check" && dialog.running) this.startCheckTimer();
   }
 
-  /** Off the page: no tick, no "Copied" to take back. */
+  /** Off the page: no tick, no "Copied" to take back -- it goes with the
+   * printer information it showed in. */
   stop(): void {
     clearTimeout(this.copiedTimer);
     this.stopCheckTimer();
+    if (this.host.dialog()?.kind === "info") this.host.setDialog({ kind: "info" });
   }
 
   /** Opens or folds a folded line of the connection check. */
@@ -196,7 +198,7 @@ export class DialogFlows {
     this.host.setDialog(next);
   }
 
-  startCheckTimer(): void {
+  private startCheckTimer(): void {
     this.stopCheckTimer();
     this.checkTimer = setInterval(() => this.host.requestUpdate(), TICK_MS);
   }

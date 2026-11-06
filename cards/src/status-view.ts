@@ -54,6 +54,7 @@ import {
   unitNozzle,
   type CardContext,
   type Slot,
+  hasAirduct,
 } from "./parts";
 import { chamberActivity } from "./heating";
 import { offlinePower, powerSection } from "./power";
@@ -194,7 +195,7 @@ function temperatureTile(ctx: CardContext, label: string, heater: Heater, iconNa
   const value = current === undefined ? "—" : formatTemperatureOf(hass, heater.sensor, current);
   // The chamber of a printer with an airduct says what else it does: kept
   // warm (the P2S) or ventilated, else off.
-  const airduct = iconName === "chamber" && (ctx.refs.airduct !== undefined || ctx.refs.ventilation !== undefined);
+  const airduct = iconName === "chamber" && hasAirduct(ctx.refs);
   const activity = airduct && !on ? chamberActivity(ctx) : undefined;
   const warm = on || activity?.kind === "warm";
   const targetText = on

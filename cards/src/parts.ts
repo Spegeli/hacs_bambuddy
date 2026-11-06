@@ -343,9 +343,8 @@ export type HeaterKind = "nozzle" | "bed" | "chamber";
  * nozzles. */
 export function heaters(ctx: CardContext): { label: string; heater: Heater; kind: HeaterKind; index: number }[] {
   const { hass, refs } = ctx;
-  const nozzleLabels: TextKey[] = refs.dual ? ["nozzle_left", "nozzle_right"] : ["nozzle"];
   return [
-    ...refs.nozzles.map((heater, index) => ({ label: t(hass, nozzleLabels[index] as TextKey), heater, kind: "nozzle" as const, index })),
+    ...refs.nozzles.map((heater, index) => ({ label: t(hass, refs.dual ? `nozzle_${sideAt(index)}` : "nozzle"), heater, kind: "nozzle" as const, index })),
     { label: t(hass, "bed"), heater: refs.bed, kind: "bed", index: 0 },
     { label: t(hass, "chamber"), heater: refs.chamber, kind: "chamber", index: 0 },
   ];
@@ -406,10 +405,14 @@ export function entityName(ctx: CardContext, entityId: string, key: TextKey): st
 
 export const NOZZLE_SIDES = ["left", "right"];
 
-/** "Left" for the first of two, "Right" for the second. */
-/** BamBuddy's extruder by its index on a two-nozzle printer: 0 the left nozzle's place in the card's lists. */
+/** The printer has an airduct: its chamber also keeps warm or is ventilated. */
+export const hasAirduct = (refs: PrinterRefs): boolean => refs.airduct !== undefined || refs.ventilation !== undefined;
+
+/** A nozzle's side by its place in the card's lists on a two-nozzle printer:
+ * the left first (BamBuddy's own extruder 0 is the right one). */
 export const sideAt = (index: number): "left" | "right" => (index === 0 ? "left" : "right");
 
+/** "Left" for the first of two, "Right" for the second. */
 export const sideName = (hass: Hass, index: number): string => t(hass, sideAt(index));
 
 export const AMS_HT = "AMS HT";

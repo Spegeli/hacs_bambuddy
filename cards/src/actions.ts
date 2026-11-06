@@ -117,6 +117,10 @@ export type SpoolPlace =
   | { here: true }
   | { here: false; printerId: number; printerName: string; amsId: number; trayId: number; amsLabel?: string; samePrinter: boolean };
 
+const FITS = ["not_for_ams", "not_for_nozzle", "not_for_printer", "by_chip", "printing"] as const;
+type Fits = (typeof FITS)[number];
+const isFits = (value: unknown): value is Fits => (FITS as readonly unknown[]).includes(value);
+
 /** A spool of BamBuddy's inventory, as get_spools lists it for a slot. */
 export interface ListedSpool {
   id: number;
@@ -136,7 +140,7 @@ export interface ListedSpool {
   /** Why the slot cannot take it; none where it can. BamBuddy links a
    * Bambu spool by its chip itself ("by_chip"); a spool in a slot of another
    * printer that prints is locked ("printing"). */
-  fits?: "not_for_ams" | "not_for_nozzle" | "not_for_printer" | "by_chip" | "printing";
+  fits?: Fits;
   /** The printer that prints, for "printing". */
   printing?: string;
   /** The type a slot takes for it, as BamBuddy reduces its material ("PLA+" -> PLA). */
@@ -148,8 +152,6 @@ export interface SpoolList {
   assigned?: number;
   spools: ListedSpool[];
 }
-
-const FITS = new Set(["not_for_ams", "not_for_nozzle", "not_for_printer", "by_chip", "printing"]);
 
 function placeOf(value: unknown): SpoolPlace | undefined {
   if (typeof value !== "object" || value === null) return undefined;
@@ -216,7 +218,7 @@ export async function spoolList(hass: Hass, entityId: string): Promise<SpoolList
       ...spoolBasics(item),
       ...(place ? { place } : {}),
       also: placesOf(item["also"]),
-      ...(typeof fits === "string" && FITS.has(fits) ? { fits: fits as ListedSpool["fits"] } : {}),
+      ...(isFits(fits) ? { fits } : {}),
       ...(textOrUndefined(item["printing"]) ? { printing: textOrUndefined(item["printing"]) } : {}),
       ...(textOrUndefined(item["type"]) ? { type: textOrUndefined(item["type"]) } : {}),
     };

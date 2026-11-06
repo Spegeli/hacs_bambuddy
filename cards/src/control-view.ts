@@ -10,8 +10,8 @@ import { formatNumber, formatState, formatTemperature, fromCelsius, listedOption
 import { detectionSection } from "./detection";
 import { heatingSection } from "./heating";
 import { type IconName } from "./icons";
-import { t, type TextKey } from "./i18n";
-import { actionButton, activeNozzleIndex, developerHint, hottestNozzle, note, NOZZLE_SIDES, radioKeys, radioLeave, radioOptions, radioStop, type CardContext } from "./parts";
+import { t } from "./i18n";
+import { actionButton, activeNozzleIndex, developerHint, hottestNozzle, note, NOZZLE_SIDES, radioKeys, radioLeave, radioOptions, radioStop, sideAt, type CardContext } from "./parts";
 import type { ControlSection, Heater, PrinterRefs } from "./types";
 
 // As BamBuddy's own: 50 mm to get the head or the bed out of the way.
@@ -28,11 +28,6 @@ const MIN_EXTRUDE_TEMPERATURE = 170;
 /** The printers whose Z moves the nozzle, not the bed (bed slingers: the
  * A1, A1 mini and A2L). */
 const NOZZLE_Z = /^A(1|2L)\b/i;
-
-/** The hint for a cold nozzle that names the active one of two. */
-const COLD_HINTS: TextKey[] = ["cold_nozzle_left", "cold_nozzle_right"];
-/** The same, where the card shows no heating section to point to. */
-const COLD_PLAIN: TextKey[] = ["cold_nozzle_left_plain", "cold_nozzle_right_plain"];
 
 /** Left or right on a printer with two nozzles: the one that extrudes and
  * loads. The printer switches only without a print. */
@@ -111,7 +106,8 @@ function motionSection(ctx: CardContext, step: Step, setStep: (step: Step) => vo
   // Of two nozzles, the hint names the one to heat.
   const side = activeNozzleIndex(ctx);
   const heating = ctx.settings.sections.includes("heating");
-  const coldHint = side === undefined ? (heating ? "cold_nozzle" : "cold_nozzle_plain") : ((heating ? COLD_HINTS : COLD_PLAIN)[side] as TextKey);
+  const coldNozzle = side === undefined ? "cold_nozzle" : (`cold_nozzle_${sideAt(side)}` as const);
+  const coldHint = heating ? coldNozzle : (`${coldNozzle}_plain` as const);
   const extruder = (direction: 1 | -1): TemplateResult =>
     actionButton({
       label: t(hass, direction > 0 ? "extrude" : "retract"),

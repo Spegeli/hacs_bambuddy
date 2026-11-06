@@ -110,7 +110,6 @@ function childName(unit: HassDevice, printer: HassDevice): string {
   return own.endsWith(")") ? (shortName(own) ?? own) : own;
 }
 
-/** A number attribute of an entity's state, if it has one. */
 /** Slots in the order of their `slot` attribute; a slot without one last. */
 function bySlot(hass: Hass, slots: readonly string[]): string[] {
   const position = (entityId: string): number => numberAttribute(hass, entityId, "slot") ?? Number.MAX_SAFE_INTEGER;

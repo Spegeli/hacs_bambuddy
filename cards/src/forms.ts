@@ -40,7 +40,7 @@ const listOf = (values: readonly string[]): Validator => ({
 
 const flag: Validator = { allowed: () => "true, false", check: (value) => typeof value === "boolean" };
 
-const OPTIONS: Record<string, Validator> = {
+const OPTIONS = {
   printer: { allowed: () => t(undefined, "allowed_device"), check: (value) => typeof value === "string" },
   camera: oneOf(CAMERA_MODES),
   status_blocks: listOf(STATUS_BLOCKS),
@@ -55,7 +55,9 @@ const OPTIONS: Record<string, Validator> = {
   show_external_spool: flag,
   assign_scanned_spool: flag,
   show_auto_off: flag,
-};
+} satisfies Record<string, Validator>;
+
+type OptionKey = keyof typeof OPTIONS;
 
 /** The configuration, checked option by option; an invalid value throws
  * with a reason Home Assistant shows on its error card. Unknown keys are
@@ -170,7 +172,7 @@ interface FormField {
   [key: string]: unknown;
 }
 
-const LABELS: Record<string, TextKey> = {
+const LABELS: Record<OptionKey, TextKey> = {
   printer: "editor_printer",
   camera: "editor_camera",
   status_blocks: "editor_blocks",
@@ -187,7 +189,8 @@ const LABELS: Record<string, TextKey> = {
   compact_chips: "editor_compact_chips",
 };
 
-const HELPERS: Record<string, TextKey> = {
+/** Every option but the start tab: its help follows the tabs (`startViewNote`). */
+const HELPERS: Record<Exclude<OptionKey, "start_view">, TextKey> = {
   printer: "editor_printer_help",
   camera: "editor_camera_help",
   status_blocks: "editor_blocks_help",
@@ -279,7 +282,7 @@ export function configForm(hass?: Hass): ConfigForm {
       group(hass, "editor_group_control", "mdi:gamepad-round-outline", [toggle("show_control_tab"), list(hass, "control_sections", "section", CONTROL_SECTIONS)]),
       group(hass, "editor_group_filament", "mdi:printer-3d-nozzle", [toggle("show_filament_tab"), dropdown(hass, "ams_folding", "folding", AMS_FOLDING), toggle("show_external_spool"), toggle("assign_scanned_spool")]),
     ],
-    computeLabel: (field) => (field.name in LABELS ? t(hass, LABELS[field.name] as TextKey) : undefined),
-    computeHelper: (field) => (field.name in HELPERS ? t(hass, HELPERS[field.name] as TextKey) : undefined),
+    computeLabel: (field) => (field.name in LABELS ? t(hass, LABELS[field.name as OptionKey]) : undefined),
+    computeHelper: (field) => (field.name in HELPERS ? t(hass, HELPERS[field.name as keyof typeof HELPERS]) : undefined),
   };
 }

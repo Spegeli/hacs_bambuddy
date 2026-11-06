@@ -103,10 +103,22 @@ export class ScanSession {
     this.takeOver();
   }
 
-  /** A phone's camera app freezes the page; back, Home Assistant reconnects
-   * and rebuilds the dashboard with new cards: the next card of this
-   * printer takes the slot dialog on, the photo read here included. */
-  handOver(): void {
+  /** Off the page: what runs of the scan ends, and the dialog goes on to
+   * the next card if one comes. */
+  leavePage(): void {
+    // A phone's camera app freezes the page; back, Home Assistant reconnects
+    // and rebuilds the dashboard with new cards: the next card of this
+    // printer takes the slot dialog on, the photo read here included.
+    this.handOver();
+    // A live scan ends with the page: back, the list shows as it was. The
+    // photo's area stays: its picker may still answer.
+    const dialog = this.host.dialog();
+    if (dialog?.kind === "filament" && dialog.scan && dialog.scan.way !== "blocked") this.host.setDialog(withoutScan(dialog));
+    this.endCamera();
+    this.endAppScan();
+  }
+
+  private handOver(): void {
     const host = this.host;
     const open = host.dialog();
     const config = host.config();
@@ -194,9 +206,11 @@ export class ScanSession {
     if (dialog?.kind !== "filament" || !hass) return;
     const run = ++this.scanRun;
     const way = scanWay(hass);
+    // A search typed just before says nothing over the scan.
+    this.host.filament().stop();
     // The camera area as high as what it stands in for: the dialog keeps its size.
     const height = this.host.root().querySelector<HTMLElement>("dialog #inv-panel")?.offsetHeight || undefined;
-    const { scanned: _scanned, scanUnknown: _unknown, ...rest } = dialog;
+    const { scanned: _scanned, scanUnknown: _unknown, listSaid: _said, ...rest } = dialog;
     if (way === "app") {
       this.host.setDialog({ ...rest, scan: { way: "app" } });
       const texts = {
@@ -326,21 +340,11 @@ export class ScanSession {
       return;
     }
     left.card = this;
-    // A fresh ask: what the old card was still waiting for answers it, not this one.
-    const filament = host.filament();
-    const ask = filament.nextAsk();
-    const dialog: FilamentDialog = { ...left.dialog, ask };
-    host.setDialog(dialog);
+    host.filament().askAgain(left.dialog);
     host.setView(left.view);
     this.photoAsked = Date.now();
     // A second rebuild (a flapping connection) hands it on again.
     this.hiddenAt = Date.now();
-    if (dialog.offer === "loading") void filament.loadOffer(dialog.entityId, ask);
-    if (dialog.kprofiles === "loading") {
-      void filament.loadKProfiles(dialog.entityId, ask);
-      filament.armKSlow(dialog.entityId, ask);
-    }
-    if (dialog.spools === "loading") void filament.loadSpools(dialog.entityId, ask);
     const photo = left.photo;
     if (photo === undefined) return;
     handover = undefined;

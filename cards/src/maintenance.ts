@@ -56,7 +56,7 @@ const TASK_NAMES: Record<string, TextKey> = {
   "Clean Linear Rails": "maint_task_clean_rails",
 };
 
-const number = (value: unknown): number => (typeof value === "number" && Number.isFinite(value) ? value : 0);
+const finiteOrZero = (value: unknown): number => (typeof value === "number" && Number.isFinite(value) ? value : 0);
 
 function taskOf(item: unknown): MaintenanceTask | undefined {
   if (typeof item !== "object" || item === null) return undefined;
@@ -69,8 +69,8 @@ function taskOf(item: unknown): MaintenanceTask | undefined {
     due,
     dueSoon: !due && task["due_soon"] === true,
     unit: task["unit"] === "days" ? "days" : "hours",
-    interval: number(task["interval"]),
-    left: number(task["left"]),
+    interval: finiteOrZero(task["interval"]),
+    left: finiteOrZero(task["left"]),
     done: typeof task["last_done"] === "string",
   };
 }

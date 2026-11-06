@@ -7,7 +7,7 @@ import { html, LitElement, nothing, type CSSResultGroup, type PropertyValues, ty
 import { callAction, errorText } from "./actions";
 import { controlView, sectionShown, type Step } from "./control-view";
 import { dialogView, type Dialog, type DialogActions, type DryingField } from "./dialogs";
-import { filamentChanges, filamentKey, withoutScan } from "./filament-dialog";
+import { filamentChanges, filamentKey } from "./filament-dialog";
 import { onInventory } from "./inventory-dialog";
 import { findPrinter, hasControls, hasPrinterIdentifier, noDataSince, noPrinterData, notListed, printerDevices, printerOnline, printStatus, shownUnits } from "./discovery";
 import { filamentView } from "./filament-view";
@@ -20,7 +20,7 @@ import { rememberLocale, t, type TextKey } from "./i18n";
 import { asOnline, connection, nextIndex, printerTitle, sample, sampleKey, slotOf, snack, type CardContext } from "./parts";
 import { defineCard, defineElement } from "./register";
 import { ScanSession } from "./scan-session";
-import { DialogFlows } from "./card-dialogs";
+import { DialogFlows, TICK_MS } from "./card-dialogs";
 import { Drafts } from "./drafts";
 import { CardMenu } from "./menu";
 import { LiveView, type Fullscreen } from "./live";
@@ -63,9 +63,6 @@ const ERROR_TIMEOUT = 12_000;
 
 /** How long "Sent" shows after a command went through. */
 const SENT_TIMEOUT = 3_000;
-
-// The redraw of a count while it runs (a plug starting, a connection check).
-const TICK_MS = 1000;
 
 /** How long the card waits for the printer's data before it says there is
  * none: Home Assistant starting or the entry reloading take seconds. */
@@ -391,17 +388,9 @@ export class BamBuddyPrinterCard extends LitElement {
     clearTimeout(this.sentTimer);
     this.sent = false;
     this.flows.stop();
-    if (this.dialog?.kind === "info") this.dialog = { kind: "info" };
-    // A phone's camera app freezes the page; back, Home Assistant reconnects
-    // and rebuilds the dashboard with new cards: the next card of this
-    // printer takes the slot dialog on, the photo read here included.
-    this.scan.handOver();
+    this.filament.stop();
     window.removeEventListener("resize", this.filament.onResize);
-    // A live scan ends with the page: back, the list shows as it was. The
-    // photo's area stays: its picker may still answer.
-    if (this.dialog?.kind === "filament" && this.dialog.scan && this.dialog.scan.way !== "blocked") this.dialog = withoutScan(this.dialog);
-    this.scan.endCamera();
-    this.scan.endAppScan();
+    this.scan.leavePage();
     // A target still being tapped is sent now, not lost.
     this.drafts.flush();
     // Out of the page a modal dialog leaves the top layer but stays open:
@@ -684,6 +673,7 @@ export class BamBuddyPrinterCard extends LitElement {
     }
     const fromMenu = this.dialogFromMenu;
     this.flows.stopCheckTimer();
+    this.filament.stop();
     this.dialog = undefined;
     this.dialogFromMenu = false;
     const element = this.renderRoot.querySelector("dialog");

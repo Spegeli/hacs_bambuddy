@@ -187,12 +187,12 @@ function vendorsOf(spools: ListedSpool[]): [key: string, shown: string][] {
 
 /** Whether a spool matches the search, word by word: every word somewhere
  * in its name, brand, material, colour or storage -- in any order, part of
- * a word too; a word of digits its spool number ("5", "Nr. 5"). */
+ * a word too; a word of digits its spool number ("5", "Nr. 5", "#5"). */
 function matches(spool: ListedSpool, query: string): boolean {
   const words = query.toLocaleLowerCase().split(/\s+/).filter((word) => word && !/^(?:nr|no)\.?$/.test(word));
   const text = [spool.name, spool.brand, spool.material, spool.colorName ?? "", spool.storage ?? ""].join(" ").toLocaleLowerCase();
   return words
-    .map((word) => word.replace(/^(?:nr|no)\.(?=\d)/, ""))
+    .map((word) => word.replace(/^(?:(?:nr|no)\.|#)(?=\d)/, ""))
     .every((word) => (/^\d+$/.test(word) ? spool.id === Number(word) : text.includes(word)));
 }
 
@@ -367,8 +367,9 @@ const cameraOpen = (dialog: FilamentDialog): boolean => dialog.scan !== undefine
 
 /** What the inventory's one live region says: the camera on (once its
  * picture comes), why it is not, the spool a scan found or the number it
- * lacks. One region that stays: one put in with its text is often not read. */
-function scanSays(hass: Hass, dialog: FilamentDialog): string {
+ * lacks, what a search found. One region that stays: one put in with its
+ * text is often not read. */
+function listSays(hass: Hass, dialog: FilamentDialog, shown: number): string {
   const scan = dialog.scan;
   if (scan?.way === "live") {
     if (scan.foreign) return t(hass, "inv_scan_not_label");
@@ -378,7 +379,9 @@ function scanSays(hass: Hass, dialog: FilamentDialog): string {
   if (scan?.way === "blocked") return scanReasonText(hass, scan) + ((scan.tries ?? 0) % 2 ? "\u200b" : "");
   if (dialog.scanned !== undefined) return t(hass, "inv_scan_done", { id: dialog.scanned });
   if (dialog.scanUnknown !== undefined) return t(hass, "inv_scan_unknown", { id: dialog.scanUnknown });
-  return "";
+  if (!dialog.listSaid) return "";
+  if (shown === 0) return t(hass, "inv_no_hit");
+  return shown === 1 ? t(hass, "inv_found_one") : t(hass, "inv_found", { count: shown });
 }
 
 /** The spools of the inventory for the slot: filters, a search, the list
@@ -407,7 +410,7 @@ export function inventoryContent(ctx: CardContext, dialog: FilamentDialog, actio
   // Named here: TypeScript keeps the narrowing of list in the inner listContent only so.
   const all = list.spools;
   return html`<div id="inv-panel" role="tabpanel" aria-labelledby="inv-tab-inventory" class="inv-panel">
-    <p class="sr-only inv-say" aria-live="polite">${scanSays(hass, dialog)}</p>
+    <p class="sr-only inv-say" aria-live="polite">${listSays(hass, dialog, shown.length)}</p>
     ${cameraOpen(dialog) ? cameraArea(hass, dialog, actions) : listContent()}
   </div>`;
 

@@ -22,7 +22,7 @@ import {
 } from "./format";
 import { icon, type IconName } from "./icons";
 import { t, type TextKey } from "./i18n";
-import { actionButton, activeNozzleIndex, heaters, note, radioKeys, radioLeave, radioOptions, radioStop, type CardContext, type HeaterKind } from "./parts";
+import { actionButton, activeNozzleIndex, hasAirduct, heaters, note, radioKeys, radioLeave, radioOptions, radioStop, type CardContext, type HeaterKind } from "./parts";
 
 /** One tap on a stepper. */
 const TARGET_STEP = 5;
@@ -241,7 +241,7 @@ function locks(ctx: CardContext): Locks {
     return { ...(airduct === "cooling" && !warm ? { chamber: "changing_reason" as const } : {}), ...(airduct !== "cooling" ? { vent: "changing_reason" as const } : {}) };
   }
   // On while the tap or the printer's report says so: the other part waits
-  // until the printer reports this one off, as the integration does.
+  // until the printer reports this one off.
   const target = refs.chamber.target;
   const heats = warm
     ? airduct === "heating"
@@ -381,7 +381,7 @@ export function heatingSection(ctx: CardContext): TemplateResult | typeof nothin
   // chamber's, which ends none (the job may set it again). It waits during a
   // filament change, which cooling would break.
   const offFor = (row: Row): boolean => !ctx.busy || row.kind === "chamber";
-  const airduct = refs.airduct !== undefined || refs.ventilation !== undefined;
+  const airduct = hasAirduct(refs);
   const lock = airduct ? locks(ctx) : {};
   return html`<section class="heating" aria-labelledby="heat-title">
     <div class="heat-head">
