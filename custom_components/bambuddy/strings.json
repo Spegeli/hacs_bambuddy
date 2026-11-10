@@ -874,7 +874,7 @@
       "message": "This slot is empty."
     },
     "ams_ht_load": {
-      "message": "BamBuddy cannot load filament from an AMS HT. Load it on the printer itself."
+      "message": "Your BamBuddy version cannot load filament from an AMS HT. BamBuddy 1.3.0 and newer can. Until then, load it on the printer itself."
     },
     "load_track_switch": {
       "message": "{printer} feeds its nozzles through the Filament Track Switch, so a load has to say which nozzle to feed. Load the filament on the printer or in BamBuddy."
@@ -1117,7 +1117,7 @@
     },
     "load_filament": {
       "name": "Load filament",
-      "description": "Loads the filament of an AMS slot or of the external spool into the nozzle (not from an AMS HT: BamBuddy cannot; and not from an AMS slot of a printer with the Filament Track Switch: such a load must name the nozzle — load it on the printer or in BamBuddy). While a print is running, pause it first.",
+      "description": "Loads the filament of an AMS slot or of the external spool into the nozzle (from an AMS HT only with BamBuddy 1.3.0 or newer; and not from an AMS slot of a printer with the Filament Track Switch: such a load must name the nozzle — load it on the printer or in BamBuddy). While a print is running, pause it first.",
       "fields": {
         "entity_id": {
           "name": "Slot",

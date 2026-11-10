@@ -416,7 +416,6 @@ export const de: Texts = {
   strip_nozzle_right: "rechte Düse",
   unload_title: "Filament entladen?",
   unload_text: "Der Drucker heizt die Düse und zieht das Filament zurück.",
-  ht_load: "Lade Filament aus dem AMS HT am Display des Druckers.",
   filament_pause: "Pausiere den Druck, um das Filament zu wechseln.",
   filament_paused: "Druck pausiert: Du kannst das Filament jetzt wechseln.",
   filament_paused_fault: "Der Drucker hat den Druck angehalten: Kümmere dich zuerst um seine Meldung. Du kannst hier das Filament wechseln und dann fortsetzen.",

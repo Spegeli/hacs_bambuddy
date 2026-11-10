@@ -16,7 +16,6 @@ PERMISSION_OF = {
     "get_printers": "printers:read",
     "get_printer": "printers:read",
     "get_status": "printers:read",
-    "get_runtime": "printers:read",
     "get_ams_labels": "printers:read",
     "get_diagnostic": "printers:read",
     "get_print_objects": "printers:read",

@@ -312,21 +312,26 @@ async def _extrude(hass: HomeAssistant, call: ServiceCall) -> None:
 
 async def _load_filament(hass: HomeAssistant, call: ServiceCall) -> None:
     coordinator, tray = _filled_slot(hass, call.data[ATTR_ENTITY_ID])
-    if AMS_HT_FIRST_ID <= tray < EXTERNAL_LEFT:
-        # BamBuddy cannot load from an AMS HT.
-        raise refuse("ams_ht_load")
     # The Filament Track Switch binds every AMS to a switch inlet: a load must
     # name its nozzle, or the firmware drops it (BamBuddy's ams_load_filament).
     # The external spools name their side.
     switch = coordinator.data.status.get("fila_switch")
     if tray < EXTERNAL_LEFT and isinstance(switch, dict) and switch.get("installed"):
         raise refuse("load_track_switch", printer=coordinator.short_name)
-    await async_run_command(
-        coordinator,
-        partial(coordinator.client.load_filament, coordinator.printer_id, tray),
-        idle_only=True,
-        paused_ok=True,
-    )
+
+    async def load() -> None:
+        try:
+            await coordinator.client.load_filament(coordinator.printer_id, tray)
+        except BamBuddyApiError as err:
+            # BamBuddy 1.3.0 loads from an AMS HT (the tray is the unit's id);
+            # 1.2.5.7 refuses it with a 400 before it asks the printer
+            # ("tray_id must be 0..15"); another 400 (the printer gone between
+            # our read and the call) is not that. Nothing tells them apart before.
+            if err.status == 400 and AMS_HT_FIRST_ID <= tray < EXTERNAL_LEFT and "tray_id" in (err.detail or ""):
+                raise refuse("ams_ht_load") from err
+            raise
+
+    await async_run_command(coordinator, load, idle_only=True, paused_ok=True)
 
 
 async def _unload_filament(hass: HomeAssistant, call: ServiceCall) -> None:

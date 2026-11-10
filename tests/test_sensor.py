@@ -567,31 +567,45 @@ async def test_a_unit_on_the_filament_track_switch_names_no_nozzle(hass: HomeAss
 
 async def test_the_print_hours(hass: HomeAssistant, bambuddy_api: SimpleNamespace, freezer: FrozenDateTimeFactory) -> None:
     """BamBuddy counts the hours the printer prints (plus an offset set in
-    BamBuddy) -- read once a minute, not with every status."""
+    BamBuddy): its maintenance overview gives them, in 1.2.5.7 and 1.3.0
+    alike -- read with the tasks, every ten minutes and after a print, not
+    with every status."""
     entry = await set_up(hass, X1C)
     hours = printer_uid(entry, "print_hours")
 
     state = state_of(hass, "sensor", hours)
     assert (state.state, state.attributes["unit_of_measurement"]) == ("559.5", "h")
 
-    bambuddy_api.get_runtime.return_value = {"total_hours": 560.0}
-    await next_refresh(hass, freezer)
+    bambuddy_api.maintenance[X1C]["total_print_hours"] = 560.0
+    await past_the_minute(hass, freezer)
     assert state_of(hass, "sensor", hours).state == "559.5"
-    assert bambuddy_api.get_runtime.await_count == 1
 
-    await past_polls(hass, freezer, 5)
+    freezer.tick(600)
+    await next_refresh(hass, freezer)
     assert state_of(hass, "sensor", hours).state == "560.0"
 
+    # The print ends: its hours count now. A whole number counts too.
+    bambuddy_api.maintenance[X1C]["total_print_hours"] = 562
+    bambuddy_api.statuses[X1C]["state"] = "FINISH"
+    await next_refresh(hass, freezer)
+    await next_refresh(hass, freezer)
+    assert state_of(hass, "sensor", hours).state == "562.0"
 
+
+@pytest.mark.parametrize("answer", ["fails", None, "559", True])
 async def test_print_hours_bambuddy_cannot_give(
-    hass: HomeAssistant, bambuddy_api: SimpleNamespace, freezer: FrozenDateTimeFactory
+    hass: HomeAssistant, bambuddy_api: SimpleNamespace, freezer: FrozenDateTimeFactory, answer: object
 ) -> None:
-    """The counter is an extra: without it the status goes on, the hours
+    """The hours are an extra: without them the status goes on, the hours
     keep their last value."""
     entry = await set_up(hass, X1C)
-    bambuddy_api.get_runtime.side_effect = BamBuddyApiError(404, "Not Found")
+    if answer == "fails":
+        bambuddy_api.get_maintenance.side_effect = BamBuddyApiError(404, "Not Found")
+    else:
+        bambuddy_api.maintenance[X1C]["total_print_hours"] = answer
 
-    await past_the_minute(hass, freezer)
+    freezer.tick(600)
+    await next_refresh(hass, freezer)
 
     assert state_of(hass, "sensor", printer_uid(entry, "print_hours")).state == "559.5"
     assert state_of(hass, "sensor", printer_uid(entry, "status")).state == "printing"

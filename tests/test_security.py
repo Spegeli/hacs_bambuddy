@@ -76,11 +76,11 @@ async def test_the_debug_log_names_a_printer_without_its_serial(
     """The diagnostics leave a printer's serial out; a log line about the
     printer names it by its BamBuddy name, not by its device name."""
     caplog.set_level(logging.DEBUG, logger="custom_components.bambuddy")
-    bambuddy_api.get_runtime.side_effect = BamBuddyConnectionError("down")
+    bambuddy_api.get_ams_labels.side_effect = BamBuddyConnectionError("down")
     await set_up(hass, X1C)
     await past_the_minute(hass, freezer)
 
-    assert "No runtime counter for Workshop:" in caplog.text
+    assert "No AMS names for Workshop:" in caplog.text
     assert printer_serial(X1C) not in caplog.text
 
 

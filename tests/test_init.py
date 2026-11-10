@@ -656,10 +656,10 @@ async def test_a_rename_survives_a_dropped_poll(
     await next_refresh(hass, freezer)
     bambuddy_api.get_status.side_effect = reads
     bambuddy_api.statuses[X1C] = renamed
-    runtime_reads = bambuddy_api.get_runtime.await_count
+    minute_reads = bambuddy_api.get_ams_labels.await_count
     await next_refresh(hass, freezer)
 
-    assert bambuddy_api.get_runtime.await_count == runtime_reads
+    assert bambuddy_api.get_ams_labels.await_count == minute_reads
     assert devices_by_identifier(hass, entry)[printer_device(entry, X1C)].name == "Lab (X1C / 00M00A000000001)"
 
 

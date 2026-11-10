@@ -83,7 +83,7 @@ async def test_a_model_bambuddy_detects_later(
 async def test_bambuddys_details_are_read_once_a_minute(
     hass: HomeAssistant, bambuddy_api: SimpleNamespace, freezer: FrozenDateTimeFactory
 ) -> None:
-    """With the runtime counter, not at setup -- it has just read the list --
+    """With the AMS names once a minute, not at setup -- it has just read the list --
     and not on every refresh: the address may change, and the number must
     still be this printer's. A known model does not reload anything."""
     entry = await set_up(hass, X1C)
@@ -94,7 +94,7 @@ async def test_bambuddys_details_are_read_once_a_minute(
     with patch.object(hass.config_entries, "async_schedule_reload") as reload:
         await past_polls(hass, freezer, 12)
 
-    assert bambuddy_api.get_printer.await_count == bambuddy_api.get_runtime.await_count - 1 >= 2
+    assert bambuddy_api.get_printer.await_count == bambuddy_api.get_ams_labels.await_count - 1 >= 2
     reload.assert_not_called()
     assert state_of(hass, "sensor", printer_uid(entry, "ip_address")).state == "192.168.1.77"
 
@@ -162,9 +162,9 @@ async def test_asking_for_the_model_may_fail(
 
     assert entry.state is ConfigEntryState.LOADED
     assert devices_by_identifier(hass, entry)[printer_device(entry, X1C)].model is None
-    # Once a minute, with the runtime counter -- not at setup, which has just
+    # Once a minute, with the AMS names -- not at setup, which has just
     # read the list, and not on every refresh.
-    assert bambuddy_api.get_printer.await_count == bambuddy_api.get_runtime.await_count - 1 >= 2
+    assert bambuddy_api.get_printer.await_count == bambuddy_api.get_ams_labels.await_count - 1 >= 2
 
 
 async def test_a_model_found_reloads_once(

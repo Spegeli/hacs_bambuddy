@@ -193,7 +193,21 @@ describe("the filament view", () => {
       data: { device_id: "dev-h2d-ams-128", temperature: 85, duration: 1 },
       notifyOnError: false,
     });
-    expect(text(find(card, ".unit .hint"))).toBe("Load filament from the AMS HT on the printer's screen.");
+    // BamBuddy 1.3.0 loads from an AMS HT: no hint to use the printer's screen.
+    expect(find(card, ".unit .hint")).toBeNull();
+  });
+
+  it("loads from an AMS HT as from any other unit", async () => {
+    const { card, hass } = await cardFor("h2d", { printer: IDLE_H2D });
+    await showView(card, "Filament");
+    const unit = findAll<HTMLElement>(card, ".unit").find((section) => text(section.querySelector(".unit-name")) === "AMS HT A");
+    const load = [...(unit?.querySelectorAll<HTMLButtonElement>(".slot .btn") ?? [])].find((item) => text(item) === "Load");
+    expect(load && text(load)).toBe("Load");
+    load?.click();
+    await card.updateComplete;
+    expect(text(find(card, "dialog h2"))).toBe("Load PA6-CF from Slot 1 · AMS HT A?");
+    await confirmDialog(card);
+    expect(hass.calls.at(-1)).toEqual({ domain: "bambuddy", service: "load_filament", data: { entity_id: "sensor.dev-h2d_ams_128_slot_1" }, notifyOnError: false });
   });
 
   it("starts drying at the gentlest of the loaded spools' temperatures and the longest time, within the unit's limit", async () => {
@@ -318,8 +332,8 @@ describe("the filament view", () => {
       await showView(card, "Filament");
       expect(findAll(card, ".note.warning").map(text), status).toEqual(["Pause the print to change the filament."]);
       expect(loadButtons(card).every((item) => item.disabled), status).toBe(true);
-      // No load button for the AMS HT.
-      expect(loadButtons(card).map(text), status).toEqual(["Load", "Unload", "Load", "Load", "Load"]);
+      // The AMS HT loads too (BamBuddy 1.3.0; an older BamBuddy refuses, and says so).
+      expect(loadButtons(card).map(text), status).toEqual(["Load", "Unload", "Load", "Load", "Load", "Load"]);
     }
     const { card: german } = await cardFor("x1c", { language: "de" });
     await showView(german, "Filament");
@@ -330,7 +344,7 @@ describe("the filament view", () => {
     const { card, hass } = await cardFor("h2d");
     await showView(card, "Filament");
     expect(find(card, ".note")).toBeNull();
-    expect(loadButtons(card).map((item) => `${text(item)}: ${item.disabled}`)).toEqual(["Load: false", "Unload: false", "Load: false", "Load: false", "Load: false"]);
+    expect(loadButtons(card).map((item) => `${text(item)}: ${item.disabled}`)).toEqual(["Load: false", "Unload: false", "Load: false", "Load: false", "Load: false", "Load: false"]);
     loadButtons(card)[0]?.click();
     await card.updateComplete;
     expect(text(find(card, "dialog h2"))).toBe("Load PLA Basic from Slot 1 · AMS\u00a0A?");

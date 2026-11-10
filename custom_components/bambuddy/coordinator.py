@@ -259,9 +259,10 @@ def stored_name(hass: HomeAssistant, entry_id: str, printer: dict[str, Any]) -> 
 
 
 class BamBuddyPrinterCoordinator(DataUpdateCoordinator[PrinterData]):
-    """One printer's status, every 10 seconds; once a minute its print hours,
-    its name in BamBuddy and BamBuddy's details of it (address, a model
-    entered since, and whether the number still is this printer)."""
+    """One printer's status, every 10 seconds; once a minute its AMS units'
+    names and BamBuddy's details of it (its name, address, a model entered
+    since, and whether the number still is this printer); every ten minutes
+    and after a print its maintenance tasks and print hours."""
 
     config_entry: BamBuddyConfigEntry
 
@@ -363,8 +364,8 @@ class BamBuddyPrinterCoordinator(DataUpdateCoordinator[PrinterData]):
             raise self._replaced_error()
         commands = self._commands
         try:
-            # The runtime counter once a minute, beside the status, not after
-            # it: a slow one delays this refresh by no more than its own read.
+            # The minute's reads and the maintenance beside the status, not
+            # after it: a slow one delays this refresh by no more than its own read.
             status, read, _ = await asyncio.gather(self._read_status(), self._read_minutely(), self._read_maintenance())
         except UpdateFailed as err:
             # Gone from BamBuddy's list: the entry reloads now and its repair
@@ -526,32 +527,18 @@ class BamBuddyPrinterCoordinator(DataUpdateCoordinator[PrinterData]):
         return await fetch(self.client.get_status(self.printer_id), entry=self.config_entry)
 
     async def _read_minutely(self) -> bool:
-        """The print hours, the printer's name, its AMS units' names in
-        BamBuddy and its details (`_read_details`), once a minute -- True
-        then; without them the status goes on and each keeps its last value."""
+        """Its AMS units' names in BamBuddy and its details (`_read_details`:
+        the printer's name among them), once a minute -- True then; without
+        them the status goes on and each keeps its last value."""
         now = self.hass.loop.time()
         if now - self._minutely_read < MINUTELY_INTERVAL:
             return False
         self._minutely_read = now
-        runtime, _ = await asyncio.gather(self._read_runtime(), self._read_ams_labels())
-        hours = runtime.get("total_hours")
-        if isinstance(hours, int | float):
-            self._hours = float(hours)
-        # Not at setup: it has just read BamBuddy's printer list. First:
-        # still this printer? Only then its name.
+        await self._read_ams_labels()
+        # Not at setup: it has just read BamBuddy's printer list.
         if self.data is not None:
             await self._read_details()
-        name = runtime.get("printer_name")
-        if not self.replaced and isinstance(name, str) and name.strip() and name != self.info.get("name"):
-            self.info = {**self.info, "name": name}
         return True
-
-    async def _read_runtime(self) -> dict[str, Any]:
-        try:
-            return await self.client.get_runtime(self.printer_id)
-        except BamBuddyError as err:
-            _LOGGER.debug("No runtime counter for %s: %s", self.short_name, err)
-            return {}
 
     async def _read_ams_labels(self) -> None:
         """The names the user gave the AMS units in BamBuddy. A failed read
@@ -563,9 +550,11 @@ class BamBuddyPrinterCoordinator(DataUpdateCoordinator[PrinterData]):
             _LOGGER.debug("No AMS names for %s: %s", self.short_name, err)
 
     async def _read_maintenance(self) -> None:
-        """The printer's maintenance tasks, every ten minutes and after a
-        print: a read can write to BamBuddy's database. A failed read keeps
-        the last."""
+        """The printer's maintenance tasks and its print hours (BamBuddy's
+        runtime counter plus its offset, `total_print_hours`, in 1.2.5.7 and
+        1.3.0 alike -- 1.3.0 has no `runtime-debug`), every ten minutes and
+        after a print: a read can write to BamBuddy's database. A failed
+        read keeps the last; an answer without hours keeps the last hours."""
         now = self.hass.loop.time()
         if not self._maintenance_due and now - self._maintenance_read < MAINTENANCE_INTERVAL:
             return
@@ -579,6 +568,9 @@ class BamBuddyPrinterCoordinator(DataUpdateCoordinator[PrinterData]):
             return
         if generation == self._maintenance_generation:
             self._maintenance = maintenance
+            hours = maintenance.get("total_print_hours")
+            if isinstance(hours, int | float) and not isinstance(hours, bool):
+                self._hours = float(hours)
 
     async def async_reread_maintenance(self) -> None:
         """The tasks now, after one was marked done. Only they change: the
@@ -587,7 +579,7 @@ class BamBuddyPrinterCoordinator(DataUpdateCoordinator[PrinterData]):
         self._maintenance_due = True
         await self._read_maintenance()
         if self.data is not None:
-            self.data = replace(self.data, maintenance=self._maintenance)
+            self.data = replace(self.data, hours=self._hours, maintenance=self._maintenance)
             self.async_update_listeners()
 
     async def _read_details(self) -> None:

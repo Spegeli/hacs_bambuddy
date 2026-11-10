@@ -35,6 +35,7 @@ from tests.conftest import (
     printer_device,
     printer_device_id,
     printer_entry,
+    printer_info,
     printer_key,
     printer_name,
     printer_serial,
@@ -43,7 +44,7 @@ from tests.conftest import (
     set_up,
     setup_integration,
 )
-from tests.helpers import as_model, call_action, devices_by_identifier, reload_entry, renamed_in_bambuddy, with_plugs
+from tests.helpers import as_model, call_action, details_are, devices_by_identifier, reload_entry, renamed_in_bambuddy, with_plugs
 
 
 async def test_a_name_given_in_home_assistant_is_explained(
@@ -113,7 +114,8 @@ async def test_the_device_name_follows_bambuddy(
     registry = dr.async_get(hass)
     printer = devices_by_identifier(hass, entry)[printer_device(entry, X1C)]
     registry.async_update_device(printer.id, name_by_user="My printer")
-    bambuddy_api.get_runtime.return_value = {"printer_name": "Lab", "total_hours": 560.0}
+    # Only its details say so: the status keeps the old name.
+    details_are(bambuddy_api, {**printer_info(X1C), "name": "Lab"})
 
     await past_the_minute(hass, freezer)
 
@@ -215,11 +217,11 @@ async def test_a_name_changed_in_bambuddy_follows_at_the_next_refresh(
     entry = await set_up(hass, X1C)
     await past_the_minute(hass, freezer)
     renamed_in_bambuddy(bambuddy_api, X1C, "Lab")
-    runtime_reads = bambuddy_api.get_runtime.await_count
+    minute_reads = bambuddy_api.get_ams_labels.await_count
 
     await next_refresh(hass, freezer)
 
-    assert bambuddy_api.get_runtime.await_count == runtime_reads
+    assert bambuddy_api.get_ams_labels.await_count == minute_reads
     devices = devices_by_identifier(hass, entry)
     assert devices[printer_device(entry, X1C)].name == "Lab (X1C / 00M00A000000001)"
     assert devices[ams_device(entry, X1C, 0)].name == "Lab AMS A (AMS / 00600A3B0000001)"

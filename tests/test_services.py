@@ -147,18 +147,50 @@ async def test_an_empty_slot_is_refused(
     assert raised.value.translation_key == refusal
 
 
-async def test_an_ams_ht_cannot_load(
-    hass: HomeAssistant, bambuddy_api: SimpleNamespace, freezer: FrozenDateTimeFactory
-) -> None:
+async def _idle_h2d_slot(hass: HomeAssistant, bambuddy_api: SimpleNamespace, freezer: FrozenDateTimeFactory, ams: int) -> str:
     entry = await set_up(hass, H2D)
     bambuddy_api.statuses[H2D]["state"] = "IDLE"
     await next_refresh(hass, freezer)
-    slot = entity_id(hass, "sensor", ams_uid(entry, 128, "slot_1", H2D))
+    return entity_id(hass, "sensor", ams_uid(entry, ams, "slot_1", H2D))
+
+
+async def test_an_ams_ht_loads(hass: HomeAssistant, bambuddy_api: SimpleNamespace, freezer: FrozenDateTimeFactory) -> None:
+    """BamBuddy 1.3.0 loads from an AMS HT: the tray is the unit's id. Nothing
+    tells the versions apart before it is sent."""
+    slot = await _idle_h2d_slot(hass, bambuddy_api, freezer, 128)
+
+    await call_action(hass, "load_filament", entity_id=slot)
+
+    bambuddy_api.load_filament.assert_awaited_once_with(H2D, 128)
+
+
+async def test_an_older_bambuddy_refuses_the_ams_ht_load(
+    hass: HomeAssistant, bambuddy_api: SimpleNamespace, freezer: FrozenDateTimeFactory
+) -> None:
+    """BamBuddy 1.2.5.7 refuses it before it asks the printer: its 400 says why in our words."""
+    slot = await _idle_h2d_slot(hass, bambuddy_api, freezer, 128)
+    bambuddy_api.load_filament.side_effect = BamBuddyApiError(400, "tray_id must be 0..15 (AMS) or 254/255 (external)")
 
     with pytest.raises(ServiceValidationError) as raised:
         await call_action(hass, "load_filament", entity_id=slot)
 
     assert raised.value.translation_key == "ams_ht_load"
+
+
+@pytest.mark.parametrize(
+    ("ams", "error"),
+    [(128, BamBuddyApiError(500, "Internal Server Error")), (128, BamBuddyApiError(409, "busy")), (0, BamBuddyApiError(400, "bad")), (128, BamBuddyApiError(400, "Printer not connected"))],
+)
+async def test_any_other_load_error_stays_bambuddys(
+    hass: HomeAssistant, bambuddy_api: SimpleNamespace, freezer: FrozenDateTimeFactory, ams: int, error: BamBuddyApiError
+) -> None:
+    slot = await _idle_h2d_slot(hass, bambuddy_api, freezer, ams)
+    bambuddy_api.load_filament.side_effect = error
+
+    with pytest.raises(HomeAssistantError) as raised:
+        await call_action(hass, "load_filament", entity_id=slot)
+
+    assert raised.value.translation_key == "command_failed"
 
 
 async def test_something_else_is_no_slot(hass: HomeAssistant, bambuddy_api: SimpleNamespace) -> None:

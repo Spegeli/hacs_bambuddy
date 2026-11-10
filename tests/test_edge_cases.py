@@ -148,7 +148,6 @@ async def test_the_replaced_refusal_names_this_printer(
     entry = await set_up(hass, X1C)
     a1_mini = printer_info(A1_MINI)
     details_are(bambuddy_api, {**a1_mini, "id": X1C})
-    bambuddy_api.get_runtime.return_value = {"total_hours": 3.0, "printer_name": a1_mini["name"]}
     bambuddy_api.statuses[X1C] = load_fixture("status_a1mini.json")
 
     with patch.object(hass.config_entries, "async_schedule_reload"):

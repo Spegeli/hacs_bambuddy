@@ -322,11 +322,6 @@ class BamBuddyClient:
     async def get_status(self, printer_id: int) -> dict[str, Any]:
         return await self._object(f"/printers/{printer_id}/status")
 
-    async def get_runtime(self, printer_id: int) -> dict[str, Any]:
-        """BamBuddy's runtime counter of a printer: the hours it printed
-        (`total_hours`, with the offset set in BamBuddy)."""
-        return await self._object(f"/printers/{printer_id}/runtime-debug")
-
     async def get_ams_labels(self, printer_id: int) -> dict[int, str]:
         """The names the user gave the printer's AMS units in BamBuddy, by
         place (BamBuddy keeps them by the unit's serial and answers by its

@@ -71,11 +71,11 @@ INVENTORY_INTERVAL = timedelta(seconds=60)
 INVENTORY_PUSH_COOLDOWN = 1.0
 # A check that failed is asked again sooner.
 UPDATE_RETRY_INTERVAL = timedelta(minutes=15)
-# The print hours, BamBuddy's name and details of a printer change slowly:
+# BamBuddy's name and details of a printer and its AMS names change slowly:
 # read once a minute, not with every status.
 MINUTELY_INTERVAL = 60.0
-# Maintenance: every ten minutes (and after a print) -- a read can write to
-# BamBuddy's database.
+# Maintenance and the print hours: every ten minutes (and after a print) --
+# a read can write to BamBuddy's database.
 MAINTENANCE_INTERVAL = 600.0
 # How long an AMS unit without a serial number waits for one: BamBuddy
 # reports it a moment after it connects.

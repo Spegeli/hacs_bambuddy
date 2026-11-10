@@ -420,7 +420,6 @@ export const en = {
   strip_nozzle_right: "right nozzle",
   unload_title: "Unload the filament?",
   unload_text: "The printer heats the nozzle and pulls the filament back.",
-  ht_load: "Load filament from the AMS HT on the printer's screen.",
   filament_pause: "Pause the print to change the filament.",
   filament_paused: "Print paused: you can change the filament now.",
   filament_paused_fault: "The printer paused the print: deal with its message first. You can change the filament here, then resume.",

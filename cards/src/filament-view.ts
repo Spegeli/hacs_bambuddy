@@ -73,7 +73,6 @@ function slotRow(
   slot: Slot,
   options: {
     canAct: boolean;
-    canLoad: boolean;
     /** The title of the slot's dialog. */
     dialogTitle: string;
     side?: string;
@@ -128,7 +127,7 @@ function slotRow(
           key: "unload",
         }),
     });
-  } else if (ctx.canControl && !slot.empty && !slot.unknown && options.canLoad) {
+  } else if (ctx.canControl && !slot.empty && !slot.unknown) {
     action = actionButton({
       label: t(hass, "load"),
       aria: options.loadName,
@@ -241,7 +240,6 @@ function unitSection(ctx: CardContext, unit: AmsRefs, canAct: boolean): Template
   const { hass } = ctx;
   const humidity = numericState(hass, unit.humidity);
   const temperature = numericState(hass, unit.temperature);
-  const ht = unit.model === AMS_HT;
   const model = unitModel(ctx.ams, unit);
   const nozzle = unitNozzle(hass, unit);
   const open = ctx.amsUnfolded(unit);
@@ -289,7 +287,6 @@ function unitSection(ctx: CardContext, unit: AmsRefs, canAct: boolean): Template
               const place = slotPlace(hass, unit, entityId, index);
               return slotRow(ctx, slotOf(hass, entityId), {
                 canAct,
-                canLoad: !ht,
                 dialogTitle: t(hass, "filament_title", { slot: place }),
                 loadTitle: (filament) => t(hass, "load_title_from", { filament, place }),
                 loadName: t(hass, "load_from", { place }),
@@ -298,8 +295,7 @@ function unitSection(ctx: CardContext, unit: AmsRefs, canAct: boolean): Template
                 ...(nozzle ? { nozzle } : {}),
               });
             })}
-          </div>
-          ${ht && ctx.canControl ? html`<p class="hint">${t(hass, "ht_load")}</p>` : nothing}`
+          </div>`
       : nothing}
   </section>`;
 }
@@ -402,7 +398,6 @@ export function filamentView(ctx: CardContext): TemplateResult {
               const texts = side ?? ONE_SPOOL;
               return slotRow(ctx, slotOf(hass, entityId), {
                 canAct,
-                canLoad: true,
                 dialogTitle: t(hass, texts.title),
                 loadTitle: (filament) => t(hass, texts.load, { filament }),
                 loadName: t(hass, texts.loadName),

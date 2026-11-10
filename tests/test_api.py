@@ -443,13 +443,6 @@ async def test_switching_a_detector(hass: HomeAssistant, aioclient_mock: Aiohttp
     assert (method, str(called)) == ("POST", url)
 
 
-async def test_the_print_hours(hass: HomeAssistant, aioclient_mock: AiohttpClientMocker) -> None:
-    """BamBuddy's runtime counter, Read Status suffices."""
-    aioclient_mock.get(f"{API}/printers/1/runtime-debug", json={"total_hours": 559.5})
-
-    assert await _client(hass).get_runtime(1) == {"total_hours": 559.5}
-
-
 async def test_ams_labels(hass: HomeAssistant, aioclient_mock: AiohttpClientMocker) -> None:
     """BamBuddy's names of the AMS units, by place: blank names and keys
     that are no place left out."""

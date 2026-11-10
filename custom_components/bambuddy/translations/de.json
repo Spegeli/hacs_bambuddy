@@ -874,7 +874,7 @@
       "message": "Dieses Fach ist leer."
     },
     "ams_ht_load": {
-      "message": "BamBuddy kann kein Filament aus einem AMS HT laden. Lade es direkt am Drucker."
+      "message": "Deine BamBuddy-Version kann kein Filament aus einem AMS HT laden. Das geht erst ab BamBuddy 1.3.0. Lade es bis dahin direkt am Drucker."
     },
     "load_track_switch": {
       "message": "{printer} versorgt seine Düsen über den Filament Track Switch: Zum Laden muss feststehen, welche Düse versorgt wird. Lade das Filament am Drucker oder in BamBuddy."
@@ -1117,7 +1117,7 @@
     },
     "load_filament": {
       "name": "Filament laden",
-      "description": "Lädt das Filament eines AMS-Fachs oder der externen Spule in die Düse (nicht aus einem AMS HT: Das kann BamBuddy nicht; und nicht aus einem AMS-Fach an einem Drucker mit Filament Track Switch: Dort muss feststehen, welche Düse versorgt wird – lade es am Drucker oder in BamBuddy). Läuft ein Druck, pausiere ihn vorher.",
+      "description": "Lädt das Filament eines AMS-Fachs oder der externen Spule in die Düse (aus einem AMS HT erst ab BamBuddy 1.3.0; und nicht aus einem AMS-Fach an einem Drucker mit Filament Track Switch: Dort muss feststehen, welche Düse versorgt wird – lade es am Drucker oder in BamBuddy). Läuft ein Druck, pausiere ihn vorher.",
       "fields": {
         "entity_id": {
           "name": "Fach",
