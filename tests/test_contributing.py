@@ -49,6 +49,17 @@ def test_the_module_table_lists_every_module() -> None:
     assert [name for name in modules if name not in named] == []
 
 
+def test_the_commit_rule_counts_the_pages_as_documentation() -> None:
+    """A page's change typed `chore:` would fall out of the release notes."""
+    assert "| `docs` — user-facing documentation, the README and `documentation/` |" in _CONTRIBUTING
+    assert "`docs:` is for what the people who run the integration read, the README and the pages under `documentation/`." in _CONTRIBUTING
+
+
+def test_contributing_says_what_holds_the_pages_together() -> None:
+    assert "## User documentation" in _CONTRIBUTING
+    assert "`tests/test_documentation.py`" in _CONTRIBUTING
+
+
 def test_contributing_says_how_ams_entity_ids_are_made() -> None:
     assert "`models.ams_object_id`" in _CONTRIBUTING
 

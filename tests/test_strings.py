@@ -7,6 +7,7 @@ import re
 from typing import Any
 
 from tests.conftest import INTEGRATION, placeholders
+from tests.helpers import all_pages
 
 # Every language file under translations/, found the way the integration
 # itself finds them (language.async_shipped_languages): a new one is guarded by
@@ -193,7 +194,8 @@ def test_configure_is_named_as_every_supported_version_shows_it():
         for key, text in _texts(_load(name)).items():
             assert not re.search(r"\bgear\b|Zahnrad", text), (name, key)
     readme = (INTEGRATION.parent.parent / "README.md").read_text(encoding="utf-8")
-    assert "choose **Configure** (⚙)" not in readme
+    for text in (readme, *all_pages().values()):
+        assert "choose **Configure** (⚙)" not in text
 
 
 # The switch to another server says what becomes of the kept printers' plugs (words as approved).

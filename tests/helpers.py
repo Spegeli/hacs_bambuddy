@@ -3,8 +3,11 @@ from __future__ import annotations
 
 import asyncio
 import json
+from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
+import unicodedata
+from urllib.parse import quote
 
 import aiohttp
 from multidict import CIMultiDict, CIMultiDictProxy
@@ -22,6 +25,32 @@ from pytest_homeassistant_custom_component.typing import WebSocketGenerator
 from custom_components.bambuddy.api import BamBuddyConnectionError
 from custom_components.bambuddy.const import DOMAIN
 from tests.conftest import API_KEY, X1C, load_fixture
+
+# The user documentation's pages.
+DOCS = Path(__file__).parent.parent / "documentation"
+
+
+def page(name: str) -> str:
+    """A page of the documentation."""
+    return (DOCS / name).read_text(encoding="utf-8")
+
+
+def all_pages() -> dict[str, str]:
+    """The documentation's pages by file name."""
+    return {path.name: path.read_text(encoding="utf-8") for path in sorted(DOCS.glob("*.md"))}
+
+
+def _github_anchor(heading: str) -> str:
+    """The anchor GitHub gives `heading`, as a link writes it: lower case;
+    letters, digits, marks, "_", "-" and spaces kept, a space becoming a
+    dash; everything else -- punctuation, an emoji -- dropped. The emoji's
+    invisible variation selector is a mark, so "⬆️ Upgrading" keeps it, and
+    a link writes it percent-encoded: "%EF%B8%8F-upgrading"."""
+    kept = "".join(
+        char for char in heading.strip().lower()
+        if char in " -_" or unicodedata.category(char)[0] in "LMN"
+    )
+    return quote(kept.replace(" ", "-"), safe="-_")
 
 
 async def reload_entry(hass: HomeAssistant, entry_id: str, *, wait_background_tasks: bool = False) -> None:

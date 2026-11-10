@@ -1,12 +1,13 @@
-"""The README: its links within itself, and its badges in step with what
-they show."""
+"""The README: its links within itself, its badges in step with what they
+show, and its shape. What moved to the pages is pinned in
+tests/test_documentation.py."""
 from __future__ import annotations
 
 import json
 from pathlib import Path
 import re
-import unicodedata
-from urllib.parse import quote
+
+from tests.helpers import _github_anchor
 
 _ROOT = Path(__file__).parent.parent
 _README = (_ROOT / "README.md").read_text(encoding="utf-8")
@@ -18,29 +19,17 @@ _HEADINGS = re.findall(r"^## (.+)$", _README, re.MULTILINE)
 # --- Links within the README ----------------------------------------------------
 
 
-def _github_anchor(heading: str) -> str:
-    """The anchor GitHub gives `heading`, as a link writes it: lower case;
-    letters, digits, marks, "_", "-" and spaces kept, a space becoming a
-    dash; everything else -- punctuation, an emoji -- dropped. The emoji's
-    invisible variation selector is a mark, so "⬆️ Upgrading" keeps it, and
-    a link writes it percent-encoded: "%EF%B8%8F-upgrading"."""
-    kept = "".join(
-        char for char in heading.strip().lower()
-        if char in " -_" or unicodedata.category(char)[0] in "LMN"
-    )
-    return quote(kept.replace(" ", "-"), safe="-_")
-
-
-def test_every_link_within_the_readme_finds_its_section():
-    """A renamed heading breaks every link to it without a warning on
-    GitHub: the requirements link the API key section, the license the
-    disclaimer."""
-    sections = {
-        _github_anchor(heading) for heading in re.findall(r"^#{1,6} (.+)$", _PROSE, re.MULTILINE)
-    }
-    links = set(re.findall(r"\]\(#([^)\s]+)\)", _PROSE))
-    assert {"create-an-api-key", "%EF%B8%8F-disclaimer"} <= links
-    assert sorted(links - sections) == []
+def test_the_readme_reads_right_in_the_marketplace():
+    """The Marketplace shows the whole README, the HACS and manual steps
+    too: Home Assistant 2026.11 has no markers that leave a part out, and a
+    link to a section of the page does not jump there. So no such link, no
+    marker, and no word that points at a place on the page: a section is
+    named in words, a page linked by its full address."""
+    assert re.findall(r"\]\(#[^)\s]*\)|href=\"#", _PROSE) == []
+    assert "ha-marketplace:" not in _README
+    for pointer in ("button above", "at the top", "further down", "Click"):
+        assert pointer not in _PROSE, pointer
+    assert "**Create an API key** under Configuration" in _PROSE
 
 
 # --- The badges under the title --------------------------------------------------
@@ -57,11 +46,13 @@ def test_the_home_assistant_badge_names_the_minimum_version_of_hacs_json():
 
 def test_the_license_badge_names_the_license_of_the_license_file_and_opens_it():
     """The badge says which license the LICENSE file grants, and links to
-    that file."""
+    that file -- by its full address: the Marketplace shows the README away
+    from the repository."""
     granted = (_ROOT / "LICENSE").read_text(encoding="utf-8").split(" License", 1)[0]
     assert granted == "MIT"
     assert (
-        f'<a href="LICENSE"><img src="https://img.shields.io/badge/license-{granted}-yellow" '
+        f'<a href="https://github.com/Spegeli/hacs_bambuddy/blob/main/LICENSE">'
+        f'<img src="https://img.shields.io/badge/license-{granted}-yellow" '
         f'alt="License: {granted}"></a>'
     ) in _README
 
@@ -83,13 +74,6 @@ def test_the_release_badge_opens_the_release_it_shows():
     )
     assert link == "https://github.com/Spegeli/hacs_bambuddy/releases/latest"
     assert "include_prereleases" not in badge
-
-
-def test_the_switch_off_trigger_fires_once():
-    """A state trigger on the switch-off's `phase` "to done" alone fires
-    again at every reload of the entry while it is done (the restored state
-    comes from one without attributes): the README's trigger names `from`."""
-    assert "`phase` from `waiting` to `done`" in _README
 
 
 def test_every_mention_of_the_floor_names_the_minimum_of_hacs_json():
@@ -121,44 +105,10 @@ def test_the_issue_forms_link_to_sections_of_the_readme():
 def test_the_key_needs_all_three_permissions() -> None:
     """The integration refuses a key lacking Read Status, Control Printer or
     Manage Maintenance -- also with BamBuddy's authentication off: the README
-    says so, and none of the read-only advice is left."""
+    says so, and tells what to check first. The read-only advice that must
+    not come back: tests/test_documentation.py."""
     assert "**Read Status**, **Control Printer** and **Manage Maintenance**" in _README
     assert "Check that you pasted all of it" in _README
-    # The owner given the right back: the stored key checked again.
-    assert "leave the dialog's field empty to check the stored key at once" in _README
-    for gone in (
-        "Unsure? Start with this alone",
-        "any key works",
-        "If the setup accepts any text as the key",
-        "give the integration an API key without **Control Printer**",
-        "There are no controls: no pause or stop",
-        "with a key without **Control Printer**",
-        "Without **Control Printer** on the API key",
-        "`can_mark_done`",
-        "Controls appear only when the API key has",
-        "off at first",
-        "starts unticked",
-        "Copy it again from BamBuddy",
-    ):
-        assert gone not in _README, gone
-
-
-def test_ams_entity_ids_name_the_unit() -> None:
-    """AMS entity IDs carry the unit's model and serial; the AMS Lite's the
-    printer's serial and its letter until BamBuddy reports its own (#3348),
-    then a notice lists the renamed IDs."""
-    assert "_ams_a_humidity" not in _README
-    assert "sensor.ams_2_pro_19c06a000000001_humidity" in _README
-    assert "sensor.ams_lite_0309da000000002_a_slot_1" in _README
-    assert "maziggy/bambuddy/issues/3348" in _README
-    assert "the plain entity IDs; otherwise they end in `_2`" in _README
-    # Known limitations: the AMS Lite until BamBuddy reports its serial.
-    assert "**AMS Lite without its serial number:**" in _README
-    # The example names the unit by its device, which follows its place.
-    assert "device_attr(trigger.entity_id, 'name')" in _README
-    assert "an AMS Lite's, for now," in _README
-    # A replacement AMS Lite without a serial stays the same device.
-    assert "an AMS Lite stays the same device while BamBuddy reports no serial" in _README
 
 
 _APP = "https://github.com/Spegeli/homeassistant-app-bambuddy"
@@ -168,11 +118,12 @@ def test_the_head_sends_date_version_users_to_the_upgrade_and_names_the_app() ->
     """No development warning any more: before the first section the README
     says it is the integration, not the BamBuddy app -- as the app's README
     says the other way round -- and sends users of a date version to the
-    upgrade first (as hacs_bitpanda does)."""
+    upgrade first (as hacs_bitpanda does), by the page's full address: a link
+    to a section does nothing in the Marketplace."""
     head = _README[: _README.index("## ✨ Features")]
     assert "[!WARNING]" not in head and "active development" not in head
     assert "This is the integration, not the app" in head and _APP in head
-    assert "> [!IMPORTANT]" in head and "(#%EF%B8%8F-upgrading-from-a-date-version)" in head
+    assert "> [!IMPORTANT]" in head and "/blob/main/documentation/updating.md#upgrading-from-a-date-version)" in head
 
 
 def test_the_head_links_where_people_ask_and_talk() -> None:
@@ -214,43 +165,77 @@ def test_the_pictures_come_right_after_the_features() -> None:
     assert _HEADINGS[:3] == ["✨ Features", "📸 Screenshots", "📋 Requirements"]
     assert _section("📸 Screenshots").count("/.github/readme/cards/") == 4
     card = _section("🃏 Dashboard card")
-    assert "<img " not in card and "[Screenshots](#-screenshots)" in card
+    assert "<img " not in card and "**Screenshots**" in card
+    # Pictures side by side that stack on a phone: no layout table.
+    assert "<table" not in _README
 
 
 def test_the_card_and_the_examples_come_before_the_reference() -> None:
     """What a new user wants first -- the card, then what to automate --
-    before the lists to look things up in: the entities and the actions."""
-    order = ["⚙️ Configuration", "🃏 Dashboard card", "🤖 Automation examples", "📊 Entities", "🎛️ Actions", "⬆️ Upgrading from a date version"]
+    before the way to look things up: the pages, then the help."""
+    order = [
+        "⚙️ Configuration",
+        "🃏 Dashboard card",
+        "🤖 Automation examples",
+        "📚 Documentation",
+        "🔧 Troubleshooting",
+        "⬆️ Upgrading from a date version",
+    ]
     assert [_HEADINGS.index(heading) for heading in order] == sorted(_HEADINGS.index(heading) for heading in order)
 
 
-def test_the_reference_folds_and_its_headings_stay_outside() -> None:
-    """The long tables and the examples' YAML are folded, closed at first.
-    Their headings stay outside the folds, so the links to them and GitHub's
-    outline still find them; a blank line after the summary lets GitHub and
-    Home Assistant (HACS shows the README) render the table or code inside."""
+def test_the_marketplace_comes_before_hacs_and_hacs_folds() -> None:
+    """Home Assistant 2026.11 replaced HACS with the Marketplace, and the
+    floor is older: its steps first, under the name people know, then the
+    one fold, closed at first, with the HACS steps and their button. A blank
+    line after the summary lets GitHub and Home Assistant render what is
+    inside."""
+    section = _section("📦 Installation")
     folds = re.findall(r"<details>\n<summary>([^<]+)</summary>\n\n(.*?)\n\n</details>", _README, re.DOTALL)
-    assert _README.count("<details") == len(folds) and "<details open" not in _README
-    assert [summary for summary, _ in folds] == [
-        "Show the options",
-        *["Show the YAML"] * 5,
-        "Show the entities of a printer",
-        "Show the entities of an AMS unit",
-        "Show the entities of a smart plug",
-        "Show the entities of the BamBuddy server",
-        "Show the actions",
-    ]
-    for summary, body in folds:
-        assert not re.search(r"^#", body, re.MULTILINE), summary
-        assert body.startswith("| ") if summary != "Show the YAML" else body.startswith("```yaml\n"), summary
+    assert _README.count("<details") == len(folds) == 1 and "<details open" not in _README
+    [(summary, body)] = folds
+    assert summary == "Home Assistant before 2026.11: HACS" and body in section
+    assert "my.home-assistant.io/redirect/hacs_repository/" in body
+    assert "**Custom repositories**" in body
+    assert section.index("### Marketplace (formerly HACS)") < section.index("<details>")
+    assert section.index("</details>") < section.index("### Manual installation")
+    assert "my.home-assistant.io/redirect/marketplace_repository/" in _README[: _README.index("<details>")]
+    assert "`Spegeli/hacs_bambuddy`" in section and "**Add from link**" in section
+
+
+def test_a_reader_without_a_github_connection_is_told_it_comes() -> None:
+    """The Marketplace asks for a GitHub connection before it adds a
+    repository: without a word on it the steps seem to stall there."""
+    assert "needs a GitHub connection" in _section("📦 Installation")
+
+
+def test_the_first_steps_say_what_the_screen_shows() -> None:
+    """What a beginner met on a real 2026.11: the field's name and what it
+    takes, where the repository then stands, the second Install, the step
+    after the printers, and the offer to uninstall with the entry."""
+    section = _section("📦 Installation")
+    assert section.index("**Create an API key**") < section.index("### Marketplace (formerly HACS)")
+    for words in ("**GitHub link**", "or the full address", "**Available**", "search for it", "You install this at your own risk"):
+        assert words in section, words
+    assert "**Name and assign**" in _README and "**Skip and finish**" in _README
+    removal = _section("🗑️ Removal")
+    assert "**Also uninstall BamBuddy?**" in removal and "`purge_keep_days`" in removal
+    assert "/blob/main/documentation/glossary.md)" in _section("✨ Features")
+
+
+def test_updates_and_betas_lead_to_the_page() -> None:
+    """One line on updates; the rest stands on its page."""
+    section = _section("📦 Installation").split("### Updates and betas", 1)[1]
+    assert "**Settings → Updates**" in section
+    assert "/blob/main/documentation/updating.md)" in section
 
 
 _OWN_IMAGE ="https://raw.githubusercontent.com/Spegeli/hacs_bambuddy/main/"
 
 
 def test_the_readmes_own_images_are_in_the_repository_with_a_text() -> None:
-    """The README loads its own images from `main` (GitHub and HACS show it
-    alike); they live under `.github/readme/` as in hacs_bitpanda: each
+    """The README loads its own images from `main` (GitHub, the Marketplace
+    and HACS show it alike); they live under `.github/readme/` as in hacs_bitpanda: each
     address finds its file, and each image says in words what it shows."""
     own = [tag for tag in re.findall(r"<img ([^>]*)>", _README) if _OWN_IMAGE in tag]
     paths = [re.search(r'src="([^"]*)"', tag).group(1).removeprefix(_OWN_IMAGE) for tag in own]  # type: ignore[union-attr]
@@ -269,56 +254,16 @@ def test_the_readmes_own_images_are_in_the_repository_with_a_text() -> None:
     assert not (_ROOT / "logo.png").exists()
 
 
-def test_the_readme_says_how_plugs_are_known() -> None:
-    """A plug's entities belong to what it switches, its device to BamBuddy's plug (words as approved)."""
-    assert (
-        "Its entities belong to what it switches: a Tasmota by its IP address, a Home Assistant plug by its entity, an MQTT plug by "
-        "its topic and the path BamBuddy reads there, a REST plug by the plug in BamBuddy. Pointed at another one in BamBuddy, the plug keeps its device and gets new "
-        "entities — also for a Tasmota given a new IP address, which BamBuddy knows only by its address —; two plugs swapped in "
-        "BamBuddy keep their devices and swap their entities, with their history. The switch-off after the print stays with its "
-        "printer either way. Deleted in BamBuddy, or linked to no printer set up here, its device goes within a minute, and its "
-        "entities with it — unless another plug switches the same device, which then takes them over. Entities that go keep their "
-        "recorded history until the recorder purges it; their statistics are deleted once their entity ID has been unused for 10 days."
-    ) in _README
-    assert (
-        "A smart plug's carry a short code made from what the plug switches — `switch.bambuddy_smart_plug_3f9a2c` (the plug "
-        "itself), `sensor.bambuddy_smart_plug_3f9a2c_power`, `sensor.bambuddy_smart_plug_3f9a2c_energy_today` —: they stay when "
-        "the plug is renamed or moved to another printer, and go with what it switches (see [Per smart plug](#per-smart-plug)); a "
-        "second plug that switches the same device ends in `_2`."
-    ) in _README
-    assert (
-        "and you can add those only it has. On another server the kept printers' smart plugs become new devices; a plug that uses "
-        "the same Tasmota, Home Assistant entity or MQTT topic and path as before keeps its entity IDs and history."
-    ) in _README
-    assert "A smart plug's carry BamBuddy's number of the plug" not in _README
-
-
-def test_the_readme_names_get_filaments() -> None:
-    """Every response action has its row in the actions table."""
-    row = next((line for line in _README.splitlines() if line.startswith("| `bambuddy.get_filaments` |")), None)
-    assert row is not None
-    assert row.count(" | ") == 2 and "`entity_id`" in row and "response only" in row
-
-
-def test_the_readme_names_the_inventory_actions() -> None:
-    """The spool inventory's three actions, the response-only one as get_filaments."""
-    rows = {line.split(" | ")[0]: line for line in _README.splitlines() if line.startswith("| `bambuddy.")}
-    for action in ("assign_spool", "unassign_spool", "get_spools"):
-        assert f"| `bambuddy.{action}`" in rows, action
-    spools = rows["| `bambuddy.get_spools`"]
-    assert spools.count(" | ") == 2 and "`entity_id`" in spools and "response only" in spools
-    assert "`spool_id`" in rows["| `bambuddy.assign_spool`"]
-
-
 def test_the_readme_names_manage_inventory_as_optional() -> None:
-    """Manage Inventory is no permission the integration needs: under "Create an API key"
-    the README says what it adds and that everything else works without it."""
+    """Manage Inventory is no permission the integration needs. Requirements
+    say so, and under "Create an API key" it stands in a list of its own after
+    the required ones, which more optional permissions can join: what it adds,
+    and that everything else works without it."""
+    assert "**Manage Inventory** is optional" in _section("📋 Requirements")
     section = _README.split("### Create an API key", 1)[1].split("\n### ", 1)[0]
-    assert "**Manage Inventory**" in section
-    assert "without it" in section
-    assert "`inventory_spool`" in _README and "`inventory_assignable`" in _README
-
-
-def test_the_readme_names_the_camera_modes_as_the_editor_does() -> None:
-    """On a tap of its camera button, always, never: the editor's three words."""
-    assert "| `camera` | `tap`, `always`, `off` | `tap` | The live view: on a tap of its camera button, always while the dashboard is open, or never (the job's cover image then) |" in _README
+    required, optional = section.split("**Optional:**", 1)
+    assert "**Required**" in required
+    for permission in ("Read Status", "Control Printer", "Manage Maintenance"):
+        assert f"- **{permission}**:" in required, permission
+    assert "- **Manage Inventory**:" in optional and "Manage Inventory" not in required
+    assert "without it" in optional
