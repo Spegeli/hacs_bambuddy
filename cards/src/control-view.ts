@@ -10,8 +10,8 @@ import { formatNumber, formatState, formatTemperature, fromCelsius, listedOption
 import { detectionSection } from "./detection";
 import { heatingSection } from "./heating";
 import { type IconName } from "./icons";
-import { t, type TextKey } from "./i18n";
-import { actionButton, activeNozzleIndex, developerHint, hottestNozzle, note, NOZZLE_SIDES, radioKeys, radioLeave, radioStop, type CardContext } from "./parts";
+import { t } from "./i18n";
+import { actionButton, activeNozzleIndex, developerHint, hottestNozzle, note, NOZZLE_SIDES, radioKeys, radioLeave, radioOptions, radioStop, sideAt, type CardContext } from "./parts";
 import type { ControlSection, Heater, PrinterRefs } from "./types";
 
 // As BamBuddy's own: 50 mm to get the head or the bed out of the way.
@@ -21,17 +21,13 @@ export type Step = (typeof STEPS)[number];
 /** The filament length one tap extrudes or retracts. */
 const EXTRUDE_LENGTH = 10;
 
-/** Below this, in °C, the printer refuses to extrude. */
+/** Below this, in °C, the printer refuses to extrude (the integration's
+ * MIN_EXTRUDE_TEMPERATURE says the same). */
 const MIN_EXTRUDE_TEMPERATURE = 170;
 
 /** The printers whose Z moves the nozzle, not the bed (bed slingers: the
  * A1, A1 mini and A2L). */
 const NOZZLE_Z = /^A(1|2L)\b/i;
-
-/** The hint for a cold nozzle that names the active one of two. */
-const COLD_HINTS: TextKey[] = ["cold_nozzle_left", "cold_nozzle_right"];
-/** The same, where the card shows no heating section to point to. */
-const COLD_PLAIN: TextKey[] = ["cold_nozzle_left_plain", "cold_nozzle_right_plain"];
 
 /** Left or right on a printer with two nozzles: the one that extrudes and
  * loads. The printer switches only without a print. */
@@ -45,18 +41,15 @@ function activeNozzle(ctx: CardContext, disabled: boolean): TemplateResult | typ
   return html`<div class="nozzle-row">
     <span class="step-label">${t(hass, "active_nozzle")}</span>
     <div class="seg" role="radiogroup" aria-label=${t(hass, "active_nozzle")} @keydown=${radioKeys} @focusout=${radioLeave}>
-      ${options.map(
-        (option, index) => html`<button
-          role="radio"
-          aria-checked=${option === state.state ? "true" : "false"}
-          tabindex=${index === stop ? 0 : -1}
-          aria-disabled=${pending ? "true" : nothing}
-          ?disabled=${disabled || state.state === "unavailable"}
-          @click=${() => ctx.run("active_nozzle", "select", "select_option", { entity_id: refs.activeNozzle, option })}
-        >
-          ${formatState(hass, refs.activeNozzle, option)}
-        </button>`,
-      )}
+      ${radioOptions({
+        options,
+        current: state.state,
+        stop,
+        pending,
+        disabled: () => disabled || state.state === "unavailable",
+        onPick: (option) => void ctx.run("active_nozzle", "select", "select_option", { entity_id: refs.activeNozzle, option }),
+        content: (option) => formatState(hass, refs.activeNozzle, option) ?? "",
+      })}
     </div>
   </div>`;
 }
@@ -113,7 +106,8 @@ function motionSection(ctx: CardContext, step: Step, setStep: (step: Step) => vo
   // Of two nozzles, the hint names the one to heat.
   const side = activeNozzleIndex(ctx);
   const heating = ctx.settings.sections.includes("heating");
-  const coldHint = side === undefined ? (heating ? "cold_nozzle" : "cold_nozzle_plain") : ((heating ? COLD_HINTS : COLD_PLAIN)[side] as TextKey);
+  const coldNozzle = side === undefined ? "cold_nozzle" : (`cold_nozzle_${sideAt(side)}` as const);
+  const coldHint = heating ? coldNozzle : (`${coldNozzle}_plain` as const);
   const extruder = (direction: 1 | -1): TemplateResult =>
     actionButton({
       label: t(hass, direction > 0 ? "extrude" : "retract"),
@@ -156,10 +150,10 @@ function motionSection(ctx: CardContext, step: Step, setStep: (step: Step) => vo
         <div class="seg" role="radiogroup" aria-label=${t(hass, "step")} aria-disabled=${disabled ? "true" : "false"} @keydown=${radioKeys} @focusout=${radioLeave}>
           ${STEPS.map(
             // Locked with the arrows: what it sets waits with them.
-            (value) => html`<button
+            (value, index) => html`<button
               role="radio"
               aria-checked=${value === step ? "true" : "false"}
-              tabindex=${value === step ? 0 : -1}
+              tabindex=${index === radioStop(STEPS, step) ? 0 : -1}
               ?disabled=${disabled}
               @click=${() => setStep(value)}
             >
@@ -187,15 +181,27 @@ function motionSection(ctx: CardContext, step: Step, setStep: (step: Step) => vo
 
 /** Whether a section has something to show: heating a heater whose target
  * the card can set, the print options a detection switch; moving always --
- * but with Hide controls (`viewOnly`), which shows states only. */
-export function sectionShown(refs: PrinterRefs, name: ControlSection, viewOnly = false): boolean {
+ * but with Hide controls (`readOnly`), which shows states only. */
+export function sectionShown(refs: PrinterRefs, name: ControlSection, readOnly = false): boolean {
   if (name === "heating") return [...refs.nozzles, refs.bed, refs.chamber].some((heater) => heater.target !== undefined);
-  if (name === "motion") return !viewOnly;
+  if (name === "motion") return !readOnly;
   return refs.detectors.length > 0;
 }
 
 export function controlView(ctx: CardContext, step: Step, setStep: (step: Step) => void): TemplateResult {
-  const section = (name: ControlSection): TemplateResult | typeof nothing =>
-    name === "heating" ? heatingSection(ctx) : name === "options" ? detectionSection(ctx) : ctx.viewOnly ? nothing : motionSection(ctx, step, setStep);
+  const section = (name: ControlSection): TemplateResult | typeof nothing => {
+    switch (name) {
+      case "heating":
+        return heatingSection(ctx);
+      case "options":
+        return detectionSection(ctx);
+      case "motion":
+        return ctx.viewOnly ? nothing : motionSection(ctx, step, setStep);
+      default: {
+        const unknown: never = name;
+        return unknown;
+      }
+    }
+  };
   return html`${developerHint(ctx)}${ctx.settings.sections.map(section)}`;
 }

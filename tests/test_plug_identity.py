@@ -1,8 +1,10 @@
 """How a smart plug is known: its BamBuddy record and what it switches."""
 from __future__ import annotations
 
+import asyncio
 from datetime import UTC, datetime
 import time
+from unittest.mock import patch
 
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers import device_registry as dr
@@ -14,8 +16,10 @@ from custom_components.bambuddy import plug_identity
 from custom_components.bambuddy.const import DOMAIN
 from custom_components.bambuddy.plug_identity import Known
 
-from .conftest import TEST_SECRET
+from tests.conftest import TEST_SECRET
 
+ENTRY = "abc123"
+HEX16 = "0123456789abcdef"
 EPOCH = int(datetime(2026, 9, 1, 10, tzinfo=UTC).timestamp())
 LATER = "2026-10-01T08:30:00"
 
@@ -208,3 +212,113 @@ async def test_the_secret_is_made_once(hass: HomeAssistant, hass_storage: dict[s
     assert len(first) == 32 and first != bytes(32)
     stored = hass_storage["bambuddy.plug_secret"]["data"]["secret"]  # type: ignore[index]
     assert len(stored) == 64 and bytes.fromhex(stored) == first
+
+
+# --- What the survivors of a mutation run asked for ---------------------------------
+
+
+def test_an_address_is_normalised_only_when_every_octet_is_one() -> None:
+    assert plug_identity.source_candidates({"plug_type": "tasmota", "ip_address": "001.001.001.255"}) == ["1.1.1.255"]
+    # Not an address: kept as written (lower-cased and trimmed).
+    assert plug_identity.source_candidates({"plug_type": "tasmota", "ip_address": "001.001.001.256"}) == ["001.001.001.256"]
+
+
+def test_an_identity_remembers_its_type_and_what_it_was_made_from() -> None:
+    identity = plug_identity.identities(TEST_SECRET, [_tasmota(3, "192.0.2.50")], {})[3]
+    assert identity.plug_type == "tasmota"
+    assert identity.known() == Known("tasmota", EPOCH, frozenset({identity.internal}))
+
+
+def test_a_plug_without_a_creation_time_is_keyed_by_a_record_at_zero() -> None:
+    rest = plug_identity.identities(TEST_SECRET, [_rest(4, created=None)], {})[4]
+    assert (rest.key, rest.known_by) == (plug_identity.record_key(TEST_SECRET, 4, 0), "record")
+    # A Tasmota with no address and nothing known comes to the same.
+    bare = plug_identity.identities(TEST_SECRET, [{"id": 5, "plug_type": "tasmota"}], {})[5]
+    assert (bare.key, bare.known_by) == (plug_identity.record_key(TEST_SECRET, 5, 0), "record")
+
+
+def test_what_a_plug_is_known_by() -> None:
+    tasmota = plug_identity.identities(TEST_SECRET, [_tasmota(3, "192.0.2.50")], {})[3]
+    assert tasmota.known_by == "source"
+    known = {7: Known("mqtt", EPOCH, frozenset({_internal("mqtt", "S\n")}))}
+    mqtt = {"id": 7, "plug_type": "mqtt", "created_at": "2026-09-01T10:00:00", "mqtt_power_topic": "P", "mqtt_state_topic": "S"}
+    assert plug_identity.identities(TEST_SECRET, [mqtt], known)[7].known_by == "source"
+
+
+@pytest.mark.parametrize(
+    "identifier",
+    [
+        f"{ENTRY}_plug_a_5",  # a number that is none
+        f"{ENTRY}_plug_3_b",  # a time that is none
+        f"{ENTRY}_plug_3",  # no time
+        f"{ENTRY}_plug_",
+        "3_5",  # right in itself, but not this entry's
+        "other_plug_3_5",
+    ],
+)
+def test_an_identifier_that_is_no_plug_devices_is_refused(identifier: str) -> None:
+    assert plug_identity.parse_device_identifier(ENTRY, identifier) is None
+
+
+@pytest.mark.parametrize(
+    "unique_id",
+    [
+        f"{HEX16}_0_power",  # right in itself, but not this entry's
+        f"{ENTRY}_plugsrc_{HEX16[:15]}_0_power",  # too short
+        f"{ENTRY}_plugsrc_{HEX16[:15]}g_0_power",  # not hex
+        f"{ENTRY}_plugsrc_{HEX16}_x_power",  # rank is no number
+        f"{ENTRY}_plugsrc_{HEX16}_0",  # no key
+        f"{ENTRY}_plugsrc_{HEX16}_0_",
+    ],
+)
+def test_a_unique_id_that_is_no_plug_entitys_is_refused(unique_id: str) -> None:
+    assert plug_identity.parse_unique_id(ENTRY, unique_id) is None
+
+
+def test_a_key_with_underscores_reads_back_whole() -> None:
+    assert plug_identity.parse_unique_id(ENTRY, f"{ENTRY}_plugsrc_{HEX16}_2_auto_off_every_print") == (HEX16, 2, "auto_off_every_print")
+
+
+async def test_the_registry_reads_only_this_domains_plug_devices(hass: HomeAssistant) -> None:
+    entry = MockConfigEntry(domain=DOMAIN)
+    entry.add_to_hass(hass)
+    devices, entities = dr.async_get(hass), er.async_get(hass)
+    identity = plug_identity.identities(TEST_SECRET, [_tasmota(3, "192.0.2.50")], {})[3]
+    plug_identifier = plug_identity.device_identifier(entry.entry_id, identity)
+    # Other identifiers on the device come before the plug's, and a plug's name in another domain is none.
+    device = devices.async_get_or_create(
+        config_entry_id=entry.entry_id,
+        identifiers={(DOMAIN, f"{entry.entry_id}_printer_1"), (DOMAIN, f"{entry.entry_id}_printer_2"), ("other", plug_identifier[1]), plug_identifier},
+        model="Something else",
+    )
+    disabled = entities.async_get_or_create(
+        "switch", DOMAIN, plug_identity.entity_unique_id(entry.entry_id, identity, "power"), config_entry=entry, device_id=device.id,
+        disabled_by=er.RegistryEntryDisabler.USER,
+    )
+    assert disabled.disabled
+    stray = devices.async_get_or_create(config_entry_id=entry.entry_id, identifiers={("other", f"{entry.entry_id}_plug_9_5")})
+    assert stray
+
+    known = plug_identity.known_from_registry(hass, entry.entry_id)
+
+    # A disabled entity still holds its key; a model that is no type of ours stays as it is.
+    assert known == {3: Known("Something else", EPOCH, frozenset({identity.internal}))}
+
+
+async def test_a_plug_device_without_a_model_has_no_type(hass: HomeAssistant) -> None:
+    entry = MockConfigEntry(domain=DOMAIN)
+    entry.add_to_hass(hass)
+    identity = plug_identity.identities(TEST_SECRET, [_tasmota(3, "192.0.2.50")], {})[3]
+    dr.async_get(hass).async_get_or_create(config_entry_id=entry.entry_id, identifiers={plug_identity.device_identifier(entry.entry_id, identity)})
+
+    assert plug_identity.known_from_registry(hass, entry.entry_id)[3].plug_type == ""
+
+
+async def test_the_secret_is_stored_privately_and_made_once_at_once(hass: HomeAssistant, hass_storage: dict[str, object]) -> None:
+    hass_storage.pop("bambuddy.plug_secret", None)
+    with patch.object(plug_identity, "Store", wraps=plug_identity.Store) as store:
+        first, second = await asyncio.gather(plug_identity.async_secret(hass), plug_identity.async_secret(hass))
+
+    assert first == second
+    assert store.call_count == 1
+    assert store.call_args.kwargs == {"private": True}

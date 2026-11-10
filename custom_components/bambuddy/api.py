@@ -12,7 +12,8 @@ from urllib.parse import urlsplit, urlunsplit
 
 import aiohttp
 
-from .const import REQUIRED_SCOPES
+from .const import MANAGE_INVENTORY, OPTIONAL_PERMISSIONS, REQUIRED_SCOPES
+from .models import is_int
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -22,6 +23,10 @@ _TIMEOUT = aiohttp.ClientTimeout(total=10, connect=5)
 _SNAPSHOT_TIMEOUT = aiohttp.ClientTimeout(total=20, connect=5)
 # For its system information BamBuddy walks through its whole archive.
 _SYSTEM_TIMEOUT = aiohttp.ClientTimeout(total=30, connect=5)
+# For its statistics BamBuddy asks every smart plug for its energy, one after another.
+_STATS_TIMEOUT = aiohttp.ClientTimeout(total=30, connect=5)
+# A camera stream runs as long as someone watches.
+_STREAM_TIMEOUT = aiohttp.ClientTimeout(total=None, connect=5)
 # The first cover of a job can need an FTP download from the printer.
 _COVER_TIMEOUT = aiohttp.ClientTimeout(total=30, connect=5)
 # Without a copy in its archive BamBuddy downloads the whole job first.
@@ -47,7 +52,9 @@ _WS_HEARTBEAT = 30.0
 _WS_TIMEOUT = aiohttp.ClientWSTimeout(ws_receive=None, ws_close=2.0)
 _API_PATH = "/api/v1"
 # A gateway's answers: a proxy without BamBuddy behind it.
-_GATEWAY = (502, 503, 504)
+GATEWAY_STATUSES = (502, 503, 504)
+
+
 class AddressWithLoginError(ValueError):
     """The address carries a user name or password: BamBuddy takes the API
     key, and the address is the entry's identity -- no secret in it."""
@@ -124,7 +131,18 @@ class BamBuddyNotJsonError(BamBuddyApiError):
 
 class KeyScopes(dict[str, bool]):
     """Whether the key has each scope the integration needs (the keys of
-    REQUIRED_SCOPES), as BamBuddy reports what it may really do."""
+    REQUIRED_SCOPES), as BamBuddy reports what it may really do; beside them
+    the optional permissions it holds (OPTIONAL_PERMISSIONS), which change
+    neither what is missing nor the marks."""
+
+    def __init__(self, scopes: dict[str, bool], optional: frozenset[str] = frozenset()) -> None:
+        super().__init__(scopes)
+        self.optional = optional
+
+    @property
+    def can_assign_spools(self) -> bool:
+        """Manage Inventory: spools of BamBuddy's inventory may be assigned to slots."""
+        return MANAGE_INVENTORY in self.optional
 
     @property
     def missing(self) -> list[str]:
@@ -216,7 +234,7 @@ class BamBuddyClient:
                     # restarts): the proxy's page, no text of BamBuddy's -- a
                     # 404 too (Traefik: "404 page not found"); BamBuddy's own
                     # 404s always carry its JSON detail.
-                    if response.status in (*_GATEWAY, 404) and detail == f"HTTP {response.status}":
+                    if response.status in (*GATEWAY_STATUSES, 404) and detail == f"HTTP {response.status}":
                         raise BamBuddyConnectionError(f"{method} {path}: HTTP {response.status}")
                     error = _ERRORS.get(response.status, BamBuddyApiError)
                     raise error(response.status, detail, f"{method} {path}")
@@ -268,7 +286,10 @@ class BamBuddyClient:
         if not isinstance(granted, list):
             raise BamBuddyBadAnswerError(200, "No permissions in the answer", "GET /auth/me")
         held = {permission for permission in granted if isinstance(permission, str)}
-        return KeyScopes({scope: needed <= held for scope, needed in REQUIRED_SCOPES.items()})
+        return KeyScopes(
+            {scope: needed <= held for scope, needed in REQUIRED_SCOPES.items()},
+            frozenset(held & OPTIONAL_PERMISSIONS),
+        )
 
     async def get_system_info(self, *, patient: bool = True) -> dict[str, Any]:
         """For it BamBuddy walks through its whole archive: 30 s -- or 10
@@ -278,7 +299,7 @@ class BamBuddyClient:
     async def get_statistics(self, *, patient: bool = True) -> dict[str, Any]:
         """BamBuddy's statistics ask every smart plug for its energy, one
         after another: up to 30 s, 10 s where the setup waits for them."""
-        return await self._object("/archives/stats", timeout=_SYSTEM_TIMEOUT if patient else _TIMEOUT)
+        return await self._object("/archives/stats", timeout=_STATS_TIMEOUT if patient else _TIMEOUT)
 
     async def get_update_check(self) -> dict[str, Any]:
         return await self._object("/updates/check", timeout=_UPDATE_TIMEOUT)
@@ -287,18 +308,19 @@ class BamBuddyClient:
         return await self._object("/firmware/updates", timeout=_UPDATE_TIMEOUT)
 
     async def get_printers(self) -> list[dict[str, Any]]:
-        return await self._list("/printers/")
+        """BamBuddy's printers: an entry that is no printer with a number
+        (no object, no whole-number id) is left out."""
+        return [
+            printer
+            for printer in await self._list("/printers/")
+            if isinstance(printer, dict) and is_int(printer.get("id"))
+        ]
 
     async def get_printer(self, printer_id: int) -> dict[str, Any]:
         return await self._object(f"/printers/{printer_id}")
 
     async def get_status(self, printer_id: int) -> dict[str, Any]:
         return await self._object(f"/printers/{printer_id}/status")
-
-    async def get_runtime(self, printer_id: int) -> dict[str, Any]:
-        """BamBuddy's runtime counter of a printer: the hours it printed
-        (`total_hours`, with the offset set in BamBuddy)."""
-        return await self._object(f"/printers/{printer_id}/runtime-debug")
 
     async def get_ams_labels(self, printer_id: int) -> dict[int, str]:
         """The names the user gave the printer's AMS units in BamBuddy, by
@@ -308,7 +330,8 @@ class BamBuddyClient:
         return {
             int(place): label.strip()
             for place, label in answer.items()
-            if isinstance(label, str) and label.strip() and str(place).isdigit()
+            # isdecimal, not isdigit: "²" is a digit int() refuses.
+            if isinstance(label, str) and label.strip() and str(place).isdecimal()
         }
 
     async def get_maintenance(self, printer_id: int) -> dict[str, Any]:
@@ -343,9 +366,23 @@ class BamBuddyClient:
         return [profile for profile in profiles if isinstance(profile, dict)] if isinstance(profiles, list) else []
 
     async def get_smart_plugs(self) -> list[dict[str, Any]]:
-        """BamBuddy's smart plugs, from its database. The answer holds a
-        plug's address and login: never logged."""
-        return await self._list("/smart-plugs/")
+        """BamBuddy's smart plugs, from its database, an entry that is no
+        plug with a number left out. The answer holds a plug's address and
+        login: never logged."""
+        return [plug for plug in await self._list("/smart-plugs/") if isinstance(plug, dict) and isinstance(plug.get("id"), int)]
+
+    async def get_spools(self) -> list[dict[str, Any]]:
+        """BamBuddy's spool inventory, archived spools left out (no paging).
+        A spool carries its owner's note: never logged."""
+        return await self._list("/inventory/spools")
+
+    async def get_spool_assignments(self) -> list[dict[str, Any]]:
+        """Which spool sits in which slot, for every printer at once."""
+        return await self._list("/inventory/assignments")
+
+    async def get_spoolman_status(self) -> dict[str, Any]:
+        """Whether Spoolman keeps the spools instead of BamBuddy's inventory."""
+        return await self._object("/spoolman/status")
 
     async def get_plug_status(self, plug_id: int, *, patient: bool = True) -> dict[str, Any]:
         """A plug's state, reachability and energy figures: BamBuddy asks the
@@ -402,7 +439,7 @@ class BamBuddyClient:
         return self._session.get(
             self.stream_url(printer_id, token, fps),
             ssl=self._ssl,
-            timeout=aiohttp.ClientTimeout(total=None, connect=5),
+            timeout=_STREAM_TIMEOUT,
         )
 
     async def stop_camera(self, printer_id: int) -> bool:
@@ -537,8 +574,8 @@ class BamBuddyClient:
         `setting_id`: Bambu Studio's for the profile, left out when empty
         (BamBuddy then derives one from the filament id)."""
         optional = {
-            name: value
-            for name, value in (
+            field: value
+            for field, value in (
                 ("kprofile_filament_id", kprofile_filament_id),
                 ("kprofile_setting_id", kprofile_setting_id),
                 ("k_value", k_value),
@@ -586,6 +623,21 @@ class BamBuddyClient:
 
     async def set_ams_backup(self, printer_id: int, enabled: bool) -> None:
         await self._command(f"/printers/{printer_id}/ams-backup", enabled=_flag(enabled))
+
+    async def assign_spool(self, spool_id: int, printer_id: int, ams_id: int, tray_id: int, *, move: bool = False) -> dict[str, Any]:
+        """An inventory spool to a slot (external: ams 255, tray 0/1); BamBuddy
+        sets the slot from it. "move" (BamBuddy's newer line) takes the spool
+        out of its other slot; 1.2.5.7 ignores the field. BamBuddy checks no
+        print."""
+        body: dict[str, Any] = {"spool_id": spool_id, "printer_id": printer_id, "ams_id": ams_id, "tray_id": tray_id}
+        if move:
+            body["move"] = True
+        answer = await self._request("POST", "/inventory/assignments", json=body)
+        return answer if isinstance(answer, dict) else {}
+
+    async def unassign_spool(self, printer_id: int, ams_id: int, tray_id: int) -> None:
+        """Drop a slot's link to its spool; nothing goes to the printer."""
+        await self._request("DELETE", f"/inventory/assignments/{printer_id}/{ams_id}/{tray_id}")
 
     async def control_plug(self, plug_id: int, on: bool) -> None:
         """A plug on or off, by name: BamBuddy's toggle skips what it does

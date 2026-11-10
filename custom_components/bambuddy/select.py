@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
-from functools import partial
 
 from homeassistant.components.select import SelectEntity, SelectEntityDescription
 from homeassistant.const import EntityCategory
@@ -12,15 +11,15 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 
 from .api import BamBuddyClient
+from .chamber import airduct_check
 from .const import PRINT_SPEEDS
 from .coordinator import BamBuddyConfigEntry
-from .entity import BamBuddyDescribedEntity, async_run_command, refuse
-from .models import JOB_STATES, PrinterData, ventilating
+from .entity import BamBuddyDescribedEntity, async_run_command
+from .models import JOB_STATES, ChamberSent, PrinterData, by_code
 
 PARALLEL_UPDATES = 1
 
 _SPEED_MODES = {name: mode for mode, name in PRINT_SPEEDS.items()}
-_AIRDUCT_MODES = {0: "cooling", 1: "heating", 2: "laser"}
 # BamBuddy sets only these; the laser mode (2, the H2 series' laser module) comes from the printer.
 _AIRDUCT_SETTABLE = ["cooling", "heating"]
 # BamBuddy's extruders: 0 is the right nozzle, 1 the left one.
@@ -36,17 +35,11 @@ class BamBuddySelectDescription(SelectEntityDescription):
     allowed: Callable[[PrinterData], bool] | None = None
     refusal: str = "not_now"
     idle_only: bool = False
-    # A choice the printer's state rules out: raises its own refusal
-    # (`refuse(key, printer=name)`), given the state, the choice and the name.
-    option_check: Callable[[PrinterData, str, str], None] | None = None
-
-
-def _chamber_heats(data: PrinterData) -> bool:
-    """The chamber heater has a target: the printer keeps the airduct on
-    heating (Bambu: "When the chamber is heated, the system will
-    automatically switch to the heating mode")."""
-    target = data.temperatures.get("chamber_target")
-    return isinstance(target, int | float) and not isinstance(target, bool) and target > 0
+    # A choice the printer's state rules out: raises its own refusal, given
+    # the state, the choice and what the chamber was just told.
+    option_check: Callable[[PrinterData, str, ChamberSent], None] | None = None
+    # The choice counts for the chamber's locks once BamBuddy took it.
+    airduct: bool = False
 
 
 SELECTS: tuple[BamBuddySelectDescription, ...] = (
@@ -54,7 +47,7 @@ SELECTS: tuple[BamBuddySelectDescription, ...] = (
         key="print_speed",
         translation_key="print_speed",
         options=list(PRINT_SPEEDS.values()),
-        value_fn=lambda data: PRINT_SPEEDS.get(data.status.get("speed_level")),  # type: ignore[arg-type]
+        value_fn=lambda data: by_code(PRINT_SPEEDS, data.status.get("speed_level")),
         select_fn=lambda client, printer, option: client.set_print_speed(printer, _SPEED_MODES[option]),
         # The speed belongs to the running job; the printer forgets it after.
         allowed=lambda data: data.state in JOB_STATES,
@@ -66,19 +59,20 @@ SELECTS: tuple[BamBuddySelectDescription, ...] = (
         options=_AIRDUCT_SETTABLE,
         entity_category=EntityCategory.CONFIG,
         exists_fn=lambda data: data.has_airduct(),
-        value_fn=lambda data: _AIRDUCT_MODES.get(data.status.get("airduct_mode")),  # type: ignore[arg-type]
+        value_fn=lambda data: data.airduct,
         select_fn=lambda client, printer, mode: client.set_airduct_mode(printer, mode),
         # The print sets it at its start (Bambu Studio refuses a change
         # during one).
         idle_only=True,
-        option_check=lambda data, mode, name: _airduct_check(data, mode, name),
+        option_check=airduct_check,
+        airduct=True,
     ),
     BamBuddySelectDescription(
         key="active_nozzle",
         translation_key="active_nozzle",
         options=list(_NOZZLES.values()),
         exists_fn=lambda data: data.is_dual_nozzle,
-        value_fn=lambda data: _NOZZLES.get(data.status.get("active_extruder")),  # type: ignore[arg-type]
+        value_fn=lambda data: by_code(_NOZZLES, data.status.get("active_extruder")),
         select_fn=lambda client, printer, nozzle: client.select_extruder(printer, _NOZZLE_INDEX[nozzle]),
         # The job switches nozzles itself while it runs, and so does a
         # filament change.
@@ -118,25 +112,19 @@ class BamBuddySelect(BamBuddyDescribedEntity, SelectEntity):
         if option not in (description.options or []):
             return  # the mode it is in, which only the printer sets
         option_check = description.option_check
+        coordinator = self.coordinator
+        sent = coordinator.chamber_sent
+
+        async def select() -> None:
+            await description.select_fn(coordinator.client, coordinator.printer_id, option)
+            if description.airduct:
+                sent.note(airduct=option)
+
         await async_run_command(
-            self.coordinator,
-            partial(description.select_fn, self.coordinator.client, self.coordinator.printer_id, option),
+            coordinator,
+            select,
             allowed=description.allowed,
             refusal=description.refusal,
             idle_only=description.idle_only,
-            check=None if option_check is None else partial(_check_option, option_check, option),
+            check=None if option_check is None else lambda data, _name: option_check(data, option, sent),
         )
-
-
-def _check_option(check: Callable[[PrinterData, str, str], None], option: str, data: PrinterData, name: str) -> None:
-    check(data, option, name)
-
-
-def _airduct_check(data: PrinterData, mode: str, name: str) -> None:
-    """Cooling beside a heating chamber is a state Bambu describes nowhere:
-    the chamber goes off first. Heating (on the P2S: keeping the chamber
-    warm) waits while the chamber is ventilated."""
-    if mode == "cooling" and _chamber_heats(data):
-        raise refuse("chamber_heating", printer=name)
-    if mode == "heating" and ventilating(data):
-        raise refuse("ventilation_on", printer=name)

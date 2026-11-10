@@ -22,11 +22,12 @@ from homeassistant.util import dt as dt_util
 
 from .api import BamBuddyAuthError, BamBuddyError, BamBuddyPermissionError
 from .entity import refuse
-from .models import ENDED_STATES, JOB_STATES, PrinterData, drying_minutes, short_name
+from .models import ENDED_STATES, JOB_STATES, PrinterData, drying_minutes, is_number
 from .plugs import Plug
 
 if TYPE_CHECKING:
-    from .coordinator import BamBuddyConfigEntry, BamBuddyPlugCoordinator, BamBuddyPrinterCoordinator
+    from .coordinator import BamBuddyConfigEntry, BamBuddyPrinterCoordinator
+    from .plug_coordinator import BamBuddyPlugCoordinator
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -37,10 +38,10 @@ ENTITIES = (("switch", "auto_off"), ("switch", "auto_off_every_print"), ("number
 # switch off; done: it switched off (or the plug went off meanwhile);
 # skipped: "not this time"; failed_print: the print failed or was stopped,
 # the printer stays on; gave_up: within two hours the printer never got
-# ready (a hot nozzle, drying, a filament change, a target, BamBuddy lost it),
-# or the plug never took the switch-off; bambuddy: BamBuddy's own auto off is
-# on for the plug, ours stands aside.
-type Phase = Literal["idle", "waiting", "done", "skipped", "failed_print", "gave_up", "bambuddy"]
+# ready (a hot nozzle, drying, a filament change, a target, BamBuddy lost it);
+# plug_failed: the plug refused the switch-off for ten minutes; bambuddy:
+# BamBuddy's own auto off is on for the plug, ours stands aside.
+type Phase = Literal["idle", "waiting", "done", "skipped", "failed_print", "gave_up", "plug_failed", "bambuddy"]
 PHASES: tuple[str, ...] = get_args(Phase.__value__)
 
 # What a wait waits for, for the card: the nozzle to cool, the AMS to dry or
@@ -54,7 +55,8 @@ MIN_TEMPERATURE = 30
 MAX_TEMPERATURE = 100
 # It stops waiting after so long.
 WAIT_LIMIT = timedelta(hours=2)
-# A switch-off the plug does not take: tried with every update for so long.
+# A switch-off the plug does not take: tried again this often, for so long.
+RETRY_GAP = timedelta(seconds=30)
 RETRY_LIMIT = timedelta(minutes=10)
 # A read of the plug right after the switch-off may still say on: only one
 # later counts as switched on again.
@@ -67,7 +69,7 @@ def _nozzles(data: PrinterData) -> list[float | None]:
     """Every nozzle's temperature, None where BamBuddy does not know it."""
     temperatures = data.temperatures
     names = ("nozzle", "nozzle_2") if data.is_dual_nozzle else ("nozzle",)
-    return [value if isinstance(value, int | float) and not isinstance(value, bool) else None for value in map(temperatures.get, names)]
+    return [value if is_number(value) else None for value in map(temperatures.get, names)]
 
 
 def _drying(data: PrinterData) -> bool:
@@ -79,7 +81,7 @@ def _heating(data: PrinterData) -> bool:
     """A target set: someone heats the printer (to unload, say)."""
     temperatures = data.temperatures
     return any(
-        isinstance(value, int | float) and not isinstance(value, bool) and value > 0
+        is_number(value) and value > 0
         for value in map(temperatures.get, ("nozzle_target", "nozzle_2_target", "bed_target", "chamber_target"))
     )
 
@@ -126,6 +128,7 @@ class AutoOff:
         # never a FINISH found at the start or after a reconnect.
         self._job_seen = False
         self._failing_since: datetime | None = None
+        self._retry_at: datetime | None = None
         # A switch-off on its way: "not this time" can no longer stop it.
         self.switching = False
         self._listeners: list[Callable[[], None]] = []
@@ -163,6 +166,7 @@ class AutoOff:
         self.since = dt_util.utcnow()
         self.waiting_for = None
         self._failing_since = None
+        self._retry_at = None
         self._notify()
 
     # What the user does
@@ -205,7 +209,7 @@ class AutoOff:
         self._notify()
 
     @callback
-    def restore(self, armed: bool, phase: str | None, since: datetime | None, every_print: bool, printer: str | None = None) -> None:
+    def restore(self, armed: bool, phase: str | None, since: datetime | None, every_print: bool, printer: str | None) -> None:
         """After a restart: a wait goes on with fresh data -- one older than
         the limit is over (a time ahead of now counts as now), as a running
         one ends: from now, and "only after the next print" used up.
@@ -280,9 +284,10 @@ class AutoOff:
         if not self.armed:
             self._set("idle")
             return
-        if (self.since is not None and now - self.since > WAIT_LIMIT) or (
-            self._failing_since is not None and now - self._failing_since > RETRY_LIMIT
-        ):
+        if self._failing_since is not None and now - self._failing_since > RETRY_LIMIT:
+            self._end("plug_failed")
+            return
+        if self.since is not None and now - self.since > WAIT_LIMIT:
             self._end("gave_up")
             return
         if plug is None or not self._belongs(plug):
@@ -302,7 +307,7 @@ class AutoOff:
         if shown != self.waiting_for:
             self.waiting_for = shown
             self._notify()
-        if waiting is not None or self.switching:
+        if waiting is not None or self.switching or (self._retry_at is not None and now < self._retry_at):
             return
         self.switching = True
         self._notify()
@@ -319,30 +324,35 @@ class AutoOff:
                 status = await self.printer.client.get_status(self.printer.printer_id)
             except BamBuddyError as err:
                 # Not the plug: the next check reads the printer again.
-                _LOGGER.debug("Reading %s before switching its plug off failed: %s", short_name(self.printer.info), err)
+                _LOGGER.debug("Reading %s before switching its plug off failed: %s", self.printer.short_name, err)
                 return
-            now = PrinterData(self.printer.info, status, None, None)
-            if self.phase != "waiting" or not self.armed or blocker(now, self.threshold) is not None:
+            reread = PrinterData(self.printer.info, status, None, None)
+            if self.phase != "waiting" or not self.armed or blocker(reread, self.threshold) is not None:
                 return
-            self.plugs.note_command()
+            if self._failing_since is None:
+                # Only a first try can change the plug: a read under way
+                # stays good while the plug keeps refusing.
+                self.plugs.note_command()
             await self.plugs.client.control_plug(plug.id, False)
         except BamBuddyError as err:
             _LOGGER.debug("Switching the plug %s off after the print failed: %s", plug.name, err)
             if isinstance(err, (BamBuddyAuthError, BamBuddyPermissionError)):
                 # Whether the key is the cause: the guard checks it.
                 self.plugs.config_entry.runtime_data.key.async_read_refused(err)
+            now = dt_util.utcnow()
             if self._failing_since is None:
-                self._failing_since = dt_util.utcnow()
+                self._failing_since = now
+            self._retry_at = now + RETRY_GAP
             self.waiting_for = "plug"
             return
         finally:
             self.switching = False
             self._notify()
-        temperatures = [value for value in _nozzles(now) if value is not None]
+        temperatures = [value for value in _nozzles(reread) if value is not None]
         _LOGGER.info(
             "Switched the plug %s of %s off after the print: nozzle %s °C, below %s °C",
             plug.name,
-            short_name(self.printer.info),
+            self.printer.short_name,
             max(temperatures) if temperatures else "?",
             self.threshold,
         )
@@ -368,13 +378,13 @@ def gets_auto_off(plugs: BamBuddyPlugCoordinator, plug: Plug) -> bool:
 
 
 def auto_off_for(entry: BamBuddyConfigEntry, plug: Plug) -> AutoOff | None:
-    """The switch-off after the print of the printer's own plug, where this
-    key may switch it; one per plug, started once."""
+    """The switch-off after the print of the printer's own plug; one per
+    plug, started once."""
     runtime = entry.runtime_data
     plugs = runtime.plugs
     if not gets_auto_off(plugs, plug):
         return None
-    printer = plugs.printers.get(plug.printer_id or -1)
+    printer = plugs.printer_of(plug)
     if printer is None:
         return None
     auto_off = runtime.auto_offs.get(plug.id)

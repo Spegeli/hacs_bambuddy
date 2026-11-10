@@ -14,6 +14,7 @@ from custom_components.bambuddy import cards
 from custom_components.bambuddy.cards import CARD_FILE, CARD_URL, async_register_card, card_digest
 
 from tests.conftest import X1C, set_up
+from tests.helpers import page, reload_entry
 
 
 def _frontend(hass: HomeAssistant) -> Mock:
@@ -68,34 +69,35 @@ async def test_the_card_is_registered_once(hass: HomeAssistant, bambuddy_api: Si
         "custom_components.bambuddy.async_register_card", register
     ):
         entry = await set_up(hass, X1C)
-        await hass.config_entries.async_reload(entry.entry_id)
-        await hass.async_block_till_done()
+        await reload_entry(hass, entry.entry_id)
 
     register.assert_awaited_once()
 
 
 def test_the_bundle_ships_inside_the_integration() -> None:
-    """HACS installs only custom_components/bambuddy."""
+    """The Marketplace and HACS install only custom_components/bambuddy."""
     assert CARD_FILE.parent.parent.name == "bambuddy"
     assert CARD_FILE.name == "bambuddy-card.js"
 
 
-def test_the_readme_documents_what_the_bundle_takes() -> None:
-    """The README's card options are the options the card reads, and the
-    card's documentation link finds the README's section: both are an
-    interface for the users' dashboards."""
+def test_the_card_page_documents_what_the_bundle_takes() -> None:
+    """The card page's options are the options the card reads, and the card's
+    documentation link finds the README's section, which leads on to the page:
+    both are an interface for the users' dashboards."""
     readme = (Path(__file__).parent.parent / "README.md").read_text(encoding="utf-8")
-    section = readme.split("## 🃏 Dashboard card", 1)[1].split("\n## ", 1)[0]
+    section = page("dashboard-card.md").split("\n## Options\n", 1)[1].split("\n## ", 1)[0]
     options = re.findall(r"^\| `(\w+)` \|", section, flags=re.MULTILINE)
     bundle = CARD_FILE.read_text(encoding="utf-8")
 
     forms = (Path(__file__).parent.parent / "cards" / "src" / "forms.ts").read_text(encoding="utf-8")
-    declared = re.search(r"const OPTIONS: Record<string, Validator> = \{(.*?)\n\};", forms, flags=re.DOTALL)
+    declared = re.search(r"const OPTIONS = \{(.*?)\n\} satisfies", forms, flags=re.DOTALL)
     assert declared
     assert options == re.findall(r"^  (\w+):", declared.group(1), flags=re.MULTILINE)
-    assert len(options) == 13
+    assert len(options) == 14
     for option in options:
         assert option in bundle, option
     assert "bambuddy-printer-card" in bundle
     assert "custom:bambuddy-printer-card" in section
     assert "#-dashboard-card" in bundle
+    assert "\n## 🃏 Dashboard card\n" in readme
+    assert "/blob/main/documentation/dashboard-card.md)" in readme

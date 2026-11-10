@@ -21,18 +21,21 @@ from tests.conftest import (
     A1_MINI,
     API_KEY,
     H2D,
+    P1S,
+    WS_TOKEN,
     X1C,
     device_id,
     load_fixture,
     make_entry,
-    next_refresh,
-    printer_device,
+    past_the_minute,
+    printer_device_id,
     printer_serial,
     printers_but,
     set_up,
     setup_integration,
-    WS_TOKEN,
+    try_set_up,
 )
+from tests.helpers import with_inventory, with_plugs
 
 
 async def test_no_secret_reaches_the_diagnostics(hass: HomeAssistant, bambuddy_api: SimpleNamespace) -> None:
@@ -72,10 +75,44 @@ async def test_no_secret_reaches_the_diagnostics(hass: HomeAssistant, bambuddy_a
     assert diagnostics["printers"]["1"]["status"]["state"] == "RUNNING"
 
 
+async def test_no_job_name_reaches_the_diagnostics(hass: HomeAssistant, bambuddy_api: SimpleNamespace) -> None:
+    """A file's name is the user's own words too; the printer's name stays."""
+    bambuddy_api.statuses[X1C].update(subtask_name="Secret_Bracket", gcode_file="/data/Secret_Bracket.gcode", current_print="Secret_Bracket")
+    entry = await set_up(hass, X1C)
+
+    diagnostics = await async_get_config_entry_diagnostics(hass, entry)
+
+    status = diagnostics["printers"]["1"]["status"]
+    assert {status[field] for field in ("subtask_name", "gcode_file", "current_print")} == {"**REDACTED**"}
+    assert status["name"] != "**REDACTED**"
+    assert "Secret_Bracket" not in json.dumps(diagnostics)
+
+
+async def test_no_place_or_plug_name_reaches_the_diagnostics(hass: HomeAssistant, bambuddy_api: SimpleNamespace) -> None:
+    """A printer's location is the user's own text (a room, an address), a
+    plug's device name the switch's or the Home Assistant entity's name: the
+    download goes into public bug reports."""
+    printers = load_fixture("printers.json")
+    for printer in printers:
+        printer["location"] = "Cellar room 3"
+    bambuddy_api.get_printers.return_value = printers
+    with_plugs(bambuddy_api)
+    entry = await set_up(hass, X1C, P1S, H2D)
+
+    diagnostics = await async_get_config_entry_diagnostics(hass, entry)
+    dumped = json.dumps(diagnostics)
+
+    for private in ("Cellar room 3", "Garage printer", "Printer light"):
+        assert private not in dumped, private
+    # The plug's status keeps what a bug report needs.
+    status = diagnostics["plugs"]["5"]["status"]
+    assert (status["device_name"], status["state"]) == ("**REDACTED**", load_fixture("plug_statuses.json")["5"]["state"])
+
+
 async def test_a_printers_device_diagnostics(hass: HomeAssistant, bambuddy_api: SimpleNamespace) -> None:
     entry = await set_up(hass, X1C, H2D)
     registry = dr.async_get(hass)
-    printer = registry.async_get(device_id(hass, entry, printer_device(entry, H2D)))
+    printer = registry.async_get(printer_device_id(hass, entry, H2D))
     instance = registry.async_get(device_id(hass, entry, entry.entry_id))
     assert printer is not None and instance is not None
 
@@ -106,6 +143,29 @@ async def test_the_diagnostics_tell_the_live_connection(hass: HomeAssistant, bam
     assert WS_TOKEN not in json.dumps(diagnostics)
 
 
+async def test_the_diagnostics_tell_the_inventory(hass: HomeAssistant, bambuddy_api: SimpleNamespace) -> None:
+    """Whether the inventory is shown and which spool sits where -- by numbers:
+    no spool name, no owner's note."""
+    with_inventory(bambuddy_api)
+    entry = await set_up(hass, X1C)
+
+    diagnostics = await async_get_config_entry_diagnostics(hass, entry)
+
+    assert diagnostics["inventory"] == {
+        "shown": True,
+        "assignable": True,
+        "spools": 3,
+        "assignments": [
+            {"printer": 1, "ams_id": 0, "tray_id": 2, "spool_id": 1},
+            {"printer": 1, "ams_id": 0, "tray_id": 3, "spool_id": 2},
+            {"printer": 99, "ams_id": 0, "tray_id": 0, "spool_id": 3},
+        ],
+    }
+    text = json.dumps(diagnostics)
+    assert "opened in May" not in text
+    assert "Geeetech" not in text
+
+
 async def test_the_diagnostics_tell_configures_settings(hass: HomeAssistant, bambuddy_api: SimpleNamespace) -> None:
     """Switched off in Configure, a read every 5 seconds at most."""
     entry = make_entry(hass, X1C, live_updates=False, push_gap=5)
@@ -120,9 +180,7 @@ async def test_the_diagnostics_of_an_entry_that_did_not_load(hass: HomeAssistant
     """The bug report form asks for this download -- most needed when the
     setup fails: the entry, its state, no secret."""
     bambuddy_api.get_version.side_effect = BamBuddyConnectionError("refused")
-    entry = make_entry(hass, X1C)
-    await hass.config_entries.async_setup(entry.entry_id)
-    await hass.async_block_till_done()
+    entry = await try_set_up(hass, X1C)
     assert entry.state is ConfigEntryState.SETUP_RETRY
 
     diagnostics = await async_get_config_entry_diagnostics(hass, entry)
@@ -143,11 +201,8 @@ async def test_the_download_names_no_serial_through_the_repairs(
     entry = make_entry(hass, X1C, A1_MINI)
     bambuddy_api.get_printers.return_value = printers_but(A1_MINI)
     await setup_integration(hass, entry)
-    workshop = dr.async_get(hass).async_get(device_id(hass, entry, printer_device(entry, X1C)))
-    assert workshop is not None
-    dr.async_get(hass).async_update_device(workshop.id, name_by_user="My printer")
-    for _ in range(6):
-        await next_refresh(hass, freezer)
+    dr.async_get(hass).async_update_device(printer_device_id(hass, entry), name_by_user="My printer")
+    await past_the_minute(hass, freezer)
     assert await async_setup_component(hass, "diagnostics", {})
     client = await hass_client()
 
@@ -157,3 +212,17 @@ async def test_the_download_names_no_serial_through_the_repairs(
     assert response.status == 200
     assert printer_serial(X1C) not in body
     assert printer_serial(A1_MINI) not in body
+
+
+async def test_device_diagnostics_of_an_entry_that_did_not_load(hass: HomeAssistant, bambuddy_api: SimpleNamespace) -> None:
+    """The entry's part then, without a secret."""
+    entry = await set_up(hass, X1C)
+    device = dr.async_get(hass).async_get(printer_device_id(hass, entry))
+    assert device is not None
+    await hass.config_entries.async_unload(entry.entry_id)
+    await hass.async_block_till_done()
+
+    diagnostics = await async_get_device_diagnostics(hass, entry, device)
+
+    assert diagnostics["entry"]["state"] == "not_loaded"
+    assert API_KEY not in str(diagnostics)

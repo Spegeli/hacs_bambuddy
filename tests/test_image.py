@@ -13,7 +13,7 @@ from pytest_homeassistant_custom_component.typing import ClientSessionGenerator
 
 from custom_components.bambuddy.api import BamBuddyApiError, BamBuddyConnectionError
 
-from tests.conftest import A1_MINI, X1C, entity_id, next_refresh, printer_uid, set_up, state_at, state_of
+from tests.conftest import A1_MINI, X1C, entity_id, next_refresh, printer_uid, set_up, state_at, state_of, past_the_minute
 
 
 async def test_the_cover_of_the_running_job(
@@ -152,20 +152,17 @@ async def test_a_cover_that_failed_comes_later(
     before = state_at(hass, cover).state
 
     # A minute later the entity says it has a new picture: the frontend asks.
-    for _ in range(6):
-        await next_refresh(hass, freezer)
+    await past_the_minute(hass, freezer)
     assert state_at(hass, cover).state != before
     assert (await client.get(f"/api/image_proxy/{cover}")).status != HTTPStatus.OK
     assert bambuddy_api.get_cover.await_count == 2
 
     # The next try waits two minutes; then BamBuddy has it.
     bambuddy_api.get_cover.side_effect = None
-    for _ in range(6):
-        await next_refresh(hass, freezer)
+    await past_the_minute(hass, freezer)
     await client.get(f"/api/image_proxy/{cover}")
     assert bambuddy_api.get_cover.await_count == 2
-    for _ in range(6):
-        await next_refresh(hass, freezer)
+    await past_the_minute(hass, freezer)
     response = await client.get(f"/api/image_proxy/{cover}")
     assert response.status == HTTPStatus.OK
     assert await response.read() == b"png"

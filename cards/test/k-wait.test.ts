@@ -5,8 +5,16 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import "../src/index";
-import { a1mini, h2d, makeHass, mountCard, x1c, type FakeCard, type FakeDevice, type FakeHassOptions } from "./fixtures";
-import { find, findAll, NBSP, press, settle, showView, styleText, text } from "./helpers";
+import {
+  a1mini,
+  h2d,
+  idleX1c,
+  mountFor,
+  type FakeCard,
+  type FakeDevice,
+  type FakeHassOptions,
+} from "./fixtures";
+import { chooseOption, declarations, editSlot, find, findAll, NBSP, press, settle, showView, styleText, text } from "./helpers";
 
 const PROFILES = {
   nozzle_diameter: 0.4,
@@ -20,18 +28,8 @@ const PROFILES = {
 const NONE = { nozzle_diameter: 0.4, current: -1, profiles: [], answered: true };
 const SILENT = { nozzle_diameter: 0.4, current: -1, profiles: [], answered: false };
 
-/** The X1C idle: every slot may be set. */
-const idle = (): FakeDevice[] => {
-  const all = x1c({ status: "idle", stage: "idle" });
-  for (const entity of (all[1] as FakeDevice).entities) {
-    if ("attributes" in entity && entity.attributes) entity.attributes = { ...entity.attributes, active: false };
-  }
-  return all;
-};
-
-async function mount(devices: FakeDevice[], printer: string, options: Partial<FakeHassOptions> = {}): Promise<FakeCard> {
-  return mountCard(makeHass({ devices, ...options }), { printer });
-}
+const mount = async (devices: FakeDevice[], printer: string, options: Partial<FakeHassOptions> = {}): Promise<FakeCard> =>
+  (await mountFor(devices, printer, {}, options)).card;
 
 const answering =
   (response: unknown) =>
@@ -47,13 +45,11 @@ function holding(): { callService: FakeHassOptions["callService"]; answer: (resp
   };
 }
 
-const editRow = async (card: FakeCard, row: number): Promise<void> => {
-  (findAll(card, ".slot")[row]?.querySelector(".btn.edit") as HTMLButtonElement).click();
-  await settle(card);
-};
 const kSelect = (card: FakeCard): HTMLSelectElement => find<HTMLSelectElement>(card, "dialog select#fil-k") as HTMLSelectElement;
 const options = (card: FakeCard): string[] => [...kSelect(card).options].map((option) => option.text);
 const hint = (card: FakeCard): Element | null => find(card, "dialog #k-hint");
+/** The lines under the open slot dialog's title: the nozzle that feeds the slot. */
+const line = (card: FakeCard): string[] => findAll(card, "dialog .nozzle-line > span").map(text);
 
 afterEach(() => {
   vi.useRealTimers();
@@ -63,9 +59,9 @@ afterEach(() => {
 describe("the K field while the printer is asked", () => {
   it("can be chosen at once: the slot's own or the printer's default, beside a spinner", async () => {
     const held = holding();
-    const card = await mount(idle(), "dev-x1c", { callService: held.callService });
+    const card = await mount(idleX1c(), "dev-x1c", { callService: held.callService });
     await showView(card, "Filament");
-    await editRow(card, 2);
+    await editSlot(card, 2);
 
     expect(kSelect(card).disabled).toBe(false);
     expect(options(card)).toEqual(["Keep the slot's own", "Printer's default (K 0.020)"]);
@@ -84,12 +80,10 @@ describe("the K field while the printer is asked", () => {
 
   it("keeps what was chosen while it asked", async () => {
     const held = holding();
-    const card = await mount(idle(), "dev-x1c", { callService: held.callService });
+    const card = await mount(idleX1c(), "dev-x1c", { callService: held.callService });
     await showView(card, "Filament");
-    await editRow(card, 2);
-    kSelect(card).value = "-1";
-    kSelect(card).dispatchEvent(new Event("change"));
-    await card.updateComplete;
+    await editSlot(card, 2);
+    await chooseOption(card, "select#fil-k", "-1");
 
     held.answer(PROFILES);
     await settle(card);
@@ -98,7 +92,7 @@ describe("the K field while the printer is asked", () => {
 
   it("says after 5 seconds, in orange, that BamBuddy asks up to three times", async () => {
     const held = holding();
-    const card = await mount(idle(), "dev-x1c", { callService: held.callService });
+    const card = await mount(idleX1c(), "dev-x1c", { callService: held.callService });
     await showView(card, "Filament");
     vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
     (findAll(card, ".slot")[2]?.querySelector(".btn.edit") as HTMLButtonElement).click();
@@ -116,47 +110,45 @@ describe("the K field while the printer is asked", () => {
 
 describe("the K field after the answer", () => {
   it("says, as information, that the printer has no profiles of its own for its nozzle diameter", async () => {
-    const card = await mount(idle(), "dev-x1c", { callService: answering(NONE) });
+    const card = await mount(idleX1c(), "dev-x1c", { callService: answering(NONE) });
     await showView(card, "Filament");
-    await editRow(card, 2);
+    await editSlot(card, 2);
     expect(find(card, "dialog #k-hint .dlg-note.info")).not.toBeNull();
     expect(text(hint(card))).toBe(
       `No K profiles of your own are saved on the printer for the 0.4${NBSP}mm nozzle diameter. Profiles of your own, for example from the flow dynamics calibration in Bambu Studio or from BamBuddy, show here. Until then the printer uses its default.`,
     );
-    const de = await mountCard(makeHass({ devices: idle(), language: "de", callService: answering({ ...NONE, nozzle_diameter: 0.6 }) }), { printer: "dev-x1c" });
+    const de = await mount(idleX1c(), "dev-x1c", { language: "de", callService: answering({ ...NONE, nozzle_diameter: 0.6 }) });
     await showView(de, "Filament");
-    await editRow(de, 2);
+    await editSlot(de, 2);
     expect(text(hint(de))).toBe(
       `Auf dem Drucker sind für den Düsendurchmesser 0,6${NBSP}mm keine eigenen K-Profile gespeichert. Eigene Profile, etwa aus der Flussdynamik-Kalibrierung in Bambu Studio oder aus BamBuddy, erscheinen hier. Bis dahin nimmt der Drucker seinen Standard.`,
     );
   });
 
   it("warns when the printer did not answer, and how to ask again", async () => {
-    const card = await mount(idle(), "dev-x1c", { callService: answering(SILENT) });
+    const card = await mount(idleX1c(), "dev-x1c", { callService: answering(SILENT) });
     await showView(card, "Filament");
-    await editRow(card, 2);
+    await editSlot(card, 2);
     expect(find(card, "dialog #k-hint .dlg-note.warning")).not.toBeNull();
     expect(text(hint(card))).toBe("The printer did not answer in time. To ask again, close the dialog and open it once more.");
-    const de = await mountCard(makeHass({ devices: idle(), language: "de", callService: answering(SILENT) }), { printer: "dev-x1c" });
+    const de = await mount(idleX1c(), "dev-x1c", { language: "de", callService: answering(SILENT) });
     await showView(de, "Filament");
-    await editRow(de, 2);
+    await editSlot(de, 2);
     expect(text(hint(de))).toBe("Der Drucker hat nicht rechtzeitig geantwortet. Um neu zu fragen, schließe den Dialog und öffne ihn noch einmal.");
   });
 });
 
 describe("the nozzle under the slot dialog's title", () => {
-  const line = (card: FakeCard): string[] => findAll(card, "dialog .nozzle-line > span").map(text);
-
   it("names the one nozzle of a printer with one: diameter and type", async () => {
-    const card = await mount(idle(), "dev-x1c", { callService: answering(PROFILES) });
+    const card = await mount(idleX1c(), "dev-x1c", { callService: answering(PROFILES) });
     await showView(card, "Filament");
-    await editRow(card, 2);
+    await editSlot(card, 2);
     expect(line(card)).toEqual([`Nozzle: 0.4${NBSP}mm · Hardened steel`]);
     expect(find(card, "dialog .nozzle-line .icon")).not.toBeNull();
     // Also in a chip spool's dialog.
-    const chip = await mount(idle(), "dev-x1c");
+    const chip = await mount(idleX1c(), "dev-x1c");
     await showView(chip, "Filament");
-    await editRow(chip, 0);
+    await editSlot(chip, 0);
     expect(line(chip)).toEqual([`Nozzle: 0.4${NBSP}mm · Hardened steel`]);
   });
 
@@ -167,19 +159,18 @@ describe("the nozzle under the slot dialog's title", () => {
     await showView(card, "Filament");
     const slots = findAll(card, ".slot");
     const lines: string[][] = [];
-    for (const index of [0, 1, slots.length - 2, slots.length - 1]) {
-      const pencil = slots[index]?.querySelector(".btn.edit") as HTMLButtonElement | null;
-      if (!pencil) continue;
+    for (const slot of slots) {
+      const pencil = slot.querySelector(".btn.edit") as HTMLButtonElement;
       pencil.click();
       await settle(card);
       lines.push(line(card));
       (findAll<HTMLButtonElement>(card, "dialog .dlg-actions .btn").find((item) => ["Cancel", "Close"].includes(text(item))) as HTMLButtonElement).click();
       await settle(card);
     }
-    expect(lines).toContainEqual([`Left nozzle: 0.4${NBSP}mm · Hardened steel`]);
-    expect(lines).toContainEqual([`Right nozzle: 0.4${NBSP}mm · Stainless steel, high flow`]);
-    expect(lines.at(-2)).toEqual([`Left nozzle: 0.4${NBSP}mm · Hardened steel`]);
-    expect(lines.at(-1)).toEqual([`Right nozzle: 0.4${NBSP}mm · Stainless steel, high flow`]);
+    const leftLine = [`Left nozzle: 0.4${NBSP}mm · Hardened steel`];
+    const rightLine = [`Right nozzle: 0.4${NBSP}mm · Stainless steel, high flow`];
+    // The AMS 2 Pro's four slots right, the AMS HT's slot and the left external spool left, the right external spool right.
+    expect(lines).toEqual([rightLine, rightLine, rightLine, rightLine, leftLine, leftLine, rightLine]);
   });
 
   it("names both nozzles where a unit may feed either, and only the diameter where the type is not known", async () => {
@@ -194,20 +185,20 @@ describe("the nozzle under the slot dialog's title", () => {
     }
     const card = await mount(devices, "dev-h2d", { callService: answering(PROFILES) });
     await showView(card, "Filament");
-    await editRow(card, 0);
+    await editSlot(card, 0);
     expect(line(card)).toEqual([`Left: 0.4${NBSP}mm · Hardened steel`, `Right: 0.4${NBSP}mm · Stainless steel, high flow`]);
 
     const bare = await mount(a1mini({ status: "idle", stage: "idle", nozzleTypes: [] }), "dev-a1mini", { callService: answering(PROFILES) });
     await showView(bare, "Filament");
-    await editRow(bare, 0);
+    await editSlot(bare, 0);
     expect(line(bare)).toEqual([`Nozzle: 0.4${NBSP}mm`]);
   });
 
   it("says it in German", async () => {
-    const card = await mountCard(makeHass({ devices: h2d({ status: "idle", stage: "idle" }), language: "de", callService: answering(PROFILES) }), { printer: "dev-h2d" });
+    const card = await mount(h2d({ status: "idle", stage: "idle" }), "dev-h2d", { language: "de", callService: answering(PROFILES) });
     await showView(card, "Filament");
-    await editRow(card, 0);
-    expect(line(card)[0]).toMatch(/^(Linke|Rechte) Düse: 0,4 mm · /);
+    await editSlot(card, 0);
+    expect(line(card)[0]).toMatch(/^(Linke|Rechte) Düse: 0,4\u00a0mm · /);
   });
 });
 
@@ -225,12 +216,12 @@ describe("the K field, every path", () => {
   };
 
   it("writes its orange as the card's other warnings: readable on a light dialog", () => {
-    expect(styleText()).toMatch(/\.k-wait\.slow\s*\{[^}]*color: color-mix\(in srgb, var\(--bb-warn\) 55%, var\(--bb-text\)\);/);
+    expect(declarations(".k-wait.slow", styleText())).toContain("color: color-mix(in srgb, var(--bb-warn) 55%, var(--bb-text))");
   });
 
   it("turns orange 5 s after this open, not an earlier one's, also after the card was put back", async () => {
     const held = holding();
-    const card = await mount(idle(), "dev-x1c", { callService: held.callService });
+    const card = await mount(idleX1c(), "dev-x1c", { callService: held.callService });
     await showView(card, "Filament");
     vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
     await open(card);
@@ -251,7 +242,7 @@ describe("the K field, every path", () => {
 
   it("turns orange in a dialog a question parked meanwhile", async () => {
     const held = holding();
-    const card = await mount(idle(), "dev-x1c", { callService: held.callService });
+    const card = await mount(idleX1c(), "dev-x1c", { callService: held.callService });
     await showView(card, "Filament");
     vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
     await open(card);
@@ -264,12 +255,12 @@ describe("the K field, every path", () => {
   it("keeps the answer of this open, not a late one of an earlier open", async () => {
     const answers: ((value: unknown) => void)[] = [];
     const callService = async (call: { service: string }) => (call.service === "get_k_profiles" ? new Promise((resolve) => answers.push(resolve)) : undefined);
-    const card = await mount(idle(), "dev-x1c", { callService });
+    const card = await mount(idleX1c(), "dev-x1c", { callService });
     await showView(card, "Filament");
-    await editRow(card, 2);
+    await editSlot(card, 2);
     (findAll<HTMLButtonElement>(card, "dialog .dlg-actions .btn").find((item) => text(item) === "Cancel") as HTMLButtonElement).click();
     await settle(card);
-    await editRow(card, 2);
+    await editSlot(card, 2);
     answers[1]?.({ response: PROFILES });
     await settle(card);
     answers[0]?.({ response: SILENT });
@@ -280,12 +271,10 @@ describe("the K field, every path", () => {
 
   it("falls back to the default where the slot's own, chosen while asked, turns out to be none", async () => {
     const held = holding();
-    const card = await mount(idle(), "dev-x1c", { callService: held.callService });
+    const card = await mount(idleX1c(), "dev-x1c", { callService: held.callService });
     await showView(card, "Filament");
-    await editRow(card, 2);
-    kSelect(card).value = "keep";
-    kSelect(card).dispatchEvent(new Event("change"));
-    await card.updateComplete;
+    await editSlot(card, 2);
+    await chooseOption(card, "select#fil-k", "keep");
     held.answer({ ...PROFILES, current: -1 });
     await settle(card);
     expect(options(card)).toEqual(["Printer's default (K 0.020)", "Generic PLA (K 0.020)", "Grey PLA matte (K 0.018)"]);
@@ -294,20 +283,17 @@ describe("the K field, every path", () => {
 
   it("sets the printer's default chosen while it asked", async () => {
     const held = holding();
-    const hass = makeHass({ devices: idle(), callService: held.callService });
-    const card = await mountCard(hass, { printer: "dev-x1c" });
+    const { card, hass } = await mountFor(idleX1c(), "dev-x1c", {}, { callService: held.callService });
     await showView(card, "Filament");
-    await editRow(card, 2);
-    kSelect(card).value = "-1";
-    kSelect(card).dispatchEvent(new Event("change"));
-    await card.updateComplete;
+    await editSlot(card, 2);
+    await chooseOption(card, "select#fil-k", "-1");
     await press(card, "Set");
     expect(hass.calls.at(-1)).toMatchObject({ service: "set_filament", data: { k_profile: -1 } });
   });
 
   it("says its waiting in German", async () => {
     const held = holding();
-    const card = await mountCard(makeHass({ devices: idle(), language: "de", callService: held.callService }), { printer: "dev-x1c" });
+    const card = await mount(idleX1c(), "dev-x1c", { language: "de", callService: held.callService });
     await showView(card, "Filament");
     vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
     await open(card);
@@ -319,17 +305,24 @@ describe("the K field, every path", () => {
 });
 
 describe("the nozzle line, every side", () => {
-  const line = (card: FakeCard): string[] => findAll(card, "dialog .nozzle-line > span").map(text);
-
   it("names an AMS unit's own side: the AMS 2 Pro feeds the right nozzle, the AMS HT the left", async () => {
     const card = await mount(h2d({ status: "idle", stage: "idle" }), "dev-h2d", { callService: answering(PROFILES) });
     await showView(card, "Filament");
-    await editRow(card, 0);
+    await editSlot(card, 0);
     expect(line(card)).toEqual([`Right nozzle: 0.4${NBSP}mm · Stainless steel, high flow`]);
-    const de = await mountCard(makeHass({ devices: h2d({ status: "idle", stage: "idle" }), language: "de", callService: answering(PROFILES) }), { printer: "dev-h2d" });
+    const de = await mount(h2d({ status: "idle", stage: "idle" }), "dev-h2d", { language: "de", callService: answering(PROFILES) });
     await showView(de, "Filament");
-    await editRow(de, 0);
+    await editSlot(de, 0);
     expect(line(de)).toEqual([`Rechte Düse: 0,4${NBSP}mm · Edelstahl, High Flow`]);
+    // The AMS HT's slot is the fifth one.
+    const ht = await mount(h2d({ status: "idle", stage: "idle" }), "dev-h2d", { callService: answering(PROFILES) });
+    await showView(ht, "Filament");
+    await editSlot(ht, 4);
+    expect(line(ht)).toEqual([`Left nozzle: 0.4${NBSP}mm · Hardened steel`]);
+    const htDe = await mount(h2d({ status: "idle", stage: "idle" }), "dev-h2d", { language: "de", callService: answering(PROFILES) });
+    await showView(htDe, "Filament");
+    await editSlot(htDe, 4);
+    expect(line(htDe)).toEqual([`Linke Düse: 0,4${NBSP}mm · Gehärteter Stahl`]);
   });
 
   it("names both nozzles for an external spool whose other sensor is gone: its side is not known", async () => {
@@ -340,24 +333,23 @@ describe("the nozzle line, every side", () => {
     printer.entities = printer.entities.filter((entity) => entity.entityId !== "sensor.h2d_left_external_spool");
     const card = await mount(devices, "dev-h2d", { callService: answering(PROFILES) });
     await showView(card, "Filament");
-    (findAll(card, ".slot").at(-1)?.querySelector(".btn.edit") as HTMLButtonElement).click();
-    await settle(card);
+    await editSlot(card, -1);
     expect(line(card)).toEqual([`Left: 0.4${NBSP}mm · Hardened steel`, `Right: 0.4${NBSP}mm · Stainless steel, high flow`]);
   });
 });
 
 describe("the slot dialog's layout", () => {
   it("keeps two lines for the waiting note, so the dialog does not move when it turns orange", () => {
-    expect(styleText()).toMatch(/\.k-wait\s*\{[^}]*min-height: 36px;/);
+    expect(declarations(".k-wait", styleText())).toContain("min-height: 36px");
   });
 
   it("puts a wrapped nozzle line's icon at its first line, as the notes do", () => {
-    expect(styleText()).toMatch(/\.nozzle-line > span\s*\{[^}]*align-items: flex-start;/);
-    expect(styleText()).toMatch(/\.nozzle-line \.icon\s*\{[^}]*margin-top: 1px;/);
+    expect(declarations(".nozzle-line > span", styleText())).toContain("align-items: flex-start");
+    expect(declarations(".nozzle-line .icon", styleText())).toContain("margin-top: 1px");
   });
 
   it("breaks a title word longer than the dialog", () => {
-    expect(styleText()).toMatch(/\.dlg-body h2\s*\{[^}]*overflow-wrap: anywhere;/);
+    expect(declarations(".dlg-body h2", styleText())).toContain("overflow-wrap: anywhere");
   });
 });
 

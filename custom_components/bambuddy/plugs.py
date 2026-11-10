@@ -2,9 +2,11 @@
 links to a printer, what kind it is, and what it last reported."""
 from __future__ import annotations
 
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from typing import Any, Literal
+
+from .models import is_number
 
 # BamBuddy's plug types, as the device's model.
 PLUG_TYPES = {"tasmota": "Tasmota", "homeassistant": "Home Assistant", "mqtt": "MQTT", "rest": "REST"}
@@ -16,7 +18,12 @@ type PlugKind = Literal["switch", "script", "monitor"]
 
 
 def _number(value: Any) -> float | None:
-    return float(value) if isinstance(value, int | float) and not isinstance(value, bool) else None
+    return float(value) if is_number(value) else None
+
+
+def plug_type_of(info: Mapping[str, Any]) -> str:
+    """A plug's type as BamBuddy lists it; a plug from before the types is a Tasmota."""
+    return str(info.get("plug_type") or "tasmota")
 
 
 @dataclass(frozen=True)
@@ -42,7 +49,7 @@ class Plug:
 
     @property
     def plug_type(self) -> str:
-        return str(self.info.get("plug_type") or "tasmota")
+        return plug_type_of(self.info)
 
     @property
     def model(self) -> str:

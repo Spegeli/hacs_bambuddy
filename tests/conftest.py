@@ -37,7 +37,7 @@ import pytest
 from pytest_homeassistant_custom_component.common import MockConfigEntry, async_fire_time_changed
 
 from custom_components.bambuddy import plug_identity
-from custom_components.bambuddy.api import BamBuddyClient, BamBuddyConnectionError
+from custom_components.bambuddy.api import BamBuddyClient, BamBuddyConnectionError, BamBuddyNotFoundError
 from custom_components.bambuddy.const import DOMAIN
 
 URL = "http://bambuddy.local:8000"
@@ -54,6 +54,17 @@ _STATUSES = {
     H2D: "status_h2d.json",
     X1E: "status_never.json",
 }
+
+# Keys that lack a permission, by their /auth/me answer, with each scope's mark.
+SHORT_KEYS = [
+    # BamBuddy's create dialog leaves Control Printer off.
+    ("auth_me_default.json", {"read_status": "\u2713", "control_printer": "\u2717", "manage_maintenance": "\u2713"}),
+    ("auth_me_read.json", {"read_status": "\u2713", "control_printer": "\u2717", "manage_maintenance": "\u2717"}),
+    # Its owner may only read: BamBuddy narrows the key to it.
+    ("auth_me_viewer.json", {"read_status": "\u2713", "control_printer": "\u2717", "manage_maintenance": "\u2717"}),
+    # BamBuddy knows the key: not an invalid one, three marks.
+    ("auth_me_other.json", {"read_status": "\u2717", "control_printer": "\u2717", "manage_maintenance": "\u2717"}),
+]
 
 _FIXTURES = Path(__file__).parent / "fixtures"
 INTEGRATION = Path(__file__).parent.parent / "custom_components" / "bambuddy"
@@ -78,9 +89,32 @@ def load_fixture(name: str) -> Any:
     return json.loads((_FIXTURES / name).read_text(encoding="utf-8"))
 
 
+def translations(language: str) -> dict[str, Any]:
+    """The integration's texts in this language (custom_components/bambuddy/translations)."""
+    texts: dict[str, Any] = json.loads((INTEGRATION / "translations" / f"{language}.json").read_text(encoding="utf-8"))
+    return texts
+
+
+def _status_of(statuses: dict[int, Any], printer_id: int) -> Any:
+    """A printer's status as the mock BamBuddy has it; one it lacks answers 404, as BamBuddy does."""
+    if printer_id not in statuses:
+        raise BamBuddyNotFoundError(404, "Printer not found", path=f"GET /printers/{printer_id}/status")
+    return copy.deepcopy(statuses[printer_id])
+
+
 def printer_info(printer_id: int) -> dict[str, Any]:
     """BamBuddy's answer for one printer of tests/fixtures/printers.json."""
     return next(p for p in load_fixture("printers.json") if p["id"] == printer_id)
+
+
+def status_never(printer_id: int, **fields: Any) -> dict[str, Any]:
+    """BamBuddy's answer for a printer it never reached (tests/fixtures/status_never.json), under this number."""
+    return {**load_fixture("status_never.json"), "id": printer_id, **fields}
+
+
+def printers_only(*printer_ids: int) -> list[dict[str, Any]]:
+    """BamBuddy's printer list with only these printers."""
+    return [p for p in load_fixture("printers.json") if p["id"] in printer_ids]
 
 
 def printers_but(*printer_ids: int) -> list[dict[str, Any]]:
@@ -105,15 +139,6 @@ def ams_key(printer_id: int, ams_id: int) -> str:
     units = load_fixture(_STATUSES[printer_id]).get("ams") or []
     unit = next((u for u in units if u["id"] == ams_id), {})
     return str(unit.get("serial_number") or ams_id)
-
-
-def as_model(bambuddy_api: SimpleNamespace, model: str, printer_id: int = X1C) -> None:
-    """The printer's place listed as another model."""
-    printers = load_fixture("printers.json")
-    for printer in printers:
-        if printer["id"] == printer_id:
-            printer["model"] = model
-    bambuddy_api.get_printers.return_value = printers
 
 
 def printer_entry(printer_id: int) -> dict[str, Any]:
@@ -161,6 +186,7 @@ CONTROLS = (
     "skip_objects",
     "perform_maintenance",
     "control_plug",
+    "unassign_spool",
 )
 
 
@@ -189,7 +215,7 @@ def bambuddy_api() -> Iterator[SimpleNamespace]:
         "get_printer": AsyncMock(
             side_effect=lambda printer_id: printer_info(printer_id)
         ),
-        "get_status": AsyncMock(side_effect=lambda printer_id: copy.deepcopy(statuses[printer_id])),
+        "get_status": AsyncMock(side_effect=lambda printer_id: _status_of(statuses, printer_id)),
         "get_stream_token": AsyncMock(return_value=STREAM_TOKEN),
         "get_ws_token": AsyncMock(return_value=WS_TOKEN),
         "open_socket": AsyncMock(side_effect=BamBuddyConnectionError("WebSocket: no socket in tests")),
@@ -198,7 +224,6 @@ def bambuddy_api() -> Iterator[SimpleNamespace]:
         "get_snapshot": AsyncMock(return_value=b"jpeg"),
         "get_cover": AsyncMock(return_value=b"png"),
         "get_print_objects": AsyncMock(return_value=load_fixture("print_objects.json")),
-        "get_runtime": AsyncMock(return_value={"runtime_hours": 547.5, "print_hours_offset": 12.0, "total_hours": 559.5}),
         # No AMS unit named in BamBuddy.
         "get_ams_labels": AsyncMock(return_value={}),
         "get_maintenance": AsyncMock(
@@ -210,6 +235,11 @@ def bambuddy_api() -> Iterator[SimpleNamespace]:
         "get_kprofiles": AsyncMock(return_value=load_fixture("kprofiles.json")),
         # No smart plugs unless a test gives BamBuddy some (`with_plugs`).
         "get_smart_plugs": AsyncMock(return_value=[]),
+        # BamBuddy's spool inventory: none by default (tests/test_inventory.py sets its own).
+        "get_spools": AsyncMock(return_value=[]),
+        "get_spool_assignments": AsyncMock(return_value=[]),
+        "get_spoolman_status": AsyncMock(return_value={"enabled": False, "connected": False, "url": None}),
+        "assign_spool": AsyncMock(return_value={}),
         "get_plug_status": AsyncMock(side_effect=lambda plug_id, patient=True: copy.deepcopy(plug_statuses[str(plug_id)])),
         **{name: AsyncMock(return_value=None) for name in CONTROLS},
     }
@@ -217,29 +247,25 @@ def bambuddy_api() -> Iterator[SimpleNamespace]:
         yield SimpleNamespace(statuses=statuses, maintenance=maintenance, plug_statuses=plug_statuses, **mocks)
 
 
-def make_entry(hass: HomeAssistant, *printer_ids: int, **options: Any) -> MockConfigEntry:
+def make_entry(
+    hass: HomeAssistant, *printer_ids: int, url: str = URL, title: str = "BamBuddy (bambuddy.local)", **options: Any
+) -> MockConfigEntry:
     """A BamBuddy entry as the config flow creates it, with these printers
     (and Configure's settings, if given); added to Home Assistant, not set up."""
     entry = MockConfigEntry(
         domain=DOMAIN,
-        title="BamBuddy (bambuddy.local)",
-        data={"url": URL, "api_key": API_KEY, "verify_ssl": True},
+        title=title,
+        data={"url": url, "api_key": API_KEY, "verify_ssl": True},
         options={
             "printers": [printer_entry(printer_id) for printer_id in printer_ids],
             **options,
         },
-        unique_id=URL,
+        unique_id=url,
         version=2,
         minor_version=2,
     )
     entry.add_to_hass(hass)
     return entry
-
-
-@pytest.fixture
-def config_entry(hass: HomeAssistant) -> MockConfigEntry:
-    """An entry with the printing X1C."""
-    return make_entry(hass, X1C)
 
 
 async def setup_integration(hass: HomeAssistant, entry: MockConfigEntry) -> None:
@@ -257,6 +283,15 @@ async def set_up(hass: HomeAssistant, *printer_ids: int) -> MockConfigEntry:
     return entry
 
 
+async def try_set_up(hass: HomeAssistant, *printer_ids: int, **options: Any) -> MockConfigEntry:
+    """An entry with these printers, its setup tried -- for one that fails
+    or waits to retry: nothing asserted."""
+    entry = make_entry(hass, *printer_ids, **options)
+    await hass.config_entries.async_setup(entry.entry_id)
+    await hass.async_block_till_done()
+    return entry
+
+
 async def next_refresh(hass: HomeAssistant, freezer: FrozenDateTimeFactory, seconds: float = 11) -> None:
     """Past the printers' next poll: a coordinator's next refresh comes 9 to
     10.5 seconds after the last (other intervals: `seconds`)."""
@@ -264,6 +299,18 @@ async def next_refresh(hass: HomeAssistant, freezer: FrozenDateTimeFactory, seco
     async_fire_time_changed(hass)
     # The coordinators refresh in background tasks.
     await hass.async_block_till_done(wait_background_tasks=True)
+
+
+async def past_polls(hass: HomeAssistant, freezer: FrozenDateTimeFactory, polls: int) -> None:
+    """`polls` of the printers' polls of 11 s one after another: past the
+    minute's details read (6), the system information's 5 minutes (30)."""
+    for _ in range(polls):
+        await next_refresh(hass, freezer)
+
+
+async def past_the_minute(hass: HomeAssistant, freezer: FrozenDateTimeFactory) -> None:
+    """Past the printers' minute: their details, print hours and names read again."""
+    await past_polls(hass, freezer, 6)
 
 
 def entity_id(hass: HomeAssistant, platform: str, unique_id: str) -> str:
@@ -308,6 +355,11 @@ def printer_uid(entry: MockConfigEntry, key: str, printer_id: int = X1C) -> str:
     return f"{entry.entry_id}_p{printer_key(printer_id)}_{key}"
 
 
+def switch_off_uid(entry: MockConfigEntry, key: str, printer_id: int = X1C) -> str:
+    """The unique ID of a part of a printer's switch-off after the print."""
+    return f"{entry.entry_id}_switchoff_{printer_key(printer_id)}_{key}"
+
+
 def ams_uid(entry: MockConfigEntry, ams_id: int, key: str, printer_id: int = X1C) -> str:
     """The unique ID of an AMS unit's entity `key`."""
     return f"{entry.entry_id}_p{printer_key(printer_id)}_ams{ams_key(printer_id, ams_id)}_{key}"
@@ -335,6 +387,11 @@ def device_id(hass: HomeAssistant, entry: MockConfigEntry, identifier: str) -> s
         if (DOMAIN, identifier) in device.identifiers:
             return device.id
     raise AssertionError(identifier)
+
+
+def printer_device_id(hass: HomeAssistant, entry: MockConfigEntry, printer_id: int = X1C) -> str:
+    """The registry ID of a printer's device."""
+    return device_id(hass, entry, printer_device(entry, printer_id))
 
 
 def state_at(hass: HomeAssistant, entity: str) -> Any:
@@ -444,9 +501,7 @@ def check_flow_texts() -> Iterator[None]:
     errors and sections, a menu's option labels, and the abort reason.
     Read from translations/en.json, which equals strings.json (test_strings).
     """
-    english = json.loads(
-        (INTEGRATION / "translations" / "en.json").read_text(encoding="utf-8")
-    )
+    english = translations("en")
     problems: list[tuple] = []
     original = FlowManager._async_handle_step
 

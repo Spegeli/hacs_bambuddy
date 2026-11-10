@@ -37,6 +37,7 @@ from .api import (
     BamBuddyNotFoundError,
     BamBuddyNotJsonError,
     BamBuddyPermissionError,
+    GATEWAY_STATUSES,
     normalise_url,
 )
 from .const import (
@@ -51,16 +52,11 @@ from .const import (
     MIN_BAMBUDDY_VERSION,
     PUSH_GAPS,
 )
-from .coordinator import BamBuddyConfigEntry, create_client, find_device, printer_identifier
+from .coordinator import BamBuddyConfigEntry, create_client, stored_name
 from .key import async_check_key
 from .live import async_test, failure_kind, live_settings
-from .models import find_printers, printer_key, printer_name, stored_key, stored_printer as _stored, too_old
-
-def form_schema(fields: dict[Any, Any]) -> Any:
-    """The schema of a form. Home Assistant 2026.10 types form schemas as
-    probatio schemas; the voluptuous ones built here work the same from
-    2025.5 on, hence `Any`: the one place that says so."""
-    return vol.Schema(fields)
+from .models import find_printers, printer_key, printer_name, stored_key, stored_printer, too_old
+from .schema import form_schema
 
 
 _KEY = TextSelector(TextSelectorConfig(type=TextSelectorType.PASSWORD))
@@ -108,6 +104,11 @@ _STORED_ERRORS = {"invalid_auth": "stored_key_refused", "missing_scopes": "store
 # At a new address -- most likely another BamBuddy -- the stored key was
 # never this one's: not "no longer".
 _STORED_ERRORS_AT_ADDRESS = {**_STORED_ERRORS, "invalid_auth": "stored_key_refused_at_address"}
+
+
+def _option(printer: dict[str, Any]) -> SelectOptionDict:
+    """A printer BamBuddy lists, as a choice: its number, its name."""
+    return SelectOptionDict(value=str(printer["id"]), label=printer_name(printer))
 
 
 def _of_stored(errors: dict[str, str], *, at_address: bool = False) -> dict[str, str]:
@@ -179,7 +180,7 @@ async def _validate(hass: HomeAssistant, url: str, api_key: str, verify_ssl: boo
         return _Found({"base": "cannot_connect"}, {}, [])
     except BamBuddyApiError as err:
         # A proxy without BamBuddy behind it answers 502-504: unreachable.
-        if err.status in (502, 503, 504):
+        if err.status in GATEWAY_STATUSES:
             return _Found({"base": "cannot_connect"}, {}, [])
         # An error to the first question: another server at the address.
         if first:
@@ -336,7 +337,7 @@ class BamBuddyConfigFlow(ConfigFlow, domain=DOMAIN):
         if user_input is not None:
             chosen = set(user_input[CONF_PRINTERS])
             return self._create_entry([printer for printer in self._printers if str(printer["id"]) in chosen])
-        options = [SelectOptionDict(value=str(printer["id"]), label=printer_name(printer)) for printer in self._printers]
+        options = [_option(printer) for printer in self._printers]
         schema = form_schema({vol.Optional(CONF_PRINTERS, default=[option["value"] for option in options]): _many(options)})
         if self._held:
             return self.async_show_form(step_id="printers_some_elsewhere", data_schema=schema, description_placeholders=self._held)
@@ -349,7 +350,7 @@ class BamBuddyConfigFlow(ConfigFlow, domain=DOMAIN):
             title=_title(self._data[CONF_URL]),
             data=self._data,
             options={
-                CONF_PRINTERS: [_stored(printer) for printer in printers]
+                CONF_PRINTERS: [stored_printer(printer) for printer in printers]
             },
             # BamBuddy has none yet: said, with where to add them later.
             description=None if self._printers else "no_printers",
@@ -373,7 +374,7 @@ class BamBuddyConfigFlow(ConfigFlow, domain=DOMAIN):
         """Why a new key: the stored one checked -- it lacks scopes, its
         owner is gone, or BamBuddy does not accept it."""
         entry = self._get_reauth_entry()
-        client = BamBuddyClient(entry.data[CONF_URL], entry.data[CONF_API_KEY], async_get_clientsession(self.hass), verify_ssl=entry.data.get(CONF_VERIFY_SSL, True))
+        client = create_client(self.hass, entry)
         check = await async_check_key(client)
         if check.outcome == "short" and check.scopes is not None:
             self._stored_marks = {f"stored_{scope}": mark for scope, mark in check.scopes.marks().items()}
@@ -483,9 +484,12 @@ class BamBuddyConfigFlow(ConfigFlow, domain=DOMAIN):
         names = []
         for printer, info in zip(self._stored, self._found, strict=True):
             if info is None:
-                device = find_device(self.hass, entry.entry_id, printer_identifier(entry.entry_id, stored_key(printer)))
-                names.append(device.name if device is not None and device.name else str(printer[CONF_PRINTER_NAME]))
+                names.append(stored_name(self.hass, entry.entry_id, printer))
         return names
+
+    def _matched_ids(self) -> set[int]:
+        """BamBuddy's numbers of the printers that the entry's stored ones were found as."""
+        return {info["id"] for info in self._found if info is not None}
 
     def _entry_or_gone(self) -> BamBuddyConfigEntry | None:
         """The entry being reconfigured -- None once it was deleted in
@@ -500,7 +504,7 @@ class BamBuddyConfigFlow(ConfigFlow, domain=DOMAIN):
         if self._entry_or_gone() is None:
             return self.async_abort(reason="reconfigure_entry_gone")
         stored = self._stored
-        matched = {info["id"] for info in self._found if info is not None}
+        matched = self._matched_ids()
         new = [printer for printer in self._printers if printer["id"] not in matched]
         if user_input is not None:
             self._other = user_input[_KIND] == _OTHER
@@ -523,7 +527,7 @@ class BamBuddyConfigFlow(ConfigFlow, domain=DOMAIN):
         }
         if new:
             schema[vol.Optional(_ADD, default=[])] = _many(
-                [SelectOptionDict(value=str(printer["id"]), label=printer_name(printer)) for printer in new]
+                [_option(printer) for printer in new]
             )
         placeholders = {"url": self._data[CONF_URL]}
         if not stored:
@@ -562,7 +566,7 @@ class BamBuddyConfigFlow(ConfigFlow, domain=DOMAIN):
         if current != self._stored:
             self._stored = current
             self._found = find_printers(self._printers, current)
-            matched = {info["id"] for info in self._found if info is not None}
+            matched = self._matched_ids()
             self._added = [printer for printer in self._added if printer["id"] not in matched]
             if user_input is not None:
                 errors["base"] = "printers_changed"
@@ -587,7 +591,7 @@ class BamBuddyConfigFlow(ConfigFlow, domain=DOMAIN):
         if (holder := self._holder(entry, self._data[CONF_URL])) is not None:
             return self.async_abort(reason="address_in_use", description_placeholders={"entry": holder})
         # The printers found there, then those added; the others go.
-        printers = [_stored(info) for info in self._found if info is not None] + [_stored(printer) for printer in self._added]
+        printers = [stored_printer(info) for info in self._found if info is not None] + [stored_printer(printer) for printer in self._added]
         other = self._other
         if other:
             await _async_forget_history(self.hass, entry)
@@ -708,10 +712,10 @@ class BamBuddyOptionsFlow(OptionsFlow):
                 data={
                     **self.config_entry.options,
                     CONF_PRINTERS: self._printers
-                    + [_stored(printer) for printer in chosen],
+                    + [stored_printer(printer) for printer in chosen],
                 }
             )
-        options = [SelectOptionDict(value=value, label=printer_name(printer)) for value, printer in new.items()]
+        options = [_option(printer) for printer in new.values()]
         if len(new) < len(missing):
             return self.async_show_form(
                 step_id="add_printer_some_elsewhere",

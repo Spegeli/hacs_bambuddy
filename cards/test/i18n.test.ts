@@ -77,3 +77,10 @@ describe("the frame rate's note in German", () => {
     expect(LANGUAGES.de.editor_show_auto_off_help).toContain("und im Dialog des Strom-Chips");
   });
 });
+
+describe("the text keys", () => {
+  it("spell problem right: only Bambu's own answer id keeps its misspelling", () => {
+    expect(Object.keys(en).filter((key) => key.includes("probelm"))).toEqual([]);
+    expect(Object.keys(en)).toContain("hms_answer_resume_printing_problem_solved");
+  });
+});

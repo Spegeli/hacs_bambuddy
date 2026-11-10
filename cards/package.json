@@ -13,6 +13,7 @@
     "build": "node build.mjs"
   },
   "dependencies": {
+    "jsqr": "1.4.0",
     "lit": "3.3.3"
   },
   "devDependencies": {

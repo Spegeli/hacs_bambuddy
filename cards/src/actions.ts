@@ -1,5 +1,6 @@
 // Calls to Home Assistant's actions, and the reason one failed in the
 // viewer's language: the integration's own text where it raised one.
+import { textOrUndefined } from "./format";
 import { t } from "./i18n";
 import type { ActionError, Hass } from "./types";
 
@@ -108,6 +109,122 @@ export async function filamentOffer(hass: Hass, entityId: string): Promise<Filam
     })),
   }));
   return { ...(typeof response["current"] === "string" ? { current: response["current"] } : {}), vendors };
+}
+
+/** Where a spool of the list sits: this slot, another slot (of this
+ * printer or another of the BamBuddy), or none. */
+export type SpoolPlace =
+  | { here: true }
+  | { here: false; printerId: number; printerName: string; amsId: number; trayId: number; amsLabel?: string; samePrinter: boolean };
+
+const FITS = ["not_for_ams", "not_for_nozzle", "not_for_printer", "by_chip", "printing"] as const;
+type Fits = (typeof FITS)[number];
+const isFits = (value: unknown): value is Fits => (FITS as readonly unknown[]).includes(value);
+
+/** A spool of BamBuddy's inventory, as get_spools lists it for a slot. */
+export interface ListedSpool {
+  id: number;
+  name: string;
+  brand: string;
+  material: string;
+  colorName?: string;
+  rgba?: string;
+  extraColors: string[];
+  remainingG: number;
+  remainingPct?: number;
+  storage?: string;
+  rfid: boolean;
+  place?: SpoolPlace;
+  /** Its further slots: BamBuddy can hold a spool in two. */
+  also: SpoolPlace[];
+  /** Why the slot cannot take it; none where it can. BamBuddy links a
+   * Bambu spool by its chip itself ("by_chip"); a spool in a slot of another
+   * printer that prints is locked ("printing"). */
+  fits?: Fits;
+  /** The printer that prints, for "printing". */
+  printing?: string;
+  /** The type a slot takes for it, as BamBuddy reduces its material ("PLA+" -> PLA). */
+  type?: string;
+}
+
+export interface SpoolList {
+  /** The spool assigned to the slot. */
+  assigned?: number;
+  spools: ListedSpool[];
+}
+
+function placeOf(value: unknown): SpoolPlace | undefined {
+  if (typeof value !== "object" || value === null) return undefined;
+  const place = value as Record<string, unknown>;
+  if (place["this_slot"] === true) return { here: true };
+  const { printer_id: printerId, ams_id: amsId, tray_id: trayId } = place;
+  if (typeof printerId !== "number" || typeof amsId !== "number" || typeof trayId !== "number") return undefined;
+  return {
+    here: false,
+    printerId,
+    printerName: typeof place["printer_name"] === "string" ? place["printer_name"] : String(printerId),
+    amsId,
+    trayId,
+    ...(typeof place["ams_label"] === "string" && place["ams_label"] ? { amsLabel: place["ams_label"] } : {}),
+    samePrinter: place["same_printer"] === true,
+  };
+}
+
+/** A list of slots a spool is assigned to besides this one. */
+export const placesOf = (value: unknown): SpoolPlace[] =>
+  (Array.isArray(value) ? value : []).map(placeOf).filter((place): place is SpoolPlace => place !== undefined && !place.here);
+
+/** What a spool of BamBuddy's inventory says the same way in the action's
+ * answer and in a slot sensor's `inventory_spool`: its colour, what is left
+ * and where it is stored, its chip. */
+export function spoolBasics(record: Record<string, unknown>): {
+  colorName?: string;
+  rgba?: string;
+  extraColors: string[];
+  remainingG: number;
+  remainingPct?: number;
+  storage?: string;
+  rfid: boolean;
+} {
+  const pct = record["remaining_pct"];
+  const grams = record["remaining_g"];
+  const colorName = textOrUndefined(record["color_name"]);
+  const rgba = textOrUndefined(record["rgba"]);
+  const storage = textOrUndefined(record["storage_location"]);
+  return {
+    ...(colorName ? { colorName } : {}),
+    ...(rgba ? { rgba } : {}),
+    extraColors: Array.isArray(record["extra_colors"]) ? record["extra_colors"].filter((color): color is string => typeof color === "string") : [],
+    remainingG: typeof grams === "number" ? grams : 0,
+    ...(typeof pct === "number" ? { remainingPct: pct } : {}),
+    ...(storage ? { storage } : {}),
+    rfid: record["rfid"] === true,
+  };
+}
+
+/** The integration's get_spools action, called for its response: the
+ * inventory's spools for a slot. An answer without a list is none. */
+export async function spoolList(hass: Hass, entityId: string): Promise<SpoolList | undefined> {
+  const response = await responseOf(hass, "get_spools", { entity_id: entityId });
+  if (!Array.isArray(response["spools"])) return undefined;
+  const spools = entriesOf(response["spools"], "id", "number").map((item): ListedSpool => {
+    const place = placeOf(item["place"]);
+    const fits = item["fits"];
+    return {
+      id: item["id"] as number,
+      name: textOrUndefined(item["name"]) ?? String(item["id"]),
+      brand: textOrUndefined(item["brand"]) ?? "",
+      material: textOrUndefined(item["material"]) ?? "",
+      ...spoolBasics(item),
+      ...(place ? { place } : {}),
+      also: placesOf(item["also"]),
+      ...(isFits(fits) ? { fits } : {}),
+      ...(textOrUndefined(item["printing"]) ? { printing: textOrUndefined(item["printing"]) } : {}),
+      ...(textOrUndefined(item["type"]) ? { type: textOrUndefined(item["type"]) } : {}),
+    };
+  });
+  const assigned = response["assigned"];
+  return { ...(typeof assigned === "number" ? { assigned } : {}), spools };
 }
 
 /** An object of the running print, as the integration lists it. */

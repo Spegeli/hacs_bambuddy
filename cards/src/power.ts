@@ -17,14 +17,15 @@ import {
   formatTemperatureOf,
   fromCelsius,
   jobName,
+  numberAttribute,
   numericState,
   stateOf,
   temperatureUnit,
 } from "./format";
 import { icon } from "./icons";
 import { t, type TextKey } from "./i18n";
-import { actionButton, hottestNozzle, noData, note, radioKeys, radioLeave, radioStop, stepControl, type CardContext, type Confirmation } from "./parts";
-import type { PlugRefs } from "./types";
+import { actionButton, hottestNozzle, noData, note, radioKeys, radioLeave, radioStop, sideAt, stateWord, stepControl, switchButton, type CardContext, type Confirmation } from "./parts";
+import type { Hass, PlugRefs } from "./types";
 
 /** How long the card counts after the printer's plug went on, before it
  * stops and says something is wrong: BamBuddy reconnects in 30 to 90 s. */
@@ -40,21 +41,21 @@ const AUTO_OFF_MAX = 100;
 /** Above it, an offline printer's plug may well feed a print. */
 const IDLE_POWER = 50;
 
-const powersPrinter = (ctx: CardContext, plug: PlugRefs): boolean => plugAttribute(ctx.hass, plug, "powers_printer") === true;
-const bambuddyAutoOff = (ctx: CardContext, plug: PlugRefs): boolean => plugAttribute(ctx.hass, plug, "bambuddy_auto_off") === true;
+const powersPrinter = (hass: Hass, plug: PlugRefs): boolean => plugAttribute(hass, plug, "powers_printer") === true;
+const bambuddyAutoOff = (hass: Hass, plug: PlugRefs): boolean => plugAttribute(hass, plug, "bambuddy_auto_off") === true;
 
 /** BamBuddy shows the plug on its own printer card. */
-const onCard = (hass: CardContext["hass"], plug: PlugRefs): boolean => plugAttribute(hass, plug, "on_printer_card") !== false;
+const onCard = (hass: Hass, plug: PlugRefs): boolean => plugAttribute(hass, plug, "on_printer_card") !== false;
 
 /** The printer's own plug among `plugs`: BamBuddy's choice among the plugs
  * that power it (the integration's `printer_main`, after BamBuddy's
  * ranking: one that switches, enabled, shown, reporting power, then the
  * lowest number) -- by the first that powers it where no plug says (it may
  * come without attributes right after a restart). */
-const isPrinterPlug = (hass: CardContext["hass"], plugs: PlugRefs[], plug: PlugRefs): boolean => {
+const isPrinterPlug = (hass: Hass, plugs: PlugRefs[], plug: PlugRefs): boolean => {
   const ranked = plugs.some((item) => typeof plugAttribute(hass, item, "printer_main") === "boolean");
   if (ranked) return plugAttribute(hass, plug, "printer_main") === true;
-  return plugs.find((item) => plugAttribute(hass, item, "powers_printer") === true) === plug;
+  return plugs.find((item) => powersPrinter(hass, item)) === plug;
 };
 
 /** The plugs the card shows: the printer's own always, the others where
@@ -78,9 +79,6 @@ const plugState = (ctx: CardContext, plug: PlugRefs): string => stateOf(ctx.hass
 /** The card switches plugs: not Hide controls (each caller checks that the
  * plug has a switch). */
 const canSwitch = (ctx: CardContext): boolean => !ctx.settings.readOnly;
-
-/** The hot-nozzle note: of two nozzles, the side (left first). */
-const HOT_NOTES: TextKey[] = ["plug_off_hot_left", "plug_off_hot_right"];
 
 /** What a wait waits for, in the card's words (the nozzle: its temperature). */
 const WAITING: Record<string, TextKey> = {
@@ -133,7 +131,7 @@ function offQuestion(ctx: CardContext, plug: PlugRefs): Confirmation {
   const key = `plug_${entityId}`;
   const confirm = t(hass, "plug_off_confirm");
   const keep = t(hass, "plug_off_keep");
-  if (!powersPrinter(ctx, plug)) return { title: t(hass, "plug_off_title", { plug: plug.name }), text: t(hass, "plug_off_text"), confirm, keep, action, key };
+  if (!powersPrinter(ctx.hass, plug)) return { title: t(hass, "plug_off_title", { plug: plug.name }), text: t(hass, "plug_off_text"), confirm, keep, action, key };
   if (ctx.online && ctx.busy) {
     const raw = formatState(hass, refs.job);
     const job = raw ? jobName(raw) : undefined;
@@ -172,7 +170,7 @@ function offQuestion(ctx: CardContext, plug: PlugRefs): Confirmation {
     text: t(hass, "plug_off_text_printer", { plug: plug.name }),
     ...(hot
       ? {
-          note: t(hass, ctx.refs.nozzles.length > 1 ? (HOT_NOTES[hot.index] as TextKey) : "plug_off_hot", {
+          note: t(hass, ctx.refs.nozzles.length > 1 ? `plug_off_hot_${sideAt(hot.index)}` : "plug_off_hot", {
             temperature: formatTemperatureOf(hass, hot.sensor, hot.value),
           }),
           noteTone: "warning" as const,
@@ -197,17 +195,7 @@ const switching = (ctx: CardContext, entityId: string): boolean => ctx.isPending
 function toggleButton(ctx: CardContext, entityId: string, label: string, onClick: () => void): TemplateResult {
   const on = ctx.switchOn(entityId);
   const pending = switching(ctx, entityId);
-  return html`<button
-    class="det-switch"
-    role="switch"
-    aria-label=${label}
-    aria-checked=${on ? "true" : "false"}
-    aria-busy=${pending ? "true" : "false"}
-    aria-disabled=${pending ? "true" : nothing}
-    @click=${pending ? nothing : onClick}
-  >
-    <span class="toggle" aria-hidden="true"><span class="knob"></span></span>
-  </button>`;
+  return switchButton({ label, on, pending, onClick, guardPending: true });
 }
 
 // --- The rows -----------------------------------------------------------------
@@ -217,7 +205,7 @@ function figures(ctx: CardContext, plug: PlugRefs, state: string): TemplateResul
   const { hass } = ctx;
   const watts = numericState(hass, plug.watts);
   const today = numericState(hass, plug.energyToday);
-  const parts: TemplateResult[] = [html`${t(hass, state === "on" ? "on" : state === "off" ? "off" : "unknown")}`];
+  const parts: TemplateResult[] = [html`${stateWord(hass, state)}`];
   if (watts !== undefined) parts.push(html`<b>${formatPower(hass, watts)}</b>`);
   if (today !== undefined) parts.push(html`${t(hass, "plug_today", { energy: formatEnergy(hass, today) })}`);
   return html`${parts.map((part, index) => (index ? html` · ${part}` : part))}`;
@@ -285,29 +273,31 @@ function plugRow(ctx: CardContext, plug: PlugRefs, tagged: boolean): TemplateRes
 /** Under the printer's plug: ours, or BamBuddy's own auto off as a note. */
 function autoOffRow(ctx: CardContext, plug: PlugRefs): TemplateResult | typeof nothing {
   const { hass } = ctx;
-  if (!ctx.settings.showAutoOff || !powersPrinter(ctx, plug)) return nothing;
+  if (!ctx.settings.showAutoOff || !powersPrinter(ctx.hass, plug)) return nothing;
   const auto = autoOffOf(ctx, plug);
-  const bambuddy = bambuddyAutoOff(ctx, plug);
+  const bambuddy = bambuddyAutoOff(ctx.hass, plug);
   if (!auto && !bambuddy) return nothing;
   // A plug BamBuddy cannot reach switches nothing: the row only where it is
   // on -- it waits for the plug then.
   if (plugState(ctx, plug) === "unavailable" && !auto?.armed) return nothing;
   const temperature = formatTemperature(hass, auto?.temperature ?? DEFAULT_AUTO_OFF, auto?.unit);
-  const pending = auto?.phase === "waiting" && !bambuddy;
-  const title = pending ? t(hass, "auto_off_waiting_title") : t(hass, "auto_off_title");
+  const waitingNow = auto?.phase === "waiting" && !bambuddy;
+  const title = waitingNow ? t(hass, "auto_off_waiting_title") : t(hass, "auto_off_title");
   let sub: string;
   // "Set it here instead" only where ours exists: a key that switches plugs.
   if (bambuddy) sub = t(hass, ctx.viewOnly || !auto ? "auto_off_bambuddy_view" : "auto_off_bambuddy");
-  else if (pending) {
+  else if (waitingNow) {
     const now = hottestNozzle(ctx);
     const why = auto?.waitingFor;
+    const waitKey = why ? WAITING[why] : undefined;
     sub = auto?.switching
       ? t(hass, "auto_off_switching")
-      : why && why !== "nozzle" && WAITING[why]
-        ? t(hass, WAITING[why] as TextKey)
+      : waitKey
+        ? t(hass, waitKey)
         : t(hass, "auto_off_waiting", { temperature, now: now === undefined ? "—" : formatTemperatureOf(hass, now.sensor, now.value) });
   } else if (auto?.phase === "failed_print") sub = t(hass, auto.every ? "auto_off_failed" : "auto_off_failed_next");
   else if (auto?.phase === "gave_up") sub = t(hass, "auto_off_gave_up");
+  else if (auto?.phase === "plug_failed") sub = t(hass, "auto_off_plug_failed");
   else if (auto?.phase === "skipped" && auto.armed) sub = t(hass, "auto_off_skipped");
   else if (auto?.armed) sub = t(hass, auto.every ? "auto_off_every" : "auto_off_next", { temperature });
   else sub = t(hass, "auto_off_disarmed");
@@ -315,8 +305,10 @@ function autoOffRow(ctx: CardContext, plug: PlugRefs): TemplateResult | typeof n
   const text = html`<span class="p-name">${title}</span>
     <span class="p-sub">${sub}</span>`;
   // Shown only, its line says it all: no state word beside it.
-  const control = settable ? toggleButton(ctx, plug.autoOff as string, t(hass, "auto_off_title"), () => ctx.toggleSwitch(plug.autoOff as string)) : nothing;
-  const skip = pending && settable && !auto?.switching && plug.autoOffSkip && stateOf(hass, plug.autoOffSkip)?.state !== "unavailable"
+  // Beside BamBuddy's own only the way off: ours cannot be turned on then.
+  const switchable = canSwitch(ctx) && !!plug.autoOff && (!bambuddy || !!auto?.armed);
+  const control = switchable ? toggleButton(ctx, plug.autoOff as string, t(hass, "auto_off_title"), () => ctx.toggleSwitch(plug.autoOff as string)) : nothing;
+  const skip = waitingNow && settable && !auto?.switching && plug.autoOffSkip && stateOf(hass, plug.autoOffSkip)?.state !== "unavailable"
     ? actionButton({
         label: t(hass, "auto_off_skip"),
         iconName: "timerOff",
@@ -324,7 +316,7 @@ function autoOffRow(ctx: CardContext, plug: PlugRefs): TemplateResult | typeof n
         onClick: () => ctx.run(`skip_${plug.autoOffSkip}`, "button", "press", { entity_id: plug.autoOffSkip }),
       })
     : nothing;
-  return html`<div class="p-row p-auto ${pending ? "waiting" : ""}">
+  return html`<div class="p-row p-auto ${waitingNow ? "waiting" : ""}">
       <span class="p-icon" aria-hidden="true">${icon(auto?.armed || bambuddy ? "timer" : "timerOff")}</span>
       ${settable && plug.autoOffTemperature
         ? html`<button class="p-text p-open" aria-label="${title}: ${sub}" aria-haspopup="dialog" @click=${ctx.openAutoOff}>
@@ -374,10 +366,7 @@ export function autoOffContent(ctx: CardContext): TemplateResult {
   const auto = plug ? autoOffOf(ctx, plug) : undefined;
   const number = plug?.autoOffTemperature;
   const unit = temperatureUnit(hass, number);
-  const limit = (name: string, celsius: number): number => {
-    const own = stateOf(hass, number)?.attributes[name];
-    return typeof own === "number" ? own : fromCelsius(celsius, unit);
-  };
+  const limit = (name: string, celsius: number): number => numberAttribute(hass, number, name) ?? fromCelsius(celsius, unit);
   const lowest = limit("min", AUTO_OFF_MIN);
   const highest = limit("max", AUTO_OFF_MAX);
   const value = (number ? ctx.targetOf(number) : undefined) ?? auto?.temperature ?? fromCelsius(DEFAULT_AUTO_OFF, unit);
@@ -427,7 +416,7 @@ export function autoOffContent(ctx: CardContext): TemplateResult {
 /** The chip: the printer's plug, else the first plug with a state -- a
  * script says nothing of the power. Green while power flows to an online
  * printer. */
-export function powerPill(ctx: CardContext, open: () => void): TemplateResult | typeof nothing {
+export function powerChip(ctx: CardContext, open: () => void): TemplateResult | typeof nothing {
   const { hass } = ctx;
   const plug = printerPlug(ctx) ?? shownPlugs(ctx).find((item) => item.power);
   if (!plug) return nothing;
@@ -448,12 +437,12 @@ export function powerPill(ctx: CardContext, open: () => void): TemplateResult | 
             ? (["info", "timer", t(hass, "auto_off_waiting_title"), t(hass, "auto_off_waiting_short")] as const)
             : ([ctx.online ? "ok" : "neutral", "bolt", power ?? t(hass, "chip_power_on"), power ?? t(hass, "on")] as const);
   // A plug that does not power the printer: its name says whose draw it is.
-  const accessory = !ctx.unreachable && !powersPrinter(ctx, plug) && (state === "on" || state === "off") && !waiting(ctx, plug);
+  const accessory = !ctx.unreachable && !powersPrinter(ctx.hass, plug) && (state === "on" || state === "off") && !waiting(ctx, plug);
   const full = !accessory
     ? label
     : state === "on" && power
       ? t(hass, "chip_power_plug", { plug: plug.name, power })
-      : t(hass, "chip_power_plug_state", { plug: plug.name, state: t(hass, state === "on" ? "on" : "off") });
+      : t(hass, "chip_power_plug_state", { plug: plug.name, state: stateWord(hass, state) });
   // The name starts with what the full chip shows (voice control): then whose plug.
   const aria = accessory ? full : ctx.unreachable ? `${full} – ${t(hass, noData(ctx))}` : t(hass, "chip_power_aria", { shown: full, plug: plug.name });
   const shown = ctx.settings.compactChips ? short : full;

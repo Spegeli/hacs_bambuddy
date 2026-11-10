@@ -14,15 +14,14 @@ if TYPE_CHECKING:
     from homeassistant.components.repairs import RepairsFlowResult
 
 from . import renames
-from .config_flow import form_schema
 from .const import CONF_PRINTER_NAME, CONF_PRINTERS
 from .coordinator import async_remove_printer, find_device, printer_identifier, renames_issue
 from .models import stored_key
+from .schema import form_schema
 
 
-class RemoveMissingPrinter(RepairsFlow):
-    """Asks once, then drops the printer from the entry; the reload that
-    follows removes its devices."""
+class _PrinterRepair(RepairsFlow):
+    """A repair of one printer of an entry: it opens on its confirm step."""
 
     def __init__(self, entry_id: str, key: str) -> None:
         self._entry_id = entry_id
@@ -30,6 +29,14 @@ class RemoveMissingPrinter(RepairsFlow):
 
     async def async_step_init(self, user_input: dict[str, Any] | None = None) -> RepairsFlowResult:
         return await self.async_step_confirm()
+
+    async def async_step_confirm(self, user_input: dict[str, Any] | None = None) -> RepairsFlowResult:
+        raise NotImplementedError
+
+
+class RemoveMissingPrinter(_PrinterRepair):
+    """Asks once, then drops the printer from the entry; the reload that
+    follows removes its devices."""
 
     async def async_step_confirm(self, user_input: dict[str, Any] | None = None) -> RepairsFlowResult:
         entry = self.hass.config_entries.async_get_entry(self._entry_id)
@@ -48,15 +55,8 @@ class RemoveMissingPrinter(RepairsFlow):
         )
 
 
-class ConfirmAmsRenames(RepairsFlow):
+class ConfirmAmsRenames(_PrinterRepair):
     """Lists the renamed IDs; "Done" clears the list, and the notice goes."""
-
-    def __init__(self, entry_id: str, key: str) -> None:
-        self._entry_id = entry_id
-        self._key = key
-
-    async def async_step_init(self, user_input: dict[str, Any] | None = None) -> RepairsFlowResult:
-        return await self.async_step_confirm()
 
     async def async_step_confirm(self, user_input: dict[str, Any] | None = None) -> RepairsFlowResult:
         pairs = await renames.async_get(self.hass, self._entry_id, self._key)

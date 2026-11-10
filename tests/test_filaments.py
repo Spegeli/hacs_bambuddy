@@ -4,7 +4,7 @@ from __future__ import annotations
 from dataclasses import replace
 
 from custom_components.bambuddy import filaments
-from custom_components.bambuddy.filaments import Slot, diameter, field_name, get, label, of_type, offer, refusal
+from custom_components.bambuddy.filaments import VENDORS, Slot, diameter, field_name, get, label, of_type, offer, refusal
 
 A1 = Slot("A1", "0.4", ams=True, extruders=frozenset({0}), nozzle_types={0: "hardened_steel"})
 H2D_RIGHT = Slot("H2D", "0.4", ams=False, extruders=frozenset({0}), nozzle_types={0: "HS01"})
@@ -148,3 +148,33 @@ def test_a_type_stands_for_its_generic_profile() -> None:
     assert of_type("PA-S") == get("GFS03")
     assert of_type("") is None
     assert of_type("Wood") is None
+
+
+def test_a_filament_ranks_by_vendor_then_type_then_name() -> None:
+    pla = get("GFA00")
+    assert pla is not None
+    assert filaments._rank(pla) == (VENDORS.index("Bambu Lab"), 0, b"Bambu PLA Basic")
+    assert filaments._rank(replace(pla, vendor="eSUN"))[0] == VENDORS.index("eSUN")
+    # What the list does not know comes after what it does.
+    assert filaments._rank(replace(pla, vendor="Nobody"))[0] == len(VENDORS)
+    assert [filaments._rank(replace(pla, type=kind))[1] for kind in ("PETG", "ABS", "TPU", "PA")] == [1, 2, 3, 4]
+
+
+def test_an_unknown_model_is_offered_vendor_by_vendor_in_bambu_studios_order() -> None:
+    ranks = [filaments._rank(filaments.FILAMENTS[fid]) for fid in filaments._every_model("0.4")]
+    assert ranks == sorted(ranks)
+    assert ranks[0][0] == 0
+
+
+def test_a_slot_without_nozzles_is_read_as_the_right_one() -> None:
+    nowhere = replace(H2D_LEFT, extruders=frozenset())
+    # Bambu PPA-CF: not on the right nozzle, the left takes it.
+    assert refusal("GFN06", nowhere) == "filament_not_right"
+    assert refusal("GFN06", replace(H2D_LEFT, extruders=frozenset({1}))) is None
+    assert refusal("GFA00", nowhere) is None
+
+
+def test_a_switch_slot_whose_nozzles_both_refuse_says_nozzle_whatever_the_reason() -> None:
+    """The right nozzle is refused by the list, the left by its type: neither side is to blame alone."""
+    switch = Slot("H2D", "0.4", ams=False, extruders=frozenset({0, 1}), nozzle_types={0: "HS01", 1: "HU01"})
+    assert refusal("GFN06", switch) == "filament_not_for_nozzle"

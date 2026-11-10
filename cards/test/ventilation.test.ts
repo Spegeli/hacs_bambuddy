@@ -6,21 +6,28 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import "../src/index";
 import { findPrinter } from "../src/discovery";
 import { ICONS } from "../src/icons";
-import { button, find, findAll, NBSP, styleText } from "./helpers";
-import { h2d, makeHass, mountCard, x1c, type FakeCard, type FakeHass } from "./fixtures";
+import { button, declarations, find, findAll, moreInfoIds, NBSP, styleText, update } from "./helpers";
+import { h2d, makeHass, mountCard, x1c, type FakeCard, type FakeDevice, type FakeHass } from "./fixtures";
 
 afterEach(() => {
   vi.useRealTimers();
   document.body.innerHTML = "";
 });
 
-type Stepper = { stepTarget: (entityId: string, value: number) => void; targetOf: (entityId: string) => number | undefined };
-const internals = (card: FakeCard): Stepper => card as unknown as Stepper;
+/** The H2D or the X1C, idle, with these overrides. */
+const idleDevices = (printer: "h2d" | "x1c", spec: Parameters<typeof h2d>[0]): FakeDevice[] =>
+  printer === "h2d" ? h2d({ status: "idle", stage: "idle", ...spec }) : x1c({ status: "idle", stage: "idle", ...spec });
+
 const VENT = "fan.h2d_ventilation";
+/** What the ventilation row shows, and its + button. */
+const ventShown = (card: FakeCard): string => find(card, ".vent-part .heat-target")?.textContent ?? "";
+const ventRaise = (card: FakeCard): HTMLButtonElement =>
+  findAll<HTMLButtonElement>(card, ".vent-part .heat-set .btn").at(-1) as HTMLButtonElement;
 const sent = (hass: FakeHass): unknown[] => hass.calls.filter((call) => call.domain === "fan").map((call) => [call.service, call.data]);
 
 async function ventCard(percent: number, fans = ["exhaust"]): Promise<{ card: FakeCard; hass: FakeHass }> {
-  const hass = makeHass({ devices: h2d({ status: "idle", stage: "idle", ventilation: { percent, fans } }) });
+  // Cooling mode, the chamber cold: the ventilation can be stepped.
+  const hass = makeHass({ devices: h2d({ status: "idle", stage: "idle", airduct: "cooling", chamber: [33, 0], ventilation: { percent, fans } }) });
   const card = await mountCard(hass, { printer: "dev-h2d", start_view: "control" });
   return { card, hass };
 }
@@ -34,15 +41,19 @@ describe("the card steps a fan as it steps a heater", () => {
 
   it("reads a fan that is off as 0", async () => {
     const { card } = await ventCard(0);
-    expect(internals(card).targetOf(VENT)).toBe(0);
+    expect(find(card, ".vent-part .heat-target")?.classList.contains("off")).toBe(true);
+    // From 0, + starts the ventilation at its start, not at 0 + 10.
+    expect(ventRaise(card).getAttribute("aria-label")).toBe(`Ventilate at 60${NBSP}%`);
   });
 
   it("steps a fan's percentage and sends it once the taps stop", async () => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
     const { card, hass } = await ventCard(60);
-    internals(card).stepTarget(VENT, 70);
-    internals(card).stepTarget(VENT, 80);
-    expect(internals(card).targetOf(VENT)).toBe(80);
+    ventRaise(card).click();
+    await card.updateComplete;
+    ventRaise(card).click();
+    await card.updateComplete;
+    expect(ventShown(card)).toContain(`80${NBSP}%`);
     expect(sent(hass)).toEqual([]);
     await vi.advanceTimersByTimeAsync(900);
     expect(sent(hass)).toEqual([["set_percentage", { entity_id: VENT, percentage: 80 }]]);
@@ -51,14 +62,12 @@ describe("the card steps a fan as it steps a heater", () => {
   it("lets the printer's report replace a fan's draft at once", async () => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
     const { card, hass } = await ventCard(60);
-    internals(card).stepTarget(VENT, 70);
+    ventRaise(card).click();
     await vi.advanceTimersByTimeAsync(900);
     // The fan stays "on": its percentage tells the report.
-    card.hass = hass.withState(VENT, "on", { percentage: 70, fans: ["exhaust"] });
-    await card.updateComplete;
-    card.hass = (card.hass as FakeHass).withState(VENT, "on", { percentage: 60, fans: ["exhaust"] });
-    await card.updateComplete;
-    expect(internals(card).targetOf(VENT)).toBe(60);
+    await update(card, hass.withState(VENT, "on", { percentage: 70, fans: ["exhaust"] }));
+    await update(card, (card.hass as FakeHass).withState(VENT, "on", { percentage: 60, fans: ["exhaust"] }));
+    expect(ventShown(card)).toContain(`60${NBSP}%`);
   });
 });
 
@@ -99,12 +108,12 @@ describe("heating and ventilation in one block", () => {
   type Spec = Parameters<typeof h2d>[0];
   async function block(spec: Spec, options: { language?: string; read_only?: boolean; printer?: "h2d" | "x1c" } = {}): Promise<{ card: FakeCard; hass: FakeHass }> {
     const printer = options.printer ?? "h2d";
-    const devices = printer === "h2d" ? h2d({ status: "idle", stage: "idle", ...spec }) : x1c({ status: "idle", stage: "idle", ...spec });
+    const devices = idleDevices(printer, spec);
     const hass = makeHass({ devices, ...(options.language ? { language: options.language } : {}) });
     const card = await mountCard(hass, { printer: `dev-${printer}`, start_view: "control", ...(options.read_only ? { read_only: true } : {}) });
     return { card, hass };
   }
-  const part = (card: FakeCard): Element | null => card.shadowRoot?.querySelector(".vent-part") ?? null;
+  const part = (card: FakeCard): Element | null => find(card, ".vent-part");
   const ventRow = (card: FakeCard): Element | null => part(card)?.querySelector(".heat-row") ?? null;
   const chamberRow = (card: FakeCard): Element | undefined =>
     findAll(card, ".heating > .heat-rows .heat-row").find((row) => row.querySelector(".heat-text")?.textContent === "Kammer");
@@ -240,8 +249,7 @@ describe("heating and ventilation in one block", () => {
     expect(words(chamberRow(card)?.querySelector(".heat-target"))).toBe("Kammer, Ziel: Aus");
     expect(buttonsOf(ventRow(card)).every((item) => item.disabled)).toBe(true);
     expect(notes(card)).toEqual(["Solange die Kammer heizt, lässt sie sich nicht lüften. Schalte zuerst oben unter „Heizen“ die Kammer aus."]);
-    card.hass = hass.withState("number.h2d_chamber_target_temperature", "0");
-    await card.updateComplete;
+    await update(card, hass.withState("number.h2d_chamber_target_temperature", "0"));
     expect(buttonsOf(ventRow(card))[1]?.disabled).toBe(false);
     expect(notes(card)).toEqual([]);
     // The other way round: the ventilation's off, then the chamber.
@@ -249,8 +257,7 @@ describe("heating and ventilation in one block", () => {
     ventRow(vent.card)?.querySelector<HTMLButtonElement>(".heat-off")?.click();
     await vent.card.updateComplete;
     expect(buttonsOf(chamberRow(vent.card)).filter((item) => !item.classList.contains("heat-off")).every((item) => item.disabled)).toBe(true);
-    vent.card.hass = vent.hass.withState(VENT, "off", { percentage: 0, fans: ["exhaust"] });
-    await vent.card.updateComplete;
+    await update(vent.card, vent.hass.withState(VENT, "off", { percentage: 0, fans: ["exhaust"] }));
     expect(buttonsOf(chamberRow(vent.card)).some((item) => !item.disabled)).toBe(true);
   });
 
@@ -302,11 +309,11 @@ describe("heating and ventilation in one block", () => {
   });
 
   it("wraps the ventilation's subtitle: the X2D's „Rechter Zusatzlüfter und Abluftlüfter“ ran under the stepper", () => {
-    expect(styleText()).toMatch(/\.heat-name\.vent \.heat-now\s*\{[^}]*white-space: normal;/);
+    expect(declarations(".heat-name.vent .heat-now", styleText())).toContain("white-space: normal");
   });
 
   it("gives the keep-warm choices room for their words (a German „Aus“ was cut from 300 px)", () => {
-    expect(styleText()).toMatch(/\.keep-warm \.seg button\s*\{[^}]*min-width: 52px;[^}]*white-space: nowrap;/);
+    expect(declarations(".keep-warm .seg button", styleText())).toEqual(expect.arrayContaining(["min-width: 52px", "white-space: nowrap"]));
   });
 
   it("has no ventilation part without the ventilation fan", async () => {
@@ -319,7 +326,7 @@ describe("heating and ventilation in one block", () => {
 describe("the chamber tile in the Status tab says what the chamber does", () => {
   type Spec = Parameters<typeof h2d>[0];
   async function tile(spec: Spec, printer: "h2d" | "x1c" = "h2d", language = "de"): Promise<Element | undefined> {
-    const devices = printer === "h2d" ? h2d({ status: "idle", stage: "idle", ...spec }) : x1c({ status: "idle", stage: "idle", ...spec });
+    const devices = idleDevices(printer, spec);
     const card = await mountCard(makeHass({ devices, language }), { printer: `dev-${printer}`, start_view: "status" });
     return findAll(card, ".temp").find((item) => /Kammer|Chamber/.test(item.querySelector(".temp-head")?.textContent ?? ""));
   }
@@ -356,10 +363,9 @@ describe("the chamber tile in the Status tab says what the chamber does", () => 
 
   it("opens what it shows: the ventilation while ventilated, else the target, the sensor where there is none or the card only shows", async () => {
     async function opened(spec: Spec, printer: "h2d" | "x1c" = "h2d", config: Record<string, unknown> = {}): Promise<string[]> {
-      const devices = printer === "h2d" ? h2d({ status: "idle", stage: "idle", ...spec }) : x1c({ status: "idle", stage: "idle", ...spec });
+      const devices = idleDevices(printer, spec);
       const card = await mountCard(makeHass({ devices, language: "de" }), { printer: `dev-${printer}`, start_view: "status", ...config });
-      const seen: string[] = [];
-      card.addEventListener("hass-more-info", (event) => seen.push((event as CustomEvent<{ entityId: string }>).detail.entityId));
+      const seen = moreInfoIds(card);
       (findAll(card, ".temp").find((item) => /Kammer/.test(item.querySelector(".temp-head")?.textContent ?? "")) as HTMLButtonElement | undefined)?.click();
       return seen;
     }
@@ -381,7 +387,7 @@ describe("the chamber tile in the Status tab says what the chamber does", () => 
 
 describe("the ventilation's explanation", () => {
   it("keeps half a line from what stands above it, as under the extruder", async () => {
-    expect(styleText()).toMatch(/\.heating > \.hint\s*\{[^}]*margin-top: 8px;/);
+    expect(declarations(".heating > .hint", styleText())).toContain("margin-top: 8px");
     // The rule reaches it: the explanation stands right in the section.
     const hass = makeHass({ devices: h2d({ status: "idle", stage: "idle", hms: [], airduct: "cooling", chamber: [33, 0], ventilation: { percent: 0, fans: ["exhaust"] } }) });
     const card = await mountCard(hass, { printer: "dev-h2d", start_view: "control" });

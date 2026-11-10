@@ -4,14 +4,25 @@
 // and the fans that bring the air through) in 10 % steps, and on one without
 // a chamber heater (the P2S) "keep warm" (the airduct on heating). A tap
 // changes the value shown at once; the card sends it when the taps stop (see
-// card.ts, stepTarget), so a few taps are one command. What does not go
+// drafts.ts, stepTarget), so a few taps are one command. What does not go
 // together locks the other (`locks`), never the way off.
 import { html, nothing, type TemplateResult } from "lit";
 
-import { formatPercent, formatTemperature, formatTemperatureOf, fromCelsius, listedOptions, numericState, stateOf, targetFloor, temperatureUnit } from "./format";
+import {
+  formatPercent,
+  formatTemperature,
+  formatTemperatureOf,
+  fromCelsius,
+  listedOptions,
+  numberAttribute,
+  numericState,
+  stateOf,
+  targetFloor,
+  temperatureUnit,
+} from "./format";
 import { icon, type IconName } from "./icons";
 import { t, type TextKey } from "./i18n";
-import { actionButton, activeNozzleIndex, heaters, note, radioKeys, radioLeave, radioStop, type CardContext, type HeaterKind } from "./parts";
+import { actionButton, activeNozzleIndex, hasAirduct, heaters, note, radioKeys, radioLeave, radioOptions, radioStop, type CardContext, type HeaterKind } from "./parts";
 
 /** One tap on a stepper. */
 const TARGET_STEP = 5;
@@ -64,15 +75,20 @@ function nozzleStart(ctx: CardContext, row: Row): number {
 function heatName(ctx: CardContext, row: Row, on: boolean): TemplateResult {
   const { hass } = ctx;
   const current = numericState(hass, row.sensor);
-  return html`<div class="heat-name ${on ? "on" : ""}">
-    <span class="heat-label"
-      >${icon(row.kind as IconName)}<span class="heat-title"
-        ><span class="heat-text">${row.label}</span> ${row.active ? html`<span class="heat-tag">${t(hass, "nozzle_active")}</span>` : nothing}</span
-      ></span
-    >
-    <span class="heat-now"
-      >${current === undefined ? "—" : t(hass, "heat_now", { value: formatTemperatureOf(hass, row.sensor, current) })}</span
-    >
+  const tag = row.active ? html`<span class="heat-tag">${t(hass, "nozzle_active")}</span>` : nothing;
+  return heatNameCell({
+    iconName: row.kind,
+    title: html`<span class="heat-text">${row.label}</span> ${tag}`,
+    now: current === undefined ? "—" : t(hass, "heat_now", { value: formatTemperatureOf(hass, row.sensor, current) }),
+    on,
+  });
+}
+
+/** A heating row's name cell: its icon and title, and what it reads now. */
+function heatNameCell(cell: { iconName: IconName; title: TemplateResult; now: string | TemplateResult | typeof nothing; on: boolean; extraClass?: string }): TemplateResult {
+  return html`<div class="heat-name ${cell.extraClass ?? ""} ${cell.on ? "on" : ""}">
+    <span class="heat-label">${icon(cell.iconName)}<span class="heat-title">${cell.title}</span></span>
+    <span class="heat-now">${cell.now}</span>
   </div>`;
 }
 
@@ -101,8 +117,7 @@ function heaterRow(ctx: CardContext, row: Row, options: { disabled: boolean; off
   const target = ctx.targetOf(row.target);
   const unit = temperatureUnit(hass, row.target);
   const floor = targetFloor(hass, row.target);
-  const maxAttribute = stateOf(hass, row.target)?.attributes["max"];
-  const max = typeof maxAttribute === "number" ? maxAttribute : fromCelsius(MAX[row.kind], unit);
+  const max = numberAttribute(hass, row.target, "max") ?? fromCelsius(MAX[row.kind], unit);
   const off = target === undefined || target <= floor;
   const start = Math.min(max, fromCelsius(row.kind === "nozzle" ? nozzleStart(ctx, row) : START[row.kind], unit));
   const raised = off ? start : Math.min(max, (target as number) + TARGET_STEP);
@@ -144,7 +159,7 @@ function heaterRow(ctx: CardContext, row: Row, options: { disabled: boolean; off
 /** A row's power symbol: a switch, on in the tone of what it does (heat
  * orange, ventilation blue), off neutral. Where it cannot be used its place
  * stays, so the steppers of the block stand one under the other. */
-export function powerCell(options: {
+function powerCell(options: {
   label: string;
   on: boolean;
   tone: "heat" | "vent";
@@ -168,7 +183,7 @@ export function powerCell(options: {
  * set the fans (the integration's VENT_START). */
 const VENT_START = 60;
 const VENT_STEP = 10;
-const KEEP_WARM: readonly string[] = ["cooling", "heating"];
+const KEEP_WARM_OPTIONS: readonly string[] = ["cooling", "heating"];
 
 /** The fans the ventilation runs, as the row's subtitle. */
 const VENT_FANS: Readonly<Record<string, TextKey>> = {
@@ -210,7 +225,7 @@ export function chamberActivity(ctx: CardContext): { kind: "warm" } | { kind: "v
 /** What locks what: the chamber heated locks the ventilation, the
  * ventilation the chamber; a print or a filament change keeps the mode it
  * set. A locked part that is on keeps its way off. */
-export function locks(ctx: CardContext): Locks {
+function locks(ctx: CardContext): Locks {
   const { hass, refs } = ctx;
   const airduct = stateOf(hass, refs.airduct)?.state;
   const warm = keepsWarm(ctx);
@@ -226,7 +241,7 @@ export function locks(ctx: CardContext): Locks {
     return { ...(airduct === "cooling" && !warm ? { chamber: "changing_reason" as const } : {}), ...(airduct !== "cooling" ? { vent: "changing_reason" as const } : {}) };
   }
   // On while the tap or the printer's report says so: the other part waits
-  // until the printer reports this one off, as the integration does.
+  // until the printer reports this one off.
   const target = refs.chamber.target;
   const heats = warm
     ? airduct === "heating"
@@ -251,14 +266,11 @@ function keepWarmRow(ctx: CardContext, lock: Locks): TemplateResult | typeof not
   if (!state || !keepsWarm(ctx)) return nothing;
   const on = state.state === "heating";
   const label = t(hass, "chamber");
-  const name = html`<div class="heat-name ${on ? "on" : ""}">
-    <span class="heat-label">${icon("chamber")}<span class="heat-title"><span class="heat-text">${label}</span></span></span>
-    <span class="heat-now">${t(hass, "keep_warm")}</span>
-  </div>`;
+  const name = heatNameCell({ iconName: "chamber", title: html`<span class="heat-text">${label}</span>`, now: t(hass, "keep_warm"), on });
   if (ctx.viewOnly) {
     return html`<div class="heat-row view keep-warm">${name}<span class="heat-target ${on ? "" : "off"}">${t(hass, on ? "on" : "heater_off")}</span></div>`;
   }
-  const options = listedOptions(state, KEEP_WARM, false).filter((option) => KEEP_WARM.includes(option));
+  const options = listedOptions(state, KEEP_WARM_OPTIONS, false).filter((option) => KEEP_WARM_OPTIONS.includes(option));
   const waiting = !ctx.online || ctx.busy || ctx.changing || state.state === "unavailable";
   // Locked by the ventilation, it keeps only the way off.
   const blocked = (option: string): boolean => waiting || (lock.chamber !== undefined && option === "heating");
@@ -270,18 +282,15 @@ function keepWarmRow(ctx: CardContext, lock: Locks): TemplateResult | typeof not
   return html`<div class="heat-row keep-warm">
     ${name}
     <div class="seg" role="radiogroup" aria-label=${group} @keydown=${radioKeys} @focusout=${radioLeave}>
-      ${options.map(
-        (option, index) => html`<button
-          role="radio"
-          aria-checked=${option === state.state ? "true" : "false"}
-          tabindex=${index === stop ? 0 : -1}
-          aria-disabled=${pending ? "true" : nothing}
-          ?disabled=${blocked(option)}
-          @click=${() => ctx.run("airduct", "select", "select_option", { entity_id: refs.airduct, option })}
-        >
-          ${t(hass, option === "heating" ? "on" : "heater_off")}
-        </button>`,
-      )}
+      ${radioOptions({
+        options,
+        current: state.state,
+        stop,
+        pending,
+        disabled: blocked,
+        onPick: (option) => void ctx.run("airduct", "select", "select_option", { entity_id: refs.airduct, option }),
+        content: (option) => t(hass, option === "heating" ? "on" : "heater_off"),
+      })}
     </div>
     <span class="heat-off-space" aria-hidden="true"></span>
   </div>`;
@@ -310,10 +319,7 @@ function ventilationPart(ctx: CardContext, lock: Locks): TemplateResult | typeof
   const subtitle = VENT_FANS[fansOf(ctx).join(" ")];
   const label = t(hass, "chamber");
   const shown = value === undefined ? "—" : on ? formatPercent(hass, value) : t(hass, "heater_off");
-  const name = html`<div class="heat-name vent ${on ? "on" : ""}">
-    <span class="heat-label">${icon("fan")}<span class="heat-title"><span class="heat-text">${label}</span></span></span>
-    <span class="heat-now">${subtitle ? t(hass, subtitle) : nothing}</span>
-  </div>`;
+  const name = heatNameCell({ iconName: "fan", title: html`<span class="heat-text">${label}</span>`, now: subtitle ? t(hass, subtitle) : nothing, on, extraClass: "vent" });
   const said = html`<span class="sr-only">${t(hass, "vent_said")} </span>`;
   const head = html`<div class="heat-head vent-head">
     <span class="section-label" id="vent-title">${icon("fan")}${t(hass, "ventilation")}</span>
@@ -368,22 +374,21 @@ function ventilationPart(ctx: CardContext, lock: Locks): TemplateResult | typeof
 /** The section, where the printer has a target the card can set. */
 export function heatingSection(ctx: CardContext): TemplateResult | typeof nothing {
   const { hass, refs } = ctx;
-  const heaters = rows(ctx);
-  if (!heaters.length) return nothing;
+  const heaterRows = rows(ctx);
+  if (!heaterRows.length) return nothing;
   const disabled = !ctx.online;
   // A heater's off would end a print: only without one -- but the
   // chamber's, which ends none (the job may set it again). It waits during a
   // filament change, which cooling would break.
-  const offered = !ctx.busy && !ctx.viewOnly;
-  const offFor = (row: Row): boolean => (offered || (row.kind === "chamber" && !ctx.viewOnly));
-  const airduct = refs.airduct !== undefined || refs.ventilation !== undefined;
+  const offFor = (row: Row): boolean => !ctx.busy || row.kind === "chamber";
+  const airduct = hasAirduct(refs);
   const lock = airduct ? locks(ctx) : {};
   return html`<section class="heating" aria-labelledby="heat-title">
     <div class="heat-head">
       <span class="section-label" id="heat-title">${icon("heat")}${t(hass, "heating")}</span>
     </div>
     <div class="heat-rows">
-      ${heaters.map((row) =>
+      ${heaterRows.map((row) =>
         ctx.viewOnly ? heaterState(ctx, row) : heaterRow(ctx, row, { disabled, offered: offFor(row), locked: row.kind === "chamber" && lock.chamber !== undefined }),
       )}${keepWarmRow(ctx, lock)}
     </div>

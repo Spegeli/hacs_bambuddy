@@ -17,8 +17,7 @@ from typing import TYPE_CHECKING, Any, NamedTuple
 
 import aiohttp
 
-from homeassistant.core import CALLBACK_TYPE, HassJob, HomeAssistant, callback
-from homeassistant.helpers.event import async_call_later
+from homeassistant.core import CALLBACK_TYPE, HomeAssistant, callback
 from homeassistant.util import dt as dt_util
 
 from .api import (
@@ -30,6 +29,8 @@ from .api import (
     BamBuddyNotJsonError,
 )
 from .const import CONF_LIVE_UPDATES, CONF_PUSH_GAP, LIVE_BACKOFF, LIVE_STEADY, LIVE_TEST_TIMEOUT, PUSH_GAP, PUSH_GAPS
+from .models import is_int
+from .timers import async_call_later_until_stop
 
 if TYPE_CHECKING:
     from .coordinator import BamBuddyConfigEntry
@@ -39,6 +40,9 @@ _LOGGER = logging.getLogger(__name__)
 # What tells of a change of a printer. BamBuddy sends more (archives,
 # spools, its queue's toasts): none of it is the printer's state.
 _PUSHES = frozenset({"printer_status", "print_start", "print_complete"})
+# A spool assigned, linked by its chip, or changed in the inventory: of any
+# printer or none -- the inventory is read whole.
+_SPOOL_EVENTS = frozenset({"spool_assignment_changed", "spool_auto_assigned", "inventory_changed"})
 # Code 1000: a close in order; none: the socket simply ended.
 _ORDERLY = (None, 1000)
 
@@ -241,8 +245,17 @@ class BamBuddyLive:
                 body = json.loads(message.data)
             except ValueError:
                 body = None
-        printer_id = body.get("printer_id") if isinstance(body, dict) and body.get("type") in _PUSHES else None
-        if not isinstance(printer_id, int) or isinstance(printer_id, bool):
+        # A "type" that is no text names no message we know (a list would not
+        # even be looked up).
+        kind = body.get("type") if isinstance(body, dict) else None
+        if not isinstance(kind, str):
+            kind = None
+        if kind in _SPOOL_EVENTS:
+            self._messages += 1
+            self.entry.runtime_data.inventory.async_pushed()
+            return
+        printer_id = body.get("printer_id") if kind in _PUSHES else None
+        if not is_int(printer_id):
             self._ignored += 1
             return
         # Every socket hears of every printer of the BamBuddy: only this
@@ -274,4 +287,4 @@ class BamBuddyLive:
             self._failures = 0
         delay = LIVE_BACKOFF[min(self._failures, len(LIVE_BACKOFF) - 1)] * random.uniform(0.8, 1.2)
         self._failures += 1
-        self._later = async_call_later(self.hass, delay, HassJob(self._async_attempt, cancel_on_shutdown=True))
+        self._later = async_call_later_until_stop(self.hass, delay, self._async_attempt)

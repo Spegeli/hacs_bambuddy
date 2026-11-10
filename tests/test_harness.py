@@ -5,7 +5,6 @@ from __future__ import annotations
 import re
 from typing import Any
 
-from homeassistant.core import HomeAssistant
 from homeassistant.data_entry_flow import FlowResultType
 import pytest
 
@@ -231,7 +230,7 @@ def test_the_list_names_every_status_field_the_code_reads():
     modules = {module.name: module.read_text(encoding="utf-8") for module in INTEGRATION.glob("*.py")}
     # A smart plug's status is another answer, with fields of its own.
     del modules["plugs.py"]
-    code ="\n".join(modules.values())
+    code = "\n".join(modules.values())
     # Read directly, through the sensors' and binary sensors' helpers, and as the fans' fields.
     read = set(re.findall(r'(?:status(?:\.get\(|\[)|_status\(|_text\(|_flag\()"([a-z0-9_]+)"', code))
     read |= set(re.findall(r'field="([a-z0-9_]+)"', modules["fan.py"]))
@@ -240,7 +239,8 @@ def test_the_list_names_every_status_field_the_code_reads():
     temperatures |= set(re.findall(r'_temperature_sensor\(\s*"[^"]+",\s*"[^"]+",\s*"([a-z0-9_]+)"', modules["sensor.py"]))
     temperatures |= set(re.findall(r'field="([a-z0-9_]+)"', modules["number.py"]))
     listed = {path for paths in _READ.values() for path in paths}
-    assert read and temperatures
+    # A renamed helper must not quietly shrink what the scan sees: as many as today, at least.
+    assert len(read) >= 47 and len(temperatures) >= 5
     assert read - {path.split(".")[0] for path in _STATUS} == set()
     assert {f"temperatures.{name}" for name in temperatures} - listed == set()
 
@@ -258,6 +258,3 @@ def test_the_printer_bambuddy_never_reached():
     never = load_fixture("status_never.json")
     assert (never["connected"], never["temperatures"], never["nozzles"]) == (False, None, [])
 
-
-async def test_home_assistant_fixture_starts(hass: HomeAssistant) -> None:
-    assert hass.config.config_dir is not None

@@ -6,7 +6,6 @@ from __future__ import annotations
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from functools import partial
-from typing import Any
 
 from homeassistant.components.button import ButtonEntity, ButtonEntityDescription
 from homeassistant.const import EntityCategory
@@ -15,9 +14,17 @@ from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 
 from .api import BamBuddyClient
 from .auto_off import AutoOff, auto_off_for
-from .coordinator import BamBuddyConfigEntry, BamBuddyPlugCoordinator
-from .entity import BamBuddyDescribedEntity, BamBuddyPlugEntity, async_add_plug_entities, async_run_command, async_switch_plug, key_by_printer
+from .coordinator import BamBuddyConfigEntry
+from .entity import (
+    BamBuddyAutoOffPart,
+    BamBuddyDescribedEntity,
+    BamBuddyPlugMainEntity,
+    async_add_plug_entities,
+    async_run_command,
+    async_switch_plug,
+)
 from .models import ACTIVE_STATES, ENDED_STATES, JOB_STATES, PrinterData
+from .plug_coordinator import BamBuddyPlugCoordinator
 from .plugs import Plug
 
 PARALLEL_UPDATES = 1
@@ -130,7 +137,7 @@ class BamBuddyButton(BamBuddyDescribedEntity, ButtonEntity):
         )
 
 
-class BamBuddyPlugRun(BamBuddyPlugEntity, ButtonEntity):
+class BamBuddyPlugRun(BamBuddyPlugMainEntity, ButtonEntity):
     """A Home Assistant script BamBuddy keeps as a plug: it runs, it has
     no on and off."""
 
@@ -139,38 +146,24 @@ class BamBuddyPlugRun(BamBuddyPlugEntity, ButtonEntity):
     def __init__(self, coordinator: BamBuddyPlugCoordinator, plug: Plug) -> None:
         super().__init__(coordinator, plug, "run")
 
-    @property
-    def available(self) -> bool:
-        return super().available and self.plug is not None and self.plug.reachable
-
-    @property
-    def capability_attributes(self) -> dict[str, Any] | None:
-        return self.plug_role()
-
-    @property
-    def extra_state_attributes(self) -> dict[str, Any]:
-        return self.plug_attributes()
-
     async def async_press(self) -> None:
         plug = self.plug
         if plug is not None:
             await async_switch_plug(self.coordinator, plug, True)
 
 
-class BamBuddyAutoOffSkip(BamBuddyPlugEntity, ButtonEntity):
+class BamBuddyAutoOffSkip(BamBuddyAutoOffPart, ButtonEntity):
     """Not this time: while the switch-off after the print waits, the
     printer stays on."""
 
     _attr_translation_key = "auto_off_skip"
 
     def __init__(self, coordinator: BamBuddyPlugCoordinator, plug: Plug, auto_off: AutoOff) -> None:
-        super().__init__(coordinator, plug, "auto_off_skip")
-        self.auto_off = auto_off
-        key_by_printer(self, auto_off.printer, "auto_off_skip")
+        super().__init__(coordinator, plug, "auto_off_skip", auto_off)
 
     async def async_added_to_hass(self) -> None:
         await super().async_added_to_hass()
-        self.async_on_remove(self.auto_off.async_add_listener(self.async_write_ha_state))
+        self._follow_auto_off()
 
     @property
     def available(self) -> bool:

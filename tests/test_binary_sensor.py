@@ -21,6 +21,7 @@ from tests.conftest import (
     INTEGRATION,
     X1C,
     ams_uid,
+    entity_id,
     instance_uid,
     load_fixture,
     make_entry,
@@ -33,6 +34,7 @@ from tests.conftest import (
     setup_integration,
     state_of,
 )
+from tests.helpers import as_model, reload_entry
 
 
 @pytest.mark.parametrize(
@@ -96,11 +98,7 @@ async def test_a_wired_network_sensor_left_from_1x_goes_where_there_is_no_port(
     hass: HomeAssistant, bambuddy_api: SimpleNamespace
 ) -> None:
     """1.x gave every printer a Wired network sensor; only the X1E and the H2D Pro have a port."""
-    printers = load_fixture("printers.json")
-    for printer in printers:
-        if printer["id"] == X1C:
-            printer["model"] = "X1E"
-    bambuddy_api.get_printers.return_value = printers
+    as_model(bambuddy_api, "X1E", X1C)
     entry = make_entry(hass, X1C, A1_MINI)
     registry = er.async_get(hass)
     for printer in (X1C, A1_MINI):
@@ -108,8 +106,8 @@ async def test_a_wired_network_sensor_left_from_1x_goes_where_there_is_no_port(
 
     await setup_integration(hass, entry)
 
-    assert registry.async_get_entity_id("binary_sensor", DOMAIN, printer_uid(entry, "wired_network", X1C)) is not None
-    assert registry.async_get_entity_id("binary_sensor", DOMAIN, printer_uid(entry, "wired_network", A1_MINI)) is None
+    assert entity_id(hass, "binary_sensor", printer_uid(entry, "wired_network", X1C))
+    assert no_entity(hass, "binary_sensor", printer_uid(entry, "wired_network", A1_MINI))
 
 
 async def test_a_stalled_countdown_is_no_drying(
@@ -143,15 +141,13 @@ async def test_the_connection_names_the_printers_bambuddy_does_not_list(
     missing = find_device(hass, entry.entry_id, printer_identifier(entry.entry_id, printer_key(A1_MINI)))
     assert missing is not None
     bambuddy_api.get_printers.return_value = printers_but(A1_MINI)
-    await hass.config_entries.async_reload(entry.entry_id)
-    await hass.async_block_till_done()
+    await reload_entry(hass, entry.entry_id)
 
     connection = state_of(hass, "binary_sensor", instance_uid(entry, "connected"))
     assert connection.attributes["missing_printers"] == [missing.id]
 
     bambuddy_api.get_printers.return_value = load_fixture("printers.json")
-    await hass.config_entries.async_reload(entry.entry_id)
-    await hass.async_block_till_done()
+    await reload_entry(hass, entry.entry_id)
     assert state_of(hass, "binary_sensor", instance_uid(entry, "connected")).attributes["missing_printers"] == []
 
 
@@ -184,11 +180,7 @@ async def test_a_wired_printer_says_so(
 ) -> None:
     """On a cable the Wi-Fi signal is empty; this sensor tells why. Only the X1E and the H2D Pro have a
     port (Bambu's spec pages): an H2D has no such sensor."""
-    printers = load_fixture("printers.json")
-    for printer in printers:
-        if printer["id"] == X1C:
-            printer["model"] = "X1E"
-    bambuddy_api.get_printers.return_value = printers
+    as_model(bambuddy_api, "X1E", X1C)
     entry = await set_up(hass, X1C, H2D)
     bambuddy_api.statuses[X1C]["wired_network"] = True
 

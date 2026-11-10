@@ -9,7 +9,7 @@ import { repeat } from "lit/directives/repeat.js";
 import { formatDuration, formatNumber, formatState, hasValue, stateOf } from "./format";
 import { icon } from "./icons";
 import { t, type TextKey } from "./i18n";
-import { compactWords, dialogNote, noData, type CardContext } from "./parts";
+import { compactWords, dialogError, dialogNote, noData, type CardContext } from "./parts";
 
 /** A task as the integration's maintenance sensor lists it. */
 export interface MaintenanceTask {
@@ -56,7 +56,7 @@ const TASK_NAMES: Record<string, TextKey> = {
   "Clean Linear Rails": "maint_task_clean_rails",
 };
 
-const number = (value: unknown): number => (typeof value === "number" && Number.isFinite(value) ? value : 0);
+const finiteOrZero = (value: unknown): number => (typeof value === "number" && Number.isFinite(value) ? value : 0);
 
 function taskOf(item: unknown): MaintenanceTask | undefined {
   if (typeof item !== "object" || item === null) return undefined;
@@ -69,8 +69,8 @@ function taskOf(item: unknown): MaintenanceTask | undefined {
     due,
     dueSoon: !due && task["due_soon"] === true,
     unit: task["unit"] === "days" ? "days" : "hours",
-    interval: number(task["interval"]),
-    left: number(task["left"]),
+    interval: finiteOrZero(task["interval"]),
+    left: finiteOrZero(task["left"]),
     done: typeof task["last_done"] === "string",
   };
 }
@@ -90,11 +90,11 @@ export function maintenanceOf(ctx: CardContext): Maintenance | undefined {
   };
 }
 
-const toneOf = (task: MaintenanceTask): string => (task.due ? "err" : task.dueSoon ? "warn" : "ok");
+const taskTone = (task: MaintenanceTask): string => (task.due ? "err" : task.dueSoon ? "warn" : "ok");
 
 /** The chip: "Maintenance OK", or how many tasks are due or due soon -- red
  * with one overdue, as BamBuddy's own. A tap opens the dialog. */
-export function maintenancePill(ctx: CardContext, open: () => void): TemplateResult | typeof nothing {
+export function maintenanceChip(ctx: CardContext, open: () => void): TemplateResult | typeof nothing {
   const { hass } = ctx;
   const maintenance = maintenanceOf(ctx);
   if (!maintenance) return nothing;
@@ -149,7 +149,7 @@ function taskRow(ctx: CardContext, task: MaintenanceTask, dialog: MaintenanceDia
   const used = task.interval > 0 ? Math.min(1, Math.max(0, (task.interval - task.left) / task.interval)) : 1;
   const pending = dialog.marking?.includes(task.id) ?? false;
   const confirming = dialog.confirming === task.id;
-  return html`<div class="maint-row tone-${toneOf(task)}">
+  return html`<div class="maint-row tone-${taskTone(task)}">
     <div class="maint-text">
       <span class="maint-name">${name}</span>
       <span class="maint-when">${whenText(ctx, task)}</span>
@@ -195,7 +195,7 @@ export function maintenanceContent(ctx: CardContext, dialog: MaintenanceDialog, 
       : ctx.unreachable
         ? dialogNote(t(hass, noData(ctx)))
         : html`<p class="hms-empty">${t(hass, "maint_none")}</p>`}
-    ${dialog.error ? html`<div class="dlg-error" role="alert">${icon("error")}<span>${dialog.error}</span></div>` : nothing}
+    ${dialog.error ? dialogError(dialog.error) : nothing}
     <p class="maint-said sr-only" role="status">${dialog.marked ? t(hass, "maint_marked", { task: dialog.marked }) : ""}</p>
     <p class="maint-foot">
       ${hours && hasValue(hass, refs.printHours)

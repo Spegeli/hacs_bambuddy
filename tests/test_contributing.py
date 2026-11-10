@@ -1,4 +1,5 @@
-"""CONTRIBUTING.md: every link to one of its sections finds that section.
+"""CONTRIBUTING.md: every link to one of its sections finds that section,
+its tables list every module, and it says what the tests hold it to.
 
 A section that moves keeps its anchor, one that is renamed loses it, and
 a link to a lost anchor fails without a sound: GitHub opens the top of the
@@ -11,6 +12,12 @@ from pathlib import Path
 import re
 
 _ROOT = Path(__file__).parent.parent
+_CONTRIBUTING = (_ROOT / "CONTRIBUTING.md").read_text(encoding="utf-8")
+
+
+def _first_cells(text: str) -> set[str]:
+    """The first column of each table row: one file, or several (`services.py`, `services.yaml`)."""
+    return {cell.strip(" `") for line in text.splitlines() if line.startswith("| `") for cell in line.split("|")[1].split(",")}
 
 
 def _anchor(heading: str) -> str:
@@ -20,33 +27,45 @@ def _anchor(heading: str) -> str:
 
 
 def _sections() -> set[str]:
-    text = (_ROOT / "CONTRIBUTING.md").read_text(encoding="utf-8")
-    return {_anchor(heading) for heading in re.findall(r"^#{2,3} (.+)$", text, re.MULTILINE)}
+    return {_anchor(heading) for heading in re.findall(r"^#{2,3} (.+)$", _CONTRIBUTING, re.MULTILINE)}
 
 
 def test_every_link_within_contributing_finds_its_section():
-    text = (_ROOT / "CONTRIBUTING.md").read_text(encoding="utf-8")
-    links = set(re.findall(r"\]\(#([^)]+)\)", text))
+    links = set(re.findall(r"\]\(#([^)]+)\)", _CONTRIBUTING))
     assert links
     assert sorted(links - _sections()) == []
 
 
 def test_contributing_says_a_short_key_is_refused() -> None:
-    text = (_ROOT / "CONTRIBUTING.md").read_text(encoding="utf-8")
-    assert "| `key.py` |" in text
-    assert "a key lacking Read Status, Control Printer or Manage Maintenance is refused" in text
-    assert "with a key that has only **Read Status**" not in text
+    assert "| `key.py` |" in _CONTRIBUTING
+    assert "a key lacking Read Status, Control Printer or Manage Maintenance is refused" in _CONTRIBUTING
+    assert "with a key that has only **Read Status**" not in _CONTRIBUTING
 
 
 def test_the_module_table_lists_every_module() -> None:
     """Each module of the integration has its row."""
-    contributing = (_ROOT / "CONTRIBUTING.md").read_text(encoding="utf-8")
-    # The first column of each row: one file, or several (`services.py`, `services.yaml`).
-    named = {cell.strip(" `") for line in contributing.splitlines() if line.startswith("| `") for cell in line.split("|")[1].split(",")}
+    named = _first_cells(_CONTRIBUTING)
     modules = sorted(path.name for path in (_ROOT / "custom_components" / "bambuddy").glob("*.py"))
     assert [name for name in modules if name not in named] == []
 
 
+def test_the_commit_rule_counts_the_pages_as_documentation() -> None:
+    """A page's change typed `chore:` would fall out of the release notes."""
+    assert "| `docs` — user-facing documentation, the README and `documentation/` |" in _CONTRIBUTING
+    assert "`docs:` is for what the people who run the integration read, the README and the pages under `documentation/`." in _CONTRIBUTING
+
+
+def test_contributing_says_what_holds_the_pages_together() -> None:
+    assert "## User documentation" in _CONTRIBUTING
+    assert "`tests/test_documentation.py`" in _CONTRIBUTING
+
+
 def test_contributing_says_how_ams_entity_ids_are_made() -> None:
-    contributing = (_ROOT / "CONTRIBUTING.md").read_text(encoding="utf-8")
-    assert "`models.ams_object_id`" in contributing
+    assert "`models.ams_object_id`" in _CONTRIBUTING
+
+
+def test_the_card_table_lists_every_module() -> None:
+    """Each module of the dashboard card has its row."""
+    named = _first_cells(_CONTRIBUTING)
+    modules = sorted(path.name for path in (_ROOT / "cards" / "src").glob("*.ts"))
+    assert [name for name in modules if name not in named] == []

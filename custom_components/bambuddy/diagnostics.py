@@ -13,6 +13,7 @@ from homeassistant.helpers import device_registry as dr
 
 from .const import CONF_API_KEY, CONF_PRINTER_NAME, CONF_URL
 from .coordinator import BamBuddyConfigEntry, BamBuddyData, BamBuddyPrinterCoordinator
+from .inventory import diagnostics as inventory_diagnostics
 from .live import live_settings
 from .plugs import Plug
 
@@ -29,6 +30,13 @@ TO_REDACT = {
     "tag_uid",
     "tray_uuid",
     "token",
+    # The user's own words: a printer's place, a plug's device name, a job's
+    # file name.
+    "location",
+    "device_name",
+    "subtask_name",
+    "gcode_file",
+    "current_print",
 }
 
 
@@ -72,7 +80,7 @@ def _plug(runtime: BamBuddyData, plug: Plug) -> dict[str, Any]:
     identity = runtime.plugs.identity(plug.id)
     return {
         "info": info,
-        "status": plug.status,
+        "status": async_redact_data(plug.status, TO_REDACT),
         "identity": None
         if identity is None
         else {
@@ -132,6 +140,8 @@ async def async_get_config_entry_diagnostics(hass: HomeAssistant, entry: BamBudd
         "live": {**runtime.live.diagnostics(), "push_gap": live_settings(entry.options).push_gap},
         "printers": {str(printer_id): _printer(coordinator) for printer_id, coordinator in runtime.printers.items()},
         "plugs": {str(plug_id): _plug(runtime, plug) for plug_id, plug in (runtime.plugs.data or {}).items()},
+        # BamBuddy's spool inventory, by numbers.
+        "inventory": inventory_diagnostics(runtime.inventory),
     }
 
 

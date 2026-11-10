@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import shutil
 from pathlib import Path
 import sys
 from types import ModuleType
@@ -95,11 +96,7 @@ def test_an_extra_filament_joins_the_list(monkeypatch: pytest.MonkeyPatch) -> No
 def test_a_changed_rule_stops_the_generator(tmp_path: Path) -> None:
     """The integration checks four of Bambu's prohibitions itself: a
     checkout where one of them reads otherwise is no list to ship."""
-    checkout = tmp_path / "bs"
-    for path in FIXTURE.rglob("*.json"):
-        target = checkout / path.relative_to(FIXTURE)
-        target.parent.mkdir(parents=True, exist_ok=True)
-        target.write_text(path.read_text(encoding="utf-8"), encoding="utf-8")
+    checkout = _copy(tmp_path)
     rules = checkout / "resources" / "printers" / "filaments_blacklist.json"
     data = json.loads(rules.read_text(encoding="utf-8"))
     data["blacklist"][0]["slot"] = "ext"
@@ -118,8 +115,6 @@ def test_main_writes_the_file(tmp_path: Path) -> None:
 
 def _copy(tmp_path: Path) -> Path:
     """A copy of the fixture checkout, to change."""
-    import shutil
-
     shutil.copytree(FIXTURE, tmp_path / "bs")
     return tmp_path / "bs"
 

@@ -69,7 +69,7 @@ def _rank(item: Filament) -> tuple[int, int, bytes]:
 # Bambu Studio's prohibitions the integration checks (its filament blacklist;
 # the generator stops when they read otherwise there).
 _TPU_HIGH_FLOW_TPUS = frozenset({"GFU04", "GFU03", "GFU01", "GFU00", "GFU99"})
-_H2D = frozenset({"H2D", "H2D PRO"})
+_H2D_FAMILY = frozenset({"H2D", "H2D PRO"})
 # A BamBuddy nozzle code ("HS01"): its second letter the flow, as Bambu Studio reads it.
 _NOZZLE_CODE = re.compile(r"^[A-Z]([A-Z])\d{2}$")
 _FLOW = {"S": "standard", "A": "standard", "X": "standard", "H": "high", "E": "high", "B": "e3d", "U": "tpu"}
@@ -120,16 +120,23 @@ def _every_model(diameter: str) -> tuple[str, ...]:
     return tuple(sorted(every, key=lambda fid: _rank(FILAMENTS[fid])))
 
 
-def _offered_ids(slot: Slot) -> Sequence[str]:
+def _printer_entry(slot: Slot) -> dict[str, Any] | None:
+    """The list's entry for the slot's model and nozzle diameter; None for a
+    printer of no known model."""
     printer = _PRINTERS.get(slot.model) if slot.model else None
-    if printer is not None:
-        return tuple(printer.get(slot.diameter, {}).get("ids", []))
+    return None if printer is None else printer.get(slot.diameter, {})
+
+
+def _offered_ids(slot: Slot) -> Sequence[str]:
+    entry = _printer_entry(slot)
+    if entry is not None:
+        return tuple(entry.get("ids", []))
     return _every_model(slot.diameter)
 
 
-def _not_on(slot: Slot) -> dict[str, list[str]]:
-    printer = _PRINTERS.get(slot.model) if slot.model else None
-    return dict(printer.get(slot.diameter, {}).get("not_on", {})) if printer else {}
+def _not_on(slot: Slot) -> Mapping[str, list[str]]:
+    entry = _printer_entry(slot)
+    return entry.get("not_on", {}) if entry is not None else {}
 
 
 def _flow(code: str | None) -> str | None:
@@ -138,7 +145,7 @@ def _flow(code: str | None) -> str | None:
 
 
 def _nozzle_refuses(item: Filament, slot: Slot, extruder: int) -> bool:
-    if slot.model not in _H2D:
+    if slot.model not in _H2D_FAMILY:
         return False
     flow = _flow(slot.nozzle_types.get(extruder))
     if flow == "tpu" and item.id not in _TPU_HIGH_FLOW_TPUS:

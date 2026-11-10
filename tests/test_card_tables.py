@@ -1,7 +1,7 @@
 """The tables the integration and the dashboard card both hold: alike.
 
 The card offers what the integration's actions take -- HMS answers,
-materials, drying, extrusion and switch-off limits. Each side keeps its own
+the filament list, drying, extrusion, ventilation and switch-off limits. Each side keeps its own
 copy (the card has no access to the integration's Python); these tests
 fail the day one copy changes without the other.
 """
@@ -15,7 +15,7 @@ import pytest
 import voluptuous as vol
 import yaml
 
-from custom_components.bambuddy import auto_off, coordinator, fan, filaments, models, plug_identity, plugs, services
+from custom_components.bambuddy import auto_off, coordinator, fan, filaments, models, plug_identity, services
 from custom_components.bambuddy.models import DRYING_MAX, HMS_ANSWERS
 
 from tests.conftest import INTEGRATION
@@ -46,7 +46,11 @@ def test_set_filament_names_a_profile_by_its_id_alone() -> None:
     the card asks the integration for its filaments: get_filaments."""
     actions = yaml.safe_load((INTEGRATION / "services.yaml").read_text(encoding="utf-8"))
     assert "material" not in actions["set_filament"]["fields"]
-    assert "GENERIC" not in _card("dialogs.ts")
+    # No card module: the dialogs and every part they were split into.
+    modules = sorted(_CARD.glob("*.ts"))
+    assert len(modules) > 20
+    for module in modules:
+        assert "GENERIC" not in _card(module.name), module.name
 
 
 def test_the_filament_choice_is_the_list() -> None:

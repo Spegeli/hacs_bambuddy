@@ -40,7 +40,7 @@ const listOf = (values: readonly string[]): Validator => ({
 
 const flag: Validator = { allowed: () => "true, false", check: (value) => typeof value === "boolean" };
 
-const OPTIONS: Record<string, Validator> = {
+const OPTIONS = {
   printer: { allowed: () => t(undefined, "allowed_device"), check: (value) => typeof value === "string" },
   camera: oneOf(CAMERA_MODES),
   status_blocks: listOf(STATUS_BLOCKS),
@@ -53,8 +53,11 @@ const OPTIONS: Record<string, Validator> = {
   show_filament_tab: flag,
   ams_folding: oneOf(AMS_FOLDING),
   show_external_spool: flag,
+  assign_scanned_spool: flag,
   show_auto_off: flag,
-};
+} satisfies Record<string, Validator>;
+
+type OptionKey = keyof typeof OPTIONS;
 
 /** The configuration, checked option by option; an invalid value throws
  * with a reason Home Assistant shows on its error card. Unknown keys are
@@ -93,6 +96,8 @@ export interface Settings {
   filamentTab: boolean;
   amsFolding: AmsFolding;
   externalSpool: boolean;
+  /** A scanned spool label assigns its spool at once, where nothing speaks against it. */
+  assignScanned: boolean;
   showAutoOff: boolean;
   compactChips: boolean;
 }
@@ -108,26 +113,36 @@ export const DEFAULTS: Settings = {
   filamentTab: true,
   amsFolding: "auto",
   externalSpool: true,
+  assignScanned: false,
   showAutoOff: true,
   compactChips: false,
 };
 
-export const settingsOf = (config: CardConfig): Settings => ({
-  camera: config.camera ?? DEFAULTS.camera,
-  blocks: config.status_blocks ?? DEFAULTS.blocks,
-  chips: config.header_chips ?? DEFAULTS.chips,
-  startView: config.start_view ?? DEFAULTS.startView,
-  controlTab: config.show_control_tab ?? DEFAULTS.controlTab,
-  sections: config.control_sections ?? DEFAULTS.sections,
-  readOnly: config.read_only ?? DEFAULTS.readOnly,
-  filamentTab: config.show_filament_tab ?? DEFAULTS.filamentTab,
-  amsFolding: config.ams_folding ?? DEFAULTS.amsFolding,
-  externalSpool: config.show_external_spool ?? DEFAULTS.externalSpool,
-  showAutoOff: config.show_auto_off ?? DEFAULTS.showAutoOff,
-  compactChips: config.compact_chips ?? DEFAULTS.compactChips,
-});
+/** Each setting's option key in the card's configuration. */
+const KEYS: { readonly [S in keyof Settings]: keyof CardConfig } = {
+  camera: "camera",
+  blocks: "status_blocks",
+  chips: "header_chips",
+  startView: "start_view",
+  controlTab: "show_control_tab",
+  sections: "control_sections",
+  readOnly: "read_only",
+  filamentTab: "show_filament_tab",
+  amsFolding: "ams_folding",
+  externalSpool: "show_external_spool",
+  assignScanned: "assign_scanned_spool",
+  showAutoOff: "show_auto_off",
+  compactChips: "compact_chips",
+};
+const SETTINGS = Object.keys(KEYS) as (keyof Settings)[];
+
+export const settingsOf = (config: CardConfig): Settings =>
+  Object.fromEntries(SETTINGS.map((setting) => [setting, config[KEYS[setting]] ?? DEFAULTS[setting]])) as unknown as Settings;
 
 // --- Editor -----------------------------------------------------------------
+
+/** Every option's default, by its key. */
+const DEFAULT_DATA: Readonly<Record<string, unknown>> = Object.fromEntries(SETTINGS.map((setting) => [KEYS[setting], DEFAULTS[setting]]));
 
 /** What the editor shows: every option's default where the configuration
  * has none, so its lists and dropdowns show what the card shows. Copies:
@@ -136,22 +151,6 @@ export const editorData = (config: CardConfig): Record<string, unknown> => ({
   ...Object.fromEntries(Object.entries(DEFAULT_DATA).map(([key, value]) => [key, Array.isArray(value) ? [...(value as unknown[])] : value])),
   ...config,
 });
-
-/** Every option's default, by its key. */
-const DEFAULT_DATA: Readonly<Record<string, unknown>> = {
-  camera: DEFAULTS.camera,
-  status_blocks: DEFAULTS.blocks,
-  header_chips: DEFAULTS.chips,
-  start_view: DEFAULTS.startView,
-  show_control_tab: DEFAULTS.controlTab,
-  control_sections: DEFAULTS.sections,
-  read_only: DEFAULTS.readOnly,
-  show_filament_tab: DEFAULTS.filamentTab,
-  ams_folding: DEFAULTS.amsFolding,
-  show_external_spool: DEFAULTS.externalSpool,
-  show_auto_off: DEFAULTS.showAutoOff,
-  compact_chips: DEFAULTS.compactChips,
-};
 
 /** The configuration after a change in the editor: an option whose value
  * now differs from what the editor showed takes it -- one emptied, or set
@@ -173,7 +172,7 @@ interface FormField {
   [key: string]: unknown;
 }
 
-const LABELS: Record<string, TextKey> = {
+const LABELS: Record<OptionKey, TextKey> = {
   printer: "editor_printer",
   camera: "editor_camera",
   status_blocks: "editor_blocks",
@@ -185,11 +184,13 @@ const LABELS: Record<string, TextKey> = {
   show_filament_tab: "editor_filament_tab",
   ams_folding: "editor_ams_folding",
   show_external_spool: "editor_external_spool",
+  assign_scanned_spool: "editor_assign_scanned",
   show_auto_off: "editor_show_auto_off",
   compact_chips: "editor_compact_chips",
 };
 
-const HELPERS: Record<string, TextKey> = {
+/** Every option but the start tab: its help follows the tabs (`startViewNote`). */
+const HELPERS: Record<Exclude<OptionKey, "start_view">, TextKey> = {
   printer: "editor_printer_help",
   camera: "editor_camera_help",
   status_blocks: "editor_blocks_help",
@@ -200,6 +201,7 @@ const HELPERS: Record<string, TextKey> = {
   show_filament_tab: "editor_filament_tab_help",
   ams_folding: "editor_ams_folding_help",
   show_external_spool: "editor_external_spool_help",
+  assign_scanned_spool: "editor_assign_scanned_help",
   show_auto_off: "editor_show_auto_off_help",
   compact_chips: "editor_compact_chips_help",
 };
@@ -278,9 +280,9 @@ export function configForm(hass?: Hass): ConfigForm {
       ]),
       group(hass, "editor_group_status", "mdi:printer-3d", [list(hass, "status_blocks", "block", STATUS_BLOCKS), toggle("show_auto_off")]),
       group(hass, "editor_group_control", "mdi:gamepad-round-outline", [toggle("show_control_tab"), list(hass, "control_sections", "section", CONTROL_SECTIONS)]),
-      group(hass, "editor_group_filament", "mdi:printer-3d-nozzle", [toggle("show_filament_tab"), dropdown(hass, "ams_folding", "folding", AMS_FOLDING), toggle("show_external_spool")]),
+      group(hass, "editor_group_filament", "mdi:printer-3d-nozzle", [toggle("show_filament_tab"), dropdown(hass, "ams_folding", "folding", AMS_FOLDING), toggle("show_external_spool"), toggle("assign_scanned_spool")]),
     ],
-    computeLabel: (field) => (field.name in LABELS ? t(hass, LABELS[field.name] as TextKey) : undefined),
-    computeHelper: (field) => (field.name in HELPERS ? t(hass, HELPERS[field.name] as TextKey) : undefined),
+    computeLabel: (field) => (field.name in LABELS ? t(hass, LABELS[field.name as OptionKey]) : undefined),
+    computeHelper: (field) => (field.name in HELPERS ? t(hass, HELPERS[field.name as keyof typeof HELPERS]) : undefined),
   };
 }

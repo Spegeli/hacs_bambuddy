@@ -23,16 +23,17 @@ from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 
 from .const import DOMAIN
-from .coordinator import BamBuddyConfigEntry, BamBuddyInstanceCoordinator, BamBuddyPlugCoordinator, BamBuddyPrinterCoordinator
+from .coordinator import BamBuddyConfigEntry, BamBuddyInstanceCoordinator, BamBuddyPrinterCoordinator
 from .entity import (
     BamBuddyAmsEntity,
     BamBuddyDescribedEntity,
     BamBuddyInstanceEntity,
-    BamBuddyPlugEntity,
+    BamBuddyPlugPowerEntity,
     async_add_ams_entities,
     async_add_plug_entities,
 )
-from .models import PrinterData, can_dry, has_heater, is_drying
+from .models import PrinterData, can_dry, has_heater, is_drying, part_id
+from .plug_coordinator import BamBuddyPlugCoordinator
 from .plugs import Plug
 
 PARALLEL_UPDATES = 0
@@ -85,7 +86,7 @@ PRINTER_BINARY_SENSORS: tuple[BamBuddyPrinterBinarySensorDescription, ...] = (
         translation_key="sd_card",
         device_class=BinarySensorDeviceClass.PLUG,
         entity_category=EntityCategory.DIAGNOSTIC,
-        exists_fn=lambda data: data.has_sd_card(),
+        exists_fn=lambda data: data.has_storage(),
         value_fn=_flag("sdcard"),
         translation_key_fn=lambda data: "usb_drive" if data.stores_on_usb() else None,
     ),
@@ -141,7 +142,7 @@ def _add_drying_sensors(
     """One per AMS unit with a heater."""
 
     def create(unit: dict[str, Any], data: PrinterData) -> list[tuple[str, Callable[[], BinarySensorEntity]]]:
-        return [("drying", partial(BamBuddyDryingSensor, coordinator, int(unit.get("id", 0))))]
+        return [("drying", partial(BamBuddyDryingSensor, coordinator, part_id(unit)))]
 
     async_add_ams_entities(coordinator, async_add_entities, create, wanted=has_heater)
 
@@ -220,29 +221,7 @@ def _add_plug_states(coordinator: BamBuddyPlugCoordinator, async_add_entities: A
     async_add_plug_entities(coordinator, async_add_entities, create)
 
 
-class BamBuddyPlugState(BamBuddyPlugEntity, BinarySensorEntity):
+class BamBuddyPlugState(BamBuddyPlugPowerEntity, BinarySensorEntity):
     """On while the plug delivers power, as BamBuddy reads it."""
 
-    # The plug's own entity: named as its device, the plug.
-    _attr_name = None
-    _attr_translation_key = "plug"
     _attr_device_class = BinarySensorDeviceClass.POWER
-
-    def __init__(self, coordinator: BamBuddyPlugCoordinator, plug: Plug) -> None:
-        super().__init__(coordinator, plug, "power")
-
-    @property
-    def available(self) -> bool:
-        return super().available and self.plug is not None and self.plug.reachable
-
-    @property
-    def is_on(self) -> bool | None:
-        return self.plug.state if self.plug else None
-
-    @property
-    def capability_attributes(self) -> dict[str, Any] | None:
-        return self.plug_role()
-
-    @property
-    def extra_state_attributes(self) -> dict[str, Any]:
-        return self.plug_attributes()

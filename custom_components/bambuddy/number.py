@@ -22,18 +22,18 @@ from homeassistant.helpers.restore_state import RestoreEntity
 
 from .api import BamBuddyClient
 from .auto_off import MAX_TEMPERATURE, MIN_TEMPERATURE, AutoOff, auto_off_for
+from .chamber import may_heat_chamber
 from .const import DOMAIN
-from .coordinator import BamBuddyConfigEntry, BamBuddyPlugCoordinator, BamBuddyPrinterCoordinator
+from .coordinator import BamBuddyConfigEntry, BamBuddyPrinterCoordinator
 from .entity import (
+    BamBuddyAutoOffPart,
     BamBuddyDescribedEntity,
-    BamBuddyPlugEntity,
     BamBuddyPrinterEntity,
     async_add_plug_entities,
     async_run_command,
-    key_by_printer,
-    refuse,
 )
-from .models import CAMERA_FPS_STEP, CAMERA_MIN_FPS, PrinterData, camera_max_fps, heater_max, ventilating
+from .models import CAMERA_FPS_STEP, CAMERA_MIN_FPS, PrinterData, camera_max_fps, heater_max, is_number
+from .plug_coordinator import BamBuddyPlugCoordinator
 from .plugs import Plug
 
 PARALLEL_UPDATES = 1
@@ -103,7 +103,7 @@ NUMBERS: tuple[BamBuddyTemperatureDescription, ...] = (
         native_max_value=65,
         heater="chamber",
         set_fn=lambda client, printer, target: client.set_chamber_temperature(printer, target),
-        exists_fn=lambda data: bool(data.status.get("supports_chamber_heater")),
+        exists_fn=lambda data: data.has_chamber_heater(),
     ),
 )
 
@@ -119,7 +119,7 @@ async def async_setup_entry(
         return [("auto_off_temperature", partial(BamBuddyAutoOffTemperature, plugs, plug, auto_off))] if auto_off else []
 
     async_add_plug_entities(plugs, async_add_entities, create)
-    # Home Assistant's setting, not the printer's: with any key; where the
+    # Home Assistant's setting, not the printer's; where the
     # camera gives no more than the least (an external camera taken away in
     # BamBuddy), it goes.
     registry = er.async_get(hass)
@@ -151,41 +151,30 @@ class BamBuddyTemperature(BamBuddyDescribedEntity, NumberEntity):
     @property
     def native_value(self) -> float | None:
         value = self.data.temperatures.get(self.entity_description.key)
-        return float(value) if isinstance(value, int | float) and not isinstance(value, bool) else None
+        return float(value) if is_number(value) else None
 
     async def async_set_native_value(self, value: float) -> None:
         coordinator, description, target = self.coordinator, self.entity_description, round(value)
-        if description.key != "chamber_target" or target <= 0 or not self.data.has_airduct():
+        if description.key != "chamber_target":
             await async_run_command(coordinator, partial(description.set_fn, coordinator.client, coordinator.printer_id, target))
             return
+        sent = coordinator.chamber_sent
+        heats = target > 0 and self.data.has_airduct()
 
         async def heat() -> None:
             # As Bambu's start G-code: the airduct on heating first -- where a
             # print or a filament change does not keep the mode it set.
             data = coordinator.data
-            if not data.job_running and not data.changing_filament and data.status.get("airduct_mode") != 1:
+            if heats and not data.job_running and not data.changing_filament and sent.get("airduct", data.airduct) != "heating":
                 await coordinator.client.set_airduct_mode(coordinator.printer_id, "heating")
+                sent.note(airduct="heating")
             await description.set_fn(coordinator.client, coordinator.printer_id, target)
+            sent.note(target=target)
 
-        await async_run_command(coordinator, heat, check=_may_heat_chamber)
-
-
-def _may_heat_chamber(data: PrinterData, name: str) -> None:
-    """A chamber target waits while the chamber is ventilated, and goes not
-    into a print or a filament change in cooling mode (Bambu Studio: "Chamber
-    temperature cannot be changed in cooling mode while printing")."""
-    cooling = data.status.get("airduct_mode") == 0
-    if data.job_running:
-        if cooling:
-            raise refuse("chamber_cooling_print", printer=name)
-    elif data.changing_filament:
-        if cooling:
-            raise refuse("filament_change", printer=name)
-    elif ventilating(data):
-        raise refuse("ventilation_on", printer=name)
+        await async_run_command(coordinator, heat, check=partial(may_heat_chamber, sent=sent) if heats else None)
 
 
-class BamBuddyAutoOffTemperature(BamBuddyPlugEntity, RestoreNumber):
+class BamBuddyAutoOffTemperature(BamBuddyAutoOffPart, RestoreNumber):
     """The switch-off after the print waits until every nozzle is below
     this: 50 °C unless the user sets another."""
 
@@ -199,9 +188,7 @@ class BamBuddyAutoOffTemperature(BamBuddyPlugEntity, RestoreNumber):
     _attr_mode = NumberMode.BOX
 
     def __init__(self, coordinator: BamBuddyPlugCoordinator, plug: Plug, auto_off: AutoOff) -> None:
-        super().__init__(coordinator, plug, "auto_off_temperature")
-        self.auto_off = auto_off
-        key_by_printer(self, auto_off.printer, "auto_off_temperature")
+        super().__init__(coordinator, plug, "auto_off_temperature", auto_off)
 
     @property
     def available(self) -> bool:
@@ -216,7 +203,7 @@ class BamBuddyAutoOffTemperature(BamBuddyPlugEntity, RestoreNumber):
         value = stored.native_value if stored is not None else None
         if value is not None and MIN_TEMPERATURE <= value <= MAX_TEMPERATURE:
             self.auto_off.set_threshold(value)
-        self.async_on_remove(self.auto_off.async_add_listener(self.async_write_ha_state))
+        self._follow_auto_off()
 
     @property
     def native_value(self) -> float:

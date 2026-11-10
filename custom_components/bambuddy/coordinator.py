@@ -1,5 +1,6 @@
 """Polling BamBuddy: one coordinator per printer for its live status, one for
-the instance's figures, one for the update checks, one for the smart plugs."""
+the instance's figures, one for the update checks (the smart plugs' is in
+`plug_coordinator`)."""
 from __future__ import annotations
 
 import asyncio
@@ -11,12 +12,11 @@ import logging
 from typing import TYPE_CHECKING, Any, TypeVar
 
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.core import CALLBACK_TYPE, HassJob, HomeAssistant, callback
+from homeassistant.core import CALLBACK_TYPE, HomeAssistant, callback
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers import issue_registry as ir
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
-from homeassistant.helpers.event import async_call_later
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 from homeassistant.util import dt as dt_util
 
@@ -33,21 +33,19 @@ from .api import (
 from .const import (
     AMS_SERIAL_WAIT,
     CONF_API_KEY,
+    CONF_PRINTER_NAME,
     CONF_PRINTERS,
     CONF_URL,
     CONF_VERIFY_SSL,
     DOMAIN,
-    HOLD_LIMIT,
     INSTANCE_INTERVAL,
     MAINTENANCE_INTERVAL,
-    PLUG_INTERVAL,
-    PLUG_LIST_INTERVAL,
     PRINTER_INTERVAL,
     PUSH_GAP,
     REFRESH_AFTER_COMMAND,
     REFRESH_AFTER_COMMAND_AGAIN,
-    REFRESH_AFTER_PLUG,
-    RUNTIME_INTERVAL,
+    RELOADS_PER_RUN,
+    MINUTELY_INTERVAL,
     SYSTEM_INTERVAL,
     UPDATE_INTERVAL,
     UPDATE_RETRY_INTERVAL,
@@ -55,6 +53,7 @@ from .const import (
 from .models import (
     CAMERA_MIN_FPS,
     JOB_STATES,
+    ChamberSent,
     PrinterData,
     ams_key,
     ams_model,
@@ -64,18 +63,20 @@ from .models import (
     camera_max_fps,
     find_printers,
     model_key,
+    part_id,
     printer_key,
     printer_name,
     short_name,
     stored_key,
 )
-from .plug_identity import PlugIdentity, device_identifier, entity_unique_id, identities, known_from_registry
-from .plugs import ENERGY_FIELDS, Plug, main_of, plug_device_name
+from .timers import async_call_later_until_stop
 
 if TYPE_CHECKING:
     from .auto_off import AutoOff
+    from .inventory import BamBuddyInventoryCoordinator
     from .key import KeyGuard
     from .live import BamBuddyLive
+    from .plug_coordinator import BamBuddyPlugCoordinator
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -102,11 +103,12 @@ async def fetch(call: Awaitable[_T], *, entry: BamBuddyConfigEntry | None = None
     reauthentication, so a 401 BamBuddy answers for a moment, or a route it
     refuses despite every scope, asks for no new key; a 401 says so only
     once the guard confirmed it. During the setup (`entry` not loaded yet)
-    the setup's own check ran a moment before."""
+    the setup's own check ran a moment before. A read that works tells the
+    guard too: a key it stands refused on may be fine again."""
+    runtime: BamBuddyData | None = getattr(entry, "runtime_data", None) if entry is not None else None
     try:
-        return await call
+        answer = await call
     except (BamBuddyAuthError, BamBuddyPermissionError) as err:
-        runtime: BamBuddyData | None = getattr(entry, "runtime_data", None) if entry is not None else None
         if runtime is not None:
             runtime.key.async_read_refused(err)
         if isinstance(err, BamBuddyAuthError):
@@ -116,6 +118,9 @@ async def fetch(call: Awaitable[_T], *, entry: BamBuddyConfigEntry | None = None
         raise kind(translation_domain=DOMAIN, translation_key="bambuddy_refused", translation_placeholders={"error": err.detail}) from err
     except BamBuddyError as err:
         raise failure(err, kind) from err
+    if runtime is not None:
+        runtime.key.async_read_worked()
+    return answer
 
 
 @callback
@@ -136,38 +141,45 @@ def _issue_part(key: str) -> str:
     return hashlib.sha256(key.encode()).hexdigest()[:12]
 
 
+def _missing_prefix(entry_id: str) -> str:
+    return f"printer_missing_{entry_id}_"
+
+
+def _names_prefix(entry_id: str) -> str:
+    return f"names_from_bambuddy_{entry_id}_"
+
+
+def _renames_prefix(entry_id: str) -> str:
+    return f"ams_ids_renamed_{entry_id}_"
+
+
 def issue_prefixes(entry_id: str) -> tuple[str, str, str]:
     """The beginnings of an entry's "printer missing", names and renamed
     AMS entity IDs notices."""
-    return f"printer_missing_{entry_id}_", f"names_from_bambuddy_{entry_id}_", f"ams_ids_renamed_{entry_id}_"
+    return _missing_prefix(entry_id), _names_prefix(entry_id), _renames_prefix(entry_id)
 
 
-def _ams_holds(hass: HomeAssistant) -> dict[tuple[str, str, str], int]:
-    """How often each (entry, printer, AMS serial) was held for a reload in this run."""
-    holds: dict[tuple[str, str, str], int] = hass.data.setdefault(DOMAIN, {}).setdefault("ams_holds", {})
-    return holds
-
-
-def _chamber_reloads(hass: HomeAssistant) -> dict[tuple[str, str], int]:
-    """How often each (entry, printer) reloaded in this run for a chamber BamBuddy reported late."""
-    reloads: dict[tuple[str, str], int] = hass.data.setdefault(DOMAIN, {}).setdefault("chamber_reloads", {})
-    return reloads
-
+def _run_counts(hass: HomeAssistant, name: str) -> dict[tuple[str, ...], int]:
+    """A count kept for this run: how often each (entry, printer[, AMS serial])
+    was held for a reload ("ams_holds"), or reloaded for a chamber BamBuddy
+    reported late ("chamber_reloads")."""
+    counts: dict[tuple[str, ...], int] = hass.data.setdefault(DOMAIN, {}).setdefault(name, {})
+    return counts
 
 
 def names_issue(entry_id: str, key: str) -> str:
     """The notice that a printer's names come from BamBuddy: one per printer."""
-    return f"{issue_prefixes(entry_id)[1]}{_issue_part(key)}"
+    return f"{_names_prefix(entry_id)}{_issue_part(key)}"
 
 
 def renames_issue(entry_id: str, key: str) -> str:
     """The notice of a printer's AMS entity IDs that followed their unit's serial."""
-    return f"{issue_prefixes(entry_id)[2]}{_issue_part(key)}"
+    return f"{_renames_prefix(entry_id)}{_issue_part(key)}"
 
 
 def missing_issue(entry_id: str, key: str) -> str:
     """By the printer's key: BamBuddy's numbers may change under it."""
-    return f"{issue_prefixes(entry_id)[0]}{_issue_part(key)}"
+    return f"{_missing_prefix(entry_id)}{_issue_part(key)}"
 
 
 @callback
@@ -215,6 +227,17 @@ def ams_identifier(entry_id: str, printer: str, unit: str) -> tuple[str, str]:
     return (DOMAIN, f"{entry_id}_printer_{printer}_ams_{unit}")
 
 
+def ams_identifier_prefix(entry_id: str, printer: str) -> str:
+    """What every AMS unit's identifier of the printer starts with."""
+    return ams_identifier(entry_id, printer, "")[1]
+
+
+def _type_known(data: PrinterData, unit: dict[str, Any]) -> bool:
+    """Whether an AMS unit's type can be trusted: BamBuddy read the versions,
+    the unit reports it, or its id tells it."""
+    return bool(data.status.get("firmware_version") or unit.get("module_type") or ams_type_by_place(unit))
+
+
 def find_device(hass: HomeAssistant, entry_id: str, identifier: tuple[str, str]) -> dr.DeviceEntry | None:
     """The entry's device with this identifier (async_get_device by
     identifiers is deprecated from Home Assistant 2026.8 on)."""
@@ -228,10 +251,18 @@ def find_device(hass: HomeAssistant, entry_id: str, identifier: tuple[str, str])
     )
 
 
+def stored_name(hass: HomeAssistant, entry_id: str, printer: dict[str, Any]) -> str:
+    """A stored printer's name: its device's of now -- BamBuddy may have
+    renamed it since --, else the stored one."""
+    device = find_device(hass, entry_id, printer_identifier(entry_id, stored_key(printer)))
+    return device.name if device is not None and device.name else str(printer[CONF_PRINTER_NAME])
+
+
 class BamBuddyPrinterCoordinator(DataUpdateCoordinator[PrinterData]):
-    """One printer's status, every 10 seconds; once a minute its print hours,
-    its name in BamBuddy and BamBuddy's details of it (address, a model
-    entered since, and whether the number still is this printer)."""
+    """One printer's status, every 10 seconds; once a minute its AMS units'
+    names and BamBuddy's details of it (its name, address, a model entered
+    since, and whether the number still is this printer); every ten minutes
+    and after a print its maintenance tasks and print hours."""
 
     config_entry: BamBuddyConfigEntry
 
@@ -257,6 +288,8 @@ class BamBuddyPrinterCoordinator(DataUpdateCoordinator[PrinterData]):
         # and whether its model changed since the last: then the entities
         # the model no longer has leave the registry.
         self.created: set[str] = set()
+        # What the chamber was just told, for its locks.
+        self.chamber_sent = ChamberSent(lambda: dt_util.utcnow().timestamp())
         self.model_changed = False
         # What the device and the entities are known by: the serial number.
         self.key = printer_key(info)
@@ -268,8 +301,9 @@ class BamBuddyPrinterCoordinator(DataUpdateCoordinator[PrinterData]):
         self._firmware: str | None = None
         self._refresh_later: CALLBACK_TYPE | None = None
         self._hours: float | None = None
-        # Since when each AMS place reports a unit without a serial number.
-        self._unserialised: dict[int, float] = {}
+        # Since when each AMS place waits: for its unit's serial number, or
+        # with the serial for the unit's type.
+        self._waiting_since: dict[int, float] = {}
         # Serials of AMS units this coordinator holds for a reload (`rekey_source`).
         self._held: set[str] = set()
         # The printer's K profiles per nozzle diameter, when last listed.
@@ -279,7 +313,7 @@ class BamBuddyPrinterCoordinator(DataUpdateCoordinator[PrinterData]):
         # The fan kits BamBuddy reported at setup (`PrinterData.fan_kits`).
         self._kits_at_setup: frozenset[str] = frozenset()
         self._chamber_at_setup: frozenset[str] = frozenset()
-        self._hours_read = -RUNTIME_INTERVAL
+        self._minutely_read = -MINUTELY_INTERVAL
         # The AMS units' names in BamBuddy by place; None until read in this run.
         self.ams_labels: dict[int, str] | None = None
         self._maintenance: dict[str, Any] | None = None
@@ -330,9 +364,9 @@ class BamBuddyPrinterCoordinator(DataUpdateCoordinator[PrinterData]):
             raise self._replaced_error()
         commands = self._commands
         try:
-            # The runtime counter once a minute, beside the status, not after
-            # it: a slow one delays this refresh by no more than its own read.
-            status, read, _ = await asyncio.gather(self._read_status(), self._read_hours(), self._read_maintenance())
+            # The minute's reads and the maintenance beside the status, not
+            # after it: a slow one delays this refresh by no more than its own read.
+            status, read, _ = await asyncio.gather(self._read_status(), self._read_minutely(), self._read_maintenance())
         except UpdateFailed as err:
             # Gone from BamBuddy's list: the entry reloads now and its repair
             # tells -- no error to log, the last values stand until then.
@@ -384,13 +418,8 @@ class BamBuddyPrinterCoordinator(DataUpdateCoordinator[PrinterData]):
         # report first, and the model goes into its entity IDs for good --
         # unless its id tells the type (an AMS HT; place 6, the A2L's Lite).
         versions_read = bool(data.status.get("firmware_version"))
-        waiting = {
-            int(unit.get("id", 0))
-            for unit in data.ams_units
-            if not versions_read
-            and (not ams_serial(unit) or not (unit.get("module_type") or ams_type_by_place(unit)))
-        }
-        self._unserialised = {place: self._unserialised.get(place, now) for place in waiting}
+        waiting = {part_id(unit) for unit in data.ams_units if not versions_read and not (ams_serial(unit) and _type_known(data, unit))}
+        self._waiting_since = {place: self._waiting_since.get(place, now) for place in waiting}
 
     def rekey_source(self, unit: dict[str, Any], *, holding: bool = False) -> dr.DeviceEntry | None:
         """The device of the unit's place that this unit, now with a serial,
@@ -403,12 +432,12 @@ class BamBuddyPrinterCoordinator(DataUpdateCoordinator[PrinterData]):
         serial = ams_serial(unit)
         if serial is None:
             return None
-        if not self.data.status.get("firmware_version") and not unit.get("module_type") and not ams_type_by_place(unit):
+        if not _type_known(self.data, unit):
             return None
         entry_id = self.config_entry.entry_id
         if find_device(self.hass, entry_id, self.ams_identifier(serial)) is not None:
             return None
-        device = find_device(self.hass, entry_id, self.ams_identifier(str(int(unit.get("id", 0)))))
+        device = find_device(self.hass, entry_id, self.ams_identifier(str(part_id(unit))))
         if device is None or device.serial_number:
             return None
         model = ams_model(unit, self.data)
@@ -417,13 +446,13 @@ class BamBuddyPrinterCoordinator(DataUpdateCoordinator[PrinterData]):
         guessed = not self.info.get("model") and device.model == "AMS" and not device.sw_version
         if device.model != model and not (guessed and model == "AMS Lite"):
             return None
-        holds = _ams_holds(self.hass)
-        if holding and serial not in self._held and holds.get((entry_id, self.key, serial), 0) >= HOLD_LIMIT:
+        holds = _run_counts(self.hass, "ams_holds")
+        if holding and serial not in self._held and holds.get((entry_id, self.key, serial), 0) >= RELOADS_PER_RUN:
             _LOGGER.warning(
                 "The AMS unit %s of %s got its serial number, but %s reloads did not move it to it: it gets its entities as a new device",
                 serial,
-                self.printer_name,
-                HOLD_LIMIT,
+                self.short_name,
+                RELOADS_PER_RUN,
             )
             return None
         return device
@@ -435,9 +464,9 @@ class BamBuddyPrinterCoordinator(DataUpdateCoordinator[PrinterData]):
         by its serial a moment later would be two devices. A unit known by
         its place that now reports its serial waits for the entry's reload:
         the next setup moves its device and entities to the serial."""
-        place = int(unit.get("id", 0))
+        place = part_id(unit)
         serial = ams_serial(unit)
-        since = self._unserialised.get(place)
+        since = self._waiting_since.get(place)
         if since is not None and self.hass.loop.time() - since < AMS_SERIAL_WAIT:
             # Waiting for its serial, or with it for its type. A unit known
             # before -- by its serial, or without one by its place -- has
@@ -447,10 +476,10 @@ class BamBuddyPrinterCoordinator(DataUpdateCoordinator[PrinterData]):
             if serial not in self._held:
                 # Counted once a run, however often the platforms ask.
                 self._held.add(serial)
-                holds = _ams_holds(self.hass)
+                holds = _run_counts(self.hass, "ams_holds")
                 key = (self.config_entry.entry_id, self.key, serial)
                 holds[key] = holds.get(key, 0) + 1
-                _LOGGER.debug("The AMS unit %s of %s got its serial number: the entry reloads", serial, self.printer_name)
+                _LOGGER.debug("The AMS unit %s of %s got its serial number: the entry reloads", serial, self.short_name)
                 self._schedule_reload()
             return False
         return True
@@ -459,6 +488,12 @@ class BamBuddyPrinterCoordinator(DataUpdateCoordinator[PrinterData]):
     def printer_name(self) -> str:
         """The device name, after the printer's name in BamBuddy."""
         return printer_name(self.info)
+
+    @property
+    def short_name(self) -> str:
+        """The printer's name in BamBuddy, else its model: for texts and the
+        log, which name no serial (the diagnostics leave it out)."""
+        return short_name(self.info)
 
     @property
     def frame_rate(self) -> int:
@@ -477,6 +512,10 @@ class BamBuddyPrinterCoordinator(DataUpdateCoordinator[PrinterData]):
         """The identifier of the device of the printer's AMS unit `unit_key`."""
         return ams_identifier(self.config_entry.entry_id, self.key, unit_key)
 
+    def ams_identifier_prefix(self) -> str:
+        """What the identifiers of all the printer's AMS unit devices begin with."""
+        return ams_identifier_prefix(self.config_entry.entry_id, self.key)
+
     def entity_unique_id(self, key: str) -> str:
         """What the printer's entity `key` is known by: the entry, the
         printer's serial number and the key."""
@@ -487,33 +526,19 @@ class BamBuddyPrinterCoordinator(DataUpdateCoordinator[PrinterData]):
         # task runs, so a reload cutting the refresh short leaves none behind.
         return await fetch(self.client.get_status(self.printer_id), entry=self.config_entry)
 
-    async def _read_hours(self) -> bool:
-        """The print hours, the printer's name and its AMS units' names in
-        BamBuddy, once a minute -- True then; without them the status goes
-        on and each keeps its last value."""
+    async def _read_minutely(self) -> bool:
+        """Its AMS units' names in BamBuddy and its details (`_read_details`:
+        the printer's name among them), once a minute -- True then; without
+        them the status goes on and each keeps its last value."""
         now = self.hass.loop.time()
-        if now - self._hours_read < RUNTIME_INTERVAL:
+        if now - self._minutely_read < MINUTELY_INTERVAL:
             return False
-        self._hours_read = now
-        runtime, _ = await asyncio.gather(self._read_runtime(), self._read_ams_labels())
-        hours = runtime.get("total_hours")
-        if isinstance(hours, int | float):
-            self._hours = float(hours)
-        # Not at setup: it has just read BamBuddy's printer list. First:
-        # still this printer? Only then its name.
+        self._minutely_read = now
+        await self._read_ams_labels()
+        # Not at setup: it has just read BamBuddy's printer list.
         if self.data is not None:
             await self._read_details()
-        name = runtime.get("printer_name")
-        if not self.replaced and isinstance(name, str) and name.strip() and name != self.info.get("name"):
-            self.info = {**self.info, "name": name}
         return True
-
-    async def _read_runtime(self) -> dict[str, Any]:
-        try:
-            return await self.client.get_runtime(self.printer_id)
-        except BamBuddyError as err:
-            _LOGGER.debug("No runtime counter for %s: %s", self.printer_name, err)
-            return {}
 
     async def _read_ams_labels(self) -> None:
         """The names the user gave the AMS units in BamBuddy. A failed read
@@ -522,12 +547,14 @@ class BamBuddyPrinterCoordinator(DataUpdateCoordinator[PrinterData]):
         try:
             self.ams_labels = await self.client.get_ams_labels(self.printer_id)
         except BamBuddyError as err:
-            _LOGGER.debug("No AMS names for %s: %s", self.printer_name, err)
+            _LOGGER.debug("No AMS names for %s: %s", self.short_name, err)
 
     async def _read_maintenance(self) -> None:
-        """The printer's maintenance tasks, every ten minutes and after a
-        print: a read can write to BamBuddy's database. A failed read keeps
-        the last."""
+        """The printer's maintenance tasks and its print hours (BamBuddy's
+        runtime counter plus its offset, `total_print_hours`, in 1.2.5.7 and
+        1.3.0 alike -- 1.3.0 has no `runtime-debug`), every ten minutes and
+        after a print: a read can write to BamBuddy's database. A failed
+        read keeps the last; an answer without hours keeps the last hours."""
         now = self.hass.loop.time()
         if not self._maintenance_due and now - self._maintenance_read < MAINTENANCE_INTERVAL:
             return
@@ -537,10 +564,13 @@ class BamBuddyPrinterCoordinator(DataUpdateCoordinator[PrinterData]):
         try:
             maintenance = await self.client.get_maintenance(self.printer_id)
         except BamBuddyError as err:
-            _LOGGER.debug("No maintenance for %s: %s", self.printer_name, err)
+            _LOGGER.debug("No maintenance for %s: %s", self.short_name, err)
             return
         if generation == self._maintenance_generation:
             self._maintenance = maintenance
+            hours = maintenance.get("total_print_hours")
+            if isinstance(hours, int | float) and not isinstance(hours, bool):
+                self._hours = float(hours)
 
     async def async_reread_maintenance(self) -> None:
         """The tasks now, after one was marked done. Only they change: the
@@ -549,7 +579,7 @@ class BamBuddyPrinterCoordinator(DataUpdateCoordinator[PrinterData]):
         self._maintenance_due = True
         await self._read_maintenance()
         if self.data is not None:
-            self.data = replace(self.data, maintenance=self._maintenance)
+            self.data = replace(self.data, hours=self._hours, maintenance=self._maintenance)
             self.async_update_listeners()
 
     async def _read_details(self) -> None:
@@ -563,12 +593,12 @@ class BamBuddyPrinterCoordinator(DataUpdateCoordinator[PrinterData]):
         try:
             info = await self.client.get_printer(self.printer_id)
         except BamBuddyError as err:
-            _LOGGER.debug("No printer details for %s: %s", self.printer_name, err)
+            _LOGGER.debug("No printer details for %s: %s", self.short_name, err)
             return
         serial = str(info.get("serial_number") or "").strip()
         known = str(self.info.get("serial_number") or "").strip()
         if serial and known and serial != known:
-            _LOGGER.debug("BamBuddy lists another printer under the number of %s", self.printer_name)
+            _LOGGER.debug("BamBuddy lists another printer under the number of %s", self.short_name)
             self.replaced = True
             self._schedule_reload()
             return
@@ -604,20 +634,20 @@ class BamBuddyPrinterCoordinator(DataUpdateCoordinator[PrinterData]):
         try:
             listed = await self.client.get_printers()
         except BamBuddyError as err:
-            _LOGGER.debug("No printer list after a 404 for %s: %s", self.printer_name, err)
+            _LOGGER.debug("No printer list after a 404 for %s: %s", self.short_name, err)
             return False
         stored: list[dict[str, Any]] = self.config_entry.options.get(CONF_PRINTERS, [])
         found = dict(zip((stored_key(printer) for printer in stored), find_printers(listed, stored), strict=True))
         info = found.get(self.key)
         if info is None or info.get("id") != self.printer_id:
-            _LOGGER.debug("BamBuddy no longer lists %s under its number: the entry reloads", self.printer_name)
+            _LOGGER.debug("BamBuddy no longer lists %s under its number: the entry reloads", self.short_name)
             self._schedule_reload()
             return True
         return False
 
     def _replaced_error(self) -> UpdateFailed:
         return UpdateFailed(
-            translation_domain=DOMAIN, translation_key="printer_replaced", translation_placeholders={"printer": short_name(self.info)}
+            translation_domain=DOMAIN, translation_key="printer_replaced", translation_placeholders={"printer": self.short_name}
         )
 
     def _schedule_reload(self) -> None:
@@ -626,13 +656,13 @@ class BamBuddyPrinterCoordinator(DataUpdateCoordinator[PrinterData]):
     def _reload_for_chamber(self) -> None:
         """BamBuddy reports a chamber temperature or heater the setup had not: BamBuddy was updated
         (1.3 gives the H2D Pro and the X1E theirs, maziggy/bambuddy#3335), or the printer had not
-        reported at setup. Their entities come with one reload, at most `HOLD_LIMIT` a run."""
-        reloads = _chamber_reloads(self.hass)
+        reported at setup. Their entities come with one reload, at most `RELOADS_PER_RUN` a run."""
+        reloads = _run_counts(self.hass, "chamber_reloads")
         key = (self.config_entry.entry_id, self.key)
-        if reloads.get(key, 0) >= HOLD_LIMIT:
+        if reloads.get(key, 0) >= RELOADS_PER_RUN:
             return
         reloads[key] = reloads.get(key, 0) + 1
-        _LOGGER.debug("BamBuddy reports a chamber for %s that the setup had not: the entry reloads", self.printer_name)
+        _LOGGER.debug("BamBuddy reports a chamber for %s that the setup had not: the entry reloads", self.short_name)
         self._schedule_reload()
 
     @callback
@@ -643,11 +673,11 @@ class BamBuddyPrinterCoordinator(DataUpdateCoordinator[PrinterData]):
         its serial): its letter follows the place it is plugged in now, its
         model and firmware what it reports; an unplugged one keeps what was
         known."""
-        self.name = f"{DOMAIN} {short_name(self.info)}"
+        self.name = f"{DOMAIN} {self.short_name}"
         registry = dr.async_get(self.hass)
         entry_id = self.config_entry.entry_id
         printer = self.identifier
-        units = self.ams_identifier("")[1]
+        units = self.ams_identifier_prefix()
         reported = {ams_key(unit): unit for unit in data.ams_units}
         for device in dr.async_entries_for_config_entry(registry, entry_id):
             details: dict[str, str | None] = {}
@@ -669,7 +699,7 @@ class BamBuddyPrinterCoordinator(DataUpdateCoordinator[PrinterData]):
                     # Its name in BamBuddy, else the letter of the place it is
                     # plugged in now -- once the names are read in this run.
                     if self.ams_labels is not None:
-                        place = int(unit.get("id", 0))
+                        place = part_id(unit)
                         details["name"] = ams_name(self.info, place, model, details["serial_number"], self.ams_labels.get(place))
             changed = {key: value for key, value in details.items() if getattr(device, key) != value}
             if device.name_by_user is not None:
@@ -731,12 +761,8 @@ class BamBuddyPrinterCoordinator(DataUpdateCoordinator[PrinterData]):
         the printer reports back later -- and BamBuddy's live connection
         tells of some results never. A new command starts both anew."""
         self._cancel_command_reads()
-        self._refresh_later = async_call_later(
-            self.hass, REFRESH_AFTER_COMMAND, HassJob(self._async_refresh_now, cancel_on_shutdown=True)
-        )
-        self._again_later = async_call_later(
-            self.hass, REFRESH_AFTER_COMMAND_AGAIN, HassJob(self._async_refresh_again, cancel_on_shutdown=True)
-        )
+        self._refresh_later = async_call_later_until_stop(self.hass, REFRESH_AFTER_COMMAND, self._async_refresh_now)
+        self._again_later = async_call_later_until_stop(self.hass, REFRESH_AFTER_COMMAND_AGAIN, self._async_refresh_again)
 
     async def _async_refresh_now(self, _now: datetime) -> None:
         self._refresh_later = None
@@ -774,7 +800,7 @@ class BamBuddyPrinterCoordinator(DataUpdateCoordinator[PrinterData]):
             return
         wait = self._push_started + self._push_gap - self.hass.loop.time()
         if wait > 0:
-            self._push_later = async_call_later(self.hass, wait, HassJob(self._async_push_due, cancel_on_shutdown=True))
+            self._push_later = async_call_later_until_stop(self.hass, wait, self._async_push_due)
             return
         self._push_pending = False
         self._push_running = True
@@ -914,230 +940,6 @@ class BamBuddyUpdateCoordinator(_BamBuddyCoordinator):
         }
 
 
-class BamBuddyPlugCoordinator(DataUpdateCoordinator[dict[int, Plug]]):
-    """The smart plugs BamBuddy links to the printers set up here: its list
-    once a minute, each plug's state every 15 s. A key that may not read
-    plugs sees none -- no reauthentication for it; a plug that does not
-    answer is unknown, the others go on."""
-
-    config_entry: BamBuddyConfigEntry
-
-    def __init__(
-        self,
-        hass: HomeAssistant,
-        entry: BamBuddyConfigEntry,
-        client: BamBuddyClient,
-        printers: dict[int, BamBuddyPrinterCoordinator],
-        secret: bytes,
-    ) -> None:
-        super().__init__(hass, _LOGGER, config_entry=entry, name=f"{DOMAIN} plugs", update_interval=PLUG_INTERVAL)
-        self.client = client
-        self.printers = printers
-        self._secret = secret
-        # The linked plugs as the integration knows them: what they switch
-        # (their entities) and their BamBuddy record (their device).
-        self.identities: dict[int, PlugIdentity] = {}
-        # What the entities were built from: the setup's identities (None:
-        # its list read failed), and those of plugs added later.
-        self.built: dict[int, PlugIdentity] | None = None
-        self._planned = False
-        self._listed: list[dict[str, Any]] = []
-        self._listed_at: float | None = None
-        # The figures each plug has reported once: only those get a sensor.
-        self._seen: dict[int, set[str]] = {}
-        # What each linked plug is: a change (moved to another printer, no
-        # longer powering it, another kind) reloads the entry.
-        self._roles: dict[int, tuple[int | None, bool, str, bool]] | None = None
-        # Since when a plug is on, once it went from off to on: the card
-        # counts while the printer starts.
-        self._on_since: dict[int, datetime] = {}
-        self._commands = 0
-        self._refresh_later: CALLBACK_TYPE | None = None
-
-    def note_command(self) -> None:
-        """A switch goes out now: a read already under way may bring the
-        state from before it."""
-        self._commands += 1
-
-    async def _async_update_data(self) -> dict[int, Plug]:
-        commands = self._commands
-        now = self.hass.loop.time()
-        # Half a read's slack: the reads come a little more than 15 seconds
-        # apart, so the third of them is due -- within a minute.
-        if self._listed_at is None or now - self._listed_at >= PLUG_LIST_INTERVAL - PLUG_INTERVAL.total_seconds() / 2:
-            self._listed = await self._read_list()
-            self._listed_at = now
-            self._follow_identities_of(self._listed)
-            self._follow_names()
-            self._follow_identities()
-        linked = [info for info in self._listed if info.get("printer_id") in self.printers]
-        # Home Assistant's start waits for the first read: 5 s per plug then.
-        patient = self.data is not None
-        statuses = await asyncio.gather(*(self._read_status(int(info["id"]), patient) for info in linked))
-        if commands != self._commands and self.data is not None:
-            # From before the switch: the read soon after it tells.
-            return self.data
-        plugs = {int(info["id"]): Plug(info, status) for info, status in zip(linked, statuses, strict=True)}
-        for plug in plugs.values():
-            self._seen.setdefault(plug.id, set()).update(field for field in ENERGY_FIELDS if plug.figure(field) is not None)
-            self._follow_power(plug)
-        return plugs
-
-    def _follow_power(self, plug: Plug) -> None:
-        before = self.data.get(plug.id) if self.data else None
-        if plug.state is True and before is not None and before.state is False:
-            self._on_since[plug.id] = dt_util.utcnow()
-        elif plug.state is False:
-            self._on_since.pop(plug.id, None)
-
-    @callback
-    def async_switched(self, plug_id: int, on: bool) -> None:
-        """BamBuddy took a switch: the plug's new state shows at once -- off,
-        BamBuddy marks its printer offline at once too --, the read soon after
-        confirms it. A script runs and stays as it is."""
-        plug = (self.data or {}).get(plug_id)
-        if plug is None or plug.kind != "switch":
-            return
-        # The plug's reading, not a printer's status.
-        reading: dict[str, Any] = {**(plug.status or {}), "reachable": True, "state": "ON" if on else "OFF"}
-        energy = reading.get("energy")
-        if not on and isinstance(energy, dict) and energy.get("power") is not None:
-            # Off draws nothing.
-            reading["energy"] = {**energy, "power": 0.0}
-        switched = Plug(plug.info, reading)
-        self._follow_power(switched)
-        self.async_set_updated_data({**(self.data or {}), plug_id: switched})
-
-    def on_since(self, plug_id: int) -> datetime | None:
-        """When the plug went from off to on, while it stays on."""
-        return self._on_since.get(plug_id)
-
-    @callback
-    def async_built(self, identities: dict[int, PlugIdentity] | None) -> None:
-        """The setup's identities, which its entities are built from."""
-        self.built = identities
-        self._planned = True
-
-    def note_built(self, plug_id: int) -> None:
-        """A plug linked while the entry runs got its entities: its changes
-        reload from now on, as a plug the setup built."""
-        identity = self.identities.get(plug_id)
-        if self.built is not None and identity is not None:
-            self.built.setdefault(plug_id, identity)
-
-    def _follow_identities(self) -> None:
-        """What a built plug switches changed, it was created anew, it
-        ranks otherwise among plugs that switch the same, it is gone, or its
-        role changed: one reload builds it anew. A setup that could not read
-        the list built nothing: the first list read reloads it."""
-        changed = self._roles_changed()
-        if self._planned:
-            if self.built is None:
-                changed = True
-            else:
-                changed = changed or any(
-                    (now := self.identities.get(plug_id)) is None or not now.same_as(built) for plug_id, built in self.built.items()
-                )
-        if changed:
-            _LOGGER.debug("A smart plug changed what it switches, its record, its printer or its role in BamBuddy: the entry reloads")
-            async_schedule_reload(self.hass, self.config_entry)
-
-    def _roles_changed(self) -> bool:
-        """A plug moved to another printer in BamBuddy, no longer powering
-        it, of another kind, no longer or now the printer's own, or deleted
-        there: its device, its card and its switch-off after the print follow
-        through one reload (a deleted one's device goes then)."""
-        listed = [Plug(info) for info in self._listed]
-        roles: dict[int, tuple[int | None, bool, str, bool]] = {
-            plug.id: (plug.printer_id, plug.powers_printer, plug.kind, main_of(listed, plug.printer_id) == plug.id)
-            for plug in listed
-            if plug.printer_id in self.printers or plug.id in (self._roles or {})
-        }
-        changed = self._roles is not None and (
-            any(self._roles.get(plug_id, role) != role for plug_id, role in roles.items())
-            or any(plug_id not in roles for plug_id in self._roles)
-        )
-        self._roles = roles
-        return changed
-
-    async def _read_list(self) -> list[dict[str, Any]]:
-        listed = await fetch(self.client.get_smart_plugs(), entry=self.config_entry)
-        return [info for info in listed if isinstance(info, dict) and isinstance(info.get("id"), int)]
-
-    async def _read_status(self, plug_id: int, patient: bool) -> dict[str, Any] | None:
-        try:
-            return await self.client.get_plug_status(plug_id, patient=patient)
-        except BamBuddyError as err:
-            _LOGGER.debug("No status of smart plug %s: %s", plug_id, err)
-            return None
-
-    def reported(self, plug_id: int, field: str) -> bool:
-        """Whether the plug has reported this figure once."""
-        return field in self._seen.get(plug_id, set())
-
-    def _follow_identities_of(self, listed: list[dict[str, Any]]) -> None:
-        """The linked plugs' identities, from what was known of them: the
-        last read's, else the registry's (a part an answer lacks keeps it)."""
-        known = known_from_registry(self.hass, self.config_entry.entry_id)
-        known.update({plug_id: identity.known() for plug_id, identity in self.identities.items()})
-        linked = [info for info in listed if info.get("printer_id") in self.printers]
-        self.identities = identities(self._secret, linked, known)
-
-    def identity(self, plug_id: int) -> PlugIdentity | None:
-        return self.identities.get(plug_id)
-
-    def identifier(self, plug_id: int) -> tuple[str, str] | None:
-        """A linked plug's device identifier: its BamBuddy record."""
-        identity = self.identities.get(plug_id)
-        return device_identifier(self.config_entry.entry_id, identity) if identity else None
-
-    def entity_unique_id(self, plug_id: int, key: str) -> str | None:
-        """A linked plug's entity's unique ID: what it switches."""
-        identity = self.identities.get(plug_id)
-        return entity_unique_id(self.config_entry.entry_id, identity, key) if identity else None
-
-    def main_plug(self, printer_id: int | None) -> int | None:
-        """The printer's own plug: BamBuddy's choice among the plugs that
-        power it (`Plug.main_rank`); None where none does."""
-        return main_of((self.data or {}).values(), printer_id)
-
-    def device_name(self, plug: Plug) -> str:
-        printer = self.printers.get(plug.printer_id or -1)
-        return plug_device_name(short_name(printer.info), plug) if printer else plug.name
-
-    def _follow_names(self) -> None:
-        """Renamed in BamBuddy -- the plug or its printer -- or another type
-        (still a switch, so no reload): the device follows."""
-        registry = dr.async_get(self.hass)
-        for info in self._listed:
-            plug = Plug(info)
-            identifier = self.identifier(plug.id)
-            if identifier is None:
-                # Linked to no printer set up here: no device.
-                continue
-            device = find_device(self.hass, self.config_entry.entry_id, identifier)
-            name = self.device_name(plug)
-            if device is not None and (device.name, device.model) != (name, plug.model):
-                registry.async_update_device(device.id, name=name, model=plug.model)
-
-    @callback
-    def async_refresh_soon(self) -> None:
-        """Read the plugs again shortly after a switch."""
-        if self._refresh_later:
-            self._refresh_later()
-        self._refresh_later = async_call_later(self.hass, REFRESH_AFTER_PLUG, self._async_refresh_now)
-
-    async def _async_refresh_now(self, _now: datetime) -> None:
-        self._refresh_later = None
-        await self.async_refresh()
-
-    async def async_shutdown(self) -> None:
-        if self._refresh_later:
-            self._refresh_later()
-            self._refresh_later = None
-        await super().async_shutdown()
-
-
 @dataclass
 class BamBuddyData:
     """What a loaded entry keeps: the client, the coordinators and the key's
@@ -1150,6 +952,8 @@ class BamBuddyData:
     printers: dict[int, BamBuddyPrinterCoordinator]
     # The smart plugs of the printers.
     plugs: BamBuddyPlugCoordinator
+    # BamBuddy's spool inventory: which spool sits in which slot.
+    inventory: BamBuddyInventoryCoordinator
     key: KeyGuard
     # BamBuddy's authentication on or off (None: it did not say), for the diagnostics.
     auth_enabled: bool | None
@@ -1161,7 +965,7 @@ class BamBuddyData:
     basis: tuple[Any, ...]
     # The switch-offs after the print, by plug.
     auto_offs: dict[int, AutoOff] = field(default_factory=dict)
-    # A printer found its model: the reload that brings it is on its way.
+    # A reload of the entry is on its way (`async_schedule_reload`): nothing starts a second one.
     reloading: bool = False
     # The devices of the printers BamBuddy does not list (each waits under
     # Repairs), for the card: it tells them from a BamBuddy without answer.

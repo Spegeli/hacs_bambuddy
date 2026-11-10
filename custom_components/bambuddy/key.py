@@ -16,11 +16,12 @@ from typing import TYPE_CHECKING, Literal
 from homeassistant.config_entries import SOURCE_REAUTH
 from homeassistant.core import CALLBACK_TYPE, HomeAssistant, callback
 from homeassistant.exceptions import HomeAssistantError
-from homeassistant.helpers.event import async_call_later, async_track_time_interval
+from homeassistant.helpers.event import async_track_time_interval
 from homeassistant.util import dt as dt_util
 
 from .api import BamBuddyApiError, BamBuddyAuthError, BamBuddyClient, BamBuddyError, BamBuddyPermissionError, KeyScopes
-from .const import DOMAIN, KEY_CHECK_INTERVAL, KEY_RETRY_DELAY
+from .const import DOMAIN, KEY_CHECK_INTERVAL, KEY_RETRY_DELAY, MANAGE_INVENTORY
+from .timers import async_call_later_until_stop
 
 if TYPE_CHECKING:
     from homeassistant.config_entries import ConfigEntry
@@ -82,6 +83,11 @@ class KeyGuard:
         self._warned: set[str] = set()
         # Reads refused since the last check, by route: named once it finds the key fine.
         self._refused_reads: dict[str, BamBuddyApiError] = {}
+        # The last check a read that worked asked for.
+        self._worked_at: datetime | None = None
+        # The optional permissions of the last check that answered: one without
+        # an answer takes nothing away (#21).
+        self._optional = first.scopes.optional if first.scopes is not None else frozenset()
 
     @callback
     def async_start(self) -> None:
@@ -89,6 +95,11 @@ class KeyGuard:
         -- and Home Assistant runs: its web session closes as it stops."""
         self.entry.async_on_unload(async_track_time_interval(self.hass, self._async_due, KEY_CHECK_INTERVAL, cancel_on_shutdown=True))
         self.entry.async_on_unload(self._stop)
+
+    @property
+    def can_assign_spools(self) -> bool:
+        """Manage Inventory, as the last answered check said."""
+        return MANAGE_INVENTORY in self._optional
 
     @property
     def refused(self) -> bool:
@@ -109,6 +120,8 @@ class KeyGuard:
             refused, self._refused_reads = self._refused_reads, {}
             check = await async_check_key(self.client)
             self.last = check
+            if check.scopes is not None:
+                self._optional = check.scopes.optional
             self._act(check)
             if check.outcome == "ok" and self._active:
                 for err in refused.values():
@@ -119,7 +132,7 @@ class KeyGuard:
     def async_check_soon(self) -> None:
         """A check within a few seconds: BamBuddy refused a request."""
         if self._active and self._soon is None and not self._lock.locked():
-            self._soon = async_call_later(self.hass, _SOON, self._async_soon)
+            self._soon = async_call_later_until_stop(self.hass, _SOON, self._async_soon)
 
     @callback
     def async_read_refused(self, err: BamBuddyApiError) -> None:
@@ -141,6 +154,19 @@ class KeyGuard:
         if not isinstance(err, BamBuddyAuthError):
             self._refused_reads[err.path] = err
         self.async_check_soon()
+
+    @callback
+    def async_read_worked(self) -> None:
+        """A read BamBuddy answered: where the key stands refused, BamBuddy
+        may be back from what looked like a refusal -- checked soon, so the
+        repair goes with it; at most once a minute, should the check keep
+        saying no."""
+        if self._said not in ("unknown", "owner") or self._lock.locked():
+            return
+        now = dt_util.utcnow()
+        if self._worked_at is None or now - self._worked_at >= KEY_RETRY_DELAY:
+            self._worked_at = now
+            self.async_check_soon()
 
     async def async_refused(self, err: BamBuddyApiError) -> HomeAssistantError:
         """What to tell the user when BamBuddy refused a request (401 or
@@ -231,7 +257,7 @@ class KeyGuard:
     @callback
     def _later(self, delay: timedelta) -> None:
         if self._active and self._retry is None:
-            self._retry = async_call_later(self.hass, delay, self._async_retry)
+            self._retry = async_call_later_until_stop(self.hass, delay.total_seconds(), self._async_retry)
 
     @callback
     def _cancel_retry(self) -> None:

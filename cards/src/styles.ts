@@ -1314,6 +1314,13 @@ export const cardStyles = css`
   .fan-label.full {
     display: none;
   }
+  /* The full label's colon: in the name ("Part cooling fan: 100 %"), not on
+   * the tile. Inline, so the name keeps no space before it (an absolute
+   * sr-only span would put one there). */
+  .fan-colon {
+    font-size: 0;
+    clip-path: inset(50%);
+  }
   .fan-value {
     color: var(--bb-text);
     font-weight: 500;
@@ -2550,6 +2557,38 @@ export const cardStyles = css`
   .dlg-error .icon {
     color: var(--bb-err);
   }
+  /* Set ends the spool's assignment: a line of its own above the buttons. */
+  .dlg-actions .dlg-warn {
+    flex: 1 0 100%;
+    display: flex;
+    align-items: flex-start;
+    gap: 6px;
+    font-size: 13px;
+    line-height: 18px;
+    color: color-mix(in srgb, var(--bb-warn) 75%, var(--bb-text));
+  }
+  .dlg-actions .dlg-warn .icon {
+    flex: none;
+    width: 16px;
+    height: 16px;
+    margin-top: 1px;
+  }
+  /* The slot's profile: a heading and what the list holds. */
+  .fil-head {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+  }
+  .fil-title {
+    font-size: 14px;
+    line-height: 20px;
+    font-weight: 500;
+  }
+  .fil-help {
+    font-size: 12px;
+    line-height: 16px;
+    color: var(--bb-muted);
+  }
   /* What the confirming button still waits for, beside it. */
   .dlg-actions .dlg-need {
     flex: 1;
@@ -2654,6 +2693,403 @@ export const cardStyles = css`
   }
   .rfid-spool {
     font-weight: 500;
+  }
+  /* What the kept profile is, under the vendor field. */
+  .dlg-body .fil-keep {
+    margin-top: 6px;
+    font-size: 12px;
+    line-height: 16px;
+    color: var(--bb-muted);
+  }
+  /* The slot dialog's switch: its filament, or a spool of the inventory. */
+  .inv-switch button[aria-selected="true"] {
+    color: color-mix(in srgb, var(--bb-accent) 50%, var(--bb-text));
+    background: color-mix(in srgb, var(--bb-accent) 18%, transparent);
+    font-weight: 500;
+  }
+  /* The slot's spool from BamBuddy's inventory. */
+  .inv-card {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    padding: 10px 12px;
+    border-radius: 12px;
+    background: var(--bb-tint);
+    font-size: 13px;
+    line-height: 18px;
+  }
+  .inv-from {
+    color: var(--bb-muted);
+    font-size: 12px;
+  }
+  .inv-spool {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    min-width: 0;
+  }
+  .inv-name {
+    font-weight: 500;
+    font-size: 14px;
+    overflow-wrap: anywhere;
+  }
+  .inv-line {
+    color: var(--bb-muted);
+    overflow-wrap: anywhere;
+  }
+  /* The spool is assigned to other slots too. */
+  .inv-also {
+    display: flex;
+    align-items: flex-start;
+    gap: 6px;
+    margin-top: 4px;
+    color: color-mix(in srgb, var(--bb-warn) 75%, var(--bb-text));
+  }
+  .inv-also .icon {
+    flex: none;
+    width: 16px;
+    height: 16px;
+    margin-top: 1px;
+  }
+  /* The inventory's way: the list in a box of its own that takes the room
+     left and scrolls (the one such box of the card's dialogs), so that the
+     head and the buttons stay in reach; a spool and a half at least. Where
+     even that does not fit, the card marks the body inv-short and the
+     dialog scrolls as a whole. */
+  .dlg-body:has(.inv-list) {
+    max-height: calc(100dvh - 48px);
+    box-sizing: border-box;
+  }
+  .inv-panel {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    min-height: 0;
+  }
+  .inv-filters {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    gap: 10px;
+  }
+  /* Side by side, each label above its select. */
+  .inv-filters .field {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 4px;
+  }
+  /* Each select to its column: Chrome sizes a select by its longest option. */
+  .inv-filters .select {
+    width: 100%;
+    max-width: none;
+  }
+  /* The location below vendor and material, across the row. */
+  .inv-filters .field.inv-wide {
+    grid-column: 1 / -1;
+  }
+  .inv-search {
+    width: 100%;
+    box-sizing: border-box;
+    font: inherit;
+    padding: 8px 10px;
+    border-radius: 8px;
+    border: 1px solid var(--bb-divider);
+    color: var(--bb-text);
+    background: transparent;
+  }
+  /* The search and the scan button side by side, one pair: the same height, radius and border. */
+  .inv-search-row {
+    display: flex;
+    gap: 8px;
+    align-items: stretch;
+  }
+  /* The search field with its magnifier inside, before the text. */
+  .inv-search-box {
+    position: relative;
+    display: flex;
+    flex: 1;
+    min-width: 0;
+  }
+  .inv-search-box .inv-search {
+    flex: 1;
+    min-width: 0;
+    padding-inline-start: 36px;
+  }
+  .inv-search-icon {
+    position: absolute;
+    inset-inline-start: 10px;
+    top: 50%;
+    translate: 0 -50%;
+    display: flex;
+    color: var(--bb-muted);
+    pointer-events: none;
+  }
+  .inv-search-icon .icon {
+    width: 20px;
+    height: 20px;
+  }
+  .inv-scan,
+  .inv-filter {
+    flex: none;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 40px;
+    min-height: 40px;
+    padding: 0 8px;
+    border-radius: 8px;
+    border: 1px solid var(--bb-divider);
+    background: transparent;
+    color: var(--bb-text);
+    cursor: pointer;
+  }
+  /* The folded filters: the button tinted while they show, the count of those set on it. */
+  .inv-filter {
+    position: relative;
+  }
+  .inv-filter.on {
+    background: var(--bb-tint);
+  }
+  .inv-filter .icon {
+    width: 22px;
+    height: 22px;
+  }
+  .inv-filter-count {
+    position: absolute;
+    top: -6px;
+    right: -6px;
+    min-width: 18px;
+    height: 18px;
+    padding: 0 4px;
+    box-sizing: border-box;
+    border-radius: 9px;
+    background: var(--bb-accent);
+    color: var(--bb-on-accent);
+    font-size: 12px;
+    line-height: 18px;
+    text-align: center;
+  }
+  /* „Zuweisung aufheben“ in the assigned spool's box: a link-like button. */
+  .inv-card .inv-unassign {
+    align-self: flex-start;
+    margin-top: 6px;
+    padding: 6px 0;
+    border: 0;
+    background: none;
+    color: var(--bb-accent);
+    font: inherit;
+    font-size: 14px;
+    cursor: pointer;
+  }
+  .inv-card .inv-unassign:focus-visible {
+    outline: 2px solid var(--bb-ring);
+    outline-offset: 2px;
+    border-radius: 4px;
+  }
+  .inv-scan:disabled {
+    opacity: 0.4;
+    cursor: default;
+  }
+  .inv-scan .icon {
+    width: 22px;
+    height: 22px;
+  }
+  .inv-scanned {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin: 0;
+    font-size: 14px;
+    color: var(--bb-text);
+  }
+  .inv-scanned .icon {
+    width: 18px;
+    height: 18px;
+    flex: none;
+    color: var(--bb-ok);
+  }
+  /* The camera area in the place of the filters, the search and the list. */
+  .inv-camera {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    box-sizing: border-box;
+  }
+  /* The picture takes the height the list left. */
+  .inv-camera-view {
+    position: relative;
+    flex: 1;
+    min-height: min(330px, 40dvh);
+    border-radius: 12px;
+    overflow: hidden;
+    background: #000;
+  }
+  .inv-camera-view video {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    display: block;
+  }
+  .inv-camera-frame {
+    position: absolute;
+    left: 50%;
+    top: 50%;
+    width: min(190px, 60%);
+    aspect-ratio: 1;
+    transform: translate(-50%, -50%);
+    border: 3px solid rgba(255, 255, 255, 0.9);
+    border-radius: 14px;
+    box-shadow: 0 0 0 9999px rgba(0, 0, 0, 0.35);
+  }
+  .inv-camera-help {
+    margin: 0;
+    text-align: center;
+    font-size: 14px;
+    line-height: 20px;
+    color: var(--bb-text);
+  }
+  .inv-camera-blocked {
+    flex: 1;
+    min-height: min(240px, 40dvh);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 12px;
+    padding: 16px;
+    border: 1px dashed var(--bb-divider);
+    border-radius: 12px;
+    text-align: center;
+  }
+  .inv-camera-reason {
+    margin: 0;
+    font-size: 14px;
+    line-height: 20px;
+    color: var(--bb-text);
+  }
+  .inv-photo {
+    position: relative;
+  }
+  /* The picker opens from its label; the input itself stays out of sight. */
+  .inv-photo input {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    opacity: 0;
+    pointer-events: none;
+  }
+  .inv-photo:has(input:focus-visible) {
+    outline: 2px solid var(--bb-ring);
+    outline-offset: 2px;
+  }
+  .inv-camera-actions {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: center;
+    gap: 8px;
+  }
+  .inv-list {
+    flex: 0 1 auto;
+    min-height: 0;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    border: 1px solid var(--bb-divider);
+    border-radius: 12px;
+    padding: 4px;
+  }
+  /* At least a spool and a half: with the filters open on a phone more would
+     push the list's end under the button row. */
+  .inv-list.many {
+    min-height: min(140px, 30dvh);
+  }
+  /* Too little room for the list's least (the card measures it: notes,
+     warnings, the filters open, a small phone), and a short screen (a phone
+     held sideways) in any case: the dialog scrolls as a whole, its button
+     row at its foot; the list keeps a cap of its own. */
+  .dlg-body.inv-short:has(.inv-list) {
+    max-height: none;
+  }
+  .dlg-body.inv-short .inv-list {
+    max-height: max(180px, 45dvh);
+  }
+  @media (max-height: 560px) {
+    .dlg-body:has(.inv-list) {
+      max-height: none;
+    }
+    .inv-list {
+      max-height: max(180px, 45dvh);
+    }
+  }
+  .inv-group {
+    padding: 8px 8px 2px;
+    font-size: 12px;
+    color: var(--bb-muted);
+    letter-spacing: 0.02em;
+  }
+  .inv-row {
+    display: flex;
+    align-items: flex-start;
+    gap: 10px;
+    padding: 8px;
+    border-radius: 9px;
+    cursor: pointer;
+    font-size: 13px;
+    line-height: 18px;
+  }
+  .inv-row .spool-dot {
+    margin-top: 2px;
+  }
+  .inv-row[aria-checked="true"] {
+    background: color-mix(in srgb, var(--bb-accent) 16%, transparent);
+  }
+  .inv-row[aria-disabled="true"] {
+    cursor: default;
+    opacity: 0.55;
+  }
+  .inv-row:focus-visible {
+    outline: 2px solid var(--bb-ring);
+    outline-offset: -2px;
+  }
+  .inv-row-text {
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+  }
+  /* The place, read without colour too: a dot before it. */
+  .inv-where::before {
+    content: "• ";
+  }
+  .inv-where.here {
+    color: color-mix(in srgb, var(--bb-accent) 70%, var(--bb-text));
+  }
+  .inv-where.elsewhere {
+    color: color-mix(in srgb, var(--bb-warn) 75%, var(--bb-text));
+  }
+  .inv-where.stored,
+  .inv-where.off {
+    color: var(--bb-muted);
+  }
+  .inv-unassign {
+    margin-inline-end: auto;
+  }
+  /* A spool's colour; a multicolour spool's in segments. */
+  .spool-dot {
+    flex: none;
+    width: 14px;
+    height: 14px;
+    border-radius: 50%;
+    background: var(--dot);
+  }
+  .spool-dot.outline {
+    box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--bb-text) 35%, transparent);
+  }
+  /* What the K field holds, between its label and the select. */
+  .k-about {
+    margin-top: -2px;
+    font-size: 12px;
+    line-height: 16px;
+    color: var(--bb-muted);
   }
   .k-hint {
     display: block;
@@ -3529,6 +3965,11 @@ export const cardStyles = css`
     .toggle .knob,
     .unit-fold {
       transition: none;
+    }
+    /* Still, the filament change's bar spans the line: it says something
+     * runs, not 30 % of it. */
+    .activity-bar {
+      width: 100%;
     }
   }
 `;

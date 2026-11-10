@@ -4,8 +4,19 @@
 import { afterEach, describe, expect, it } from "vitest";
 
 import "../src/index";
-import { h2d, makeHass, maintenanceSpec, mountCard, offlineP1s, readOnlyX1c, unreachable, x1c, type FakeDevice } from "./fixtures";
-import { atRule, button, find, findAll, NBSP, press, settle, showView, styleText, text, update } from "./helpers";
+import {
+  h2d,
+  idleX1c,
+  maintenanceSpec,
+  makeHass,
+  mountCard,
+  offlineP1s,
+  readOnlyX1c,
+  unreachable,
+  withPlugs,
+  x1c,
+} from "./fixtures";
+import { atRule, button, editSlot, find, findAll, NBSP, press, settle, showView, styleText, text, update } from "./helpers";
 
 afterEach(() => {
   document.body.innerHTML = "";
@@ -19,7 +30,7 @@ describe("the Filament tab's buttons", () => {
     await showView(card, "Filament");
     const names = findAll<HTMLButtonElement>(card, ".body button").map(nameOf);
     expect(names.filter((name, index) => names.indexOf(name) !== index)).toEqual([]);
-    expect(names.some((name) => / – Slot 1 · AMS A$/.test(name))).toBe(true);
+    expect(names.some((name) => / – Slot 1 · AMS\u00a0A$/.test(name))).toBe(true);
   });
 
   it("let Dry wait for a filament change; Stop drying does not", async () => {
@@ -75,45 +86,29 @@ describe("dialogs, said whole", () => {
   });
 
   it("the K profile's hint describes its select, and is said when it changes", async () => {
-    const devices = x1c({ status: "idle", stage: "idle" });
-    for (const entity of (devices[1] as FakeDevice).entities) {
-      if ("attributes" in entity && entity.attributes) entity.attributes = { ...entity.attributes, active: false };
-    }
+    const devices = idleX1c();
     const card = await mountCard(makeHass({ devices }), { printer: "dev-x1c" });
     await showView(card, "Filament");
-    (findAll(card, ".slot")[2]?.querySelector(".btn.edit") as HTMLButtonElement).click();
-    await settle(card);
+    await editSlot(card, 2);
     const select = find(card, "dialog select#fil-k") as HTMLSelectElement;
-    const hint = find(card, `#${select.getAttribute("aria-describedby")}`) as HTMLElement;
+    // What the field holds, then its hint.
+    const [about, hintId] = (select.getAttribute("aria-describedby") ?? "").split(" ");
+    expect(find(card, `#${about}`)?.classList.contains("k-about")).toBe(true);
+    const hint = find(card, `#${hintId}`) as HTMLElement;
     expect(hint.classList.contains("k-hint-box")).toBe(true);
     expect(hint.getAttribute("aria-live")).toBe("polite");
   });
 
-  it("marking a maintenance task done is said", async () => {
-    const hass = makeHass({ devices: x1c({ maintenance: maintenanceSpec() }) });
-    const card = await mountCard(hass, { printer: "dev-x1c", header_chips: ["maintenance"] });
-    (find(card, ".pill.maintenance") as HTMLButtonElement).click();
-    await card.updateComplete;
-    const status = (): string => text(find(card, "dialog .maint-said"));
-    expect(status()).toBe("");
-    (find(card, 'dialog .maint-done[data-task="11"]') as HTMLButtonElement).click();
-    await card.updateComplete;
-    (find(card, "dialog .maint-confirm .btn.primary") as HTMLButtonElement).click();
-    await settle(card);
-    expect(find(card, "dialog .maint-said")?.getAttribute("role")).toBe("status");
-    expect(status()).toMatch(/^“.+” marked as done\.$/);
-  });
-
   it("the switch-off's steppers say what they change", async () => {
     const devices = x1c({ status: "idle", stage: "idle" });
-    const { plugDevice } = await import("./fixtures");
-    const card = await mountCard(makeHass({ devices: [...devices, plugDevice({ printer: devices[0] as FakeDevice, id: 3, name: "Tasmota", autoOff: { armed: true, phase: "idle", temperature: 50 } })] }), {
+    const card = await mountCard(makeHass({ devices: withPlugs(devices, { id: 3, name: "Tasmota", autoOff: { armed: true, phase: "idle", temperature: 50 } }) }), {
       printer: "dev-x1c",
     });
     (find(card, ".power .p-open") as HTMLButtonElement).click();
     await settle(card);
-    expect(button(card, `Lower the switch-off temperature by 5${NBSP}°C`)).toBeTruthy();
-    expect(button(card, `Raise the switch-off temperature by 5${NBSP}°C`)).toBeTruthy();
+    // button() fails where no button has this name.
+    button(card, `Lower the switch-off temperature by 5${NBSP}°C`);
+    button(card, `Raise the switch-off temperature by 5${NBSP}°C`);
   });
 });
 
@@ -128,10 +123,13 @@ describe("a task marked done", () => {
     await card.updateComplete;
     const done = find(card, 'dialog .maint-done[data-task="11"]') as HTMLButtonElement;
     expect(text(done.closest(".maint-row") as HTMLElement)).toContain(shown);
+    // Said in a status line, empty before.
+    expect(text(find(card, "dialog .maint-said"))).toBe("");
     done.click();
     await card.updateComplete;
     (find(card, "dialog .maint-confirm .btn.primary") as HTMLButtonElement).click();
     await settle(card);
+    expect(find(card, "dialog .maint-said")?.getAttribute("role")).toBe("status");
     expect(text(find(card, "dialog .maint-said"))).toBe(said);
   });
 });

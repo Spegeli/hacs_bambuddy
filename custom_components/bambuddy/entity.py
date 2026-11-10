@@ -3,7 +3,7 @@ a command reaches a printer."""
 from __future__ import annotations
 
 from collections.abc import Awaitable, Callable, Iterable
-from typing import Any, TypeVar, cast
+from typing import TYPE_CHECKING, Any, TypeVar, cast
 
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.exceptions import HomeAssistantError, ServiceValidationError
@@ -18,15 +18,18 @@ from .const import CONF_URL, DOMAIN
 from .coordinator import (
     BamBuddyConfigEntry,
     BamBuddyInstanceCoordinator,
-    BamBuddyPlugCoordinator,
     BamBuddyPrinterCoordinator,
     BamBuddyUpdateCoordinator,
     failure,
     find_device,
 )
-from .models import PrinterData, ams_key, ams_model, ams_name, ams_object_id, ams_serial, display_model, short_name
+from .models import PrinterData, ams_key, ams_model, ams_name, ams_object_id, ams_serial, display_model, part_id
+from .plug_coordinator import BamBuddyPlugCoordinator
 from .plug_identity import PlugIdentity, device_identifier, entity_unique_id
 from .plugs import Plug
+
+if TYPE_CHECKING:
+    from .auto_off import AutoOff
 
 _T = TypeVar("_T")
 
@@ -87,7 +90,7 @@ def _domain_of(entity: object) -> str | None:
     return None
 
 
-def _suggest(entity: Any, *words: str) -> None:
+def _suggest(entity: Entity, *words: str) -> None:
     """The entity ID a new entity gets: its platform and the words, in
     Home Assistant's form. Home Assistant keeps the ID of an entity it knows."""
     domain = _domain_of(entity)
@@ -104,21 +107,19 @@ def printer_object_id(coordinator: BamBuddyPrinterCoordinator, *parts: str) -> s
     return slugify(" ".join((display_model(info.get("model")) or "printer", serial, *parts)))
 
 
-def suggest_entity_id(entity: Any, coordinator: BamBuddyPrinterCoordinator, *parts: str) -> None:
+def suggest_entity_id(entity: Entity, coordinator: BamBuddyPrinterCoordinator, *parts: str) -> None:
     """The ID a new printer entity gets (`printer_object_id`)."""
-    domain = _domain_of(entity)
-    if domain:
-        entity.entity_id = f"{domain}.{printer_object_id(coordinator, *parts)}"
+    _suggest(entity, printer_object_id(coordinator, *parts))
 
 
-def suggest_instance_entity_id(entity: Any, key: str) -> None:
+def suggest_instance_entity_id(entity: Entity, key: str) -> None:
     """The ID a new entity of the instance gets: BamBuddy and the English
     key -- not its address, which may change. A second instance's get Home
     Assistant's `_2`."""
     _suggest(entity, "bambuddy", key.removeprefix("bambuddy_"))
 
 
-def suggest_plug_entity_id(entity: Any, identity: PlugIdentity, key: str) -> None:
+def suggest_plug_entity_id(entity: Entity, identity: PlugIdentity, key: str) -> None:
     """The ID a new entity of a smart plug gets: six characters of what the
     plug switches and the English key -- it stays when the plug is renamed,
     moved to another printer or found on another BamBuddy; a second plug
@@ -133,10 +134,15 @@ def suggest_plug_entity_id(entity: Any, identity: PlugIdentity, key: str) -> Non
 def switch_off_unique_id(entry_id: str, printer_key: str, key: str) -> str:
     """Our switch-off after the print belongs to its printer: its settings
     stay with it whichever plug is the printer's own."""
-    return f"{entry_id}_switchoff_{printer_key}_{key}"
+    return f"{switch_off_prefix(entry_id)}{printer_key}_{key}"
 
 
-def key_by_printer(entity: Any, printer: BamBuddyPrinterCoordinator, key: str) -> None:
+def switch_off_prefix(entry_id: str) -> str:
+    """What the unique IDs of all the entry's switch-off entities begin with."""
+    return f"{entry_id}_switchoff_"
+
+
+def key_by_printer(entity: Entity, printer: BamBuddyPrinterCoordinator, key: str) -> None:
     """A switch-off entity's unique ID and entity ID, by its printer."""
     entity._attr_unique_id = switch_off_unique_id(printer.config_entry.entry_id, printer.key, key)
     suggest_entity_id(entity, printer, key)
@@ -256,7 +262,7 @@ class BamBuddyAmsEntity(BamBuddyPrinterEntity):
         """The unit's place now (BamBuddy's AMS id), else where it was."""
         unit = self.unit
         if unit is not None:
-            self._ams_id = int(unit.get("id", 0))
+            self._ams_id = part_id(unit)
         return self._ams_id
 
     @property
@@ -329,6 +335,20 @@ def refuse(key: str, **placeholders: str) -> ServiceValidationError:
     )
 
 
+def connection_error(err: BamBuddyConnectionError) -> HomeAssistantError:
+    """BamBuddy not reached for a command: no answer in time, or no connection."""
+    if timed_out(err):
+        return HomeAssistantError(translation_domain=DOMAIN, translation_key="no_answer")
+    return HomeAssistantError(translation_domain=DOMAIN, translation_key="cannot_connect")
+
+
+def command_error(err: BamBuddyError) -> HomeAssistantError:
+    """A command BamBuddy did not take. It said no (4xx): a validation error --
+    no ERROR in the log, and an automation can tell it from a BamBuddy that fails."""
+    kind = ServiceValidationError if isinstance(err, BamBuddyApiError) and 400 <= err.status < 500 else HomeAssistantError
+    return kind(translation_domain=DOMAIN, translation_key="command_failed", translation_placeholders={"error": str(err)})
+
+
 async def async_run_command(
     coordinator: BamBuddyPrinterCoordinator,
     call: Callable[[], Awaitable[_T]],
@@ -351,13 +371,13 @@ async def async_run_command(
     takes it -- a filament swap by hand, between the colours of a print.
     `offline_ok`: BamBuddy acts without the printer (it sends it nothing).
     `refresh`: a command, not a read: read the status again soon after.
-    `check`: raises `refuse(key, printer=name)` where the printer's state
+    `check`: raises a `refuse(...)` where the printer's state
     rules the command out for a reason of its own, after `allowed`.
     A refusal (401, 403) goes to the key's guard: it says whether the key is
     the cause, and alone starts a reauthentication."""
     data = coordinator.data
     # BamBuddy's name, short enough for a phone's toast.
-    name = short_name(coordinator.info)
+    name = coordinator.short_name
     if coordinator.replaced:
         raise refuse("printer_replaced", printer=name)
     if not data.connected and not offline_ok:
@@ -383,23 +403,14 @@ async def async_run_command(
         if timed_out(err) and not refresh:
             # A read: nothing may still reach the printer.
             raise failure(err, HomeAssistantError) from err
-        if timed_out(err):
-            raise HomeAssistantError(translation_domain=DOMAIN, translation_key="no_answer") from err
-        raise HomeAssistantError(translation_domain=DOMAIN, translation_key="cannot_connect") from err
+        raise connection_error(err) from err
     except BamBuddyError as err:
         if not refresh:
             # A read is no command BamBuddy refused.
             raise HomeAssistantError(
                 translation_domain=DOMAIN, translation_key="read_failed", translation_placeholders={"error": str(err)}
             ) from err
-        # BamBuddy said no (4xx): a validation error -- no ERROR in the log,
-        # and an automation can tell it from a BamBuddy that fails.
-        kind = ServiceValidationError if isinstance(err, BamBuddyApiError) and 400 <= err.status < 500 else HomeAssistantError
-        raise kind(
-            translation_domain=DOMAIN,
-            translation_key="command_failed",
-            translation_placeholders={"error": str(err)},
-        ) from err
+        raise command_error(err) from err
     if refresh:
         coordinator.async_refresh_soon()
     return result
@@ -428,7 +439,42 @@ class BamBuddyPlugEntity(CoordinatorEntity[BamBuddyPlugCoordinator]):
     def plug(self) -> Plug | None:
         return (self.coordinator.data or {}).get(self.plug_id)
 
-    def plug_role(self) -> dict[str, Any] | None:
+    @property
+    def available(self) -> bool:
+        return super().available and self.plug is not None
+
+    @property
+    def device_info(self) -> DeviceInfo:
+        """Read when the entity is added: the plug as BamBuddy lists it then."""
+        coordinator = self.coordinator
+        entry_id = coordinator.config_entry.entry_id
+        plug = self.plug or Plug({"id": self.plug_id, "printer_id": self._printer_id})
+        printer = coordinator.printer_of(plug)
+        return plug_device_info(
+            self.hass,
+            entry_id,
+            device_identifier(entry_id, self._identity),
+            coordinator.device_name(plug),
+            plug.model,
+            printer.identifier if printer else None,
+        )
+
+
+class BamBuddyReachablePlugEntity(BamBuddyPlugEntity):
+    """A plug's entity that says what BamBuddy reads from the plug: unavailable
+    while BamBuddy cannot reach it."""
+
+    @property
+    def available(self) -> bool:
+        return super().available and self.plug is not None and self.plug.reachable
+
+
+class BamBuddyPlugMainEntity(BamBuddyReachablePlugEntity):
+    """The plug's own entity (its switch, state or Run): the plug's role, which
+    the card tells plugs apart by, and when it was switched on."""
+
+    @property
+    def capability_attributes(self) -> dict[str, Any] | None:
         """What the card tells plugs apart by, and BamBuddy's own auto off --
         as capability attributes: Home Assistant keeps those while the plug
         is unavailable, and drops the others."""
@@ -445,7 +491,8 @@ class BamBuddyPlugEntity(CoordinatorEntity[BamBuddyPlugCoordinator]):
             "plug_type": plug.plug_type,
         }
 
-    def plug_attributes(self) -> dict[str, Any]:
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
         """Off to on, seen by the integration: the card counts the start."""
         plug = self.plug
         if plug is None:
@@ -453,25 +500,33 @@ class BamBuddyPlugEntity(CoordinatorEntity[BamBuddyPlugCoordinator]):
         on_since = self.coordinator.on_since(plug.id)
         return {"on_since": on_since.isoformat() if on_since else None}
 
-    @property
-    def available(self) -> bool:
-        return super().available and self.plug is not None
+
+class BamBuddyPlugPowerEntity(BamBuddyPlugMainEntity):
+    """The plug's power, on or off: its switch, or its state where it may not
+    be switched from here. Named as its device, the plug."""
+
+    _attr_name = None
+    _attr_translation_key = "plug"
+
+    def __init__(self, coordinator: BamBuddyPlugCoordinator, plug: Plug) -> None:
+        super().__init__(coordinator, plug, "power")
 
     @property
-    def device_info(self) -> DeviceInfo:
-        """Read when the entity is added: the plug as BamBuddy lists it then."""
-        coordinator = self.coordinator
-        entry_id = coordinator.config_entry.entry_id
-        plug = self.plug or Plug({"id": self.plug_id, "printer_id": self._printer_id})
-        printer = coordinator.printers.get(plug.printer_id or -1)
-        return plug_device_info(
-            self.hass,
-            entry_id,
-            device_identifier(entry_id, self._identity),
-            coordinator.device_name(plug),
-            plug.model,
-            printer.identifier if printer else None,
-        )
+    def is_on(self) -> bool | None:
+        return self.plug.state if self.plug else None
+
+
+class BamBuddyAutoOffPart(BamBuddyPlugEntity):
+    """A part of a plug's switch-off after the print, known by its printer."""
+
+    def __init__(self, coordinator: BamBuddyPlugCoordinator, plug: Plug, key: str, auto_off: AutoOff) -> None:
+        super().__init__(coordinator, plug, key)
+        self.auto_off = auto_off
+        key_by_printer(self, auto_off.printer, key)
+
+    def _follow_auto_off(self) -> None:
+        """Shows the switch-off's changes; from `async_added_to_hass`."""
+        self.async_on_remove(self.auto_off.async_add_listener(self.async_write_ha_state))
 
 
 def async_add_plug_entities(
@@ -516,9 +571,7 @@ async def async_switch_plug(coordinator: BamBuddyPlugCoordinator, plug: Plug, on
     except (BamBuddyAuthError, BamBuddyPermissionError) as err:
         raise await coordinator.config_entry.runtime_data.key.async_refused(err) from err
     except BamBuddyConnectionError as err:
-        if timed_out(err):
-            raise HomeAssistantError(translation_domain=DOMAIN, translation_key="no_answer") from err
-        raise HomeAssistantError(translation_domain=DOMAIN, translation_key="cannot_connect") from err
+        raise connection_error(err) from err
     except BamBuddyApiError as err:
         if err.status == 503:
             # BamBuddy reached, the plug not.
@@ -532,7 +585,7 @@ async def async_switch_plug(coordinator: BamBuddyPlugCoordinator, plug: Plug, on
         ) from err
     coordinator.async_switched(plug.id, on)
     coordinator.async_refresh_soon()
-    printer = coordinator.printers.get(plug.printer_id or -1)
+    printer = coordinator.printer_of(plug)
     if printer is not None and plug.powers_printer:
         printer.async_refresh_soon()
 

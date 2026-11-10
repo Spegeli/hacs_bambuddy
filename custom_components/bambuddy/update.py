@@ -16,7 +16,7 @@ from .entity import BamBuddyUpdatesEntity, suggest_entity_id, suggest_instance_e
 PARALLEL_UPDATES = 0
 
 
-class _BamBuddyUpdate(BamBuddyUpdatesEntity, UpdateEntity):
+class _BamBuddyUpdateEntity(BamBuddyUpdatesEntity, UpdateEntity):
     """What both checks report the same way: the latest version and its notes."""
 
     _attr_supported_features = UpdateEntityFeature.RELEASE_NOTES
@@ -30,7 +30,7 @@ class _BamBuddyUpdate(BamBuddyUpdatesEntity, UpdateEntity):
 
     @property
     def _check(self) -> dict[str, Any]:
-        raise NotImplementedError
+        return (self.coordinator.data or {}).get(self._source) or {}
 
     @property
     def latest_version(self) -> str | None:
@@ -46,12 +46,12 @@ async def async_setup_entry(
     hass: HomeAssistant, entry: BamBuddyConfigEntry, async_add_entities: AddConfigEntryEntitiesCallback
 ) -> None:
     runtime = entry.runtime_data
-    entities: list[UpdateEntity] = [BamBuddyUpdate(runtime.updates)]
-    entities.extend(FirmwareUpdate(runtime.updates, printer) for printer in runtime.printers.values())
+    entities: list[UpdateEntity] = [BamBuddyServerUpdate(runtime.updates)]
+    entities.extend(BamBuddyFirmwareUpdate(runtime.updates, printer) for printer in runtime.printers.values())
     async_add_entities(entities)
 
 
-class BamBuddyUpdate(_BamBuddyUpdate):
+class BamBuddyServerUpdate(_BamBuddyUpdateEntity):
     """BamBuddy's own check against its GitHub releases."""
 
     _attr_translation_key = "bambuddy_update"
@@ -65,10 +65,6 @@ class BamBuddyUpdate(_BamBuddyUpdate):
         suggest_instance_entity_id(self, "update")
 
     @property
-    def _check(self) -> dict[str, Any]:
-        return (self.coordinator.data or {}).get("bambuddy") or {}
-
-    @property
     def installed_version(self) -> str | None:
         return self._check.get("current_version")
 
@@ -77,7 +73,7 @@ class BamBuddyUpdate(_BamBuddyUpdate):
         return self._check.get("release_url")
 
 
-class FirmwareUpdate(_BamBuddyUpdate):
+class BamBuddyFirmwareUpdate(_BamBuddyUpdateEntity):
     """A printer's firmware as BamBuddy compares it with Bambu Lab's."""
 
     _attr_translation_key = "firmware"

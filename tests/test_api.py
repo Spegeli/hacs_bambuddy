@@ -2,15 +2,12 @@
 what becomes of BamBuddy's answer."""
 from __future__ import annotations
 
-import asyncio
 import logging
-from typing import Any
+from typing import Any, cast
 from unittest.mock import AsyncMock, patch
 
 import aiohttp
-from multidict import CIMultiDict, CIMultiDictProxy
 import pytest
-import yarl
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from pytest_homeassistant_custom_component.test_util.aiohttp import AiohttpClientMocker
@@ -27,7 +24,8 @@ from custom_components.bambuddy.api import (
     normalise_url,
 )
 
-from tests.conftest import API_KEY, STREAM_TOKEN, URL, load_fixture
+from tests.conftest import API_KEY, SHORT_KEYS, STREAM_TOKEN, URL, load_fixture
+from tests.helpers import handshake_refusal, never_answers
 
 API = f"{URL}/api/v1"
 
@@ -107,6 +105,8 @@ async def test_the_version_is_read_without_the_key(
         ("get_status", (1,), "GET", f"{API}/printers/1/status"),
         ("get_maintenance", (1,), "GET", f"{API}/maintenance/printers/1"),
         ("get_diagnostic", (1,), "GET", f"{API}/printers/1/diagnostic"),
+        ("get_spoolman_status", (), "GET", f"{API}/spoolman/status"),
+        ("get_plug_status", (3,), "GET", f"{API}/smart-plugs/3/status"),
     ],
 )
 async def test_each_read_reaches_its_path_with_the_key(
@@ -118,7 +118,7 @@ async def test_each_read_reaches_its_path_with_the_key(
     url: str,
 ) -> None:
     """BamBuddy's routes, and the key its scoped API keys are checked by."""
-    answer: Any = [{"answer": call}] if call == "get_printers" else {"answer": call}
+    answer: Any = [{"id": 1, "answer": call}] if call == "get_printers" else {"answer": call}
     aioclient_mock.request(verb, url, json=answer)
 
     assert await getattr(_client(hass), call)(*args) == answer
@@ -443,19 +443,20 @@ async def test_switching_a_detector(hass: HomeAssistant, aioclient_mock: Aiohttp
     assert (method, str(called)) == ("POST", url)
 
 
-async def test_the_print_hours(hass: HomeAssistant, aioclient_mock: AiohttpClientMocker) -> None:
-    """BamBuddy's runtime counter, Read Status suffices."""
-    aioclient_mock.get(f"{API}/printers/1/runtime-debug", json={"total_hours": 559.5})
-
-    assert await _client(hass).get_runtime(1) == {"total_hours": 559.5}
-
-
 async def test_ams_labels(hass: HomeAssistant, aioclient_mock: AiohttpClientMocker) -> None:
     """BamBuddy's names of the AMS units, by place: blank names and keys
     that are no place left out."""
-    aioclient_mock.get(f"{API}/printers/1/ams-labels", json={"0": "Silk", "1": "  ", "x": "y", "2": None, "128": "Dryer "})
+    aioclient_mock.get(f"{API}/printers/1/ams-labels", json={"0": "Silk", "1": "  ", "x": "y", "2": None, "128": "Dryer ", "²": "Super"})
 
     assert await _client(hass).get_ams_labels(1) == {0: "Silk", 128: "Dryer"}
+
+
+async def test_the_printer_list_takes_only_printers(hass: HomeAssistant, aioclient_mock: AiohttpClientMocker) -> None:
+    """An entry of BamBuddy's list that is no printer with a number is left
+    out, as in the plug list: the other printers set up."""
+    aioclient_mock.get(f"{API}/printers/", json=[{"id": 1, "name": "Workshop"}, "x", {"name": "no id"}, {"id": True}, {"id": "2"}, None])
+
+    assert await _client(hass).get_printers() == [{"id": 1, "name": "Workshop"}]
 
 
 async def test_ams_labels_that_are_no_object(hass: HomeAssistant, aioclient_mock: AiohttpClientMocker) -> None:
@@ -464,39 +465,6 @@ async def test_ams_labels_that_are_no_object(hass: HomeAssistant, aioclient_mock
 
     with pytest.raises(BamBuddyApiError):
         await _client(hass).get_ams_labels(1)
-
-
-async def test_the_system_information_may_take_long(hass: HomeAssistant) -> None:
-    """BamBuddy walks through its whole archive for it."""
-    client = _client(hass)
-    with patch.object(client, "_request", AsyncMock(return_value={})) as request:
-        await client.get_system_info()
-
-    assert request.await_args is not None
-    assert request.await_args.kwargs["timeout"].total == 30
-
-
-async def test_the_statistics_may_take_long_but_briefly_at_setup(hass: HomeAssistant) -> None:
-    """BamBuddy asks every smart plug for its energy, one after another."""
-    client = _client(hass)
-    with patch.object(client, "_request", AsyncMock(return_value={})) as request:
-        await client.get_statistics()
-        await client.get_statistics(patient=False)
-
-    timeouts = [call.kwargs["timeout"] for call in request.await_args_list]
-    assert [(timeout.total, timeout.connect) for timeout in timeouts] == [(30, 5), (10, 5)]
-
-
-async def test_a_connection_gets_five_seconds(hass: HomeAssistant) -> None:
-    """A connect that hangs is told apart from a slow answer."""
-    client = _client(hass)
-    with patch.object(client, "_request", AsyncMock(return_value={})) as request:
-        await client.get_status(1)
-        await client.get_system_info(patient=False)
-
-    assert request.await_args_list[0].kwargs["timeout"].connect == 5
-    assert request.await_args_list[1].kwargs["timeout"].total == 10
-    assert request.await_args_list[1].kwargs["timeout"].connect == 5
 
 
 @pytest.mark.parametrize("status", [502, 503, 504])
@@ -529,17 +497,6 @@ async def test_marking_a_maintenance_task_done(hass: HomeAssistant, aioclient_mo
     assert headers["X-API-Key"] == API_KEY
 
 
-async def test_the_connection_check_may_take_half_a_minute(hass: HomeAssistant) -> None:
-    """It probes the printer's ports and waits up to ten seconds for a
-    report: some 26 seconds at worst."""
-    client = _client(hass)
-    with patch.object(client, "_request", AsyncMock(return_value={})) as request:
-        await client.get_diagnostic(1)
-
-    assert request.await_args is not None
-    assert request.await_args.kwargs["timeout"].total == 40
-
-
 async def test_the_smart_plugs_are_read(hass: HomeAssistant, aioclient_mock: AiohttpClientMocker) -> None:
     """BamBuddy's plug list comes from its database: one cheap read."""
     aioclient_mock.get(f"{API}/smart-plugs/", json=[{"id": 3, "name": "X1C plug", "printer_id": 1}])
@@ -547,23 +504,17 @@ async def test_the_smart_plugs_are_read(hass: HomeAssistant, aioclient_mock: Aio
     assert await _client(hass).get_smart_plugs() == [{"id": 3, "name": "X1C plug", "printer_id": 1}]
 
 
+async def test_an_entry_that_is_no_plug_with_a_number_is_left_out(hass: HomeAssistant, aioclient_mock: AiohttpClientMocker) -> None:
+    aioclient_mock.get(f"{API}/smart-plugs/", json=[{"id": 3}, "odd", {"name": "no id"}, {"id": "4"}])
+
+    assert await _client(hass).get_smart_plugs() == [{"id": 3}]
+
+
 async def test_a_plug_list_that_is_no_list_is_refused(hass: HomeAssistant, aioclient_mock: AiohttpClientMocker) -> None:
     aioclient_mock.get(f"{API}/smart-plugs/", json={"detail": "odd"})
 
     with pytest.raises(BamBuddyApiError):
         await _client(hass).get_smart_plugs()
-
-
-async def test_a_plugs_status_may_take_half_a_minute(hass: HomeAssistant) -> None:
-    """BamBuddy asks the plug itself: a Home Assistant plug with energy
-    sensors takes several calls of up to ten seconds each."""
-    client = _client(hass)
-    with patch.object(client, "_request", AsyncMock(return_value={"state": "ON", "reachable": True})) as request:
-        assert await client.get_plug_status(3) == {"state": "ON", "reachable": True}
-
-    assert request.await_args is not None
-    assert request.await_args.args == ("GET", "/smart-plugs/3/status")
-    assert request.await_args.kwargs["timeout"].total == 30
 
 
 @pytest.mark.parametrize(("on", "action"), [(True, "on"), (False, "off")])
@@ -577,6 +528,59 @@ async def test_a_plug_is_switched(hass: HomeAssistant, aioclient_mock: AiohttpCl
     [(method, called, body, headers)] = aioclient_mock.mock_calls
     assert (method, str(called), body) == ("POST", f"{API}/smart-plugs/3/control", {"action": action})
     assert headers["X-API-Key"] == API_KEY
+
+
+@pytest.mark.parametrize(("call", "url"), [("get_spools", "inventory/spools"), ("get_spool_assignments", "inventory/assignments")])
+async def test_the_inventory_lists_reach_their_paths(
+    hass: HomeAssistant, aioclient_mock: AiohttpClientMocker, call: str, url: str
+) -> None:
+    """BamBuddy's spools (archived ones left out) and their slots, for every printer at once."""
+    aioclient_mock.get(f"{API}/{url}", json=[{"id": 1}])
+
+    assert await getattr(_client(hass), call)() == [{"id": 1}]
+    [(method, called, _, headers)] = aioclient_mock.mock_calls
+    assert (method, str(called)) == ("GET", f"{API}/{url}")
+    assert headers["X-API-Key"] == API_KEY
+
+
+@pytest.mark.parametrize(("move", "body"), [
+    (False, {"spool_id": 7, "printer_id": 2, "ams_id": 0, "tray_id": 1}),
+    (True, {"spool_id": 7, "printer_id": 2, "ams_id": 0, "tray_id": 1, "move": True}),
+])
+async def test_a_spool_is_assigned(
+    hass: HomeAssistant, aioclient_mock: AiohttpClientMocker, move: bool, body: dict[str, Any]
+) -> None:
+    """The four numbers; "move" only when moving (1.2.5.7 ignores it, the newer line takes the
+    spool out of its other slot)."""
+    aioclient_mock.post(f"{API}/inventory/assignments", json={"id": 3, "configured": True})
+
+    assert await _client(hass).assign_spool(7, 2, 0, 1, move=move) == {"id": 3, "configured": True}
+    [(method, called, sent, _)] = aioclient_mock.mock_calls
+    assert (method, str(called), sent) == ("POST", f"{API}/inventory/assignments", body)
+
+
+async def test_a_spool_assignment_is_removed(hass: HomeAssistant, aioclient_mock: AiohttpClientMocker) -> None:
+    """The slot by its printer, unit and place; nothing goes to the printer."""
+    aioclient_mock.delete(f"{API}/inventory/assignments/2/255/1", json={"status": "deleted"})
+
+    assert await _client(hass).unassign_spool(2, 255, 1) is None
+    [(method, called, _, _)] = aioclient_mock.mock_calls
+    assert (method, str(called)) == ("DELETE", f"{API}/inventory/assignments/2/255/1")
+
+
+@pytest.mark.parametrize(("fixture", "can_assign"), [("auth_me_control.json", True), ("auth_me_read.json", False)])
+async def test_check_key_keeps_the_optional_permissions(
+    hass: HomeAssistant, aioclient_mock: AiohttpClientMocker, fixture: str, can_assign: bool
+) -> None:
+    """Manage Inventory is no scope the integration needs: it changes neither what is
+    missing nor the marks, it only says whether spools may be assigned."""
+    aioclient_mock.get(f"{API}/auth/me", json=load_fixture(fixture))
+
+    scopes = await _client(hass).check_key()
+
+    assert scopes.can_assign_spools is can_assign
+    assert "inventory:read" in scopes.optional
+    assert set(scopes) == {"read_status", "control_printer", "manage_maintenance"}
 
 
 async def test_a_plug_that_does_not_answer_is_an_api_error(hass: HomeAssistant, aioclient_mock: AiohttpClientMocker) -> None:
@@ -630,56 +634,51 @@ async def test_no_snapshot_token_in_the_log(
     assert STREAM_TOKEN not in caplog.text
 
 
-async def test_the_update_checks_may_take_a_minute(hass: HomeAssistant) -> None:
-    """BamBuddy asks GitHub (10 s of its own) and, per printer model, Bambu Lab's pages live."""
-    client = _client(hass)
-    with patch.object(client, "_request", AsyncMock(return_value={})) as request:
-        await client.get_update_check()
-        await client.get_firmware_updates()
-
-    assert [(call.kwargs["timeout"].total, call.kwargs["timeout"].connect) for call in request.await_args_list] == [(60, 5), (60, 5)]
-
-
 @pytest.mark.parametrize(
-    ("call", "args", "total"),
+    ("call", "args", "kwargs", "total"),
     [
+        # A connect that hangs is told apart from a slow answer: 5 s for every connect.
+        ("get_status", (1,), {}, 10),
+        # BamBuddy walks through its whole archive for it; briefly at setup.
+        ("get_system_info", (), {}, 30),
+        ("get_system_info", (), {"patient": False}, 10),
+        # BamBuddy asks every smart plug for its energy, one after another; briefly at setup.
+        ("get_statistics", (), {}, 30),
+        ("get_statistics", (), {"patient": False}, 10),
+        # It probes the printer's ports and waits up to ten seconds for a report: some 26 seconds at worst.
+        ("get_diagnostic", (1,), {}, 40),
+        # BamBuddy asks GitHub (10 s of its own) and, per printer model, Bambu Lab's pages live.
+        ("get_update_check", (), {}, 60),
+        ("get_firmware_updates", (), {}, 60),
         # The printer is asked live: up to about 16 seconds.
-        ("get_kprofiles", (1, "0.4"), 25),
+        ("get_kprofiles", (1, "0.4"), {}, 25),
         # BamBuddy waits up to 15 seconds for a fresh frame.
-        ("get_snapshot", (1, STREAM_TOKEN), 20),
-        ("get_print_objects", (1,), 60),
-        ("get_cover", (1,), 30),
-        ("control_plug", (3, False), 30),
-        ("get_plug_status", (3,), 30),
+        ("get_snapshot", (1, STREAM_TOKEN), {}, 20),
+        ("get_print_objects", (1,), {}, 60),
+        ("get_cover", (1,), {}, 30),
+        ("control_plug", (3, False), {}, 30),
+        # BamBuddy asks the plug itself: a Home Assistant plug with energy sensors takes several
+        # calls of up to ten seconds each. At Home Assistant's start they may not hold the setup up.
+        ("get_plug_status", (3,), {}, 30),
+        ("get_plug_status", (3,), {"patient": False}, 5),
     ],
 )
-async def test_the_slow_answers_get_their_time(hass: HomeAssistant, call: str, args: tuple[Any, ...], total: int) -> None:
+async def test_the_slow_answers_get_their_time(
+    hass: HomeAssistant, call: str, args: tuple[Any, ...], kwargs: dict[str, Any], total: int
+) -> None:
     client = _client(hass)
     with patch.object(client, "_request", AsyncMock(return_value={})) as request:
-        await getattr(client, call)(*args)
+        await getattr(client, call)(*args, **kwargs)
     timeout = request.await_args.kwargs["timeout"]
     assert (timeout.total, timeout.connect) == (total, 5)
-
-
-async def test_a_plug_at_the_start_gets_five_seconds(hass: HomeAssistant) -> None:
-    """At Home Assistant's start the plugs' first reads may not hold the setup up."""
-    client = _client(hass)
-    with patch.object(client, "_request", AsyncMock(return_value={})) as request:
-        await client.get_plug_status(3, patient=False)
-    assert request.await_args.kwargs["timeout"].total == 5
 
 
 @pytest.mark.parametrize(
     ("fixture", "marks"),
     [
         # BamBuddy's default toggles and Control Printer: the extra toggles do no harm.
-        ("auth_me_control.json", {"read_status": "Y", "control_printer": "Y", "manage_maintenance": "Y"}),
-        # BamBuddy's create dialog leaves Control Printer off.
-        ("auth_me_default.json", {"read_status": "Y", "control_printer": "N", "manage_maintenance": "Y"}),
-        ("auth_me_read.json", {"read_status": "Y", "control_printer": "N", "manage_maintenance": "N"}),
-        # Its owner may only read: BamBuddy narrows the key to it.
-        ("auth_me_viewer.json", {"read_status": "Y", "control_printer": "N", "manage_maintenance": "N"}),
-        ("auth_me_other.json", {"read_status": "N", "control_printer": "N", "manage_maintenance": "N"}),
+        ("auth_me_control.json", {"read_status": "\u2713", "control_printer": "\u2713", "manage_maintenance": "\u2713"}),
+        *SHORT_KEYS,
     ],
 )
 async def test_check_key_marks_each_toggle(
@@ -691,9 +690,8 @@ async def test_check_key_marks_each_toggle(
 
     scopes = await _client(hass).check_key()
 
-    symbol = {"Y": "✓", "N": "✗"}
-    assert scopes.marks() == {key: symbol[value] for key, value in marks.items()}
-    assert scopes.missing == [key for key, value in marks.items() if value == "N"]
+    assert scopes.marks() == marks
+    assert scopes.missing == [key for key, value in marks.items() if value == "\u2717"]
     assert aioclient_mock.mock_calls[-1][3]["X-API-Key"] == API_KEY
 
 
@@ -738,11 +736,9 @@ class _Session:
         self.closed = closed
 
 
-def _refusal(status: int) -> aiohttp.WSServerHandshakeError:
-    """A refused handshake as aiohttp raises it: its text names the URL, token included."""
-    url = yarl.URL(f"{API}/ws?token=secret-ws-token")
-    info = aiohttp.RequestInfo(url, "GET", CIMultiDictProxy(CIMultiDict()), url)
-    return aiohttp.WSServerHandshakeError(info, (), status=status, message="Invalid response status")
+def _socket_client(ws_connect: AsyncMock, *, closed: bool = False, url: str = URL) -> BamBuddyClient:
+    """A client whose session only opens sockets."""
+    return BamBuddyClient(url, API_KEY, cast(aiohttp.ClientSession, _Session(ws_connect, closed=closed)))
 
 
 async def test_the_live_token(hass: HomeAssistant, aioclient_mock: AiohttpClientMocker) -> None:
@@ -778,7 +774,7 @@ async def test_the_socket_opens_with_the_token(url: str) -> None:
     socket = object()
     ws_connect = AsyncMock(return_value=socket)
 
-    assert await BamBuddyClient(url, API_KEY, _Session(ws_connect)).open_socket("abc") is socket  # type: ignore[arg-type]
+    assert await _socket_client(ws_connect, url=url).open_socket("abc") is socket
 
     ws_connect.assert_awaited_once()
     assert ws_connect.await_args is not None
@@ -797,10 +793,10 @@ async def test_the_socket_opens_with_the_token(url: str) -> None:
 )
 async def test_a_refused_socket_says_why_without_its_address(status: int, error: type[BamBuddyApiError]) -> None:
     """aiohttp's refusal names the URL -- the token travels there."""
-    ws_connect = AsyncMock(side_effect=_refusal(status))
+    ws_connect = AsyncMock(side_effect=handshake_refusal(f"{API}/ws?token=secret-ws-token", status))
 
     with pytest.raises(error) as raised:
-        await BamBuddyClient(URL, API_KEY, _Session(ws_connect)).open_socket("secret-ws-token")  # type: ignore[arg-type]
+        await _socket_client(ws_connect).open_socket("secret-ws-token")
 
     assert raised.value.status == status
     assert str(raised.value) == f"HTTP {status}"
@@ -814,7 +810,7 @@ async def test_an_unreachable_socket(failure: BaseException) -> None:
     ws_connect = AsyncMock(side_effect=failure)
 
     with pytest.raises(BamBuddyConnectionError) as raised:
-        await BamBuddyClient(URL, API_KEY, _Session(ws_connect)).open_socket("secret-ws-token")  # type: ignore[arg-type]
+        await _socket_client(ws_connect).open_socket("secret-ws-token")
 
     assert str(raised.value) == f"WebSocket: {type(failure).__name__}"
     assert raised.value.__cause__ is None
@@ -825,16 +821,12 @@ async def test_no_socket_once_the_session_closed() -> None:
     ws_connect = AsyncMock()
 
     with pytest.raises(BamBuddyConnectionError):
-        await BamBuddyClient(URL, API_KEY, _Session(ws_connect, closed=True)).open_socket("abc")  # type: ignore[arg-type]
+        await _socket_client(ws_connect, closed=True).open_socket("abc")
 
     ws_connect.assert_not_awaited()
 
 
 async def test_a_handshake_that_hangs_gives_up() -> None:
     """aiohttp's own limit for the upgrade is the session's five minutes."""
-
-    async def hang(*_args: Any, **_kwargs: Any) -> None:
-        await asyncio.Event().wait()
-
     with patch("custom_components.bambuddy.api._WS_HANDSHAKE_TIMEOUT", 0.01), pytest.raises(BamBuddyConnectionError):
-        await BamBuddyClient(URL, API_KEY, _Session(AsyncMock(side_effect=hang))).open_socket("abc")  # type: ignore[arg-type]
+        await _socket_client(AsyncMock(side_effect=never_answers)).open_socket("abc")

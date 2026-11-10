@@ -505,3 +505,37 @@ mark_maintenance_done:
           min: 1
           max: 1000000
           mode: box
+assign_spool:
+  fields:
+    entity_id:
+      required: true
+      selector:
+        entity:
+          filter:
+            integration: bambuddy
+            domain: sensor
+    spool_id:
+      required: true
+      selector:
+        number:
+          min: 1
+          max: 1000000
+          mode: box
+unassign_spool:
+  fields:
+    entity_id:
+      required: true
+      selector:
+        entity:
+          filter:
+            integration: bambuddy
+            domain: sensor
+get_spools:
+  fields:
+    entity_id:
+      required: true
+      selector:
+        entity:
+          filter:
+            integration: bambuddy
+            domain: sensor

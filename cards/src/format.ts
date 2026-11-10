@@ -8,6 +8,12 @@ const MISSING = new Set(["unavailable", "unknown"]);
 export const stateOf = (hass: Hass, entityId: string | undefined): HassEntityState | undefined =>
   entityId ? hass.states[entityId] : undefined;
 
+/** An entity's number attribute, else undefined. */
+export function numberAttribute(hass: Hass, entityId: string | undefined, name: string): number | undefined {
+  const value = stateOf(hass, entityId)?.attributes[name];
+  return typeof value === "number" ? value : undefined;
+}
+
 /** Whether the entity has a state to show. */
 export function hasValue(hass: Hass, entityId: string | undefined): boolean {
   const state = stateOf(hass, entityId);
@@ -43,16 +49,14 @@ export function temperatureUnit(hass: Hass, entityId: string | undefined): strin
 export const fromCelsius = (celsius: number, unit: string): number =>
   Math.round(unit === "°F" ? celsius * 1.8 + 32 : unit === "K" ? celsius + 273.15 : celsius);
 
-/** A temperature entity's figure in °C: a heater's sensor and its number
- * may show different units (Home Assistant keeps a registered sensor in its
- * unit when the unit system changes). */
-export const toCelsius = (value: number, unit: string): number => (unit === "°F" ? (value - 32) / 1.8 : unit === "K" ? value - 273.15 : value);
-
 /** The lowest value a heater's target takes: off (0 °C, 32 °F). */
 export function targetFloor(hass: Hass, entityId: string | undefined): number {
   const min = stateOf(hass, entityId)?.attributes["min"];
   return typeof min === "number" ? min : 0;
 }
+
+/** Grams: "886\u00a0g". */
+export const formatGrams = (hass: Hass, grams: number): string => `${formatNumber(hass, grams)}\u00a0g`;
 
 /** A value that is a text with something in it, else undefined. */
 export const textOrUndefined = (value: unknown): string | undefined => (typeof value === "string" && value ? value : undefined);
@@ -119,6 +123,9 @@ export const formatPower = (hass: Hass, watts: number): string =>
 
 /** Energy in kWh, to the watt hour a plug reports it. */
 export const formatEnergy = (hass: Hass, kwh: number): string => `${formatNumber(hass, kwh, 2)}\u00a0kWh`;
+
+/** A duration that never breaks across lines: "2\u00a0h\u00a015\u00a0min". */
+export const formatDurationKept = (hass: Hass, minutes: number): string => formatDuration(hass, minutes).replace(/ /g, "\u00a0");
 
 /** Minutes as "42 min", "2 h", "1 h 23 min", "1 d 4 h". */
 export function formatDuration(hass: Hass, minutes: number): string {

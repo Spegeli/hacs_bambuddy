@@ -4,13 +4,15 @@ import { changedConfig, configForm, DEFAULTS, editorData, settingsOf, startViewN
 import { de } from "../src/translations/de";
 import { en } from "../src/translations/en";
 import type { HeaderChip } from "../src/types";
-import { makeHass } from "./fixtures";
+import { makeHass, TYPE } from "./fixtures";
 
 afterEach(() => {
   document.body.innerHTML = "";
 });
 
-const TYPE = "custom:bambuddy-printer-card";
+/** The names of a form's fields, the groups' fields included. */
+const flat = (fields: readonly Record<string, unknown>[]): string[] =>
+  fields.flatMap((field) => (Array.isArray(field["schema"]) ? flat(field["schema"] as Record<string, unknown>[]) : [field["name"] as string]));
 
 describe("the configuration check", () => {
   it("accepts every option the card documents", () => {
@@ -82,6 +84,7 @@ describe("the settings", () => {
       filamentTab: true,
       amsFolding: "auto",
       externalSpool: true,
+      assignScanned: false,
       showAutoOff: true,
       compactChips: false,
     });
@@ -96,7 +99,6 @@ describe("the settings", () => {
     expect(settings.readOnly).toBe(true);
     expect(settings.amsFolding).toBe("open");
   });
-
 });
 
 describe("what the editor shows and writes", () => {
@@ -114,6 +116,7 @@ describe("what the editor shows and writes", () => {
       show_filament_tab: true,
       ams_folding: "auto",
       show_external_spool: true,
+      assign_scanned_spool: false,
       show_auto_off: true,
       compact_chips: false,
     });
@@ -158,8 +161,6 @@ describe("what the editor shows and writes", () => {
   });
 
   it("fills in a default for every field of the form", () => {
-    const flat = (fields: readonly Record<string, unknown>[]): string[] =>
-      fields.flatMap((field) => (Array.isArray(field["schema"]) ? flat(field["schema"] as Record<string, unknown>[]) : [field["name"] as string]));
     const fields = flat(configForm().schema).filter((name) => name !== "printer");
     // An option the form shows without a default would show an empty field.
     expect(Object.keys(editorData({ type: TYPE })).filter((name) => name !== "type").sort()).toEqual([...fields].sort());
@@ -208,7 +209,7 @@ describe("the visual editor", () => {
     expect(names(1)).toEqual(["start_view", "camera", "header_chips", "compact_chips", "read_only"]);
     expect(names(2)).toEqual(["status_blocks", "show_auto_off"]);
     expect(names(3)).toEqual(["show_control_tab", "control_sections"]);
-    expect(names(4)).toEqual(["show_filament_tab", "ams_folding", "show_external_spool"]);
+    expect(names(4)).toEqual(["show_filament_tab", "ams_folding", "show_external_spool", "assign_scanned_spool"]);
   });
 
   it("lets the blocks, the chips and the control sections be ordered by dragging", () => {
@@ -318,7 +319,7 @@ describe("the visual editor", () => {
     expect(form.computeHelper({ name: "start_view" })).toBeUndefined();
     expect(form.computeLabel({ name: "header_chips" })).toBe("Add chip");
     expect(form.computeHelper({ name: "header_chips" })).toBe(
-      "The chips below the name. Drag a chip where you want it; × hides it. Door, SD card / USB drive and drying appear only while the door is open, the storage is missing or an AMS dries; Power only with a smart plug. An HMS error always shows.",
+      "The chips below the name. Drag a chip where you want it; × hides it. Door, SD card / USB drive and drying appear only while the door is open, the storage is missing or an AMS dries; Power only with a smart plug. An HMS message always shows.",
     );
     expect(form.computeHelper({ name: "control_sections" })).toBe("The sections of the “Control” tab. Drag a section where you want it; × hides it.");
     expect(form.computeHelper({ name: "read_only" })).toBe(
@@ -336,7 +337,7 @@ describe("the visual editor", () => {
     expect(form.computeLabel({ name: "header_chips" })).toBe("Chip hinzufügen");
     expect(form.computeLabel({ name: "read_only" })).toBe("Steuerelemente ausblenden");
     expect(form.computeHelper({ name: "header_chips" })).toBe(
-      "Die Chips unter dem Namen. Ziehe einen Chip an die gewünschte Stelle; × blendet ihn aus. Tür, SD-Karte / USB-Stick und Trocknen erscheinen nur, wenn die Tür offen ist, der Speicher fehlt oder ein AMS trocknet; Strom nur mit einer Steckdose. Eine HMS-Fehlermeldung zeigt die Karte immer.",
+      "Die Chips unter dem Namen. Ziehe einen Chip an die gewünschte Stelle; × blendet ihn aus. Tür, SD-Karte / USB-Stick und Trocknen erscheinen nur, wenn die Tür offen ist, der Speicher fehlt oder ein AMS trocknet; Strom nur mit einer Steckdose. Eine HMS-Meldung zeigt die Karte immer.",
     );
     expect(form.computeHelper({ name: "control_sections" })).toBe("Die Bereiche im Tab „Steuerung“. Ziehe einen Bereich an die gewünschte Stelle; × blendet ihn aus.");
     expect(form.computeHelper({ name: "read_only" })).toBe(
@@ -348,7 +349,7 @@ describe("the visual editor", () => {
     // Each toggle's text says what it does.
     expect(form.computeHelper({ name: "show_control_tab" })).toBe("Blendet den Tab mit Heizen und Lüften, Druckoptionen, Achsen und Extruder ein oder aus.");
     expect(form.computeHelper({ name: "show_filament_tab" })).toBe(
-      "Blendet den Tab mit den AMS-Einheiten und der externen Spule ein oder aus – zum Laden, Entladen, Festlegen und Trocknen des Filaments.",
+      "Blendet den Tab mit den AMS-Einheiten und der externen Spule ein oder aus – zum Laden, Entladen, Einstellen und Trocknen des Filaments.",
     );
     expect(form.computeLabel({ name: "show_auto_off" })).toBe("Zeile „Nach dem Druck ausschalten“");
     expect(form.computeHelper({ name: "show_auto_off" })).toBe(
@@ -367,7 +368,7 @@ describe("the visual editor", () => {
     // Given a hass, its language.
     expect(configForm(makeHass({ language: "en" })).computeLabel({ name: "camera" })).toBe("Live view");
     expect(configForm(makeHass({ language: "en" })).computeHelper({ name: "camera" })).toBe(
-      "On tap: a tap on the camera symbol on the picture starts it. Always: it runs while the dashboard is open, using bandwidth all the time. Never: only the job's picture.",
+      "On tap: a tap on the camera symbol on the picture starts it. Always: it runs while the dashboard is open, using bandwidth all the time. Never: only the job's cover image.",
     );
   });
 });
@@ -386,7 +387,14 @@ describe("every field of the editor", () => {
     show_filament_tab: ["editor_filament_tab", "editor_filament_tab_help"],
     ams_folding: ["editor_ams_folding", "editor_ams_folding_help"],
     show_auto_off: ["editor_show_auto_off", "editor_show_auto_off_help"],
+    compact_chips: ["editor_compact_chips", "editor_compact_chips_help"],
+    show_external_spool: ["editor_external_spool", "editor_external_spool_help"],
+    assign_scanned_spool: ["editor_assign_scanned", "editor_assign_scanned_help"],
   } as const;
+
+  it("names every field of the form", () => {
+    expect(Object.keys(FIELDS).sort()).toEqual(flat(configForm().schema).sort());
+  });
 
   it("has its own label and help, in English", () => {
     const form = configForm();
@@ -394,7 +402,7 @@ describe("every field of the editor", () => {
       expect(form.computeLabel({ name }), name).toBe(en[label]);
       expect(form.computeHelper({ name }), name).toBe(help ? en[help] : undefined);
     }
-    expect(new Set(Object.values(FIELDS).map(([label]) => en[label])).size).toBe(10);
+    expect(new Set(Object.values(FIELDS).map(([label]) => en[label])).size).toBe(Object.keys(FIELDS).length - 1);
   });
 
   it("has its German label", () => {
@@ -406,18 +414,23 @@ describe("every field of the editor", () => {
   });
 });
 
+describe("the editor's switches", () => {
+  it.each([
+    ["compact_chips", "compactChips", false],
+    ["show_external_spool", "externalSpool", true],
+    ["assign_scanned_spool", "assignScanned", false],
+  ] as const)("%s: its default, a yes or no only, and written only when changed", (option, setting, fallback) => {
+    expect(settingsOf(validateConfig({ type: TYPE, printer: "dev-x1c" }))[setting]).toBe(fallback);
+    expect(settingsOf(validateConfig({ type: TYPE, printer: "dev-x1c", [option]: !fallback }))[setting]).toBe(!fallback);
+    expect(() => validateConfig({ type: TYPE, printer: "dev-x1c", [option]: "yes" })).toThrow(new RegExp(option));
+    const shown = editorData({ type: TYPE, printer: "dev-x1c" });
+    expect(shown[option]).toBe(fallback);
+    expect(changedConfig({ type: TYPE }, shown, { ...shown, [option]: !fallback })).toEqual({ type: TYPE, [option]: !fallback });
+    expect(changedConfig({ type: TYPE, [option]: !fallback }, { ...shown, [option]: !fallback }, shown)).toEqual({ type: TYPE });
+  });
+});
 
 describe("the external spool's switch", () => {
-  it("accepts show_external_spool and writes it only when off", () => {
-    expect(settingsOf(validateConfig({ type: TYPE, printer: "dev-x1c" })).externalSpool).toBe(true);
-    expect(settingsOf(validateConfig({ type: TYPE, printer: "dev-x1c", show_external_spool: false })).externalSpool).toBe(false);
-    expect(() => validateConfig({ type: TYPE, printer: "dev-x1c", show_external_spool: "no" })).toThrow();
-    const shown = editorData({ type: TYPE, printer: "dev-x1c" });
-    expect(shown["show_external_spool"]).toBe(true);
-    expect(changedConfig({ type: TYPE }, shown, { ...shown, show_external_spool: false })).toEqual({ type: TYPE, show_external_spool: false });
-    expect(changedConfig({ type: TYPE, show_external_spool: false }, { ...shown, show_external_spool: false }, shown)).toEqual({ type: TYPE });
-  });
-
   it("names the switch and says what it does, in both languages", () => {
     const de = configForm(makeHass({ language: "de" }));
     expect(de.computeLabel({ name: "show_external_spool" })).toBe("Externe Spule anzeigen");
@@ -428,6 +441,21 @@ describe("the external spool's switch", () => {
     expect(en.computeLabel({ name: "show_external_spool" })).toBe("Show external spool");
     expect(en.computeHelper({ name: "show_external_spool" })).toBe(
       "Shows or hides the external spool in the Status and Filament tabs. Hiding it takes effect only on a printer with an AMS; while the printer feeds from the external spool, the card shows it all the same.",
+    );
+  });
+});
+
+describe("the scanned spool's switch", () => {
+  it("names the switch and says what it does, in both languages", () => {
+    const de = configForm(makeHass({ language: "de" }));
+    expect(de.computeLabel({ name: "assign_scanned_spool" })).toBe("Gescannte Spule gleich zuweisen");
+    expect(de.computeHelper({ name: "assign_scanned_spool" })).toBe(
+      "Passt die gescannte Spule, weist die Karte sie gleich zu. Bei einer Sperre, einer Warnung oder einer Spule aus einem anderen Fach wartet der Dialog auf „Zuweisen“.",
+    );
+    const en = configForm(makeHass({ language: "en" }));
+    expect(en.computeLabel({ name: "assign_scanned_spool" })).toBe("Assign a scanned spool at once");
+    expect(en.computeHelper({ name: "assign_scanned_spool" })).toBe(
+      "If the scanned spool fits, the card assigns it at once. Where something locks or warns, or the spool sits in another slot, the dialog waits for Assign.",
     );
   });
 });

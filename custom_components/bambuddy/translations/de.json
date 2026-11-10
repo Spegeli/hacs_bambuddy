@@ -319,7 +319,7 @@
         "name": "Druck fortsetzen"
       },
       "stop": {
-        "name": "Druck stoppen"
+        "name": "Druck abbrechen"
       },
       "plate_cleared": {
         "name": "Druckplatte geräumt"
@@ -530,7 +530,7 @@
           "cooling_heatbed": "Heizbett wird gekühlt",
           "printing_calibration_lines": "Kalibrierlinien werden gedruckt",
           "checking_material": "Material wird geprüft",
-          "calibrating_live_view_camera": "Liveansicht-Kamera wird kalibriert",
+          "calibrating_live_view_camera": "Livebild-Kamera wird kalibriert",
           "waiting_for_heatbed": "Warten auf die Heizbetttemperatur",
           "checking_material_position": "Materialposition wird geprüft",
           "calibrating_cutting_module": "Versatz des Schneidmoduls wird kalibriert",
@@ -758,7 +758,7 @@
         "name": "Auswurfschacht-Überwachung"
       },
       "clumping_detection": {
-        "name": "Erkennung von Düsenklumpen"
+        "name": "Erkennung von Düsenverklumpung"
       },
       "air_printing_detection": {
         "name": "Druck-ins-Leere-Erkennung"
@@ -829,7 +829,7 @@
       "message": "BamBuddy führt unter der Nummer von {printer} jetzt einen anderen Drucker. Die Integration lädt neu, um {printer} über die Seriennummer wiederzufinden."
     },
     "job_running": {
-      "message": "{printer} druckt oder ist pausiert: Das geht erst, wenn der Druck fertig oder gestoppt ist."
+      "message": "{printer} druckt oder ist pausiert: Das geht erst, wenn der Druck fertig oder abgebrochen ist."
     },
     "chamber_heating": {
       "message": "Die Kammer heizt: schalte zuerst die Kammerheizung aus."
@@ -874,7 +874,7 @@
       "message": "Dieses Fach ist leer."
     },
     "ams_ht_load": {
-      "message": "BamBuddy kann kein Filament aus einem AMS HT laden. Lade es direkt am Drucker."
+      "message": "Deine BamBuddy-Version kann kein Filament aus einem AMS HT laden. Das geht erst ab BamBuddy 1.3.0. Lade es bis dahin direkt am Drucker."
     },
     "load_track_switch": {
       "message": "{printer} versorgt seine Düsen über den Filament Track Switch: Zum Laden muss feststehen, welche Düse versorgt wird. Lade das Filament am Drucker oder in BamBuddy."
@@ -889,10 +889,7 @@
       "message": "{printer} druckt gerade. Pausiere den Druck, um das Filament zu wechseln."
     },
     "rfid_spool": {
-      "message": "Der Chip dieser Spule nennt dem Drucker ihr Filament; es lässt sich nicht von Hand festlegen. Hat die Spule keinen Chip? Dann kennt der Drucker vielleicht noch den letzten: Nimm die Spule heraus, bis das Fach leer ist, und lege sie wieder ein."
-    },
-    "slot_in_use": {
-      "message": "{printer} druckt gerade aus diesem Fach. Pausiere den Druck, um sein Filament zu ändern."
+      "message": "Der Chip dieser Spule nennt dem Drucker ihr Filament; es lässt sich nicht von Hand einstellen. Hat die Spule keinen Chip? Dann kennt der Drucker vielleicht noch den letzten: Nimm die Spule heraus, bis das Fach leer ist, und lege sie wieder ein."
     },
     "material_needed": {
       "message": "Für dieses Fach kennt der Drucker noch kein Filament: Wähle eines aus."
@@ -958,7 +955,7 @@
       "message": "{printer} meldet diese AMS-Einheit gerade nicht. Ist sie eingesteckt?"
     },
     "dry_stop_on_screen": {
-      "message": "{printer} beendet das Trocknen nur am eigenen Display."
+      "message": "{printer} stoppt das Trocknen nur am eigenen Display."
     },
     "maintenance_task_unknown": {
       "message": "{printer} hat diese Wartungsaufgabe nicht."
@@ -1004,6 +1001,36 @@
     },
     "hms_answer_not_taken": {
       "message": "{printer} hat die Antwort nicht angenommen. Ist er noch mit BamBuddy verbunden?"
+    },
+    "inventory_not_allowed": {
+      "message": "Der API-Schlüssel darf keine Spulen zuweisen: Ihm fehlt „Bestand verwalten“."
+    },
+    "inventory_not_shown": {
+      "message": "BamBuddys Spuleninventar lässt sich gerade nicht lesen, oder Spoolman verwaltet die Spulen."
+    },
+    "spool_not_found": {
+      "message": "BamBuddy hat keine Spule {spool}."
+    },
+    "spool_archived": {
+      "message": "Diese Spule ist in BamBuddy archiviert."
+    },
+    "spool_not_for_nozzle": {
+      "message": "Die Spule passt nicht zu dieser Düse."
+    },
+    "spool_not_for_ams": {
+      "message": "Die Spule ist nicht für das AMS."
+    },
+    "spool_not_for_printer": {
+      "message": "Die Spule ist nicht für diesen Drucker."
+    },
+    "no_assignment": {
+      "message": "Diesem Fach ist keine Spule zugewiesen."
+    },
+    "spool_printing": {
+      "message": "Diese Spule steckt in einem Fach von {printer}, und {printer} druckt gerade. Ändere zuerst dort die Zuweisung."
+    },
+    "spool_by_chip": {
+      "message": "Diese Spule verknüpft BamBuddy über ihren Chip."
     }
   },
   "issues": {
@@ -1090,7 +1117,7 @@
     },
     "load_filament": {
       "name": "Filament laden",
-      "description": "Lädt das Filament eines AMS-Fachs oder der externen Spule in die Düse (nicht aus einem AMS HT: Das kann BamBuddy nicht; und nicht aus einem AMS-Fach an einem Drucker mit Filament Track Switch: Dort muss feststehen, welche Düse versorgt wird – lade es am Drucker oder in BamBuddy). Läuft ein Druck, pausiere ihn vorher.",
+      "description": "Lädt das Filament eines AMS-Fachs oder der externen Spule in die Düse (aus einem AMS HT erst ab BamBuddy 1.3.0; und nicht aus einem AMS-Fach an einem Drucker mit Filament Track Switch: Dort muss feststehen, welche Düse versorgt wird – lade es am Drucker oder in BamBuddy). Läuft ein Druck, pausiere ihn vorher.",
       "fields": {
         "entity_id": {
           "name": "Fach",
@@ -1109,7 +1136,7 @@
       }
     },
     "start_drying": {
-      "name": "Trocknung starten",
+      "name": "Trocknen starten",
       "description": "Trocknet das Filament in einer AMS-Einheit, die trocknen kann, etwa dem AMS 2 Pro oder dem AMS HT.",
       "fields": {
         "device_id": {
@@ -1127,12 +1154,12 @@
       }
     },
     "stop_drying": {
-      "name": "Trocknung beenden",
-      "description": "Beendet das Trocknen in einer AMS-Einheit.",
+      "name": "Trocknen stoppen",
+      "description": "Stoppt das Trocknen in einer AMS-Einheit.",
       "fields": {
         "device_id": {
           "name": "AMS-Einheit",
-          "description": "Die AMS-Einheit, die das Trocknen beenden soll."
+          "description": "Die AMS-Einheit, die das Trocknen stoppen soll."
         }
       }
     },
@@ -1161,8 +1188,8 @@
       }
     },
     "set_filament": {
-      "name": "Filament festlegen",
-      "description": "Legt Filament und Farbe eines AMS-Fachs oder der externen Spule fest – wie der Drucker es nach dem Einlegen einer Spule ohne Chip abfragt. Eine neue Farbe behält das Profil des Fachs; ein neues Filament nutzt sein Profil aus Bambu Studio, mit dem Standard-K-Wert (Flussdynamik). Nicht für Bambu-Spulen mit Chip: Die liest der Drucker selbst.",
+      "name": "Filament einstellen",
+      "description": "Stellt Filament und Farbe eines AMS-Fachs oder der externen Spule ein – wie der Drucker es nach dem Einlegen einer Spule ohne Chip abfragt. Eine neue Farbe behält das Profil des Fachs; ein neues Filament nutzt sein Profil aus Bambu Studio, mit dem Standard-K-Wert (Flussdynamik). Nicht für Bambu-Spulen mit Chip: Die liest der Drucker selbst.",
       "fields": {
         "entity_id": {
           "name": "Fach",
@@ -1226,7 +1253,7 @@
     },
     "get_k_profiles": {
       "name": "K-Profile abrufen",
-      "description": "Nennt die eigenen K-Kalibrierungen (Pressure Advance) des Druckers für die Düse, die ein Fach versorgt, so wie „Filament festlegen“ sie nimmt, und das aktuelle des Fachs. Der Drucker wird live gefragt (bis etwa 16 Sekunden). Bei einer leeren Liste sagt „answered“, ob der Drucker keine eigenen hat (true) oder nicht geantwortet hat (false).",
+      "description": "Nennt die eigenen K-Kalibrierungen (Flussdynamik) des Druckers für die Düse, die ein Fach versorgt, so wie „Filament einstellen“ sie nimmt, und das aktuelle des Fachs. Der Drucker wird live gefragt (bis etwa 16 Sekunden). Bei einer leeren Liste sagt „answered“, ob der Drucker keine eigenen hat (true) oder nicht geantwortet hat (false).",
       "fields": {
         "entity_id": {
           "name": "Fach",
@@ -1261,6 +1288,40 @@
         "entity_id": {
           "name": "Fach",
           "description": "Der Sensor des Fachs (oder der externen Spule)."
+        }
+      }
+    },
+    "assign_spool": {
+      "name": "Spule zuweisen",
+      "description": "Weist einem Fach eine Spule aus BamBuddys Inventar zu; BamBuddy stellt das Fach danach ein (Material, Farbe, Profil, K). Eine Spule, die einem anderen Fach zugewiesen ist, wechselt. Braucht einen API-Schlüssel mit „Bestand verwalten“. Nicht für ein Fach mit einer Bambu-Lab-Spule mit Chip und nicht während eines Filamentwechsels; das Fach, aus dem ein laufender Druck druckt, stellt BamBuddy mitten im Druck um.",
+      "fields": {
+        "entity_id": {
+          "name": "Fach",
+          "description": "Der Sensor des AMS-Fachs oder der externen Spule."
+        },
+        "spool_id": {
+          "name": "Spule",
+          "description": "Die Nummer der Spule in BamBuddys Inventar."
+        }
+      }
+    },
+    "unassign_spool": {
+      "name": "Spulenzuweisung aufheben",
+      "description": "Hebt die Verknüpfung eines Fachs mit seiner Inventarspule auf. An den Drucker geht nichts: Das Fach behält sein Filament. Braucht einen API-Schlüssel mit „Bestand verwalten“.",
+      "fields": {
+        "entity_id": {
+          "name": "Fach",
+          "description": "Der Sensor des AMS-Fachs oder der externen Spule."
+        }
+      }
+    },
+    "get_spools": {
+      "name": "Spulen abrufen",
+      "description": "Nennt die Spulen aus BamBuddys Inventar für ein Fach, frisch aus BamBuddy gelesen: die Spule des Fachs zuerst, wo jede sitzt und ob sie zum Fach passt. Nur lesend.",
+      "fields": {
+        "entity_id": {
+          "name": "Fach",
+          "description": "Der Sensor des AMS-Fachs oder der externen Spule."
         }
       }
     }

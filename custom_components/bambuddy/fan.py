@@ -19,9 +19,10 @@ from homeassistant.components.fan import (  # type: ignore[attr-defined]
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 
+from .chamber import may_ventilate
 from .coordinator import BamBuddyConfigEntry, BamBuddyPrinterCoordinator
-from .entity import BamBuddyDescribedEntity, BamBuddyPrinterEntity, async_run_command, refuse
-from .models import PrinterData, chamber_heats, round_ten, ventilating, ventilation_fans, ventilation_speed
+from .entity import BamBuddyDescribedEntity, BamBuddyPrinterEntity, async_run_command
+from .models import PrinterData, is_int, round_ten, ventilating, ventilation_fans, ventilation_speed
 
 PARALLEL_UPDATES = 1
 
@@ -131,7 +132,7 @@ class BamBuddyFan(BamBuddyDescribedEntity, FanEntity):
     @property
     def percentage(self) -> int | None:
         value = self.data.status.get(self.entity_description.field)
-        return round_ten(value) if isinstance(value, int) and not isinstance(value, bool) else None
+        return round_ten(value) if is_int(value) else None
 
     @property
     def is_on(self) -> bool | None:
@@ -156,23 +157,6 @@ class BamBuddyFan(BamBuddyDescribedEntity, FanEntity):
 
     async def async_turn_off(self, **kwargs: Any) -> None:
         await self.async_set_percentage(0)
-
-
-def _may_ventilate(data: PrinterData, name: str) -> None:
-    """Ventilating needs cooling mode, which a print or a filament change
-    keeps as they set it, and goes not with a heated chamber."""
-    mode = data.status.get("airduct_mode")
-    if data.job_running:
-        if mode == 1:
-            raise refuse("ventilation_heating_print", printer=name)
-        if mode == 2:
-            raise refuse("not_now", printer=name)
-    elif chamber_heats(data):
-        if data.status.get("supports_chamber_heater"):
-            raise refuse("chamber_heating", printer=name)
-        raise refuse("keep_warm_on", printer=name)
-    if data.changing_filament and mode != 0:
-        raise refuse("filament_change", printer=name)
 
 
 class BamBuddyVentilation(BamBuddyPrinterEntity, FanEntity):
@@ -207,16 +191,20 @@ class BamBuddyVentilation(BamBuddyPrinterEntity, FanEntity):
             await self.async_turn_off()
             return
         coordinator = self.coordinator
+        sent = coordinator.chamber_sent
         fans = ventilation_fans(self.data)
 
         async def ventilate() -> None:
-            if coordinator.data.status.get("airduct_mode") != 0:
+            if sent.get("airduct", coordinator.data.airduct) != "cooling":
                 await coordinator.client.set_airduct_mode(coordinator.printer_id, "cooling")
-                await coordinator.async_wait_for(lambda data: data.status.get("airduct_mode") == 0, VENT_MODE_WAIT, VENT_MODE_POLL)
+                sent.note(airduct="cooling")
+            if coordinator.data.airduct != "cooling":
+                await coordinator.async_wait_for(lambda data: data.airduct == "cooling", VENT_MODE_WAIT, VENT_MODE_POLL)
             for fan in fans:
                 await coordinator.client.set_fan_speed(coordinator.printer_id, fan.fan, speed)
+                sent.note(ventilating=True)
 
-        await async_run_command(coordinator, ventilate, check=_may_ventilate)
+        await async_run_command(coordinator, ventilate, check=partial(may_ventilate, sent=sent))
 
     async def async_turn_on(
         self, percentage: int | None = None, preset_mode: str | None = None, **kwargs: Any
@@ -227,13 +215,15 @@ class BamBuddyVentilation(BamBuddyPrinterEntity, FanEntity):
         # Outside cooling mode it is off already, and its fans do other work:
         # the X2D's right fan filters, the P2S's circulates through the
         # filter, the H2's exhaust fan draws off the laser's fumes.
-        if self.data.status.get("airduct_mode") != 0:
-            return
         coordinator = self.coordinator
+        sent = coordinator.chamber_sent
+        if sent.get("airduct", self.data.airduct) != "cooling":
+            return
         fans = ventilation_fans(self.data)
 
         async def stop() -> None:
             for fan in fans:
                 await coordinator.client.set_fan_speed(coordinator.printer_id, fan.fan, 0)
+            sent.note(ventilating=False)
 
         await async_run_command(coordinator, stop)

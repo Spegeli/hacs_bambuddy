@@ -21,6 +21,7 @@ from homeassistant.helpers.event import async_track_time_interval
 from homeassistant.helpers.typing import ConfigType
 from homeassistant.util import dt as dt_util
 
+from . import plug_history, renames
 from .api import (
     BamBuddyAuthError,
     BamBuddyBadAnswerError,
@@ -51,9 +52,10 @@ from .coordinator import (
     BamBuddyConfigEntry,
     BamBuddyData,
     BamBuddyInstanceCoordinator,
-    BamBuddyPlugCoordinator,
     BamBuddyPrinterCoordinator,
     BamBuddyUpdateCoordinator,
+    ams_identifier,
+    ams_identifier_prefix,
     async_raise_missing_issue,
     async_remove_printer,
     async_schedule_reload,
@@ -65,14 +67,16 @@ from .coordinator import (
     missing_issue,
     names_issue,
     printer_identifier,
+    stored_name,
 )
-from .entity import instance_device_info, plug_device_info, printer_device_info, switch_off_unique_id
+from .entity import instance_device_info, plug_device_info, printer_device_info, switch_off_prefix, switch_off_unique_id
+from .fan_ids import async_rename_x2d_fans
+from .inventory import BamBuddyInventoryCoordinator
 from .key import KeyCheck, KeyGuard
 from .live import BamBuddyLive, live_settings
 from .models import ams_key, display_model, find_printers, model_changed, stored_key, stored_printer, too_old
-from .plug_identity import parse_unique_id
-from . import plug_history, plug_identity, renames
-from .fan_ids import async_rename_x2d_fans
+from .plug_coordinator import BamBuddyPlugCoordinator
+from .plug_identity import async_secret, device_prefix, parse_unique_id
 from .rekey import async_rekey_ams_units
 from .services import async_setup_services
 
@@ -156,8 +160,10 @@ async def async_setup_entry(hass: HomeAssistant, entry: BamBuddyConfigEntry) -> 
         basis = _reload_basis(entry)
         # The printers' smart plugs: when BamBuddy cannot list them, only
         # their entities wait.
-        plugs = BamBuddyPlugCoordinator(hass, entry, client, printers, await plug_identity.async_secret(hass))
-        await asyncio.gather(figures, plugs.async_refresh())
+        plugs = BamBuddyPlugCoordinator(hass, entry, client, printers, await async_secret(hass))
+        # BamBuddy's spool inventory: only optional permissions, so a refusal shows none.
+        inventory = BamBuddyInventoryCoordinator(hass, entry, client, first)
+        await asyncio.gather(figures, plugs.async_refresh(), inventory.async_refresh())
         plugs.async_built(dict(plugs.identities) if plugs.last_update_success else None)
     except BaseException:
         figures.cancel()
@@ -167,11 +173,11 @@ async def async_setup_entry(hass: HomeAssistant, entry: BamBuddyConfigEntry) -> 
     # store is read first: a list that cannot be kept moves nothing.
     stored = entry.options.get(CONF_PRINTERS, [])
     await renames.async_keep(hass, entry.entry_id, {stored_key(printer) for printer in stored})
-    renamed = async_rekey_ams_units(hass, entry, printers)
+    renamed = async_rekey_ams_units(hass, printers)
     # And the X2D's auxiliary fans: their IDs after their side.
-    async_rename_x2d_fans(hass, entry, printers)
+    async_rename_x2d_fans(hass, printers)
     grown = {key for key, pairs in renamed.items() if await renames.async_add(hass, entry.entry_id, key, pairs)}
-    names = {stored_key(printer): _device_name(hass, entry, printer) for printer in absent}
+    names = {stored_key(printer): stored_name(hass, entry.entry_id, printer) for printer in absent}
     names.update({coordinator.key: coordinator.printer_name for coordinator in printers.values()})
     noticed = await renames.async_raise(hass, entry, names, grown)
     missing = {missing_issue(entry.entry_id, stored_key(printer)) for printer in absent}
@@ -191,6 +197,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: BamBuddyConfigEntry) -> 
         updates,
         printers,
         plugs,
+        inventory,
         key=KeyGuard(hass, entry, client, first),
         auth_enabled=auth_enabled,
         live=BamBuddyLive(hass, entry, client),
@@ -243,8 +250,7 @@ async def _async_read_printers(
             # By the name its device has now: BamBuddy may have renamed it since
             # the last start. Stored under it, the repair's dialog and the
             # actions' refusals say it too.
-            device = find_device(hass, entry.entry_id, printer_identifier(entry.entry_id, stored_key(printer)))
-            name = device.name if device is not None and device.name else printer[CONF_PRINTER_NAME]
+            name = stored_name(hass, entry.entry_id, printer)
             current.append({**printer, CONF_PRINTER_NAME: name})
             absent.append(printer)
             async_raise_missing_issue(hass, entry.entry_id, stored_key(printer), name)
@@ -335,18 +341,13 @@ def _remove_spare_switch_offs(hass: HomeAssistant, entry: ConfigEntry, plugs: Ba
                 registry.async_remove(entity_id)
 
 
-def _device_name(hass: HomeAssistant, entry: ConfigEntry, printer: dict[str, Any]) -> str:
-    """A stored printer's name: its device's of now, else the stored one."""
-    device = find_device(hass, entry.entry_id, printer_identifier(entry.entry_id, stored_key(printer)))
-    return device.name if device is not None and device.name else str(printer[CONF_PRINTER_NAME])
-
-
 def _delete_issues(hass: HomeAssistant, entry: ConfigEntry, keep: set[str] | None = None) -> None:
     """The entry's "printer missing", names and renamed AMS entity IDs
     notices, but those still true."""
     prefixes = issue_prefixes(entry.entry_id)
+    keep = keep or set()
     for domain, issue_id in list(ir.async_get(hass).issues):
-        if domain == DOMAIN and issue_id.startswith(prefixes) and issue_id not in (keep or set()):
+        if domain == DOMAIN and issue_id.startswith(prefixes) and issue_id not in keep:
             ir.async_delete_issue(hass, DOMAIN, issue_id)
 
 
@@ -364,7 +365,7 @@ def _follow_plug_identities(hass: HomeAssistant, entry: ConfigEntry, plugs: BamB
     linked = {plug_id: plug for plug_id, plug in (plugs.data or {}).items() if plugs.identity(plug_id) is not None}
     planned: dict[int, str] = {}
     for plug_id, plug in linked.items():
-        printer = plugs.printers.get(plug.printer_id or -1)
+        printer = plugs.printer_of(plug)
         identifier = plugs.identifier(plug_id)
         if identifier is None:
             continue
@@ -383,7 +384,7 @@ def _follow_plug_identities(hass: HomeAssistant, entry: ConfigEntry, plugs: BamB
         if (parsed := parse_unique_id(entry_id, unique_id)) is not None:
             owner = by_source.get(parsed[:2])
             target = planned[owner] if owner is not None else None
-        elif unique_id.startswith(switch_off := f"{entry_id}_switchoff_"):
+        elif unique_id.startswith(switch_off := switch_off_prefix(entry_id)):
             # A printer without an own plug keeps its switch-off for `_remove_spare_switch_offs`.
             target = next((device for key, device in switch_offs.items() if unique_id.startswith(f"{switch_off}{key}_")), entity.device_id)
         else:
@@ -395,7 +396,7 @@ def _follow_plug_identities(hass: HomeAssistant, entry: ConfigEntry, plugs: BamB
             entities.async_update_entity(entity.entity_id, device_id=target)
     kept = set(planned.values())
     for device in dr.async_entries_for_config_entry(devices, entry_id):
-        is_plug = any(domain == DOMAIN and name.startswith(f"{entry_id}_plug_") for domain, name in device.identifiers)
+        is_plug = any(domain == DOMAIN and name.startswith(device_prefix(entry_id)) for domain, name in device.identifiers)
         if is_plug and device.id not in kept:
             removed.extend(entity.entity_id for entity in er.async_entries_for_device(entities, device.id, include_disabled_entities=True))
             devices.async_remove_device(device.id)
@@ -405,18 +406,18 @@ def _follow_plug_identities(hass: HomeAssistant, entry: ConfigEntry, plugs: BamB
 def _remove_stale_devices(hass: HomeAssistant, entry: ConfigEntry) -> None:
     """Devices of printers no longer added (and their AMS units) go; the
     plugs' are `_follow_plug_identities`'s."""
-    configured = {
-        printer_identifier(entry.entry_id, stored_key(printer))[1] for printer in entry.options.get(CONF_PRINTERS, [])
-    }
+    keys = {stored_key(printer) for printer in entry.options.get(CONF_PRINTERS, [])}
+    configured = {printer_identifier(entry.entry_id, key)[1] for key in keys}
+    units = tuple(ams_identifier_prefix(entry.entry_id, key) for key in keys)
     registry = dr.async_get(hass)
-    plug_prefix = f"{entry.entry_id}_plug_"
+    plug_prefix = device_prefix(entry.entry_id)
     for device in dr.async_entries_for_config_entry(registry, entry.entry_id):
         names = {identifier for domain, identifier in device.identifiers if domain == DOMAIN}
         if entry.entry_id in names:
             continue
         if any(name.startswith(plug_prefix) for name in names):
             continue
-        if not any(name == printer or name.startswith(f"{printer}_ams_") for name in names for printer in configured):
+        if not any(name in configured or name.startswith(units) for name in names):
             registry.async_remove_device(device.id)
 
 
@@ -537,7 +538,7 @@ def _key_by_serial(hass: HomeAssistant, entry: ConfigEntry) -> list[dict[str, An
         for domain, identifier in device.identifiers
         if domain == DOMAIN
     }
-    renames: list[tuple[str, str]] = []
+    moves: list[tuple[str, str]] = []
     printers: list[dict[str, Any]] = []
     for printer in entry.options.get(CONF_PRINTERS, []):
         number = printer[CONF_PRINTER_ID]
@@ -548,8 +549,7 @@ def _key_by_serial(hass: HomeAssistant, entry: ConfigEntry) -> list[dict[str, An
         if device is None:
             continue
         key = serial or f"id{number}"
-        new = f"{entry.entry_id}_printer_{key}"
-        devices.async_update_device(device.id, new_identifiers={(DOMAIN, new)})
+        devices.async_update_device(device.id, new_identifiers={printer_identifier(entry.entry_id, key)})
         taken: set[str] = set()
         for identifier, unit in own.items():
             if identifier.startswith(f"{old}_ams_"):
@@ -559,13 +559,13 @@ def _key_by_serial(hass: HomeAssistant, entry: ConfigEntry) -> list[dict[str, An
                     # One unit seen at two places under 2.1: the second keeps its place.
                     unit_key = place
                 taken.add(unit_key)
-                devices.async_update_device(unit.id, new_identifiers={(DOMAIN, f"{new}_ams_{unit_key}")})
-                renames.append((f"{entry.entry_id}_p{number}_ams{place}_", f"{entry.entry_id}_p{key}_ams{unit_key}_"))
+                devices.async_update_device(unit.id, new_identifiers={ams_identifier(entry.entry_id, key, unit_key)})
+                moves.append((f"{entry.entry_id}_p{number}_ams{place}_", f"{entry.entry_id}_p{key}_ams{unit_key}_"))
         # After the printer's AMS units: their IDs start the same way.
-        renames.append((f"{entry.entry_id}_p{number}_", f"{entry.entry_id}_p{key}_"))
+        moves.append((f"{entry.entry_id}_p{number}_", f"{entry.entry_id}_p{key}_"))
     entities = er.async_get(hass)
     for entity in er.async_entries_for_config_entry(entities, entry.entry_id):
-        for old_prefix, new_prefix in renames:
+        for old_prefix, new_prefix in moves:
             if entity.unique_id.startswith(old_prefix):
                 entities.async_update_entity(
                     entity.entity_id, new_unique_id=new_prefix + entity.unique_id.removeprefix(old_prefix)
@@ -588,7 +588,8 @@ async def async_remove_config_entry_device(
     hass: HomeAssistant, entry: BamBuddyConfigEntry, device: dr.DeviceEntry
 ) -> bool:
     """Deleting a printer's device removes the printer; an AMS unit's device
-    goes when its printer no longer reports it; the instance stays."""
+    goes when its printer no longer reports it, a smart plug's when BamBuddy
+    no longer links it; the instance stays."""
     if (DOMAIN, entry.entry_id) in device.identifiers:
         raise HomeAssistantError(translation_domain=DOMAIN, translation_key="cannot_delete_instance")
     printers: list[dict[str, Any]] = entry.options.get(CONF_PRINTERS, [])

@@ -8,10 +8,12 @@ import { html, nothing, type TemplateResult } from "lit";
 import { entriesOf, responseOf } from "./actions";
 import { icon, type IconName } from "./icons";
 import { LANGUAGES, languageOf, t, type TextKey } from "./i18n";
-import type { CardContext } from "./parts";
+import { dialogError, type CardContext } from "./parts";
 import type { Hass } from "./types";
 
-export type CheckStatus = "pass" | "fail" | "warn" | "skip";
+const STATUSES = ["pass", "fail", "warn", "skip"] as const;
+export type CheckStatus = (typeof STATUSES)[number];
+const isStatus = (value: unknown): value is CheckStatus => (STATUSES as readonly unknown[]).includes(value);
 
 export interface Check {
   id: string;
@@ -35,14 +37,12 @@ export interface CheckDialog {
   open?: readonly ("pass" | "skip")[];
 }
 
-const STATUSES: readonly CheckStatus[] = ["pass", "fail", "warn", "skip"];
-
 /** BamBuddy's connection check of the printer, as the integration answers. */
 export async function runCheck(hass: Hass, deviceId: string): Promise<CheckResult> {
   const response = await responseOf(hass, "run_diagnostic", { device_id: deviceId });
   const checks = entriesOf(response["checks"], "id", "string").map((item) => ({
     id: item["id"] as string,
-    status: STATUSES.includes(item["status"] as CheckStatus) ? (item["status"] as CheckStatus) : "skip",
+    status: isStatus(item["status"]) ? item["status"] : "skip",
     params: typeof item["params"] === "object" && item["params"] !== null ? (item["params"] as Record<string, unknown>) : {},
   }));
   return { overall: typeof response["overall"] === "string" ? response["overall"] : "ok", checks };
@@ -69,8 +69,9 @@ function detail(hass: Hass, check: Check, withFix = false): string | undefined {
   if (check.id === "developer_mode" && check.status === "fail") return t(hass, "developer_off");
   const specific = reason ? `check_${check.id}_${check.status}_${reason}` : undefined;
   const key = specific && text(hass, specific) !== undefined ? specific : `check_${check.id}_${check.status}`;
-  const own = text(hass, key, vars(check));
-  const fix = withFix ? text(hass, `${key}_fix`, vars(check)) : undefined;
+  const values = vars(check);
+  const own = text(hass, key, values);
+  const fix = withFix ? text(hass, `${key}_fix`, values) : undefined;
   return own ? [own, fix].filter(Boolean).join(" ") : check.status === "skip" ? t(hass, "check_skip") : undefined;
 }
 
@@ -92,7 +93,7 @@ function item(ctx: CardContext, check: Check, follows: boolean): TemplateResult 
 }
 
 /** The verdict: BamBuddy's, with how many things need attention. */
-function verdict(hass: Hass, result: CheckResult): { tone: string; text: string } {
+function verdict(hass: Hass, result: CheckResult): { tone: "ok" | "warn" | "err"; text: string } {
   const fails = result.checks.filter((check) => check.status === "fail").length;
   const warns = result.checks.filter((check) => check.status === "warn").length;
   if (result.overall === "problems" || fails > 0) {
@@ -134,6 +135,9 @@ function fold(ctx: CardContext, which: "pass" | "skip", checks: Check[], dialog:
   </div>`;
 }
 
+/** The verdict's icon by its tone. */
+const VERDICT_ICONS: Record<"ok" | "warn" | "err", IconName> = { ok: "check", warn: "warning", err: "error" };
+
 /** The state: running, failed, or the verdict -- in one live region that
  * stays in place, so a screen reader hears the verdict once; the seconds
  * are not read out. */
@@ -149,10 +153,10 @@ function state(ctx: CardContext, dialog: CheckDialog, now: number): TemplateResu
       <p class="hint">${t(hass, "check_running_hint")}</p>`;
   }
   if (dialog.error || !dialog.result) {
-    return html`<div class="dlg-error">${icon("error")}<span>${t(hass, "check_error", { error: dialog.error ?? "" })}</span></div>`;
+    return dialogError(t(hass, "check_error", { error: dialog.error ?? "" }));
   }
   const found = verdict(hass, dialog.result);
-  return html`<div class="check-verdict tone-${found.tone}">${icon(found.tone === "ok" ? "check" : found.tone === "warn" ? "warning" : "error")}<span>${found.text}</span></div>`;
+  return html`<div class="check-verdict tone-${found.tone}">${icon(VERDICT_ICONS[found.tone])}<span>${found.text}</span></div>`;
 }
 
 export function checkContent(ctx: CardContext, dialog: CheckDialog, actions: CheckActions, now: number): TemplateResult {

@@ -39,6 +39,16 @@ REQUIRED_SCOPES: dict[str, frozenset[str]] = {
     "control_printer": frozenset({"printers:control", "printers:clear_plate", "printers:ams_rfid", "smart_plugs:control"}),
     "manage_maintenance": frozenset({"maintenance:update"}),
 }
+# What a key may have beyond REQUIRED_SCOPES, and what then works: the live
+# connection (websocket:connect) and BamBuddy's spool inventory -- shown with
+# the three reads, assigned with inventory:update (Manage Inventory, #21). None
+# of them is needed: a key without one gets no reauth and no repair.
+# Manage Inventory: spools may be assigned to slots.
+MANAGE_INVENTORY = "inventory:update"
+OPTIONAL_PERMISSIONS = frozenset(
+    {"websocket:connect", "inventory:read", "inventory:view_assignments", "filaments:read", MANAGE_INVENTORY}
+)
+
 # How often the running entry checks its key; how soon again after no answer.
 KEY_CHECK_INTERVAL = timedelta(minutes=10)
 KEY_RETRY_DELAY = timedelta(minutes=1)
@@ -55,20 +65,25 @@ INSTANCE_INTERVAL = timedelta(seconds=60)
 # For the system information BamBuddy walks through its whole archive.
 SYSTEM_INTERVAL = timedelta(minutes=5)
 UPDATE_INTERVAL = timedelta(hours=6)
+# BamBuddy's spool inventory: once a minute, and at once (at most once a
+# second) when BamBuddy tells of a spool or a slot's spool.
+INVENTORY_INTERVAL = timedelta(seconds=60)
+INVENTORY_PUSH_COOLDOWN = 1.0
 # A check that failed is asked again sooner.
 UPDATE_RETRY_INTERVAL = timedelta(minutes=15)
-# The print hours, BamBuddy's name and details of a printer change slowly:
+# BamBuddy's name and details of a printer and its AMS names change slowly:
 # read once a minute, not with every status.
-RUNTIME_INTERVAL = 60.0
-# Maintenance: every ten minutes (and after a print) -- a read can write to
-# BamBuddy's database.
+MINUTELY_INTERVAL = 60.0
+# Maintenance and the print hours: every ten minutes (and after a print) --
+# a read can write to BamBuddy's database.
 MAINTENANCE_INTERVAL = 600.0
 # How long an AMS unit without a serial number waits for one: BamBuddy
 # reports it a moment after it connects.
 AMS_SERIAL_WAIT = 60.0
-# How often an AMS unit whose serial newly arrived is held for a reload in
-# one Home Assistant run before it gets its entities as a new device.
-HOLD_LIMIT = 3
+# How often one Home Assistant run reloads the entry for a printer's part that came after
+# the setup: an AMS unit whose serial newly arrived (held, then a new device), or a chamber
+# temperature or heater BamBuddy reports late.
+RELOADS_PER_RUN = 3
 # BamBuddy only publishes a command; the printer reports back about a
 # second later.
 REFRESH_AFTER_COMMAND = 1.5

@@ -3,6 +3,7 @@
 // entity's domain and translation key. Never by entity ID, which users can
 // rename. Each lookup reads the registries Home Assistant hands over at
 // that moment, so entities and AMS units that come later are found too.
+import { numberAttribute } from "./format";
 import {
   DETECTORS,
   type AmsRefs,
@@ -64,7 +65,7 @@ function statusEntity(hass: Hass, deviceId: string): string | undefined {
 }
 
 /** Whether the device is a BamBuddy printer: one with a print status sensor. */
-export const isPrinter = (hass: Hass, deviceId: string | null | undefined): boolean => !!deviceId && statusEntity(hass, deviceId) !== undefined;
+export const hasPrintStatus = (hass: Hass, deviceId: string | null | undefined): boolean => !!deviceId && statusEntity(hass, deviceId) !== undefined;
 
 /** The state of a printer's print status sensor. */
 export function printStatus(hass: Hass, deviceId: string): string | undefined {
@@ -79,12 +80,12 @@ const PRINTER_IDENTIFIER = /^[^_]+_printer_[^_]+$/;
 /** Whether the device is a BamBuddy printer by its identifier, also before
  * its entities are there: Home Assistant restores a printer added again at
  * the start of the setup, its entities come with the platforms. */
-export const isPrinterDevice = (device: HassDevice): boolean =>
+export const hasPrinterIdentifier = (device: HassDevice): boolean =>
   (device.identifiers ?? []).some(([domain, id]) => domain === PLATFORM && PRINTER_IDENTIFIER.test(id));
 
 /** The BamBuddy printers, in the order of the device registry. */
 export function printerDevices(hass: Hass): HassDevice[] {
-  return Object.values(hass.devices).filter((device): device is HassDevice => !!device && isPrinter(hass, device.id));
+  return Object.values(hass.devices).filter((device): device is HassDevice => !!device && hasPrintStatus(hass, device.id));
 }
 
 export const deviceName = (device: HassDevice): string => device.name_by_user || device.name || "";
@@ -99,7 +100,7 @@ function shortName(name: string | null | undefined): string | undefined {
 /** An AMS unit's name without its printer's and without its "(model /
  * serial)": "Workshop AMS A (AMS 2 Pro / 19C…)" -> "AMS A" (also the older
  * "X1C (01S…) AMS 1"). A name the user gave the unit stays whole. */
-function amsName(unit: HassDevice, printer: HassDevice): string {
+function childName(unit: HassDevice, printer: HassDevice): string {
   const name = deviceName(unit);
   if (unit.name_by_user) return name;
   const prefix = [printer.name, printer.name_by_user, shortName(printer.name)].find(
@@ -107,12 +108,6 @@ function amsName(unit: HassDevice, printer: HassDevice): string {
   );
   const own = prefix ? name.slice(prefix.length + 1) : name;
   return own.endsWith(")") ? (shortName(own) ?? own) : own;
-}
-
-/** A number attribute of an entity's state, if it has one. */
-function numberAttribute(hass: Hass, entityId: string, name: string): number | undefined {
-  const value = hass.states[entityId]?.attributes[name];
-  return typeof value === "number" ? value : undefined;
 }
 
 /** Slots in the order of their `slot` attribute; a slot without one last. */
@@ -128,18 +123,29 @@ function unitOrder(hass: Hass, unit: AmsRefs): number {
   return ids.length ? Math.min(...ids) : Number.MAX_SAFE_INTEGER;
 }
 
-function findAms(hass: Hass, printer: HassDevice): AmsRefs[] {
+/** The devices under the printer, each with its entities by key and the
+ * first entity of a key. */
+function* childDevices(hass: Hass, printer: HassDevice): Generator<{ device: HassDevice; keys: Map<string, string[]>; one: (key: string) => string | undefined }> {
   const byDevice = entitiesByDevice(hass);
-  const units: AmsRefs[] = [];
   for (const device of Object.values(hass.devices)) {
     if (!device || device.via_device_id !== printer.id) continue;
     const keys = keyed(byDevice.get(device.id) ?? []);
+    yield { device, keys, one: (key) => keys.get(key)?.[0] };
+  }
+}
+
+/** `{ [field]: value }` where there is a value, else nothing to spread. */
+const optional = <K extends string>(field: K, value: string | undefined): Partial<Record<K, string>> =>
+  (value ? { [field]: value } : {}) as Partial<Record<K, string>>;
+
+function findAms(hass: Hass, printer: HassDevice): AmsRefs[] {
+  const units: AmsRefs[] = [];
+  for (const { device, keys, one } of childDevices(hass, printer)) {
     const slots = keys.get("sensor.ams_slot");
     if (!slots) continue;
-    const one = (key: string): string | undefined => keys.get(key)?.[0];
     units.push({
       deviceId: device.id,
-      name: amsName(device, printer),
+      name: childName(device, printer),
       model: device.model ?? "",
       humidity: one("sensor.ams_humidity"),
       temperature: one("sensor.ams_temperature"),
@@ -160,28 +166,24 @@ export function plugAttribute(hass: Hass, plug: PlugRefs, name: string): unknown
 /** The plugs under the printer -- devices with a plug's switch, state or run
  * button --, by name (the card puts the printer's own first). */
 function findPlugs(hass: Hass, printer: HassDevice): PlugRefs[] {
-  const byDevice = entitiesByDevice(hass);
   const plugs: PlugRefs[] = [];
-  for (const device of Object.values(hass.devices)) {
-    if (!device || device.via_device_id !== printer.id) continue;
-    const keys = keyed(byDevice.get(device.id) ?? []);
-    const one = (key: string): string | undefined => keys.get(key)?.[0];
+  for (const { device, one } of childDevices(hass, printer)) {
     const switchEntity = one("switch.plug");
     const power = switchEntity ?? one("binary_sensor.plug");
     const run = one("button.plug_run");
     if (!power && !run) continue;
     plugs.push({
       deviceId: device.id,
-      name: amsName(device, printer),
+      name: childName(device, printer),
       ...(power ? { power } : {}),
       switchable: switchEntity !== undefined,
       ...(run ? { run } : {}),
-      ...(one("sensor.plug_power") ? { watts: one("sensor.plug_power") } : {}),
-      ...(one("sensor.plug_energy_today") ? { energyToday: one("sensor.plug_energy_today") } : {}),
-      ...(one("switch.auto_off") ? { autoOff: one("switch.auto_off") } : {}),
-      ...(one("switch.auto_off_every_print") ? { autoOffEveryPrint: one("switch.auto_off_every_print") } : {}),
-      ...(one("number.auto_off_temperature") ? { autoOffTemperature: one("number.auto_off_temperature") } : {}),
-      ...(one("button.auto_off_skip") ? { autoOffSkip: one("button.auto_off_skip") } : {}),
+      ...optional("watts", one("sensor.plug_power")),
+      ...optional("energyToday", one("sensor.plug_energy_today")),
+      ...optional("autoOff", one("switch.auto_off")),
+      ...optional("autoOffEveryPrint", one("switch.auto_off_every_print")),
+      ...optional("autoOffTemperature", one("number.auto_off_temperature")),
+      ...optional("autoOffSkip", one("button.auto_off_skip")),
     });
   }
   // By name; the printer's own plug goes first where the card shows them
@@ -338,12 +340,31 @@ export function notListed(hass: Hass, refs: PrinterRefs): boolean {
   return Array.isArray(missing) && missing.includes(refs.deviceId);
 }
 
+/** No data on the printer from the integration: its print status, or its
+ * Online sensor where it has one, without a state yet (Home Assistant
+ * starts) or unavailable (BamBuddy does not answer, or a reload). */
+export function noPrinterData(hass: Hass, refs: PrinterRefs): boolean {
+  const gone = (entityId: string | undefined): boolean => {
+    const state = entityId ? hass.states[entityId] : undefined;
+    return !state || state.state === "unavailable";
+  };
+  return gone(refs.status) || (refs.online !== undefined && gone(refs.online));
+}
+
+/** When the printer's data went away, as far as the states tell: the
+ * status's last change while it is unavailable, else now. */
+export function noDataSince(hass: Hass, refs: PrinterRefs, now: number): number {
+  const states = [refs.status, refs.online].map((entityId) => (entityId ? hass.states[entityId] : undefined));
+  const since = states.map((state) => (state?.state === "unavailable" ? Date.parse(state.last_changed ?? "") : NaN)).filter((time) => !Number.isNaN(time));
+  return Math.min(now, ...since);
+}
+
 /** Whether the printer is online: its Online sensor where it has one, else
  * -- the user may have disabled the sensor -- its print status, neither
  * offline nor without an answer from BamBuddy. */
 export function printerOnline(hass: Hass, refs: PrinterRefs): boolean {
   if (refs.online) return hass.states[refs.online]?.state === "on";
-  const status = refs.status ? hass.states[refs.status]?.state : undefined;
+  const status = hass.states[refs.status]?.state;
   return status !== undefined && status !== "offline" && status !== "unavailable";
 }
 

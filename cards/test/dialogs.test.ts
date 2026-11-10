@@ -3,20 +3,30 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import "../src/index";
-import { h2d, makeHass, maintenanceSpec, mountCard, p1s, plugDevice, x1c, type FakeCard, type FakeDevice, type FakeHass, type ServiceCall } from "./fixtures";
-import { button, find, findAll, root, settle, styleText, text, update } from "./helpers";
+import {
+  h2d,
+  maintenanceSpec,
+  makeHass,
+  mountCard,
+  p1s,
+  withPlugs,
+  x1c,
+  type FakeCard,
+  type FakeDevice,
+  type FakeHass,
+  type ServiceCall,
+} from "./fixtures";
+import { button, declarations, find, findAll, root, settle, showView, styleText, text, update } from "./helpers";
+import { keyPress } from "./card-helpers";
 
 afterEach(() => {
   document.body.innerHTML = "";
 });
 
-/** A key pressed on an element of the card: the keyboard is there. */
-const keyPress = (element: Element, key = "Enter"): boolean => element.dispatchEvent(new KeyboardEvent("keydown", { key, bubbles: true, composed: true }));
-
 /** The X1C finished, its plug waiting to switch it off. */
 function waitingX1c(): FakeDevice[] {
   const devices = x1c({ status: "finished", stage: "idle", nozzles: [[142, 0]] });
-  return [...devices, plugDevice({ printer: devices[0] as FakeDevice, id: 3, name: "Tasmota", watts: 182, autoOff: { armed: true, phase: "waiting", since: "2026-10-18T14:05:00+00:00" } })];
+  return withPlugs(devices, { id: 3, name: "Tasmota", watts: 182, autoOff: { armed: true, phase: "waiting", since: "2026-10-18T14:05:00+00:00" } });
 }
 
 describe("a control in a dialog that goes after its own press", () => {
@@ -25,9 +35,9 @@ describe("a control in a dialog that goes after its own press", () => {
     const card = await mountCard(hass, { printer: "dev-x1c", header_chips: ["power"] });
     (find(card, ".pill.power-chip") as HTMLButtonElement).click();
     await card.updateComplete;
-    const skip = button(card, "Don't switch off this time");
+    const skip = button(card, "Don't turn off this time");
     skip.focus();
-    keyPress(skip);
+    keyPress(skip, "Enter");
     skip.click();
     await settle(card);
     expect(hass.calls.at(-1)).toMatchObject({ domain: "button", service: "press" });
@@ -48,10 +58,10 @@ describe("the switch-off's settings opened from the power dialog", () => {
     await card.updateComplete;
     const row = find(card, "dialog .p-open") as HTMLButtonElement;
     row.focus();
-    keyPress(row);
+    keyPress(row, "Enter");
     row.click();
     await settle(card);
-    expect(text(find(card, "dialog h2"))).toBe("Switch off after the print");
+    expect(text(find(card, "dialog h2"))).toBe("Turn off after the print");
     expect(root(card).activeElement).toBe(find(card, "dialog .dlg-actions .btn.safe"));
     (find(card, "dialog .dlg-actions .btn.safe") as HTMLButtonElement).click();
     await settle(card);
@@ -63,7 +73,7 @@ describe("the switch-off's settings opened from the power dialog", () => {
 describe("the HMS dialog while the printer goes offline", () => {
   it("says the printer is offline, not that there are no messages", async () => {
     const errors = [{ code: "0700_2000_0002_0012", severity: "error", description: "AMS A Slot 2 filament has run out.", actions: ["FILAMENT_LOAD_RESUME"] }];
-    const hass = makeHass({ devices: p1s({ status: "paused", stage: "paused_by_user", hms: errors as never }) });
+    const hass = makeHass({ devices: p1s({ status: "paused", stage: "paused_by_user", hms: errors }) });
     const card = await mountCard(hass, { printer: "dev-p1s" });
     (find(card, ".pill.hms") as HTMLButtonElement).click();
     await card.updateComplete;
@@ -82,19 +92,19 @@ describe("the HMS dialog while the printer goes offline", () => {
 describe("a dialog's buttons on a narrow phone", () => {
   it("wrap instead of pushing the safe one out of the dialog; the drying steppers wrap below their label", () => {
     const sheet = styleText();
-    expect(sheet).toMatch(/\.dlg-actions\s*\{[^}]*flex-wrap: wrap;/);
-    expect(sheet).toMatch(/\.field\s*\{[^}]*flex-wrap: wrap;/);
+    expect(declarations(".dlg-actions", sheet)).toContain("flex-wrap: wrap");
+    expect(declarations(".field", sheet)).toContain("flex-wrap: wrap");
   });
 });
 
 describe("the chips' names start with what they show", () => {
   it("HMS and power", async () => {
     const devices = x1c({ status: "idle", stage: "idle" });
-    const hass = makeHass({ devices: [...devices, plugDevice({ printer: devices[0] as FakeDevice, id: 3, name: "Tasmota", state: "off" })] });
+    const hass = makeHass({ devices: withPlugs(devices, { id: 3, name: "Tasmota", state: "off" }) });
     const card = await mountCard(hass, { printer: "dev-x1c", header_chips: ["hms", "power"] });
     for (const chip of findAll(card, ".pills > button")) {
-      const shown = text(chip).replace(/ /g, " ").toLowerCase();
-      const name = (chip.getAttribute("aria-label") ?? "").replace(/ /g, " ").toLowerCase();
+      const shown = text(chip).replace(/\u00a0/g, " ").toLowerCase();
+      const name = (chip.getAttribute("aria-label") ?? "").replace(/\u00a0/g, " ").toLowerCase();
       expect(name.startsWith(shown), `"${name}" for "${shown}"`).toBe(true);
     }
   });
@@ -104,19 +114,27 @@ describe("the check's problems and the HMS messages on a phone", () => {
   it("are not capped in a box of their own that scrolls inside the scrolling dialog; the buttons stay in reach", () => {
     const sheet = styleText();
     expect(sheet).not.toMatch(/\.hms-list\s*\{[^}]*max-height/);
-    expect(sheet).toMatch(/\.dlg-actions\s*\{[^}]*position: sticky;/);
+    expect(declarations(".dlg-actions", sheet)).toContain("position: sticky");
   });
 });
 
+/** The maintenance dialog open; marking task 11 waits until `answer` settles it. */
+async function openMaintenanceHanging(): Promise<{ card: FakeCard; hass: FakeHass; answer: { resolve: (value: unknown) => void; reject: (error: unknown) => void } }> {
+  const answer = { resolve: (_value: unknown): void => undefined, reject: (_error: unknown): void => undefined };
+  const callService = (call: ServiceCall): Promise<unknown> =>
+    call.service === "mark_maintenance_done" && call.data?.["task_id"] === 11
+      ? new Promise((resolve, reject) => Object.assign(answer, { resolve, reject }))
+      : Promise.resolve(undefined);
+  const hass = makeHass({ devices: x1c({ maintenance: maintenanceSpec() }), callService });
+  const card = await mountCard(hass, { printer: "dev-x1c", header_chips: ["maintenance"] });
+  (find(card, ".pill.maintenance") as HTMLButtonElement).click();
+  await card.updateComplete;
+  return { card, hass, answer };
+}
+
 describe("maintenance marked in one row while another asks", () => {
   it("says the first one failed, and keeps its Done waiting while it runs", async () => {
-    let fail: (error: unknown) => void = () => undefined;
-    const callService = (call: ServiceCall): Promise<unknown> =>
-      call.service === "mark_maintenance_done" && call.data?.["task_id"] === 11 ? new Promise((_, reject) => (fail = reject)) : Promise.resolve(undefined);
-    const hass: FakeHass = makeHass({ devices: x1c({ maintenance: maintenanceSpec() }), callService });
-    const card: FakeCard = await mountCard(hass, { printer: "dev-x1c", header_chips: ["maintenance"] });
-    (find(card, ".pill.maintenance") as HTMLButtonElement).click();
-    await card.updateComplete;
+    const { card, answer } = await openMaintenanceHanging();
     // Clean Build Plate (11): asked, confirmed; its call runs.
     (find(card, 'dialog .maint-done[data-task="11"]') as HTMLButtonElement).click();
     await card.updateComplete;
@@ -126,19 +144,13 @@ describe("maintenance marked in one row while another asks", () => {
     (find(card, 'dialog .maint-done[data-task="12"]') as HTMLButtonElement).click();
     await card.updateComplete;
     expect((find(card, 'dialog .maint-done[data-task="11"]') as HTMLButtonElement).getAttribute("aria-busy")).toBe("true");
-    fail(new Error("BamBuddy refused it"));
+    answer.reject(new Error("BamBuddy refused it"));
     await settle(card);
     expect(text(find(card, "dialog"))).toContain("BamBuddy refused it");
   });
 
   it("keeps the first one waiting when the second is confirmed too, and says how the first ended", async () => {
-    let fail: (error: unknown) => void = () => undefined;
-    const callService = (call: ServiceCall): Promise<unknown> =>
-      call.service === "mark_maintenance_done" && call.data?.["task_id"] === 11 ? new Promise((_, reject) => (fail = reject)) : Promise.resolve(undefined);
-    const hass: FakeHass = makeHass({ devices: x1c({ maintenance: maintenanceSpec() }), callService });
-    const card: FakeCard = await mountCard(hass, { printer: "dev-x1c", header_chips: ["maintenance"] });
-    (find(card, ".pill.maintenance") as HTMLButtonElement).click();
-    await card.updateComplete;
+    const { card, answer } = await openMaintenanceHanging();
     (find(card, 'dialog .maint-done[data-task="11"]') as HTMLButtonElement).click();
     await card.updateComplete;
     (find(card, "dialog .maint-confirm .btn.primary") as HTMLButtonElement).click();
@@ -149,19 +161,13 @@ describe("maintenance marked in one row while another asks", () => {
     (find(card, "dialog .maint-confirm .btn.primary") as HTMLButtonElement).click();
     await settle(card);
     expect(find(card, 'dialog .maint-done[data-task="11"]')?.getAttribute("aria-busy")).toBe("true");
-    fail(new Error("BamBuddy refused it"));
+    answer.reject(new Error("BamBuddy refused it"));
     await settle(card);
     expect(text(find(card, "dialog"))).toContain("BamBuddy refused it");
   });
 
   it("keeps another row's open question, and its focus, when an answer arrives", async () => {
-    let done: (value: unknown) => void = () => undefined;
-    const callService = (call: ServiceCall): Promise<unknown> =>
-      call.service === "mark_maintenance_done" && call.data?.["task_id"] === 11 ? new Promise((resolve) => (done = resolve)) : Promise.resolve(undefined);
-    const hass: FakeHass = makeHass({ devices: x1c({ maintenance: maintenanceSpec() }), callService });
-    const card: FakeCard = await mountCard(hass, { printer: "dev-x1c", header_chips: ["maintenance"] });
-    (find(card, ".pill.maintenance") as HTMLButtonElement).click();
-    await card.updateComplete;
+    const { card, answer } = await openMaintenanceHanging();
     (find(card, 'dialog .maint-done[data-task="11"]') as HTMLButtonElement).click();
     await card.updateComplete;
     (find(card, "dialog .maint-confirm .btn.primary") as HTMLButtonElement).click();
@@ -169,7 +175,7 @@ describe("maintenance marked in one row while another asks", () => {
     (find(card, 'dialog .maint-done[data-task="12"]') as HTMLButtonElement).click();
     await settle(card);
     expect(root(card).activeElement).toBe(find(card, "dialog .maint-confirm .btn.plain"));
-    done(undefined);
+    answer.resolve(undefined);
     await settle(card);
     expect(find(card, "dialog .maint-confirm")).not.toBeNull();
     expect(root(card).activeElement).toBe(find(card, "dialog .maint-confirm .btn.plain"));
@@ -194,8 +200,7 @@ describe("the slot reset's question", () => {
   it("drops an earlier Sent", async () => {
     const hass = makeHass({ devices: x1c({ status: "idle", stage: "idle" }) });
     const card = await mountCard(hass, { printer: "dev-x1c" });
-    for (const tab of findAll<HTMLButtonElement>(card, ".tabs [role=tab]")) if (text(tab) === "Filament") tab.click();
-    await card.updateComplete;
+    await showView(card, "Filament");
     const pencil = findAll<HTMLButtonElement>(card, "button").find((item) => (item.getAttribute("aria-label") ?? "").startsWith("Edit")) as HTMLButtonElement;
     pencil.click();
     await settle(card);
@@ -215,8 +220,7 @@ describe("the radio groups of keeping warm and of the switch-off", () => {
 
   it("give the stop back to the chosen option once the focus leaves the group: keeping warm", async () => {
     const card = await mountCard(makeHass({ devices: x1c({ status: "idle", stage: "idle", airduct: "cooling" }) }), { printer: "dev-x1c" });
-    for (const tab of findAll<HTMLButtonElement>(card, ".tabs [role=tab]")) if (text(tab) === "Control") tab.click();
-    await card.updateComplete;
+    await showView(card, "Control");
     const radios = (): HTMLButtonElement[] => findAll<HTMLButtonElement>(card, ".keep-warm [role=radio]");
     expect(radios().map((radio) => radio.tabIndex)).toEqual([0, -1]);
     radios()[0]?.focus();
@@ -227,8 +231,7 @@ describe("the radio groups of keeping warm and of the switch-off", () => {
   });
 
   it("the same for the switch-off's choice", async () => {
-    const devices = x1c({ status: "finished", stage: "idle", nozzles: [[142, 0]] });
-    const hass = makeHass({ devices: [...devices, plugDevice({ printer: devices[0] as FakeDevice, id: 3, name: "Tasmota", watts: 182, autoOff: { armed: true, phase: "waiting", since: "2026-10-18T14:05:00+00:00" } })] });
+    const hass = makeHass({ devices: waitingX1c() });
     const card = await mountCard(hass, { printer: "dev-x1c", header_chips: ["power"] });
     (find(card, ".pill.power-chip") as HTMLButtonElement).click();
     await card.updateComplete;
@@ -249,7 +252,7 @@ describe("a chip's name for one message, and the USB drive's dialog", () => {
   it("names one HMS message in the singular, in English and German", async () => {
     const one = [{ code: "0700_2000_0002_0012", severity: "warning", description: "One.", actions: [] }];
     for (const [language, name] of [["en", "1 HMS message"], ["de", "1 HMS-Meldung"]] as const) {
-      const card = await mountCard(makeHass({ devices: p1s({ status: "paused", stage: "paused_by_user", hms: one as never }), language }), { printer: "dev-p1s" });
+      const card = await mountCard(makeHass({ devices: p1s({ status: "paused", stage: "paused_by_user", hms: one }), language }), { printer: "dev-p1s" });
       expect(find(card, ".pill.hms")?.getAttribute("aria-label")).toBe(name);
       card.remove();
     }
@@ -274,7 +277,7 @@ describe("a control in an open dialog that moves while it has the keyboard", () 
     await card.updateComplete;
     const done = find(card, 'dialog .maint-done[data-task="11"]') as HTMLButtonElement;
     done.focus();
-    keyPress(done);
+    keyPress(done, "Enter");
     // A browser blurs a focused button its list moves: the focus falls to the page.
     done.blur();
     await update(card, hass.withState("sensor.x1c_bed_temperature", "31"));
@@ -286,7 +289,7 @@ describe("a control in an open dialog that moves while it has the keyboard", () 
     const card: FakeCard = await mountCard(hass, { printer: "dev-x1c" });
     const pause = button(card, "Pause print");
     pause.focus();
-    keyPress(pause);
+    keyPress(pause, "Enter");
     pause.blur();
     await update(card, hass.withState("sensor.x1c_bed_temperature", "31"));
     expect(root(card).activeElement).toBeNull();
@@ -337,9 +340,9 @@ describe("the keyboard's place in the menu", () => {
 
 describe("a temperature tile's name on a narrow card", () => {
   it("wraps at its words instead of being cut", () => {
-    const rule = /\.temp-head > span:not\(\.temp-tag\) \{([^}]*)\}/.exec(styleText())?.[1] ?? "";
-    expect(rule).toContain("overflow-wrap: anywhere;");
-    expect(rule).not.toContain("ellipsis");
+    const rule = declarations(".temp-head > span:not(.temp-tag)");
+    expect(rule).toContain("overflow-wrap: anywhere");
+    expect(rule.filter((declaration) => declaration.includes("ellipsis"))).toEqual([]);
   });
 });
 
@@ -388,5 +391,24 @@ describe("a maintenance task named like a property of every object", () => {
     (find(card, ".pill.maintenance") as HTMLButtonElement).click();
     await settle(card);
     expect(text(find(card, "dialog"))).toContain("toString");
+  });
+});
+
+describe("a question asked from a dialog", () => {
+  it("gives the keyboard back to the button that asked, whatever its name holds (a line break)", async () => {
+    const devices = x1c({ status: "idle", stage: "idle" });
+    const hass = makeHass({ devices: withPlugs(devices, { id: 3, name: 'Desk "lamp"\nleft', watts: 12, powersPrinter: false }) });
+    const card = await mountCard(hass, { printer: "dev-x1c", header_chips: ["power"] });
+    (find(card, ".pill.power-chip") as HTMLButtonElement).click();
+    await card.updateComplete;
+    const toggle = findAll<HTMLButtonElement>(card, "dialog .det-switch").find((element) => element.getAttribute("aria-label")?.includes("\n"));
+    expect(toggle).toBeDefined();
+    toggle?.focus();
+    keyPress(toggle as HTMLButtonElement);
+    toggle?.click();
+    await settle(card);
+    (find(card, "dialog .dlg-actions .btn.safe") as HTMLButtonElement).click();
+    await settle(card);
+    expect(root(card).activeElement?.getAttribute("aria-label")).toBe(toggle?.getAttribute("aria-label"));
   });
 });
