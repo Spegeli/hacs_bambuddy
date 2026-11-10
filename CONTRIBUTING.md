@@ -75,11 +75,11 @@ docker run --rm -v "${PWD}:/workspace" -w /workspace python:3.13 sh -c 'git conf
 
 CI runs both (see [Continuous integration](#continuous-integration)): the suite must pass on both Home Assistant releases, with at least 95 % line coverage on the newest, and `mypy --strict` must report no error. `config_flow.py` stays at 100 %, and every test that shows an error in a dialog goes on to finish that dialog.
 
-The suite has two layers. `tests/test_api.py` (and the camera's stream in `tests/test_camera.py`) checks what each `BamBuddyClient` method sends and makes of BamBuddy's answer, against Home Assistant's HTTP mock. Most other tests set the integration up in Home Assistant with the client's methods replaced by mocks — the fixture `bambuddy_api` in `tests/conftest.py`, answering from `tests/fixtures/` (BamBuddy's shapes, invented values) — and finds an entity by its unique ID, not by its entity ID. Some tests read the repository's documents and pin texts in them (`tests/test_readme.py`, `tests/test_contributing.py`, `tests/test_strings.py` …): a change there goes with its test. Pure functions are tested directly (`test_models.py`, `test_inventory_fits.py` …), and the filament list's generator against a cut-down Bambu Studio tree in `tests/fixtures/bambu_studio/`.
+The suite has two layers. `tests/test_api.py` (and the camera's stream in `tests/test_camera.py`) checks what each `BamBuddyClient` method sends and makes of BamBuddy's answer, against Home Assistant's HTTP mock. Most other tests set the integration up in Home Assistant with the client's methods replaced by mocks — the fixture `bambuddy_api` in `tests/conftest.py`, answering from `tests/fixtures/` (BamBuddy's shapes, invented values) — and finds an entity by its unique ID, not by its entity ID. Some tests read the repository's documents and pin texts in them (`tests/test_readme.py`, `tests/test_documentation.py`, `tests/test_contributing.py`, `tests/test_strings.py` …): a change there goes with its test. Pure functions are tested directly (`test_models.py`, `test_inventory_fits.py` …), and the filament list's generator against a cut-down Bambu Studio tree in `tests/fixtures/bambu_studio/`.
 
 ## Dashboard card
 
-The dashboard card, BamBuddy printer, is TypeScript and Lit in `cards/`. esbuild bundles it into one file, `custom_components/bambuddy/frontend/bambuddy-card.js`, because HACS installs only the integration's folder; the integration serves that file and adds it to every dashboard. With Node 24, in `cards/`:
+The dashboard card, BamBuddy printer, is TypeScript and Lit in `cards/`. esbuild bundles it into one file, `custom_components/bambuddy/frontend/bambuddy-card.js`, because the Marketplace and HACS install only the integration's folder; the integration serves that file and adds it to every dashboard. With Node 24, in `cards/`:
 
 ```bash
 npm ci              # exactly the packages package-lock.json locks
@@ -224,6 +224,17 @@ python .github/scripts/bambu_filaments.py --fetch
 - The `filament` choices of `set_filament` in `services.yaml` are written by hand from the list (by vendor, then type, then name); `tests/test_card_tables.py` names any it lacks or holds too many.
 - A printer whose own screen lists otherwise than Bambu Studio is corrected in the script's `MODEL_CORRECTIONS` and `EXTRA_FILAMENTS`, never in the JSON.
 
+## User documentation
+
+The README is short on purpose: what the integration does, how to install and set it up, and the way on. Everything else stands on the pages under `documentation/`, and a user-facing change goes where a reader looks for it, most often on a page.
+
+- **The README** links with full addresses, to `main`: the Marketplace shows it away from the repository. There a link to one of its own sections does nothing, so a sentence must read without it. `tests/test_documentation.py` keeps it under its word limit and keeps four headings that links out of our reach lead to: the card's, the upgrade's, the troubleshooting's and the API key's.
+- **The Marketplace** shows the README of the installed release, or of the latest stable release before an install (cached until **Refresh information**), all of it: the badges, the HACS steps and the manual steps too. The HACS steps are the README's one fold.
+- **The pages** link each other relatively. Each starts with its title, one line on what it is for, and the link back to the overview, and none has a fold. Interface words are bold and spelled as the card and `strings.json` spell them.
+- **A new action** gets its heading and its row in `actions.md`, **a new entity** its name in `entities.md`, **a new card option** its row under Options in `dashboard-card.md`: tests hold them to it.
+
+A change to the README or the pages alone needs the document tests only: `tests/test_readme.py`, `tests/test_documentation.py`, `tests/test_local_notes.py`.
+
 ## Translations
 
 The integration ships two languages under `translations/`: English (`en`) and German (`de`). Corrections and new languages by native speakers are welcome.
@@ -289,10 +300,10 @@ A release computes its version from the commit messages and writes its release n
 | `perf` | ⚡ Improvements |
 | `fix` | 🐛 Bug Fixes |
 | `refactor`, `style` | ♻️ Refactor & Code Quality |
-| `docs` — user-facing documentation, the README | 📝 Documentation |
+| `docs` — user-facing documentation, the README and `documentation/` | 📝 Documentation |
 | `test`, `ci`, `build`, `chore` | not listed — unless breaking or scoped `security` (below) |
 
-- **A change to CI, the tests or the release tooling alone is `ci:`, `test:`, `build:` or `chore:`** — also when it fixes or adds something there. **So is a change to the contributor documentation alone** — this file, the issue and pull request templates: `chore:`. `docs:` is for what the people who run the integration read, the README. The notes are for them: a `fix:` for a workflow would show up among their bug fixes, a `docs:` for this file among their documentation.
+- **A change to CI, the tests or the release tooling alone is `ci:`, `test:`, `build:` or `chore:`** — also when it fixes or adds something there. **So is a change to the contributor documentation alone** — this file, the issue and pull request templates: `chore:`. `docs:` is for what the people who run the integration read, the README and the pages under `documentation/`. The notes are for them: a `fix:` for a workflow would show up among their bug fixes, a `docs:` for this file among their documentation.
 - A breaking change — a `!` after the type or the scope (`feat!:`, `fix(scope)!:`, `ci!:`), or a line that starts with `BREAKING CHANGE:` in the message body — makes the next version a major one on **any** type, `ci`, `test`, `build` and `chore` included, and is listed under 💥 Breaking Changes, and only there. So mark only what breaks an installation as breaking.
 - The scope `security`, with any type — `chore` and `build` included — lists the change under 🔒 Security.
 - Write the description for the people who run the integration, in the imperative: the notes print it with a capital first letter, the scope in bold before it — `fix(camera): renew …` becomes "**camera:** Renew …". Within a section, a description whose first word is `add` (or `adds`, `added`, `adding`) comes first, then everything else, then the forms of `fix`, then the forms of `remove`, `drop` and `delete`.
@@ -307,7 +318,7 @@ The maintainer releases with the **Create Release** workflow (`.github/workflows
 | Version and tag | `X.Y.Z`, tag `vX.Y.Z` | `X.Y.Z-beta.N`, tag `vX.Y.Z-beta.N` |
 | Version commit | pushed to `main`, then tagged | only in its tag: `dev` stays as it is |
 | GitHub release | published at once and marked latest — or a draft, when asked for | published at once, marked as a pre-release, never latest |
-| HACS offers it | to everyone | only to installations that switched pre-releases on (see the README's [Beta versions](README.md#beta-versions)) |
+| The Marketplace and HACS offer it | to everyone | only to installations that switched pre-releases on (see [Beta versions](documentation/updating.md#beta-versions)) |
 | Release notes list | the changes since the previous stable release | the changes since the previous release of either type |
 
 **Versions** follow [Semantic Versioning](https://semver.org). The next stable version is the last stable one plus a bump the commits since then call for (see [Commit messages](#commit-messages)): major when one of them is a breaking change, else minor when one is a `feat`, else patch. "Version bump" overrides that with major, minor or patch. A beta carries the stable version it leads to: after `2.0.0`, a `feat` on `dev` makes the betas `2.1.0-beta.1`, `2.1.0-beta.2`, and then the stable `2.1.0`. `manifest.json` gets the version without the `v`. A forced bump holds for its own run only — every run computes the version again. So force the same bump for every beta of a version and for its stable release: `major` for `3.0.0` and each of its betas. A later run on "auto" could plan `2.1.0`, which ranks below the `3.0.0` betas already out, so HACS offers it to none of their installations.
@@ -339,7 +350,7 @@ After a stable release, merge `main` into `dev`, so the version commit reaches `
 ## After merging
 
 - A change on `dev` reaches `main` with the next pull request from `dev`.
-- Installations get it with the next release: a beta from `dev` brings it to those that switched pre-releases on (see the README's [Beta versions](README.md#beta-versions)), a stable release to everyone.
+- Installations get it with the next release: a beta from `dev` brings it to those that switched pre-releases on (see [Beta versions](documentation/updating.md#beta-versions)), a stable release to everyone.
 
 ## License
 

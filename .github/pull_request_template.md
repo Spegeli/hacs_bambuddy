@@ -12,7 +12,7 @@
 - [ ] New feature
 - [ ] Improvement (performance)
 - [ ] Security
-- [ ] Documentation (the README)
+- [ ] Documentation (the README or `documentation/`)
 - [ ] Refactor / code quality
 - [ ] CI, tests, contributor documentation or repository
 - [ ] Breaking change — existing installations must act after updating
@@ -32,7 +32,7 @@ Never try the print controls on a printer that is printing.
 - [ ] Commit messages follow Conventional Commits — the release notes are built from them
 - [ ] Translations updated and in sync, if UI strings changed: `strings.json` and both `translations/*.json` (`en`, `de`), and the card's `cards/src/translations/en.ts` and `de.ts`
 - [ ] No API key, camera token, access code or other secret is logged, put into the diagnostics or committed
-- [ ] README updated, if user-facing behavior changed
+- [ ] README or `documentation/` updated, if user-facing behavior changed
 - [ ] Card changed: its tests and typecheck pass, and the rebuilt bundle `custom_components/bambuddy/frontend/bambuddy-card.js` is committed (`npm --prefix cards run build`)
 
 <!--
