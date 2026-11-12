@@ -133,6 +133,8 @@ _STATUS = [
     "active_extruder",
     "ams_extruder_map",
     "extruder_slots",
+    # An H3C's tools: the one on the toolhead tells the input that feeds.
+    "nozzle_rack",
     "tray_now",
     "fila_switch",
     "ams_status_main",

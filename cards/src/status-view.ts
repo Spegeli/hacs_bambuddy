@@ -28,7 +28,9 @@ import { t, type TextKey } from "./i18n";
 import {
   actionButton,
   activeNozzleIndex,
+  AMS_3H,
   AMS_HT,
+  inputNumber,
   amsActivity,
   asOnline,
   callout,
@@ -286,7 +288,7 @@ const slotType = (slot: Slot, external: boolean): string =>
  * and R of two external spools --, so a row's colours stand level. */
 function amsStrip(ctx: CardContext): TemplateResult | typeof nothing {
   const { hass, refs } = ctx;
-  const twoSpools = refs.externalSpools.length === 2;
+  const twoSpools = !refs.inputs && refs.externalSpools.length === 2;
   // The sides from all spools, what shows from those shown.
   const spools = shownExternalSpools(ctx);
   const groups = [
@@ -305,6 +307,7 @@ function amsStrip(ctx: CardContext): TemplateResult | typeof nothing {
         slots: unit.slots,
         fill: unit.model === AMS_HT,
         ht: unit.model === AMS_HT,
+        nine: unit.model === AMS_3H,
         sides: false,
       };
     }),
@@ -320,6 +323,7 @@ function amsStrip(ctx: CardContext): TemplateResult | typeof nothing {
             slots: spools,
             fill: true,
             ht: false,
+            nine: false,
             sides: twoSpools,
           },
         ]
@@ -330,7 +334,9 @@ function amsStrip(ctx: CardContext): TemplateResult | typeof nothing {
   const fill = groups.filter((group) => group.fill);
   // Two external spools: left and right, in that order.
   const sides = twoSpools ? [t(hass, "side_left_short"), t(hass, "side_right_short")] : [];
-  const sideOf = (entityId: string): string | undefined => sides[refs.externalSpools.indexOf(entityId)];
+  // An H3C's inputs by their tool's number, two external spools by their side.
+  const sideOf = (entityId: string): string | undefined =>
+    refs.inputs && refs.externalSpools.includes(entityId) ? String(inputNumber(hass, entityId)) : sides[refs.externalSpools.indexOf(entityId)];
   // A screen reader hears what the strip shows -- each slot as its title
   // says it, the one in use named -- and where a tap goes.
   const spoken = (entityId: string): string => {
@@ -368,7 +374,7 @@ function amsStrip(ctx: CardContext): TemplateResult | typeof nothing {
                   : nothing}
               </span>`}
         </span>
-        <span class="ams-slots">
+        <span class="ams-slots ${group.nine ? "nine" : ""}">
           ${group.slots.map((entityId) => {
             const slot = slotOf(hass, entityId);
             const side = sideOf(entityId);

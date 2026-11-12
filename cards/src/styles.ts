@@ -1496,6 +1496,12 @@ export const cardStyles = css`
     display: flex;
     gap: 8px;
   }
+  /* The AMS 3H's nine colours: five a row, then four. */
+  .ams-slots.nine {
+    display: grid;
+    grid-template-columns: repeat(5, auto);
+    justify-content: start;
+  }
   .ams-slot {
     display: flex;
     flex-direction: column;
@@ -3885,6 +3891,9 @@ export const cardStyles = css`
       display: grid;
       grid-template-columns: repeat(2, auto);
       justify-content: start;
+    }
+    .ams-slots.nine {
+      grid-template-columns: repeat(3, auto);
     }
     button.ams-strip {
       padding-right: 28px;

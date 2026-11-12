@@ -86,8 +86,8 @@ def test_an_ams_slot_on_the_tpu_high_flow_nozzle_has_nothing_left() -> None:
 
 def test_a_switch_slot_offers_what_either_nozzle_takes() -> None:
     switch = Slot("H2D", "0.4", ams=True, extruders=frozenset({0, 1}), nozzle_types={0: "HS01", 1: "HS01"})
-    assert refusal("GFN06", switch) is None  # Bambu PPA-CF: not on the right nozzle, the left takes it
-    assert refusal("GFN06", replace(switch, extruders=frozenset({0}))) == "filament_not_right"
+    assert refusal("GFN97", switch) is None  # Generic PPA-CF: not on the right nozzle, the left takes it
+    assert refusal("GFN97", replace(switch, extruders=frozenset({0}))) == "filament_not_right"
     assert refusal("GFT01", switch) == "filament_not_for_ams"  # Bambu PET-CF: the AMS rule holds on the switch too
     # The right nozzle a TPU high-flow one: TPU for AMS goes through the left.
     high_flow = replace(switch, nozzle_types={0: "HU01", 1: "HS01"})
@@ -97,7 +97,8 @@ def test_a_switch_slot_offers_what_either_nozzle_takes() -> None:
 
 def test_an_unknown_model_offers_every_filament() -> None:
     every = _ids(replace(A1, model=None, ams=False))
-    assert len(every) == 100
+    # Every filament but the H3C's two 2.85 mm TPUs, which need its TPU285 tool.
+    assert len(every) == 101
     assert every == _ids(replace(A1, model="Z9", ams=False))
 
 
@@ -178,3 +179,49 @@ def test_a_switch_slot_whose_nozzles_both_refuse_says_nozzle_whatever_the_reason
     """The right nozzle is refused by the list, the left by its type: neither side is to blame alone."""
     switch = Slot("H2D", "0.4", ams=False, extruders=frozenset({0, 1}), nozzle_types={0: "HS01", 1: "HU01"})
     assert refusal("GFN06", switch) == "filament_not_for_nozzle"
+
+
+# Bambu Studio's AMS types: 1 AMS, 2 AMS Lite, 3 AMS 2 Pro, 4 AMS HT, 5 the A2L's AMS Lite, 6 the AMS 3H.
+H3C_AMS = Slot("H3C", "0.4", ams=True, extruders=frozenset({0}), nozzle_types={0: "HS01"}, ams_type=6)
+H3C_SPOOL = Slot("H3C", "0.4", ams=False, extruders=frozenset({0}), nozzle_types={0: "HS01"})
+X1C_AMS = Slot("X1C", "0.4", ams=True, extruders=frozenset({0}), nozzle_types={0: "hardened_steel"})
+
+
+def test_the_ams_3h_takes_no_tpu_but_bambu_s_cf_filaments() -> None:
+    """Bambu Studio 02.09: TPU in no AMS but the A2L's AMS Lite; Bambu's
+    PET-CF, PA6-CF and PPS-CF not in AMS types 1-5, PPA-CF not in the AMS 3H
+    either."""
+    assert refusal("GFU99", H3C_AMS) == "filament_not_for_ams"
+    assert refusal("GFU98", H3C_AMS) is None
+    assert {refusal(fid, H3C_AMS) for fid in ("GFT01", "GFN05", "GFT02")} == {None}
+    assert refusal("GFN06", H3C_AMS) == "filament_not_for_ams"
+
+
+def test_bambu_s_cf_filaments_stay_out_of_the_other_ams_units() -> None:
+    for fid in ("GFT01", "GFN05", "GFN06"):
+        assert refusal(fid, X1C_AMS) == "filament_not_for_ams"
+    # Another vendor's CF is no Bambu filament.
+    assert refusal("GFL50", X1C_AMS) is None
+
+
+def test_the_a2l_s_ams_lite_takes_tpu() -> None:
+    a2l = Slot("A2L", "0.4", ams=True, extruders=frozenset({0}), nozzle_types={0: "hardened_steel"}, ams_type=5)
+    assert refusal("GFU99", a2l) is None
+    assert refusal("GFU99", replace(a2l, ams_type=2)) == "filament_not_for_ams"
+
+
+def test_a_nozzle_code_with_its_diameter_reads_as_the_code() -> None:
+    """The H3C reported "HS01-0.4" once: a standard nozzle, not a TPU285 tool."""
+    assert refusal("GFL99", replace(H3C_SPOOL, nozzle_types={0: "HS01-0.4"})) is None
+    assert refusal("GFU06", replace(H3C_SPOOL, nozzle_types={0: "HT01-0.4"})) is None
+
+
+def test_2_85_mm_tpu_needs_a_tpu285_tool() -> None:
+    """The H3C's 2.85 mm TPU goes only to its TPU285 tool (HT01), which
+    takes only 2.85 mm filament."""
+    for fid in ("GFU06", "GFU97"):
+        assert refusal(fid, H3C_SPOOL) == "filament_not_for_nozzle"
+        assert refusal(fid, H3C_AMS) is not None
+        assert refusal(fid, replace(H3C_SPOOL, nozzle_types={0: "HT01"})) is None
+    assert refusal("GFL99", replace(H3C_SPOOL, nozzle_types={0: "HT01"})) == "filament_not_for_nozzle"
+    assert not {"GFU06", "GFU97"} & _ids(H3C_SPOOL)

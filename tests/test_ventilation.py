@@ -15,7 +15,7 @@ from homeassistant.exceptions import HomeAssistantError, ServiceValidationError
 
 from custom_components.bambuddy import fan as fan_module
 from custom_components.bambuddy.api import BamBuddyApiError
-from tests.conftest import X1C, entity_id, no_entity, placeholders, printer_uid, set_up, state_at, translations
+from tests.conftest import H3C, X1C, entity_id, no_entity, placeholders, printer_uid, set_up, state_at, translations, with_h3c
 from tests.helpers import as_model
 
 
@@ -95,6 +95,20 @@ async def test_no_ventilation_without_an_airduct(hass: HomeAssistant, bambuddy_a
 
     assert hass.states.async_entity_ids("fan") and not [e for e in hass.states.async_entity_ids("fan") if e.endswith("_ventilation")]
     assert no_entity(hass, "fan", printer_uid(entry, "ventilation"))
+
+
+async def test_the_h3c_ventilates_with_its_exhaust_fan(hass: HomeAssistant, bambuddy_api: SimpleNamespace) -> None:
+    """The H3C's fan 3 is the exhaust fan on its back wall (a tester set it
+    from BamBuddy: 50 % came back as 47 %): as on the H2 series, the
+    exhaust fan and ventilation through it, beside the airduct and the
+    chamber heater."""
+    with_h3c(bambuddy_api)
+    entry = await set_up(hass, H3C)
+
+    assert entity_id(hass, "fan", printer_uid(entry, "chamber_fan", H3C)) == "fan.h3c_31b00a000000006_exhaust_fan"
+    assert state_at(hass, entity_id(hass, "fan", printer_uid(entry, "ventilation", H3C))).attributes["fans"] == ["exhaust"]
+    assert entity_id(hass, "select", printer_uid(entry, "airduct_mode", H3C))
+    assert entity_id(hass, "number", printer_uid(entry, "chamber_target", H3C))
 
 
 async def test_ventilation_switches_to_cooling_first(hass: HomeAssistant, bambuddy_api: SimpleNamespace) -> None:

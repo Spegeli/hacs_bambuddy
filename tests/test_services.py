@@ -20,6 +20,7 @@ from custom_components.bambuddy.services import SCHEMAS
 from tests.conftest import (
     A1_MINI,
     H2D,
+    H3C,
     INTEGRATION,
     P1S,
     X1C,
@@ -36,6 +37,7 @@ from tests.conftest import (
     printers_but,
     set_up,
     state_of,
+    with_h3c,
 )
 from tests.helpers import call_action, reload_entry, timed_out
 
@@ -134,6 +136,30 @@ async def test_loading_a_slot(hass: HomeAssistant, bambuddy_api: SimpleNamespace
     bambuddy_api.load_filament.assert_awaited_once_with(A1_MINI, 2)
 
 
+async def test_loading_the_ams_3h_s_ninth_slot(hass: HomeAssistant, bambuddy_api: SimpleNamespace) -> None:
+    """BamBuddy 1.3.1 numbers the AMS 3H's slots 28-36: the ninth is 36."""
+    with_h3c(bambuddy_api)
+    entry = await set_up(hass, H3C)
+    slot = entity_id(hass, "sensor", ams_uid(entry, 32, "slot_9", H3C))
+
+    await call_action(hass, "load_filament", entity_id=slot)
+
+    bambuddy_api.load_filament.assert_awaited_once_with(H3C, 36)
+
+
+async def test_a_refused_ams_3h_load_is_not_taken_for_an_ams_ht(hass: HomeAssistant, bambuddy_api: SimpleNamespace) -> None:
+    """Tray 36 is no AMS HT's: BamBuddy's own refusal stands."""
+    with_h3c(bambuddy_api)
+    entry = await set_up(hass, H3C)
+    slot = entity_id(hass, "sensor", ams_uid(entry, 32, "slot_9", H3C))
+    bambuddy_api.load_filament.side_effect = BamBuddyApiError(400, "tray_id must be 0-15, 24-36, 128-135, 247-255")
+
+    with pytest.raises(HomeAssistantError) as raised:
+        await call_action(hass, "load_filament", entity_id=slot)
+
+    assert raised.value.translation_key != "ams_ht_load"
+
+
 @pytest.mark.parametrize(("key", "refusal"), [("slot_4", "slot_empty")])
 async def test_an_empty_slot_is_refused(
     hass: HomeAssistant, bambuddy_api: SimpleNamespace, key: str, refusal: str
@@ -209,6 +235,21 @@ async def test_unloading(hass: HomeAssistant, bambuddy_api: SimpleNamespace) -> 
     await call_action(hass, "unload_filament", device_id=printer_device_id(hass, entry, A1_MINI))
 
     bambuddy_api.unload_filament.assert_awaited_once_with(A1_MINI)
+
+
+@pytest.mark.parametrize(("zone", "sent"), [([5, 7], {"filament": "PETG"}), ([], {})])
+async def test_the_ams_3h_dries_its_zone_s_filament(
+    hass: HomeAssistant, bambuddy_api: SimpleNamespace, zone: list[int], sent: dict[str, str]
+) -> None:
+    """The AMS 3H dries two of its nine slots: the first filled one of them
+    names the filament. A zone BamBuddy does not report names none."""
+    with_h3c(bambuddy_api)
+    bambuddy_api.statuses[H3C]["ams"][0]["dryer_slots"] = zone
+    entry = await set_up(hass, H3C)
+
+    await call_action(hass, "start_drying", device_id=_ams(hass, entry, H3C, 32), temperature=55, duration=12)
+
+    bambuddy_api.start_drying.assert_awaited_once_with(H3C, 32, 55, 12, **sent)
 
 
 async def test_drying(hass: HomeAssistant, bambuddy_api: SimpleNamespace) -> None:

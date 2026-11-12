@@ -221,7 +221,10 @@ export function findPrinter(hass: Hass, deviceId: string | undefined): PrinterRe
   const dual = DUAL_KEYS.some((key) => keys.has(key));
   const sides = dual ? ["left_", "right_"] : [""];
   const nozzles: Heater[] = sides.map((side) => ({ sensor: one(`sensor.${side}nozzle_temperature`), target: one(`number.${side}nozzle_target_temperature`) }));
-  const externalSpools = sides.map((side) => one(`sensor.${side}external_spool`));
+  // An H3C's nine inputs, by the tool each feeds.
+  const inputs = [1, 2, 3, 4, 5, 6, 7, 8, 9].map((tool) => one(`sensor.external_${tool}`));
+  const hasInputs = inputs.some((input) => input !== undefined);
+  const externalSpools = hasInputs ? inputs : sides.map((side) => one(`sensor.${side}external_spool`));
   const fans = Object.entries(FAN_KEYS)
     .map(([key, fan]) => ({ key: fan, entityId: one(key) }))
     .filter((fan): fan is { key: FanKey; entityId: string } => fan.entityId !== undefined);
@@ -254,6 +257,7 @@ export function findPrinter(hass: Hass, deviceId: string | undefined): PrinterRe
     hms: one("sensor.hms_errors"),
     activeFilament: one("sensor.active_filament"),
     externalSpools: externalSpools.filter((spool): spool is string => spool !== undefined),
+    inputs: hasInputs,
     online,
     plateClearNeeded: one("binary_sensor.plate_clear_needed"),
     developerMode: one("binary_sensor.developer_mode"),

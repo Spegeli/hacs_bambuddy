@@ -17,6 +17,7 @@ from custom_components.bambuddy.api import BamBuddyApiError
 from tests.conftest import (
     A1_MINI,
     H2D,
+    H3C,
     P1S,
     X1C,
     X1E,
@@ -35,6 +36,7 @@ from tests.conftest import (
     setup_integration,
     state_at,
     state_of,
+    with_h3c,
 )
 from tests.helpers import as_model
 
@@ -426,6 +428,62 @@ async def test_two_external_spools_by_their_ids(
 
     assert state_of(hass, "sensor", printer_uid(entry, "external_spool", H2D)).state == "PETG"
     assert state_of(hass, "sensor", printer_uid(entry, "external_spool_2", H2D)).state == "TPU"
+
+
+async def test_the_ams_3h_s_drying_zone(hass: HomeAssistant, bambuddy_api: SimpleNamespace, freezer: FrozenDateTimeFactory) -> None:
+    """The drying sensor names the zone's two slots and its own humidity and
+    temperature; while BamBuddy reports no zone they are unknown, the sensor
+    stays."""
+    with_h3c(bambuddy_api)
+    entry = await set_up(hass, H3C)
+    uid = ams_uid(entry, 32, "drying", H3C)
+
+    drying = state_of(hass, "binary_sensor", uid)
+    assert (drying.attributes["zone_slots"], drying.attributes["zone_humidity"], drying.attributes["zone_temperature"]) == ([6, 8], 25, 55.5)
+    assert entity_id(hass, "sensor", ams_uid(entry, 32, "drying_remaining_time", H3C))
+
+    bambuddy_api.statuses[H3C]["ams"][0].update({"dryer_slots": [], "dryer_humidity": None, "dryer_temp": None})
+    await next_refresh(hass, freezer)
+
+    drying = state_of(hass, "binary_sensor", uid)
+    assert drying.state == "off"
+    assert (drying.attributes["zone_slots"], drying.attributes["zone_humidity"], drying.attributes["zone_temperature"]) == (None, None, None)
+
+
+async def test_other_units_name_no_drying_zone(hass: HomeAssistant, bambuddy_api: SimpleNamespace) -> None:
+    """BamBuddy 1.3.1 sends every unit an empty zone: an AMS 2 Pro stays as it was."""
+    bambuddy_api.statuses[H2D]["ams"][0].update({"ams_type": 3, "dryer_slots": [], "dryer_humidity": None, "dryer_temp": None})
+    entry = await set_up(hass, H2D)
+
+    drying = state_of(hass, "binary_sensor", ams_uid(entry, 0, "drying", H2D))
+    assert drying.state != "unavailable"
+    assert not {"zone_slots", "zone_humidity", "zone_temperature"} & set(drying.attributes)
+
+
+async def test_the_h3c_s_nine_external_inputs(hass: HomeAssistant, bambuddy_api: SimpleNamespace) -> None:
+    """An H3C reports nine inputs, one per tool: input 255 feeds tool 1,
+    254 tool 2, 247 tool 9. Each is a sensor named by its tool, as the
+    printer's screen and BamBuddy name them; there is no single external
+    spool."""
+    with_h3c(bambuddy_api)
+    for spool in bambuddy_api.statuses[H3C]["vt_tray"]:
+        spool.update({"tray_type": "PETG" if spool["id"] == 254 else "PLA", "tray_sub_brands": "", "exists": True})
+    entry = await set_up(hass, H3C)
+
+    second = state_of(hass, "sensor", printer_uid(entry, "external_2", H3C))
+    assert (second.state, second.attributes["tray_id"], second.attributes["slot"]) == ("PETG", 254, 2)
+    ninth = state_of(hass, "sensor", printer_uid(entry, "external_9", H3C))
+    assert (ninth.attributes["tray_id"], ninth.attributes["slot"]) == (247, 9)
+    assert entity_id(hass, "sensor", printer_uid(entry, "external_1", H3C)) == "sensor.h3c_31b00a000000006_external_1"
+    assert no_entity(hass, "sensor", printer_uid(entry, "external_spool", H3C))
+
+
+async def test_an_ams_3h_slot_carries_its_global_tray_id(hass: HomeAssistant, bambuddy_api: SimpleNamespace) -> None:
+    with_h3c(bambuddy_api)
+    entry = await set_up(hass, H3C)
+
+    assert state_of(hass, "sensor", ams_uid(entry, 32, "slot_1", H3C)).attributes["tray_id"] == 28
+    assert state_of(hass, "sensor", ams_uid(entry, 32, "slot_3", H3C)).attributes["active"] is True
 
 
 @pytest.mark.parametrize(("extruder", "feeding"), [(0, "external_spool_2"), (1, "external_spool")])

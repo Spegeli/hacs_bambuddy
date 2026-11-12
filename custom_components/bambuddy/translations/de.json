@@ -616,6 +616,60 @@
           "empty": "Leer"
         }
       },
+      "external_1": {
+        "name": "Extern 1",
+        "state": {
+          "empty": "Leer"
+        }
+      },
+      "external_2": {
+        "name": "Extern 2",
+        "state": {
+          "empty": "Leer"
+        }
+      },
+      "external_3": {
+        "name": "Extern 3",
+        "state": {
+          "empty": "Leer"
+        }
+      },
+      "external_4": {
+        "name": "Extern 4",
+        "state": {
+          "empty": "Leer"
+        }
+      },
+      "external_5": {
+        "name": "Extern 5",
+        "state": {
+          "empty": "Leer"
+        }
+      },
+      "external_6": {
+        "name": "Extern 6",
+        "state": {
+          "empty": "Leer"
+        }
+      },
+      "external_7": {
+        "name": "Extern 7",
+        "state": {
+          "empty": "Leer"
+        }
+      },
+      "external_8": {
+        "name": "Extern 8",
+        "state": {
+          "empty": "Leer"
+        }
+      },
+      "external_9": {
+        "name": "Extern 9",
+        "state": {
+          "empty": "Leer"
+        }
+      },
       "nozzle_type": {
         "name": "Düsentyp",
         "state": {
@@ -625,7 +679,8 @@
           "stainless_steel_high_flow": "Edelstahl, High Flow",
           "hardened_steel_high_flow": "Gehärteter Stahl, High Flow",
           "tungsten_carbide_high_flow": "Wolframcarbid, High Flow",
-          "tpu_high_flow": "TPU-High-Flow"
+          "tpu_high_flow": "TPU-High-Flow",
+          "tpu_285": "TPU 2,85 mm"
         }
       },
       "left_nozzle_type": {
@@ -637,7 +692,8 @@
           "stainless_steel_high_flow": "Edelstahl, High Flow",
           "hardened_steel_high_flow": "Gehärteter Stahl, High Flow",
           "tungsten_carbide_high_flow": "Wolframcarbid, High Flow",
-          "tpu_high_flow": "TPU-High-Flow"
+          "tpu_high_flow": "TPU-High-Flow",
+          "tpu_285": "TPU 2,85 mm"
         }
       },
       "right_nozzle_type": {
@@ -649,7 +705,8 @@
           "stainless_steel_high_flow": "Edelstahl, High Flow",
           "hardened_steel_high_flow": "Gehärteter Stahl, High Flow",
           "tungsten_carbide_high_flow": "Wolframcarbid, High Flow",
-          "tpu_high_flow": "TPU-High-Flow"
+          "tpu_high_flow": "TPU-High-Flow",
+          "tpu_285": "TPU 2,85 mm"
         }
       },
       "nozzle_diameter": {

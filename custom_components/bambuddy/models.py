@@ -139,24 +139,25 @@ STAGE_OPTIONS = sorted({"idle", *STAGES.values(), *_DERIVED_STAGES.values()})
 _MODEL_NAMES = {
     "BL-P001": "X1C", "BL-P002": "X1", "BL-P003": "X1E", "C13": "X1E", "C11": "P1P", "C12": "P1S", "N7": "P2S",
     "N6": "X2D", "N9": "A2L", "A11": "A1", "A12": "A1 Mini", "N1": "A1 Mini", "N2S": "A1", "A04": "A1 Mini",
-    "O1D": "H2D", "O1E": "H2D Pro", "O2D": "H2D Pro", "O1C": "H2C", "O1C2": "H2C", "O1S": "H2S",
+    "O1D": "H2D", "O1E": "H2D Pro", "O2D": "H2D Pro", "O1C": "H2C", "O1C2": "H2C", "O1S": "H2S", "N10": "H3C",
 }  # fmt: skip
 _CANONICAL = {code: name.upper() for code, name in _MODEL_NAMES.items()}
 
 # The models by their names in upper case (`model_key` maps a code to its model).
 _A1_FAMILY = frozenset({"A1", "A1 MINI", "A2L"})
-_DOOR = frozenset({"X1", "X1C", "X1E", "X2D", "P2S", "H2D", "H2D PRO", "H2C", "H2S"})
-_AIRDUCT = frozenset({"P2S", "X2D", "H2C", "H2D", "H2D PRO", "H2S"})
+_DOOR = frozenset({"X1", "X1C", "X1E", "X2D", "P2S", "H2D", "H2D PRO", "H2C", "H2S", "H3C"})
+_AIRDUCT = frozenset({"P2S", "X2D", "H2C", "H2D", "H2D PRO", "H2S", "H3C"})
 # An Ethernet port: only the X1E and the H2D Pro (Bambu's spec pages and FAQs, 2026-10-19). BamBuddy's own
 # list holds more models; a printer without a port never reports a cable.
 _ETHERNET = frozenset({"X1E", "H2D PRO"})
 # No SD slot but a USB port (and internal storage): BamBuddy's SD card flag
 # tells a USB drive.
-_USB_DRIVE = frozenset({"P2S", "X2D", "H2C", "H2D", "H2D PRO", "H2S"})
+_USB_DRIVE = frozenset({"P2S", "X2D", "H2C", "H2D", "H2D PRO", "H2S", "H3C"})
 # "Exhaust fan" is Bambu's name for fan 3 of these (Bambu Studio's default; the H2 wiki's
 # „Bauraumabluftlüfter“); on the P2S it is the External Exhaust Fan kit, there only when BamBuddy
 # reports it (`exhaust_fan_present`: airduct part 3, bambu_mqtt.py).
-_EXHAUST_FAN = frozenset({"P2S", "X2D", "H2C", "H2D", "H2D PRO", "H2S"})
+# The H3C's fan 3 sits on its back wall too (a tester's H3C, set from BamBuddy).
+_EXHAUST_FAN = frozenset({"P2S", "X2D", "H2C", "H2D", "H2D PRO", "H2S", "H3C"})
 _EXHAUST_KIT = frozenset({"P2S"})
 # Fan 2 is the left auxiliary fan and fan 10 the right one here; the P2S has them the other way
 # round (Bambu Studio's N6.json and N7.json; BamBuddy calls fan 10 "left" on both, #3373).
@@ -177,13 +178,13 @@ _HEATER_MAX: dict[str, dict[str, int]] = {
     "nozzle": {
         **dict.fromkeys(("A1", "A1 MINI", "A2L", "P1P", "P1S", "P2S", "X1", "X1C", "X2D"), 300),
         "X1E": 320,
-        **dict.fromkeys(("H2D", "H2D PRO", "H2C", "H2S"), 350),
+        **dict.fromkeys(("H2D", "H2D PRO", "H2C", "H2S", "H3C"), 350),
     },
     "bed": {
         **dict.fromkeys(("A1 MINI", "A2L"), 80),
         **dict.fromkeys(("A1", "P1P", "P1S"), 100),
         **dict.fromkeys(("X1E", "P2S"), 110),
-        **dict.fromkeys(("X1", "X1C", "X2D", "H2D", "H2D PRO", "H2C", "H2S"), 120),
+        **dict.fromkeys(("X1", "X1C", "X2D", "H2D", "H2D PRO", "H2C", "H2S", "H3C"), 120),
     },
     # BamBuddy takes up to 65 °C; the X1E heats its chamber to 60 °C (Bambu's
     # spec page, BamBuddy's own note on its heater list).
@@ -200,6 +201,13 @@ EXTERNAL_AMS = 255
 AMS_HT_FIRST_ID = 128
 # The place BamBuddy gives the A2L's AMS Lite.
 AMS_LITE_PLACE = 6
+# BamBuddy's unit id of the H3C's AMS 3H.
+AMS_3H_PLACE = 32
+# Bambu Studio's global tray id per AMS type (BamBuddy 1.3.1's `ams_type`):
+# the AMS HT by its unit id, the rest from a first id on.
+_FIRST_TRAY = {5: 24, 6: 28, 7: 37}
+AMS_TYPE_HT = 4
+AMS_TYPE_3H = 6
 # BamBuddy's airduct modes; the laser mode (the H2 series' laser module) only the printer sets.
 AIRDUCT_MODES = {0: "cooling", 1: "heating", 2: "laser"}
 
@@ -269,7 +277,9 @@ def _older(found: Any, version: str) -> bool:
 # detector a printer lacks as on.
 _X1_SERIES = frozenset({"X1", "X1C", "X1E"})
 _H2D = frozenset({"H2D"})
-_SEPARATE_DETECTORS = frozenset({"P2S", "X2D", "H2D PRO", "H2S", "H2C"})
+# The H3C's clump detector: Bambu's list for it names nozzle clumping, Bambu
+# Studio's N10.json no clump position calibration -- taken as the H2S has it.
+_SEPARATE_DETECTORS = frozenset({"P2S", "X2D", "H2D PRO", "H2S", "H2C", "H3C"})
 _AIR_PRINTING = frozenset({"H2D PRO", "H2C"})
 # Before it, the H2D had the X1's single AI monitoring switch.
 _H2D_SEPARATE_DETECTORS_FIRMWARE = "01.01.02.08"
@@ -416,8 +426,8 @@ def display_model(model: str | None) -> str:
 # BamBuddy does not know -- up to 5, a camera it takes from elsewhere up to 15.
 CAMERA_MIN_FPS = 5
 CAMERA_FPS_STEP = 5
-_RTSP_PREFIXES = ("X1", "X2", "H2", "P2")
-_RTSP_CODES = frozenset({"BL-P001", "C13", "N6", "O1D", "O1C", "O1C2", "O1S", "O1E", "O2D", "N7"})
+_RTSP_PREFIXES = ("X1", "X2", "H2", "H3", "P2")
+_RTSP_CODES = frozenset({"BL-P001", "C13", "N6", "O1D", "O1C", "O1C2", "O1S", "O1E", "O2D", "N7", "N10"})
 # The most frames a second BamBuddy streams: an external camera, an RTSP
 # camera, the chamber image (A1, P1, A2L and any model it does not know).
 _EXTERNAL_FPS = 15
@@ -514,6 +524,11 @@ class PrinterData:
     @property
     def external_spools(self) -> list[dict[str, Any]]:
         return [tray for tray in self.status.get("vt_tray") or [] if isinstance(tray, dict)]
+
+    @property
+    def has_inputs(self) -> bool:
+        """Nine external inputs, one per tool (the H3C): BamBuddy reports more than two."""
+        return len(self.external_spools) > 2
 
     # An unknown model gets only what every printer has: fans an A1 lacks
     # would stay behind unavailable once the model is known, and the
@@ -688,11 +703,25 @@ def ams_key(unit: dict[str, Any]) -> str:
     return ams_serial(unit) or str(unit.get("id", 0))
 
 
+def studio_ams_type(unit: dict[str, Any]) -> int | None:
+    """The unit's type as Bambu Studio counts it (BamBuddy 1.3.1's
+    `ams_type`); without it, by place where that tells it: the A2L's AMS Lite
+    5, the AMS 3H 6; None otherwise."""
+    kind = unit.get("ams_type")
+    if isinstance(kind, int) and kind > 0:
+        return kind
+    unit_id = unit.get("id")
+    return {AMS_LITE_PLACE: 5, AMS_3H_PLACE: AMS_TYPE_3H}.get(unit_id) if isinstance(unit_id, int) else None
+
+
 def ams_type_by_place(unit: dict[str, Any]) -> bool:
     """Whether a unit's place tells its type without BamBuddy's module type:
-    an AMS HT (ids 128-135), the A2L's AMS Lite (place 6)."""
+    an AMS HT (ids 128-135), the A2L's AMS Lite (place 6), the H3C's AMS 3H
+    (place 32, or BamBuddy 1.3.1's type 6)."""
     unit_id = unit.get("id", 0)
-    return isinstance(unit_id, int) and (unit_id >= AMS_HT_FIRST_ID or unit_id == AMS_LITE_PLACE)
+    if unit.get("ams_type") == AMS_TYPE_3H:
+        return True
+    return isinstance(unit_id, int) and (unit_id >= AMS_HT_FIRST_ID or unit_id in (AMS_LITE_PLACE, AMS_3H_PLACE))
 
 
 def ams_label(unit_id: int) -> str:
@@ -701,18 +730,20 @@ def ams_label(unit_id: int) -> str:
     (BamBuddy's amsHelpers.ts): an AMS at place 0 is AMS A beside it."""
     if unit_id == AMS_LITE_PLACE:
         return "AMS Lite"
+    if unit_id == AMS_3H_PLACE:
+        return "AMS 3H"
     kind = "AMS HT" if unit_id >= AMS_HT_FIRST_ID else "AMS"
     return f"{kind} {chr(ord('A') + ams_number(unit_id) - 1)}"
 
 
 # The kinds of AMS unit, as `ams_model` names them.
-AMS_MODELS = ("AMS", "AMS 2 Pro", "AMS HT", "AMS Lite")
+AMS_MODELS = ("AMS", "AMS 2 Pro", "AMS HT", "AMS Lite", "AMS 3H")
 
 
 def ams_letter(unit_id: int) -> str | None:
     """A place's letter as on the printer (`ams_label`), in small: a-d, AMS
-    HT a-h; none for the A2L's AMS Lite."""
-    return None if unit_id == AMS_LITE_PLACE else ams_label(unit_id)[-1].lower()
+    HT a-h; none for the A2L's AMS Lite and the H3C's AMS 3H."""
+    return None if unit_id in (AMS_LITE_PLACE, AMS_3H_PLACE) else ams_label(unit_id)[-1].lower()
 
 
 def ams_object_id(model: str, printer_key: str, unit_id: int, serial: str | None, key: str) -> str:
@@ -843,6 +874,9 @@ def nozzle_type(code: str) -> str:
             return material
     if len(code) >= 4 and code[1].upper() == "U":
         return "tpu_high_flow"
+    # The H3C's tool for 2.85 mm TPU (Bambu Studio's TPU285).
+    if len(code) >= 4 and code[1].upper() == "T":
+        return "tpu_285"
     if len(code) >= 4 and code[2:4] in _NOZZLE_MATERIALS:
         return _NOZZLE_MATERIALS[code[2:4]] + ("_high_flow" if code[1].upper() in "HE" else "")
     return code
@@ -855,6 +889,9 @@ def ams_model(unit: dict[str, Any], printer: PrinterData) -> str:
     through the hub is never mixed with an AMS Lite)."""
     module = unit.get("module_type") or ""
     unit_id = unit.get("id", 0)
+    # The H3C's AMS 3H: BamBuddy 1.3.1's module, its type 6, its place 32.
+    if module == "n10a" or unit.get("ams_type") == AMS_TYPE_3H or unit_id == AMS_3H_PLACE:
+        return "AMS 3H"
     if module == "n3s" or (isinstance(unit_id, int) and unit_id >= AMS_HT_FIRST_ID):
         return "AMS HT"
     if module == "n3f":
@@ -870,7 +907,33 @@ def ams_model(unit: dict[str, Any], printer: PrinterData) -> str:
 # The AMS units with a heater, and the hottest each dries at (Bambu Lab's
 # specifications); BamBuddy's `supports_drying` tells whether the printer's
 # firmware lets it dry remotely.
-DRYING_MAX = {"AMS 2 Pro": 65, "AMS HT": 85}
+DRYING_MAX = {"AMS 2 Pro": 65, "AMS HT": 85, "AMS 3H": 85}
+
+
+def drying_zone(unit: dict[str, Any]) -> dict[str, Any]:
+    """The AMS 3H dries two of its nine slots (BamBuddy 1.3.1's
+    `dryer_slots`, numbered from 1 here) and measures them on their own;
+    all None while BamBuddy reports no zone."""
+    found = unit.get("dryer_slots")
+    slots: list[int] = found if isinstance(found, list) else []
+    known = bool(slots)
+    return {
+        "zone_slots": [slot + 1 for slot in slots] if known else None,
+        "zone_humidity": unit.get("dryer_humidity") if known else None,
+        "zone_temperature": unit.get("dryer_temp") if known else None,
+    }
+
+
+def drying_filament(unit: dict[str, Any]) -> str | None:
+    """What the AMS 3H's zone holds: the first filled zone slot's type, for
+    BamBuddy's cooling temperature; None where no zone is reported."""
+    slots = unit.get("dryer_slots")
+    trays = {part_id(tray): tray for tray in unit.get("tray") or []}
+    for slot in slots if isinstance(slots, list) else []:
+        tray = trays.get(slot)
+        if tray is not None and not tray_empty(tray):
+            return str(tray.get("tray_type") or "") or None
+    return None
 
 
 def drying_minutes(unit: dict[str, Any]) -> int:
@@ -900,19 +963,29 @@ def ams_number(unit_id: int) -> int:
     A2L's AMS Lite (BamBuddy's id 6) as 1."""
     if unit_id >= AMS_HT_FIRST_ID:
         return unit_id - AMS_HT_FIRST_ID + 1
-    if unit_id == AMS_LITE_PLACE:
+    if unit_id in (AMS_LITE_PLACE, AMS_3H_PLACE):
         return 1
     return unit_id + 1
 
 
-def tray_id(unit_id: int, slot: int) -> int:
+
+def tray_id(unit: dict[str, Any], slot: int) -> int:
     """BamBuddy's global id of an AMS slot, as `tray_now` and ams/load use
-    it: 0-15 for AMS units 0-3, 24-27 for an A2L's AMS Lite, the unit id for
-    an AMS HT."""
-    if unit_id >= AMS_HT_FIRST_ID:
+    it. BamBuddy 1.3.1 names each unit's type: an AMS HT is its unit id, an
+    A2L's AMS Lite 24-27, an AMS 3H 28-36, an AMS-B from 37. Without a type
+    (BamBuddy 1.2.5.7, 1.3.0) the place tells: 0-15 for AMS units 0-3,
+    24-27 for an A2L's AMS Lite, the unit id for an AMS HT, 28-36 for the
+    AMS 3H (unit 32)."""
+    unit_id = part_id(unit)
+    kind = unit.get("ams_type")
+    if kind == AMS_TYPE_HT or (kind not in _FIRST_TRAY and unit_id >= AMS_HT_FIRST_ID):
         return unit_id
+    if kind in _FIRST_TRAY:
+        return _FIRST_TRAY[kind] + slot
     if unit_id == AMS_LITE_PLACE:
         return 24 + slot
+    if unit_id == AMS_3H_PLACE:
+        return 28 + slot
     return unit_id * 4 + slot
 
 
@@ -970,7 +1043,7 @@ def slot_attributes(tray: dict[str, Any], slot: int, global_id: int, active_tray
         and remain >= 0
         and not empty
         and has_chip_ids(tray)
-        and global_id not in (EXTERNAL_LEFT, EXTERNAL_RIGHT)
+        and not FIRST_INPUT <= global_id <= EXTERNAL_RIGHT
         else None,
         "active": global_id == active_tray,
         "empty": empty,
@@ -1049,6 +1122,8 @@ def active_tray(data: PrinterData) -> int | None:
     holders so): the active nozzle tells which -- the left one feeds from
     the left spool (254), the right one from the right (255), as
     BamBuddy's printer card reads it."""
+    if data.has_inputs and _fed_from_input(data):
+        return _input_on_toolhead(data)
     tray_now = data.status.get("tray_now")
     if not isinstance(tray_now, int) or tray_now == NOTHING_LOADED:
         return None
@@ -1057,15 +1132,56 @@ def active_tray(data: PrinterData) -> int | None:
     return tray_now
 
 
+def _fed_from_input(data: PrinterData) -> bool:
+    """An H3C whose extruder is fed from an external input (its AMS 3H not
+    connected, or the TPU tool), not from the AMS: tray_now does not tell
+    the input then."""
+    slots = data.status.get("extruder_slots")
+    first = slots.get("0") if isinstance(slots, dict) else None
+    return isinstance(first, dict) and first.get("ams_id") in (EXTERNAL_LEFT, EXTERNAL_RIGHT)
+
+
+def _input_on_toolhead(data: PrinterData) -> int | None:
+    """The input of the tool on the H3C's toolhead -- the rack's entry 0, at
+    address a, takes input 255 - a; None without a tool there."""
+    rack = data.status.get("nozzle_rack") or []
+    mounted = next((tool for tool in rack if isinstance(tool, dict) and tool.get("id") == 0), None)
+    address = mounted.get("addr_id") if mounted else None
+    return 255 - address if isinstance(address, int) and 0 <= address < 9 else None
+
+
 def find_tray(data: PrinterData, global_id: int) -> tuple[dict[str, Any], int] | None:
     """The tray with BamBuddy's global id, and its 1-based slot number."""
     for unit in data.ams_units:
-        unit_id = part_id(unit)
         for tray in unit.get("tray") or []:
             slot = part_id(tray)
-            if tray_id(unit_id, slot) == global_id:
+            if tray_id(unit, slot) == global_id:
                 return tray, slot + 1
-    for index, tray in enumerate(data.external_spools):
+    spools = data.external_spools
+    for index, tray in enumerate(spools):
         if tray.get("id") == global_id:
-            return tray, index + 1
+            return tray, input_tool(global_id) if data.has_inputs else index + 1
     return None
+
+
+# An H3C's external inputs: one per tool, input 256 - n feeding tool n
+# (Bambu Studio: a hotend at rack address a takes input 255 - a).
+FIRST_INPUT = 247
+INPUT_TOOLS = range(1, 10)
+
+
+def input_tool(global_id: int) -> int:
+    """The tool an H3C's input feeds, as its screen and BamBuddy number them: 255 tool 1, 247 tool 9."""
+    return 256 - global_id
+
+
+def input_global_id(tray: int) -> int:
+    """An H3C input's global id from BamBuddy's slot of it in AMS 255."""
+    return EXTERNAL_LEFT + tray if tray < 2 else FIRST_INPUT + tray - 2
+
+
+def input_tray(tool: int) -> int:
+    """BamBuddy's slot of a tool's input in AMS 255: 254 is 0, 255 is 1,
+    247-253 are 2-8."""
+    global_id = 256 - tool
+    return global_id - EXTERNAL_LEFT if global_id >= EXTERNAL_LEFT else global_id - FIRST_INPUT + 2

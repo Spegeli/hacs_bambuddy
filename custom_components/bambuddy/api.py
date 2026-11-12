@@ -530,9 +530,14 @@ class BamBuddyClient:
     async def unload_filament(self, printer_id: int) -> None:
         await self._command(f"/printers/{printer_id}/ams/unload")
 
-    async def start_drying(self, printer_id: int, ams_id: int, temperature: int, duration: int) -> None:
+    async def start_drying(
+        self, printer_id: int, ams_id: int, temperature: int, duration: int, filament: str | None = None
+    ) -> None:
+        """`filament` (the AMS 3H's zone) sets BamBuddy's cooling temperature;
+        without it BamBuddy takes the unit's first filled slot."""
+        extra = {"filament": filament} if filament else {}
         await self._command(
-            f"/printers/{printer_id}/drying/start", ams_id=ams_id, temp=temperature, duration=duration
+            f"/printers/{printer_id}/drying/start", ams_id=ams_id, temp=temperature, duration=duration, **extra
         )
 
     async def stop_drying(self, printer_id: int, ams_id: int) -> None:

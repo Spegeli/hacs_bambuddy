@@ -387,7 +387,7 @@ function slotTools(ctx: CardContext, dialog: FilamentDialog, actions: DialogActi
     ? t(hass, "rfid_unload_hint", { slots: slot })
     : spool < 0
       ? undefined
-      : t(hass, refs.externalSpools.length > 1 ? `rfid_unload_hint_${sideAt(spool)}` : "rfid_unload_hint_external");
+      : t(hass, refs.externalSpools.length === 2 ? `rfid_unload_hint_${sideAt(spool)}` : "rfid_unload_hint_external");
   return html`<div class="slot-tools">
       ${dialog.ams ? actionButton({ label: t(hass, "rfid_read"), iconName: "sync", disabled: running || unloadFirst !== undefined, onClick: actions.refreshRfid }) : nothing}
       ${dialog.empty

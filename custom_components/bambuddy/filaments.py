@@ -42,14 +42,17 @@ class Slot:
     """What decides a slot's offer: the printer's model key (as
     `models.model_key` gives it), the nozzle diameter (`diameter`), an AMS
     slot or an external spool, the nozzles it feeds (0 the right or only
-    one, 1 the left; both on the filament track switch) and their BamBuddy
-    nozzle codes ("HS01")."""
+    one, 1 the left; both on the filament track switch), their BamBuddy
+    nozzle codes ("HS01"), and the AMS unit's type as Bambu Studio counts it
+    (`ams_type`: 5 the A2L's AMS Lite, 6 the AMS 3H; None for the others and
+    an external spool)."""
 
     model: str | None
     diameter: str
     ams: bool
     extruders: frozenset[int]
     nozzle_types: Mapping[int, str]
+    ams_type: int | None = None
 
 
 FILAMENTS: Final[dict[str, Filament]] = {fid: Filament(id=fid, **entry) for fid, entry in _DATA["filaments"].items()}
@@ -70,9 +73,19 @@ def _rank(item: Filament) -> tuple[int, int, bytes]:
 # the generator stops when they read otherwise there).
 _TPU_HIGH_FLOW_TPUS = frozenset({"GFU04", "GFU03", "GFU01", "GFU00", "GFU99"})
 _H2D_FAMILY = frozenset({"H2D", "H2D PRO"})
-# A BamBuddy nozzle code ("HS01"): its second letter the flow, as Bambu Studio reads it.
-_NOZZLE_CODE = re.compile(r"^[A-Z]([A-Z])\d{2}$")
-_FLOW = {"S": "standard", "A": "standard", "X": "standard", "H": "high", "E": "high", "B": "e3d", "U": "tpu"}
+# A BamBuddy nozzle code ("HS01", the H3C's also "HS01-0.4" with its
+# diameter): its second letter the flow, as Bambu Studio reads it.
+_NOZZLE_CODE = re.compile(r"^[A-Z]([A-Z])\d{2}(?:-[\d.]+)?$")
+_FLOW = {"S": "standard", "A": "standard", "X": "standard", "H": "high", "E": "high", "B": "e3d", "U": "tpu", "T": "tpu285"}
+# What an AMS takes, by Bambu Studio's AMS type: TPU only in the A2L's AMS
+# Lite (5) and the AMS-B (7); Bambu's PET-CF, PA6-CF and PPS-CF not in types
+# 1-5 (an unknown type counts as one of them), Bambu's PPA-CF in none but the
+# AMS-B.
+_TPU_AMS_TYPES = frozenset({5, 7})
+_BAMBU_CF = frozenset({"PET-CF", "PA6-CF", "PPS-CF"})
+_CF_AMS_TYPES = frozenset({6, 7})
+# Bambu Studio's 2.85 mm TPU, which only its TPU285 tool takes -- and that tool nothing else.
+_TPU_285 = frozenset({"GFU06", "GFU97"})
 
 
 def get(filament_id: str | None) -> Filament | None:
@@ -144,10 +157,24 @@ def _flow(code: str | None) -> str | None:
     return _FLOW.get(match.group(1)) if match else None
 
 
+def _not_for_ams(item: Filament, slot: Slot) -> bool:
+    if not slot.ams:
+        return False
+    if item.type == "TPU":
+        return slot.ams_type not in _TPU_AMS_TYPES
+    if item.vendor != "Bambu Lab":
+        return False
+    if item.type in _BAMBU_CF:
+        return slot.ams_type not in _CF_AMS_TYPES
+    return item.type == "PPA-CF" and slot.ams_type != 7
+
+
 def _nozzle_refuses(item: Filament, slot: Slot, extruder: int) -> bool:
+    flow = _flow(slot.nozzle_types.get(extruder))
+    if (flow == "tpu285") != (item.id in _TPU_285):
+        return True
     if slot.model not in _H2D_FAMILY:
         return False
-    flow = _flow(slot.nozzle_types.get(extruder))
     if flow == "tpu" and item.id not in _TPU_HIGH_FLOW_TPUS:
         return True
     return item.name == "Bambu TPU 85A" and slot.diameter == "0.4" and flow in ("standard", "high")
@@ -159,7 +186,7 @@ def refusal(filament_id: str, slot: Slot) -> str | None:
     item = get(filament_id)
     if item is None or filament_id not in _offered_ids(slot):
         return "filament_not_offered"
-    if slot.ams and (item.type == "TPU" or (item.vendor == "Bambu Lab" and item.type == "PET-CF")):
+    if _not_for_ams(item, slot):
         return "filament_not_for_ams"
     not_on = _not_on(slot)
     extruders = slot.extruders or frozenset({0})

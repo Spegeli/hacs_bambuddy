@@ -39,6 +39,8 @@ _BACK_LINK = "[← Documentation](README.md)"
 # Entity names no page writes as they stand, and why.
 _NAMED_TOGETHER = {
     "Slot {slot}": "a placeholder: one row names a unit's slots, as many as it has",
+    # One row names an H3C's nine inputs: "External 1 … 9".
+    **{f"External {tool}": "one row names an H3C's nine inputs" for tool in range(2, 10)},
 }
 
 

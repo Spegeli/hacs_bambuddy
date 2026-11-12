@@ -69,8 +69,27 @@ EXTRA_FILAMENTS: dict[str, dict[str, Any]] = {}
 # integration checks (custom_components/bambuddy/filaments.py), without their
 # texts.
 CHECKED_RULES: dict[str, dict[str, Any]] = {
-    "TPU in the AMS": {"type": "TPU", "action": "prohibition", "slot": "ams"},
-    "Bambu PET-CF in the AMS": {"vendor": "Bambu Lab", "type": "PET-CF", "action": "prohibition", "slot": "ams"},
+    "TPU in the AMS (Bambu Studio's AMS types 1-4 and the AMS 3H)": {
+        "type": "TPU", "action": "prohibition", "slot": "ams", "ams_type_id": [1, 2, 3, 4, 6],
+    },
+    **{
+        f"Bambu {kind} in the AMS (types 1-5)": {
+            "vendor": "Bambu Lab", "type": kind, "action": "prohibition", "slot": "ams",
+            "ams_type_id": [1, 2, 3, 4, 5], "group": "cf_gf_ams", "priority": 2,
+        }
+        for kind in ("PET-CF", "PA6-CF", "PPS-CF", "PPA-CF")
+    },
+    "Bambu PPA-CF in the H3C's AMS 3H": {
+        "vendor": "Bambu Lab", "type": "PPA-CF", "model_id": ["N10"], "action": "prohibition", "slot": "ams",
+        "ams_type_id": [6], "group": "ams_6_7_cf_gf_feeding", "priority": 2,
+    },
+    "only 2.85 mm filament on a TPU285 tool": {
+        "white_names": ["2.85mm"], "nozzle_flows": ["TPU285"], "action": "prohibition", "hide_in": ["pre_check", "double_check"],
+    },
+    "2.85 mm TPU only on a TPU285 tool": {
+        "filament_id_vec": ["GFU06", "GFU97"], "nozzle_flows": ["Standard", "High Flow", "TPU High Flow", "E3D High Flow"],
+        "action": "prohibition",
+    },
     "the H2D's TPU high-flow nozzle": {
         "white_fila_ids": ["GFU04", "GFU03", "GFU01", "GFU00", "GFU99"],
         "nozzle_flows": ["TPU High Flow"],
@@ -100,8 +119,26 @@ IGNORED_RULES: dict[str, dict[str, Any]] = {
         ("TPU 90A", {"name_suffix": "TPU 90A"}),
     )
 }
-IGNORED_RULES["TPU with automatic flow calibration on the H2D (a print setting, not a slot's)"] = {
-    "type": "TPU", "action": "prohibition", "calib_mode": "auto_pa", "model_id": ["O1D", "O1E"],
+IGNORED_RULES["TPU with automatic flow calibration on the H2D and H3C (a print setting, not a slot's)"] = {
+    "type": "TPU", "action": "prohibition", "calib_mode": "auto_pa", "model_id": ["O1D", "O1E", "N10"],
+}
+# The X2D's own refusals (Bambu Studio 02.09): per nozzle, on the filament
+# track switch, on its 0.2 nozzle -- not checked yet.
+IGNORED_RULES["the X2D's right nozzle (not checked yet)"] = {
+    "model_id": ["N6"], "extruder_id": [0], "filament_id_vec": ["GFA11", "GFN06", "GFU04", "GFU03", "GFU01", "GFU00"],
+    "action": "prohibition",
+}
+IGNORED_RULES["the X2D's filament track switch (not checked yet)"] = {
+    "model_id": ["N6"], "has_filament_switch": True, "slot": "ams", "filament_id_vec": ["GFN05", "GFN06"],
+    "action": "prohibition", "group": "cf_gf_ams", "priority": 10,
+}
+IGNORED_RULES["the X2D's filament track switch on a 0.2 nozzle (not checked yet)"] = {
+    "model_id": ["N6"], "has_filament_switch": True, "slot": "ams", "filament_id_vec": ["GFA15"], "nozzle_flows": ["Standard"],
+    "nozzle_diameters": [0.2], "action": "prohibition", "group": "fila_switcher", "priority": 50,
+}
+IGNORED_RULES["the X2D's 0.2 nozzle (not checked yet)"] = {
+    "model_id": ["N6"], "filament_id_vec": ["GFA12"], "nozzle_flows": ["Standard"], "nozzle_diameters": [0.2],
+    "action": "prohibition",
 }
 
 

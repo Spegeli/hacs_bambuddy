@@ -168,6 +168,8 @@ async def test_an_hms_answer_goes_as_json(hass: HomeAssistant, aioclient_mock: A
         ("load_filament", (1, 254), f"{API}/printers/1/ams/load?tray_id=254"),
         ("unload_filament", (1,), f"{API}/printers/1/ams/unload"),
         ("start_drying", (1, 128, 65, 8), f"{API}/printers/1/drying/start?ams_id=128&temp=65&duration=8"),
+        # The AMS 3H's drying zone names its filament: BamBuddy takes its cooling temperature from it.
+        ("start_drying", (1, 32, 55, 12, "PETG"), f"{API}/printers/1/drying/start?ams_id=32&temp=55&duration=12&filament=PETG"),
         ("stop_drying", (1, 128), f"{API}/printers/1/drying/stop?ams_id=128"),
         ("select_extruder", (1, 1), f"{API}/printers/1/select-extruder?extruder=1"),
         ("set_ams_backup", (1, True), f"{API}/printers/1/ams-backup?enabled=true"),

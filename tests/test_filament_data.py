@@ -1,5 +1,5 @@
-"""The shipped filament list, as Bambu Studio's profiles of 2026-10-13 hold
-it (and as the printers' own screens and his A1 showed it)."""
+"""The shipped filament list, as Bambu Studio 02.09.01.70's profiles hold it
+(and as the printers' own screens and his A1 showed it)."""
 from __future__ import annotations
 
 from collections import Counter
@@ -13,9 +13,9 @@ ROOT = Path(__file__).parents[1]
 DATA: dict[str, Any] = json.loads((ROOT / "custom_components" / "bambuddy" / "filaments.json").read_text(encoding="utf-8"))
 
 
-def test_one_hundred_filaments_from_six_vendors() -> None:
+def test_one_hundred_and_three_filaments_from_six_vendors() -> None:
     vendors = Counter(item["vendor"] for item in DATA["filaments"].values())
-    assert vendors == {"Bambu Lab": 49, "Generic": 29, "Polymaker": 12, "SUNLU": 7, "Overture": 2, "eSUN": 1}
+    assert vendors == {"Bambu Lab": 51, "Generic": 30, "Polymaker": 12, "SUNLU": 7, "Overture": 2, "eSUN": 1}
     assert DATA["vendors"] == ["Bambu Lab", "Generic", "Polymaker", "Overture", "SUNLU", "eSUN"]
 
 
@@ -31,13 +31,13 @@ def test_what_bambu_studio_sends() -> None:
     assert filaments["GFG96"]["setting_id"] == "GFSG96_04"
 
 
-@pytest.mark.parametrize(("model", "count"), [("A1", 86), ("A1 MINI", 62), ("P1S", 96), ("X1C", 96), ("H2S", 84), ("H2C", 77)])
+@pytest.mark.parametrize(("model", "count"), [("A1", 87), ("A1 MINI", 63), ("P1S", 97), ("X1C", 97), ("H2S", 85), ("H2C", 78), ("H3C", 75)])
 def test_the_offer_per_model_at_04(model: str, count: int) -> None:
     assert len(DATA["printers"][model]["0.4"]["ids"]) == count
 
 
 def test_every_model_bambu_studio_knows() -> None:
-    assert set(DATA["printers"]) == {"A1", "A1 MINI", "A2L", "P1P", "P1S", "P2S", "X1", "X1C", "X1E", "X2D", "H2D", "H2D PRO", "H2C", "H2S"}
+    assert set(DATA["printers"]) == {"A1", "A1 MINI", "A2L", "P1P", "P1S", "P2S", "X1", "X1C", "X1E", "X2D", "H2D", "H2D PRO", "H2C", "H2S", "H3C"}
 
 
 def test_the_a1_mini_has_no_abs_and_the_p2s_two_vendors() -> None:
@@ -64,5 +64,5 @@ def test_bambu_studios_order() -> None:
 
 def test_the_source() -> None:
     assert DATA["source"] == {"repository": "https://github.com/bambulab/BambuStudio",
-                              "commit": "79df7ae309be398ed30c9f397c13c9911c2edc57",
-                              "profiles": "02.08.00.09", "licence": "AGPL-3.0"}  # fmt: skip
+                              "commit": "56a57d00a591360cf41bf21383915ee5bf357be5",
+                              "profiles": "02.09.00.74", "licence": "AGPL-3.0"}  # fmt: skip

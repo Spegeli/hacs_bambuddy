@@ -253,6 +253,33 @@
       "right_external_spool": {
         "default": "mdi:printer-3d-nozzle-outline"
       },
+      "external_1": {
+        "default": "mdi:printer-3d-nozzle-outline"
+      },
+      "external_2": {
+        "default": "mdi:printer-3d-nozzle-outline"
+      },
+      "external_3": {
+        "default": "mdi:printer-3d-nozzle-outline"
+      },
+      "external_4": {
+        "default": "mdi:printer-3d-nozzle-outline"
+      },
+      "external_5": {
+        "default": "mdi:printer-3d-nozzle-outline"
+      },
+      "external_6": {
+        "default": "mdi:printer-3d-nozzle-outline"
+      },
+      "external_7": {
+        "default": "mdi:printer-3d-nozzle-outline"
+      },
+      "external_8": {
+        "default": "mdi:printer-3d-nozzle-outline"
+      },
+      "external_9": {
+        "default": "mdi:printer-3d-nozzle-outline"
+      },
       "nozzle_type": {
         "default": "mdi:printer-3d-nozzle"
       },

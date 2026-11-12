@@ -9,7 +9,7 @@ import { chosenFilament, selectValue, type FilamentDialog, type ScanReason } fro
 import { numberAttribute, rgbOf } from "./format";
 import { icon } from "./icons";
 import { t, type TextKey } from "./i18n";
-import { AMS_HT, AMS_LITE, dialogNote, nextIndex, printerTitle, radioLeave, slotOf, spoolDot, spoolLine, waitLine, warnings, type CardContext, type InventorySpool, type Slot, unitLetterTogether } from "./parts";
+import { AMS_3H, AMS_HT, AMS_LITE, dialogNote, nextIndex, printerTitle, radioLeave, slotOf, spoolDot, spoolLine, waitLine, warnings, type CardContext, type InventorySpool, type Slot, unitLetterTogether } from "./parts";
 import type { Hass } from "./types";
 
 const TABS = ["set", "inventory"] as const;
@@ -79,15 +79,23 @@ const scanReasonText = (hass: Hass, scan: { reason?: ScanReason }): string => t(
 /** Filters and the search show from this many spools on. */
 const SEARCH_FROM = 5;
 
-/** BamBuddy's AMS letters: unit 0-3 AMS A-D, 128-135 AMS HT A-H, 6 the AMS Lite. */
-function unitName(amsId: number): string {
+/** BamBuddy's AMS letters: unit 0-3 AMS A-D, 128-135 AMS HT A-H, 6 the AMS
+ * Lite, 32 the H3C's AMS 3H. */
+export function unitName(amsId: number): string {
   if (amsId === 6) return AMS_LITE;
+  if (amsId === 32) return AMS_3H;
   // A no-break space: "AMS A" never breaks across lines.
   return amsId >= 128 ? `AMS\u00a0HT\u00a0${String.fromCharCode(65 + amsId - 128)}` : `AMS\u00a0${String.fromCharCode(65 + amsId)}`;
 }
 
-/** BamBuddy's global id of a slot, as the slot sensors carry it. */
-const globalTray = (amsId: number, trayId: number): number => (amsId >= 128 ? amsId : amsId === 6 ? 24 + trayId : amsId * 4 + trayId);
+/** The tool an H3C input feeds, from BamBuddy's slot of it in AMS 255:
+ * 0 is input 254 (tool 2), 1 is 255 (tool 1), 2-8 are 247-253 (tools 9-3). */
+export const inputTool = (trayId: number): number => (trayId === 0 ? 2 : trayId === 1 ? 1 : 11 - trayId);
+
+/** BamBuddy's global id of a slot, as the slot sensors carry it: an AMS HT
+ * by its unit, the A2L's AMS Lite 24-27, the AMS 3H 28-36. */
+export const globalTray = (amsId: number, trayId: number): number =>
+  amsId >= 128 ? amsId : amsId === 6 ? 24 + trayId : amsId === 32 ? 28 + trayId : amsId * 4 + trayId;
 
 interface Where {
   /** The list's line: "Zugewiesen: AMS A, Fach 1". */
@@ -102,6 +110,10 @@ interface Where {
 function whereOf(ctx: CardContext, place: Exclude<SpoolPlace, { here: true }>): Where {
   const { hass, refs } = ctx;
   if (place.samePrinter) {
+    if (place.amsId === 255 && refs.inputs) {
+      const unit = t(hass, "input_place", { number: inputTool(place.trayId) });
+      return { line: t(hass, "inv_in_unit", { unit }), at: unit, from: unit };
+    }
     if (place.amsId === 255) {
       const sides = refs.externalSpools.length > 1;
       const side = !sides ? "" : place.trayId === 1 ? "_right" : "_left";

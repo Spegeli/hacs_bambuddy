@@ -218,6 +218,9 @@ export interface PrinterRefs {
   activeFilament?: string;
   /** One external spool, or the left and the right one. */
   externalSpools: string[];
+  /** The H3C's nine external inputs, one per tool, in the tools' order
+   * (`externalSpools` holds them): named by their number. */
+  inputs: boolean;
   online?: string;
   plateClearNeeded?: string;
   /** On when the printer takes commands over the LAN (developer mode). */

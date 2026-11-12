@@ -62,6 +62,14 @@ def test_the_filament_choice_is_the_list() -> None:
     assert options == [{"label": item.name, "value": item.id} for item in expected]
 
 
+def test_the_card_dries_the_units_the_integration_dries() -> None:
+    """The Filament tab's drying row stands where a unit has a heater."""
+    found = re.search(r"const DRYING_MODELS = \[(.*?)\];", _card("filament-view.ts"))
+    assert found
+    constants = dict(re.findall(r'export const (AMS_\w+) = "([^"]+)";', _card("parts.ts")))
+    assert {constants[name.strip()] for name in found.group(1).split(",")} == set(DRYING_MAX)
+
+
 def test_the_same_drying_limits() -> None:
     """The dialog offers no drying the action refuses, and refuses none it takes."""
     found = re.search(r"export const DRYING = \{(.*?)\};", _card("dialogs.ts"))

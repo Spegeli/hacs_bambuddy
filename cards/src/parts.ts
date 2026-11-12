@@ -4,7 +4,7 @@
 // tappable piece is a button, so it works by keyboard.
 import { html, nothing, type TemplateResult } from "lit";
 
-import { filamentColor, formatGrams, formatPercent, formatState, hasValue, needsOutline, numericState, stateOf, textOrUndefined } from "./format";
+import { filamentColor, formatGrams, formatPercent, formatState, hasValue, needsOutline, numberAttribute, numericState, stateOf, textOrUndefined } from "./format";
 import { icon, type IconName } from "./icons";
 import { placesOf, spoolBasics, type SpoolPlace } from "./actions";
 import { LANGUAGES, t, type TextKey } from "./i18n";
@@ -418,6 +418,11 @@ export const sideName = (hass: Hass, index: number): string => t(hass, sideAt(in
 export const AMS_HT = "AMS HT";
 export const AMS_2_PRO = "AMS 2 Pro";
 export const AMS_LITE = "AMS Lite";
+export const AMS_3H = "AMS 3H";
+
+/** An H3C input's number, the tool it feeds: its sensor's `slot` (the list
+ * leaves out inputs the user disabled, so not their place in it). */
+export const inputNumber = (hass: Hass, entityId: string): number => numberAttribute(hass, entityId, "slot") ?? 0;
 
 /** A compact chip's words: the short ones on screen, the full ones for a
  * screen reader -- the chip row announces a change by its text, which may
@@ -650,8 +655,14 @@ export function slotTitle(hass: Hass, slot: Slot): string {
  * job on it fed from. */
 export function shownExternalSpools(ctx: CardContext): string[] {
   const { hass, refs } = ctx;
+  const feeds = (entityId: string): boolean => slotOf(hass, entityId).active || ctx.jobSpools?.has(entityId) === true;
+  // An H3C's inputs: beside its AMS 3H only the one that feeds -- they keep
+  // what they held while the AMS 3H was not detected --, else those with a spool.
+  if (refs.inputs) {
+    return refs.externalSpools.filter((entityId) => feeds(entityId) || (ctx.ams.length === 0 && !slotOf(hass, entityId).empty));
+  }
   if (ctx.settings.externalSpool || ctx.ams.length === 0) return refs.externalSpools;
-  return refs.externalSpools.filter((entityId) => slotOf(hass, entityId).active || ctx.jobSpools?.has(entityId) === true);
+  return refs.externalSpools.filter(feeds);
 }
 
 /** A text attribute, where it has one. */

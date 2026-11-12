@@ -50,18 +50,22 @@ from .models import (
     ams_key,
     ams_model,
     can_dry,
+    drying_filament,
     drying_minutes,
     find_tray,
     has_heater,
     has_rfid,
     hms_answers,
     hms_code,
+    input_global_id,
+    input_tray,
     is_drying,
     model_key,
     nozzle_side,
     part_id,
     spool_present,
     stored_key,
+    studio_ams_type,
     tray_empty,
     tray_id,
     tray_label,
@@ -90,8 +94,9 @@ _PRINTER_BUSY = "Printer is busy"
 
 # The firmware refuses to extrude below this nozzle temperature.
 MIN_EXTRUDE_TEMPERATURE = 170
-# p<printer key>_ams<AMS key>_slot_<n>, or p<printer key>_external_spool[_2].
-_SLOT_IN_UNIQUE_ID = re.compile(r"p([^_]+)_(?:ams([^_]+)_slot_(\d+)|external_spool(_2)?)")
+# p<printer key>_ams<AMS key>_slot_<n>, p<printer key>_external_spool[_2], or an
+# H3C's input p<printer key>_external_<tool>.
+_SLOT_IN_UNIQUE_ID = re.compile(r"p([^_]+)_(?:ams([^_]+)_slot_(\d+)|external_spool(_2)?|external_(\d))")
 
 
 def _distance(limit: float) -> vol.All:
@@ -230,10 +235,12 @@ def _place(hass: HomeAssistant, entity_id: str) -> tuple[BamBuddyPrinterCoordina
             match = _SLOT_IN_UNIQUE_ID.fullmatch(entity.unique_id.removeprefix(f"{entry_id}_"))
             if entity.config_entry_id != entry_id or match is None or match.group(1) != coordinator.key:
                 continue
-            _, ams, slot, right = match.groups()
+            _, ams, slot, right, tool = match.groups()
             if ams is not None:
                 unit, index = _unit_place(coordinator, ams), int(slot) - 1
-                return coordinator, unit, index, tray_id(unit, index)
+                return coordinator, part_id(unit), index, tray_id(unit, index)
+            if tool is not None:
+                return coordinator, EXTERNAL_AMS, input_tray(int(tool)), 256 - int(tool)
             return coordinator, EXTERNAL_AMS, 1 if right else 0, EXTERNAL_RIGHT if right else EXTERNAL_LEFT
         # A slot of a printer BamBuddy does not list now: its repair says why.
         for entry in hass.config_entries.async_loaded_entries(DOMAIN):
@@ -244,16 +251,16 @@ def _place(hass: HomeAssistant, entity_id: str) -> tuple[BamBuddyPrinterCoordina
     raise refuse("not_a_slot")
 
 
-def _unit_place(coordinator: BamBuddyPrinterCoordinator, key: str) -> int:
-    """Where an AMS unit is plugged in now (BamBuddy's AMS id). A unit the
-    printer does not report: with the printer online, the action says so;
-    offline, the command says that first."""
+def _unit_place(coordinator: BamBuddyPrinterCoordinator, key: str) -> dict[str, Any]:
+    """The AMS unit as the printer reports it now (its id is where it is
+    plugged in). A unit the printer does not report: with the printer
+    online, the action says so; offline, the command says that first."""
     for unit in coordinator.data.ams_units:
         if ams_key(unit) == key:
-            return part_id(unit)
+            return unit
     if coordinator.data.connected:
         raise refuse("ams_not_reported", printer=coordinator.short_name)
-    return int(key) if key.isdigit() else 0
+    return {"id": int(key) if key.isdigit() else 0}
 
 
 def _filled_slot(hass: HomeAssistant, entity_id: str) -> tuple[BamBuddyPrinterCoordinator, int]:
@@ -819,13 +826,21 @@ def _extruder(data: PrinterData, ams: int, slot: int) -> int | None:
 def _filament_slot(data: PrinterData, ams: int, slot: int) -> filaments.Slot:
     """What Bambu Studio's offer for a slot depends on: the printer's model,
     the diameter and codes of the nozzles it feeds (both on the filament
-    track switch), an AMS slot or an external spool."""
+    track switch), an AMS slot or an external spool, the AMS unit's type."""
     model = model_key(data.model) or None
     extruder = _extruder(data, ams, slot)
     extruders = frozenset({0, 1}) if extruder is None else frozenset({extruder})
     nozzles = data.status.get("nozzles") or []
     codes = {index: str(nozzles[index].get("nozzle_type") or "") for index in extruders if index < len(nozzles)}
-    return filaments.Slot(model, filaments.diameter(model, _nozzle_diameter(data, ams, slot)), ams != EXTERNAL_AMS, extruders, codes)
+    if data.has_inputs:
+        # An H3C: the tool the place feeds, not the one on the toolhead. The
+        # TPU tool (TPU285) takes no AMS slot: a slot at its address is
+        # offered as for a standard nozzle.
+        tool = _rack_tool(data, ams, slot)
+        code = str((tool or {}).get("nozzle_type") or "")
+        codes = {0: code} if code and (ams == EXTERNAL_AMS or code[1:2].upper() != "T") else {}
+    kind = studio_ams_type(_unit(data, ams)) if ams != EXTERNAL_AMS else None
+    return filaments.Slot(model, filaments.diameter(model, _nozzle_diameter(data, ams, slot)), ams != EXTERNAL_AMS, extruders, codes, kind)
 
 
 # The reasons `filaments.refusal` gives that are refusals of their own name.
@@ -839,10 +854,27 @@ def _refused_filament(why: str | None, filament: str, printer: str) -> ServiceVa
     return refuse("filament_not_offered", filament=filament, printer=printer)
 
 
+def _rack_tool(data: PrinterData, ams: int, slot: int) -> dict[str, Any] | None:
+    """The H3C's tool a place feeds, from its rack: AMS 3H slot k feeds the
+    tool at address k, input v the one at 255 - v (Bambu Studio). None for
+    every other printer."""
+    if not data.has_inputs:
+        return None
+    if ams == EXTERNAL_AMS:
+        address = 255 - input_global_id(slot)
+    else:
+        address = slot
+    rack = [tool for tool in data.status.get("nozzle_rack") or [] if isinstance(tool, dict)]
+    return next((tool for tool in rack if tool.get("addr_id") == address), None)
+
+
 def _nozzle_diameter(data: PrinterData, ams: int, slot: int) -> str:
     """The diameter of the nozzle the slot feeds -- the printer keeps a K
     value per diameter; a unit on both nozzles takes the first's (both are
-    alike as a rule)."""
+    alike as a rule). An H3C's place: its own tool's."""
+    tool = _rack_tool(data, ams, slot)
+    if tool is not None and tool.get("nozzle_diameter"):
+        return str(tool["nozzle_diameter"])
     extruder = _extruder(data, ams, slot) or 0
     nozzles = data.status.get("nozzles") or []
     for index in (extruder, 0):
@@ -887,9 +919,13 @@ async def _start_drying(hass: HomeAssistant, call: ServiceCall) -> None:
     if call.data[ATTR_TEMPERATURE] > maximum:
         raise refuse("drying_too_hot", model=model, maximum=str(maximum))
 
+    # The AMS 3H's zone names its filament; elsewhere BamBuddy picks it.
+    filament = drying_filament(found) if model == "AMS 3H" else None
+    zone = {"filament": filament} if filament else {}
+
     async def start() -> None:
         try:
-            await coordinator.client.start_drying(coordinator.printer_id, unit, call.data[ATTR_TEMPERATURE], call.data[ATTR_DURATION])
+            await coordinator.client.start_drying(coordinator.printer_id, unit, call.data[ATTR_TEMPERATURE], call.data[ATTR_DURATION], **zone)
         except BamBuddyApiError as err:
             # A countdown that stands still may still count as drying for the
             # printer: the way out is a stop. BamBuddy's other reasons

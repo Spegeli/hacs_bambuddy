@@ -541,10 +541,12 @@ export function printerDevice(spec: PrinterSpec): FakeDevice {
   if (spec.chamber) {
     entities.push({ entityId: `sensor.${p}_chamber_temperature`, key: "chamber_temperature", state: value(String(spec.chamber[0])), attributes: { unit_of_measurement: "°C" } });
   }
-  const spools = dual ? ["left_external_spool", "right_external_spool"] : ["external_spool"];
+  // An H3C's nine inputs, by the tool each feeds.
+  const inputs = spec.externalSpools.length === 9;
+  const spools = inputs ? spec.externalSpools.map((_, index) => `external_${index + 1}`) : dual ? ["left_external_spool", "right_external_spool"] : ["external_spool"];
   spec.externalSpools.forEach((spool, index) => {
     const key = spools[index] as string;
-    entities.push({ entityId: `sensor.${p}_${key}`, key, state: value(slotState(spool)), attributes: slotAttributes(spool, 1, true) });
+    entities.push({ entityId: `sensor.${p}_${key}`, key, state: value(slotState(spool)), attributes: slotAttributes(spool, inputs ? index + 1 : 1, true) });
   });
   const active = spec.externalSpools.find((spool) => spool.active);
   entities.push({ entityId: `sensor.${p}_active_filament`, key: "active_filament", state: value(active ? slotState(active) : "none") });
@@ -664,7 +666,7 @@ export interface AmsSpec {
   temperature?: number;
   slots: SlotSpec[];
   /** Drying is offered: true while it runs, with its minutes left. */
-  drying?: { on: boolean; remaining: number; target?: number };
+  drying?: { on: boolean; remaining: number; target?: number; zone?: number[] | null };
   online?: boolean;
   /** On a two-nozzle printer: the nozzle the unit feeds (its slots say it). */
   nozzle?: "left" | "right";
@@ -674,8 +676,8 @@ export interface AmsSpec {
 
 export function amsDevice(spec: AmsSpec): FakeDevice {
   const ht = spec.amsId >= 128;
-  // Lettered as the integration names the unit: AMS A-D, AMS HT A-H.
-  const label = `${ht ? "AMS HT" : "AMS"} ${String.fromCharCode(65 + (ht ? spec.amsId - 128 : spec.amsId))}`;
+  // Lettered as the integration names the unit: AMS A-D, AMS HT A-H; the H3C's AMS 3H without a letter.
+  const label = spec.amsId === 32 ? "AMS 3H" : `${ht ? "AMS HT" : "AMS"} ${String.fromCharCode(65 + (ht ? spec.amsId - 128 : spec.amsId))}`;
   const p = `${spec.printer.id}_ams_${spec.amsId}`;
   const value = (state: string): string => (spec.online === false ? "unavailable" : state);
   const entities: FakeEntity[] = spec.slots.map((slot, index) => ({
@@ -696,7 +698,10 @@ export function amsDevice(spec: AmsSpec): FakeDevice {
         entityId: `binary_sensor.${p}_drying`,
         key: "drying",
         state: value(spec.drying.on ? "on" : "off"),
-        attributes: { target_temperature: spec.drying.target ?? null },
+        attributes: {
+          target_temperature: spec.drying.target ?? null,
+          ...(spec.drying.zone !== undefined ? { zone_slots: spec.drying.zone, zone_humidity: spec.drying.zone ? 25 : null, zone_temperature: spec.drying.zone ? 55.5 : null } : {}),
+        },
       },
       { entityId: `sensor.${p}_drying_remaining_time`, key: "drying_remaining_time", state: value(String(spec.drying.remaining)), attributes: { unit_of_measurement: "min" } },
     );
@@ -848,6 +853,67 @@ export function h2d(overrides: Partial<PrinterSpec> = {}): FakeDevice[] {
     slots: [{ name: "PA6-CF", type: "PA6-CF", color: "#2B2B2B", remaining: 55, trayId: 512, drying: [80, 10] }],
   });
   return [printer, ht, ams2];
+}
+
+/** An H3C, idle, with its AMS 3H (nine slots, two of them its drying zone)
+ * and the one external input the integration shows; an airduct and a
+ * chamber heater, no ventilation. */
+/** The H3C's nine inputs as the tester's printer had them with its AMS 3H
+ * not connected: tools 1, 2, 5 and 9 hold PLA (input 256 - tool). */
+export const H3C_INPUTS: SlotSpec[] = [1, 2, 3, 4, 5, 6, 7, 8, 9].map((tool) => {
+  const color = { 1: "#FFFFFF", 2: "#FF0000", 5: "#2F2E2D", 9: "#0000FF" }[tool];
+  return color ? { name: "Generic PLA", type: "PLA", color, remaining: null, trayId: 256 - tool } : { trayId: 256 - tool };
+});
+
+export function h3c(overrides: Partial<PrinterSpec> = {}, zone: number[] | null = [6, 8], withAms = true): FakeDevice[] {
+  const printer = printerDevice({
+    id: "dev-h3c",
+    slug: "h3c",
+    name: "Lab (H3C / 31B00A000000006)",
+    bambuddyName: "Lab",
+    serial: "31B00A000000006",
+    model: "H3C",
+    printHours: 12,
+    wifi: -50,
+    nozzleTypes: ["hardened_steel"],
+    firmware: { installed: "01.01.03.00", latest: "01.01.03.00" },
+    status: "idle",
+    stage: "idle",
+    nozzles: [[25, 0]],
+    bed: [24, 0],
+    chamber: [26, 0],
+    hotendFan: 0,
+    control: true,
+    speed: "standard",
+    fans: [
+      { key: "part_cooling_fan", percent: 0 },
+      { key: "auxiliary_fan", percent: 0 },
+      // Fan 3, on its back wall.
+      { key: "exhaust_fan", percent: 0 },
+    ],
+    light: true,
+    airduct: "cooling",
+    ventilation: { percent: 0, fans: ["exhaust"] },
+    // With its AMS 3H the inputs stand empty.
+    externalSpools: withAms ? H3C_INPUTS.map((input) => ({ trayId: input.trayId })) : H3C_INPUTS,
+    detectors: [{ key: "build_plate_detection", on: true }],
+    ...overrides,
+  });
+  const colours = ["#FF6A13", "#000000", "#0A2989", "#FFFFFF", "#C12E1F", "#00AE42", "#F4EE2A", undefined, "#5E43B7"];
+  const ams = amsDevice({
+    printer,
+    amsId: 32,
+    model: "AMS 3H",
+    humidity: 33,
+    temperature: 27.6,
+    drying: { on: false, remaining: 0, zone },
+    slots: colours.map((color, index) =>
+      color
+        ? { name: index === 5 ? "PETG HF" : "PLA Basic", type: index === 5 ? "PETG" : "PLA", color, remaining: null, trayId: 28 + index, drying: index === 5 ? [65, 8] : [50, 12] }
+        : { trayId: 28 + index },
+    ),
+  });
+  return withAms ? [printer, ams] : [printer];
 }
 
 /** An A1 mini, idle, with an AMS lite and a spool on its holder; it

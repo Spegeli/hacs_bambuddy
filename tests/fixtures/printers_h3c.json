@@ -1,0 +1,24 @@
+[
+  {
+    "name": "Lab",
+    "serial_number": "31B00A000000006",
+    "ip_address": "192.0.2.16",
+    "model": "H3C",
+    "location": null,
+    "auto_archive": true,
+    "external_camera_url": null,
+    "external_camera_type": null,
+    "external_camera_enabled": false,
+    "external_camera_snapshot_url": null,
+    "camera_rotation": 0,
+    "id": 6,
+    "is_active": true,
+    "nozzle_count": 1,
+    "supports_nozzle_flow_type": true,
+    "print_hours_offset": 0.0,
+    "plate_detection_enabled": false,
+    "plate_detection_roi": null,
+    "created_at": "2026-05-10T12:01:44",
+    "updated_at": "2026-10-11T09:12:03"
+  }
+]

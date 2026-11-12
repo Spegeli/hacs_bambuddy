@@ -15,6 +15,7 @@ from custom_components.bambuddy import services
 from tests.conftest import (
     A1_MINI,
     H2D,
+    H3C,
     P1S,
     X1C,
     ams_uid,
@@ -23,6 +24,7 @@ from tests.conftest import (
     next_refresh,
     printer_uid,
     set_up,
+    with_h3c,
 )
 from tests.helpers import as_model, call_action
 
@@ -536,15 +538,15 @@ async def test_a_switch_slot_is_offered_what_either_nozzle_takes(
     hass: HomeAssistant, bambuddy_api: SimpleNamespace, freezer: FrozenDateTimeFactory
 ) -> None:
     """The H2D's AMS on the filament track switch (BamBuddy leaves it out of
-    its map): Bambu PPA-CF goes through the left nozzle."""
+    its map): Generic PPA-CF goes through the left nozzle."""
     entry = await set_up(hass, H2D)
     slot = ams_uid(entry, 0, "slot_1", H2D)
-    assert "GFN06" not in _offered(await _get_filaments(hass, slot))  # unit 0 feeds the right nozzle
+    assert "GFN97" not in _offered(await _get_filaments(hass, slot))  # unit 0 feeds the right nozzle
 
     bambuddy_api.statuses[H2D]["ams_extruder_map"] = {"128": 1}
     await next_refresh(hass, freezer)
 
-    assert "GFN06" in _offered(await _get_filaments(hass, slot))
+    assert "GFN97" in _offered(await _get_filaments(hass, slot))
 
 
 @pytest.mark.parametrize(("code", "absent", "present"), [("N1", "GFB99", "GFL99"), ("O1E", "GFSNL03", "GFT98")])
@@ -636,6 +638,43 @@ async def test_a_foreign_profile_without_a_range_takes_its_type_s(
 
     kwargs = bambuddy_api.configure_slot.await_args.kwargs
     assert (kwargs["tray_info_idx"], kwargs["temp_min"], kwargs["temp_max"]) == ("P4d64437", *nozzle_range)
+
+
+async def test_an_h3c_place_is_offered_for_the_tool_it_feeds(hass: HomeAssistant, bambuddy_api: SimpleNamespace) -> None:
+    """On an H3C the toolhead holds one of nine tools: a slot or an input is
+    offered for its own tool, not for the one mounted. Here the TPU tool
+    (rack address 7) is on the toolhead and tool 2 carries a 0.6 mm nozzle."""
+    with_h3c(bambuddy_api)
+    status = bambuddy_api.statuses[H3C]
+    status["nozzles"] = [{"nozzle_type": "HT01", "nozzle_diameter": "0.4"}]
+    for tool in status["nozzle_rack"]:
+        tool["id"] = 0 if tool["addr_id"] == 7 else 16 + tool["addr_id"]
+    status["nozzle_rack"][1]["nozzle_diameter"] = "0.6"
+    entry = await set_up(hass, H3C)
+
+    # AMS 3H slot 1 feeds tool 1, a standard nozzle; slot 8 too (the TPU tool takes no AMS slot).
+    for slot in ("slot_1", "slot_8"):
+        offered = _offered(await _get_filaments(hass, ams_uid(entry, 32, slot, H3C)))
+        assert "GFL99" in offered and "GFU06" not in offered
+    # External 8 feeds the TPU tool: 2.85 mm TPU only.
+    offered = _offered(await _get_filaments(hass, printer_uid(entry, "external_8", H3C)))
+    assert "GFU06" in offered and "GFL99" not in offered
+    # External 2 feeds tool 2 and its 0.6 mm nozzle.
+    offered = _offered(await _get_filaments(hass, printer_uid(entry, "external_2", H3C)))
+    assert "GFL99" in offered and "GFU06" not in offered
+    assert (await _get_k_profiles(hass, printer_uid(entry, "external_2", H3C)))["nozzle_diameter"] == 0.6
+
+
+@pytest.mark.parametrize(("tool", "tray"), [(1, 1), (2, 0), (5, 6), (9, 2)])
+async def test_an_h3c_input_gets_its_filament(hass: HomeAssistant, bambuddy_api: SimpleNamespace, tool: int, tray: int) -> None:
+    """BamBuddy keeps an H3C's inputs as AMS 255, tray 0 (input 254), 1
+    (255) and 2-8 (247-253): tool 5's input 251 is tray 6."""
+    with_h3c(bambuddy_api)
+    entry = await set_up(hass, H3C)
+
+    await _set_filament(hass, printer_uid(entry, f"external_{tool}", H3C), filament="GFL99", color=[255, 106, 19])
+
+    assert bambuddy_api.configure_slot.await_args.args == (H3C, 255, tray)
 
 
 @pytest.mark.parametrize(("printer_id", "tray", "diameter"), [(X1C, 0, "0.4"), (H2D, 0, "0.6"), (H2D, 1, "0.4")])
