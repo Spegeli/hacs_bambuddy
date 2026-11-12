@@ -133,12 +133,14 @@ function whereOf(ctx: CardContext, place: Exclude<SpoolPlace, { here: true }>): 
     const short = slot === undefined ? unit : t(hass, "inv_other_slot", { unit, slot });
     return { line: slot === undefined ? t(hass, "inv_in_unit", { unit }) : t(hass, "inv_in_slot", { unit, slot }), at: short, from: short };
   }
-  // Another printer: BamBuddy's names of its units; its external spools
-  // only where the place says the right one.
+  // Another printer: BamBuddy's names of its units; an H3C's input by its
+  // tool, an external spool by its side where the integration knows them.
   const unit = place.amsLabel ?? unitName(place.amsId);
   const at =
     place.amsId === 255
-      ? t(hass, place.trayId === 1 ? "inv_other_ext_right" : "inv_other_ext")
+      ? place.input !== undefined
+        ? t(hass, "input_place", { number: place.input })
+        : t(hass, place.side === undefined ? "inv_other_ext" : `inv_other_ext_${place.side}`)
       : place.amsId >= 128
         ? unit
         : t(hass, "inv_other_slot", { unit, slot: place.trayId + 1 });

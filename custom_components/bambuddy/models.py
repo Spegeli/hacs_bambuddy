@@ -1177,6 +1177,19 @@ FIRST_INPUT = 247
 INPUT_TOOLS = range(1, 10)
 
 
+# Printers with two external spools, one per nozzle (254 left, 255 right).
+_TWO_EXTERNAL = frozenset({"H2D", "H2D PRO", "H2C", "X2D"})
+
+
+def external_count(model: str | None) -> int | None:
+    """How many external places a model has: the H3C's nine inputs, two on a
+    two-nozzle printer, one on the others; None for a model unknown here."""
+    key = model_key(model)
+    if key not in _CANONICAL.values():
+        return None
+    return len(INPUT_TOOLS) if key == "H3C" else 2 if key in _TWO_EXTERNAL else 1
+
+
 def input_tool(global_id: int) -> int:
     """The tool an H3C's input feeds, as its screen and BamBuddy number them: 255 tool 1, 247 tool 9."""
     return 256 - global_id

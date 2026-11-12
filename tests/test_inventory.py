@@ -12,7 +12,8 @@ import pytest
 from homeassistant.core import HomeAssistant
 
 from custom_components.bambuddy.api import BamBuddyConnectionError, BamBuddyPermissionError
-from custom_components.bambuddy.inventory import BamBuddyInventoryCoordinator, Spool, spool_of, spool_types
+from custom_components.bambuddy.inventory import BamBuddyInventoryCoordinator, Placed, Spool, external_counts, inventory_of, place_json, spool_of, spool_types
+from custom_components.bambuddy.models import PrinterData
 from custom_components.bambuddy.key import KeyGuard
 from custom_components.bambuddy.inventory import INVENTORY_ATTRIBUTES
 from custom_components.bambuddy.sensor import BamBuddyAmsSlotSensor, BamBuddyPrinterSensor
@@ -240,3 +241,76 @@ async def test_no_inventory_no_attributes(hass: HomeAssistant, bambuddy_api: Sim
     attributes = _slot(hass, entry, 3).attributes
     assert "inventory_spool" not in attributes
     assert "inventory_assignable" not in attributes
+
+
+def _placed(ams_id: int, tray_id: int, printer_model: str | None = None) -> Placed:
+    return Placed(99, "Desk", ams_id, tray_id, None, 1, printer_model=printer_model)
+
+
+@pytest.mark.parametrize(
+    ("ams_id", "tray_id", "known", "model", "extra"),
+    [
+        # An H3C of this entry: each input by its tool (254 tool 2, 255 tool 1, 250 tool 6).
+        (255, 0, {99: 9}, None, {"input": 2}),
+        (255, 1, {99: 9}, None, {"input": 1}),
+        (255, 5, {99: 9}, None, {"input": 6}),
+        # Another BamBuddy printer: by the model BamBuddy 1.3.1 names.
+        (255, 1, {}, "H3C", {"input": 1}),
+        (255, 0, {}, "H2D", {"side": "left"}),
+        (255, 0, {}, "P1S", {}),
+        # No model: an input from tray 2 on, the right spool at tray 1, tray 0 untold.
+        (255, 5, {}, None, {"input": 6}),
+        (255, 1, {}, None, {"side": "right"}),
+        (255, 0, {}, None, {}),
+        # Two spools or one, as this entry's printer reports them.
+        (255, 0, {99: 2}, None, {"side": "left"}),
+        (255, 1, {99: 2}, None, {"side": "right"}),
+        (255, 0, {99: 1}, "H2D", {}),
+        # An AMS slot is named by its unit and slot alone.
+        (0, 1, {99: 9}, "H3C", {}),
+    ],
+)
+def test_a_place_names_an_input_or_a_side(
+    ams_id: int, tray_id: int, known: dict[int, int], model: str | None, extra: dict[str, Any]
+) -> None:
+    """Another printer's external places: an H3C's input by its tool, a
+    two-nozzle printer's spool by its side -- the card cannot tell them apart."""
+    assert place_json(_placed(ams_id, tray_id, model), X1C, known) == {
+        "printer_id": 99,
+        "printer_name": "Desk",
+        "ams_id": ams_id,
+        "tray_id": tray_id,
+        "ams_label": None,
+        "same_printer": False,
+        **extra,
+    }
+
+
+def test_an_assignment_row_keeps_bambuddys_printer_model() -> None:
+    """BamBuddy 1.3.1 names the printer's model in an assignment row; 1.2.5.7 does not."""
+    rows = load_fixture("inventory_assignments.json")
+    with_model = inventory_of([], [{**rows[0], "printer_model": "H3C"}])
+    without = inventory_of([], [rows[0]])
+    assert with_model.placed[0].printer_model == "H3C"
+    assert without.placed[0].printer_model is None
+
+
+def _printer(printer_id: int, model: str | None, external_spools: int, dual: bool = False) -> SimpleNamespace:
+    status: dict[str, Any] = {"vt_tray": [{"id": 254 + index} for index in range(external_spools)]}
+    if dual:
+        status["temperatures"] = {"nozzle": 20, "nozzle_2": 20}
+    return SimpleNamespace(printer_id=printer_id, data=PrinterData({"model": model}, status))
+
+
+def test_the_entrys_printers_count_their_external_places_by_model_first() -> None:
+    """An H3C reporting fewer inputs for a moment (at its start) is still one
+    with nine; a two-nozzle printer two; a printer without data none."""
+    printers = {
+        1: _printer(1, "H3C", 1),
+        2: _printer(2, "H2D", 2, dual=True),
+        3: _printer(3, "P1S", 1),
+        4: SimpleNamespace(printer_id=4, data=None),
+        5: _printer(5, None, 2, dual=True),
+    }
+    coordinator = SimpleNamespace(config_entry=SimpleNamespace(runtime_data=SimpleNamespace(printers=printers)))
+    assert external_counts(coordinator) == {1: 9, 2: 2, 3: 1, 5: 2}  # type: ignore[arg-type]

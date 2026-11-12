@@ -435,7 +435,7 @@ describe("the inventory tab", () => {
       { id: 12, name: "B", material: "PLA", place: place(0, 1, { ams_label: "Werkstatt Silk" }) },
       { id: 13, name: "C", material: "PLA", place: place(255, 0) },
       { id: 14, name: "D", material: "PLA", place: other(0, 1) },
-      { id: 15, name: "E", material: "PLA", place: other(255, 1) },
+      { id: 15, name: "E", material: "PLA", place: { ...other(255, 1), side: "right" } },
       { id: 16, name: "F", material: "PLA", place: other(128, 0) },
       { id: 17, name: "G", material: "PLA", place: other(6, 1) },
       { id: 18, name: "H", material: "PLA", place: other(255, 0) },
@@ -452,6 +452,34 @@ describe("the inventory tab", () => {
       "Zugewiesen: Desk, externe Spule",
     ]);
     expect(rows(card).every((row) => row.querySelector(".inv-where")?.classList.contains("elsewhere"))).toBe(true);
+  });
+
+  it("names another printer's inputs and external spools as the integration tells them", async () => {
+    const other = (tray_id: number, extra: Record<string, unknown> = {}) => ({ printer_id: 99, printer_name: "Desk", ams_id: 255, tray_id, ams_label: null, same_printer: false, ...extra });
+    const spools = [
+      { id: 11, name: "A", material: "PLA", place: other(1, { input: 1 }) },
+      { id: 12, name: "B", material: "PLA", place: other(5, { input: 6 }) },
+      { id: 13, name: "C", material: "PLA", place: other(0, { side: "left" }) },
+      { id: 14, name: "D", material: "PLA", place: other(1, { side: "right" }) },
+      { id: 15, name: "E", material: "PLA", place: other(0) },
+    ].map(listed);
+    const card = await openInventory(spools, { assigned: null, spool: null });
+    expect(rows(card).map(where)).toEqual([
+      "Zugewiesen: Desk, Extern 1",
+      "Zugewiesen: Desk, Extern 6",
+      "Zugewiesen: Desk, externe Spule (links)",
+      "Zugewiesen: Desk, externe Spule (rechts)",
+      "Zugewiesen: Desk, externe Spule",
+    ]);
+    rows(card)[1]?.click();
+    await settle(card);
+    expect(text(find(card, "dialog"))).toContain("Zuweisen nimmt die Spule aus dem Drucker Desk, Extern 6.");
+  });
+
+  it("the box names another printer's input", async () => {
+    const also = [{ printer_id: 99, printer_name: "Desk", ams_id: 255, tray_id: 5, ams_label: null, same_printer: false, input: 6 }];
+    const card = await openSlot3({ ...GEEETECH, also_assigned: also }, true);
+    expect(findAll(card, "dialog .inv-card .inv-also").map(text)).toEqual(["Auch zugewiesen: Desk, Extern 6"]);
   });
 
   it("names the external spools of a two-nozzle printer by side", async () => {

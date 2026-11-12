@@ -478,3 +478,19 @@ async def test_no_spool_list_with_spoolman(hass: HomeAssistant, bambuddy_api: Si
         await call_action(hass, "get_spools", response=True, entity_id=_slot(hass, entry, 3))
 
     assert raised.value.translation_key == "inventory_not_shown"
+
+
+async def test_a_spool_on_another_two_nozzle_printer_names_its_side(hass: HomeAssistant, bambuddy_api: SimpleNamespace) -> None:
+    """Spool 3 on the H2D's left external spool: the X1C's list says which
+    side -- the H2D reports two external spools."""
+    with_inventory(bambuddy_api)
+    rows = load_fixture("inventory_assignments.json")
+    rows[2] = {**rows[2], "printer_id": H2D, "printer_name": "Studio", "ams_id": 255, "tray_id": 0}
+    bambuddy_api.get_spool_assignments.return_value = rows
+    entry = await set_up(hass, X1C, H2D)
+
+    answer = await call_action(hass, "get_spools", response=True, entity_id=_slot(hass, entry, 3))
+
+    third = next(item for item in answer["spools"] if item["id"] == 3)
+    assert third["place"]["side"] == "left"
+    assert "input" not in third["place"]

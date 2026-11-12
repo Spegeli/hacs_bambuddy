@@ -36,7 +36,7 @@ from .const import CONF_PRINTER_NAME, CONF_PRINTERS, DOMAIN, K_PROFILES_KEEP, K_
 from .coordinator import BamBuddyConfigEntry, BamBuddyPrinterCoordinator, printer_identifier
 from .entity import async_run_command, command_error, connection_error, refuse
 from .filament_types import printer_filament_type
-from .inventory import BamBuddyInventoryCoordinator, InventoryData, Placed, Spool, place_json, spool_fit
+from .inventory import BamBuddyInventoryCoordinator, InventoryData, Placed, Spool, external_counts, place_json, spool_fit
 from .models import (
     AMS_HT_FIRST_ID,
     DRYING_MAX,
@@ -747,13 +747,15 @@ async def _printing(coordinator: BamBuddyPrinterCoordinator, rows: list[Placed],
     return found
 
 
-def _spool_answer(spool: Spool, here: tuple[int, int, int], fresh: InventoryData, slot: filaments.Slot, printing: list[str]) -> dict[str, Any]:
+def _spool_answer(
+    spool: Spool, here: tuple[int, int, int], fresh: InventoryData, slot: filaments.Slot, printing: list[str], known: dict[int, int]
+) -> dict[str, Any]:
     """A spool of the list: where it sits (this slot, another, none; `also` its
     further slots -- BamBuddy can hold one in two) and whether it fits; a Bambu
     spool whose chip links it to another slot is none to assign, nor one in a
     slot of another printer that prints (`printing` its name)."""
     places = fresh.places_of(spool.id)
-    others = [place_json(row, here[0]) for row in fresh.places_of(spool.id, besides=here)]
+    others = [place_json(row, here[0], known) for row in fresh.places_of(spool.id, besides=here)]
     at_here = len(others) < len(places)
     place: dict[str, Any] | None = {"this_slot": True} if at_here else (others[0] if others else None)
     also = others if at_here else others[1:]
@@ -786,9 +788,10 @@ async def _get_spools(hass: HomeAssistant, call: ServiceCall) -> ServiceResponse
     )
     spools: list[Any] = []
     read: dict[int, bool] = {}
+    known = external_counts(inventory)
     for item in order:
         elsewhere = fresh.places_of(item.id, besides=here)
-        spools.append(_spool_answer(item, here, fresh, target, await _printing(coordinator, elsewhere, read)))
+        spools.append(_spool_answer(item, here, fresh, target, await _printing(coordinator, elsewhere, read), known))
     return {"assigned": assigned.id if assigned else None, "spools": spools}
 
 

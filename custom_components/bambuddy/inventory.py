@@ -14,6 +14,7 @@ import asyncio
 from dataclasses import dataclass, field
 import logging
 import re
+from collections.abc import Mapping
 from typing import TYPE_CHECKING, Any, Literal
 
 from homeassistant.core import HomeAssistant, callback
@@ -24,7 +25,7 @@ from . import filaments
 from .api import BamBuddyClient, BamBuddyError
 from .const import DOMAIN, INVENTORY_INTERVAL, INVENTORY_PUSH_COOLDOWN
 from .filament_types import printer_filament_type
-from .models import is_int, is_number
+from .models import EXTERNAL_AMS, INPUT_TOOLS, external_count, input_global_id, input_tool, is_int, is_number
 
 if TYPE_CHECKING:
     from .coordinator import BamBuddyConfigEntry
@@ -100,6 +101,8 @@ class Placed:
     # What the slot reported when BamBuddy last matched it to the spool (its fingerprint).
     color: str = ""
     type: str = ""
+    # The printer's model, as BamBuddy 1.3.1 names it in the row (1.2.5.7: none).
+    printer_model: str | None = None
 
     @property
     def slot(self) -> tuple[int, int, int]:
@@ -194,6 +197,7 @@ def inventory_of(spools: list[Any], assignments: list[Any]) -> InventoryData:
                 spool.id,
                 _text(row.get("fingerprint_color")) or "",
                 _text(row.get("fingerprint_type")) or "",
+                _text(row.get("printer_model")),
             )
         )
     return InventoryData(shown=True, spools=found, placed=placed)
@@ -347,7 +351,7 @@ def inventory_attributes(coordinator: BamBuddyInventoryCoordinator, printer_id: 
     if row is not None and (spool := data.spools.get(row.spool_id)) is not None:
         # The spool's other slots: BamBuddy can hold one in two (its "Show all spools",
         # a chip read in another printer).
-        also = [place_json(other, printer_id) for other in data.places_of(spool.id, besides=row.slot)]
+        also = [place_json(other, printer_id, external_counts(coordinator)) for other in data.places_of(spool.id, besides=row.slot)]
         attributes[_SPOOL] = {
             **spool.attributes(),
             "also_assigned": also,
@@ -366,10 +370,14 @@ def spool_types(spool: Spool) -> list[str]:
     return sorted({printer_filament_type(name).upper() for name in names if name} - {""})
 
 
-def place_json(row: Placed, here: int) -> dict[str, Any]:
+def place_json(row: Placed, here: int, known: Mapping[int, int] | None = None) -> dict[str, Any]:
     """A slot a spool is assigned to, as the attributes and the actions name
-    it; `here`, the printer asking: whether it is that printer's."""
-    return {
+    it; `here`, the printer asking: whether it is that printer's. An external
+    place names an H3C's input by its tool (`input`) or a two-nozzle printer's
+    spool by its side (`side`): by the count of external places of this
+    entry's printer (`known`), else of the model BamBuddy names, else by the
+    tray -- an input from tray 2 on, the right spool at tray 1."""
+    place: dict[str, Any] = {
         "printer_id": row.printer_id,
         "printer_name": row.printer_name,
         "ams_id": row.ams_id,
@@ -377,6 +385,29 @@ def place_json(row: Placed, here: int) -> dict[str, Any]:
         "ams_label": row.ams_label,
         "same_printer": row.printer_id == here,
     }
+    if row.ams_id != EXTERNAL_AMS:
+        return place
+    count = (known or {}).get(row.printer_id) or external_count(row.printer_model)
+    if count is None:
+        count = len(INPUT_TOOLS) if row.tray_id >= 2 else 2 if row.tray_id == 1 else 1
+    if count > 2:
+        place["input"] = input_tool(input_global_id(row.tray_id))
+    elif count == 2:
+        place["side"] = "right" if row.tray_id == 1 else "left"
+    return place
+
+
+def external_counts(coordinator: BamBuddyInventoryCoordinator) -> dict[int, int]:
+    """How many external places each printer of the entry has: by its model
+    (an H3C reporting fewer inputs at its start still has nine), else as it
+    reports them -- nine inputs, two spools or one."""
+    counts: dict[int, int] = {}
+    for printer in coordinator.config_entry.runtime_data.printers.values():
+        data = printer.data
+        if data is not None:
+            reported = len(INPUT_TOOLS) if data.has_inputs else 2 if data.is_dual_nozzle else 1
+            counts[printer.printer_id] = external_count(data.model) or reported
+    return counts
 
 
 def diagnostics(coordinator: BamBuddyInventoryCoordinator) -> dict[str, Any]:
