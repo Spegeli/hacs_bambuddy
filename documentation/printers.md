@@ -15,6 +15,7 @@ The integration knows some things by the model. Others it learns from what BamBu
 - **P2S:** it has no chamber heater. Its chamber row reads **Keep warm**: the airduct's heating mode keeps the warmth in. With the External Exhaust Fan kit it gets an exhaust fan, and ventilation runs that too ([Per model](chamber.md#per-model)). It starts drying from firmware 01.02.00.00.
 - **H2D Pro:** on BamBuddy 1.2.5.7 it has no *Chamber temperature* or *Chamber target temperature*, and its chamber row reads **Keep warm**. BamBuddy 1.3.0 reports them ([Known limitations](troubleshooting.md#known-limitations)).
 - **X1E:** on BamBuddy 1.2.5.7 it has no *Chamber target temperature*. From BamBuddy 1.3.0 the target takes up to 60 °C.
+- **H3C:** nine tools on one toolhead and an [AMS 3H](glossary.md#ams-3h) with nine slots, which dries two of them. It needs BamBuddy 1.3.1. Each tool has its own external input: *External 1* to *External 9*. While the printer does not detect its AMS 3H, it shows the AMS 3H's spools there, and so does the card. Beside a detected AMS 3H the card shows only the input that feeds: the inputs may still hold what they showed before. Its *Exhaust fan* on the back wall runs the ventilation, as on the H2 series. The nine tools themselves come later.
 - **The A series (A1 mini, A1, A2L):** open frames, so no door sensor, chamber values or airduct. The camera is a chamber image at 5 frames a second at most, and the build plate detection knows the position only. The A1 and the A1 mini dry only from the printer's screen.
 
 ## Hardware at a glance
@@ -28,6 +29,7 @@ The integration knows some things by the model. Others it learns from what BamBu
 | P2S, H2S | yes | Chamber light | Wi-Fi only | USB drive | no |
 | X2D, H2D, H2C | yes | Chamber light | Wi-Fi only | USB drive | yes |
 | H2D Pro | yes | Chamber light | Ethernet port | USB drive | yes |
+| H3C | yes | Chamber light | Wi-Fi only | USB drive | no |
 
 - **The A1 mini, A1, A2L and P1P** are [open frames](glossary.md#open-frame); the others are enclosed.
 - **Two nozzles** give left and right versions of the nozzle and external spool entities.
@@ -45,6 +47,7 @@ The integration knows some things by the model. Others it learns from what BamBu
 | X1E | no | yes | from BamBuddy 1.3.0 |
 | X2D, H2S, H2D, H2C | yes | yes | yes |
 | H2D Pro | yes | from BamBuddy 1.3.0 | from BamBuddy 1.3.0 |
+| H3C | yes | yes | yes |
 
 - **An airduct** brings the *Airduct mode* select and the *Ventilation* fan. Which fans it runs: [Per model](chamber.md#per-model).
 - **Chamber temperature** exists only if BamBuddy reports a value at setup, **Chamber target temperature** only if it reports a heater. Should either come later, the entry reloads once by itself.
@@ -60,6 +63,7 @@ The integration knows some things by the model. Others it learns from what BamBu
 | P2S | yes | yes | if reported | no | no | if reported |
 | X2D | yes | no | yes | if reported | no | yes |
 | H2S, H2D, H2D Pro, H2C | yes | yes | no | no | no | yes |
+| H3C | yes | yes | if reported | no | no | yes |
 
 - **Fan speeds** are in %, settable, in steps of 10 as Bambu's apps show them.
 - **Disabled at first:** the stock X1 has no [auxiliary fan](glossary.md#auxiliary-fan), and the P1P neither that nor a chamber fan. Kits add them and BamBuddy cannot tell, so the entities exist, disabled ([turn one on](entities.md#disabled-entities)).
@@ -82,9 +86,9 @@ The target entities take these values, in °C. Their lowest value (0 °C, 32 °F
 | X1, X1C | 300 | 300 | 120 | 120 | no target |
 | X1E | 320 | 320 | 110 | 110 | 60 |
 | X2D | 300 | 300 | 120 | 120 | 65 |
-| H2S, H2D, H2D Pro, H2C | 350 | 320 | 120 | 120 | 65 |
+| H2S, H2D, H2D Pro, H2C, H3C | 350 | 320 | 120 | 120 | 65 |
 
-- **The H2 series** reach 350 °C, but the target stops at 320 °C. That is BamBuddy's limit: nozzle 320 °C, bed 140 °C, chamber 65 °C.
+- **The H2 series and the H3C** reach 350 °C, but the target stops at 320 °C. That is BamBuddy's limit: nozzle 320 °C, bed 140 °C, chamber 65 °C.
 - **The X1 and X1C bed:** 110 °C on 220 V, 120 °C on 110 V. The table holds the higher value, so no printer is refused what it reaches.
 - **The chamber column** needs a reported heater: the X1E and the H2D Pro only from BamBuddy 1.3.0.
 
@@ -93,7 +97,7 @@ The target entities take these values, in °C. Their lowest value (0 °C, 32 °F
 | Model | Most frames a second | What BamBuddy streams | *Camera frame rate* entity |
 |---|---|---|---|
 | A1 mini, A1, A2L, P1P, P1S | 5 | chamber image | no |
-| P2S, X1, X1C, X1E, X2D, H2S, H2D, H2D Pro, H2C | 30 | camera stream | yes |
+| P2S, X1, X1C, X1E, X2D, H2S, H2D, H2D Pro, H2C, H3C | 30 | camera stream | yes |
 
 - ***Camera frame rate*** goes from 5 up, in steps of 5. More: [Camera](dashboard-card.md#camera).
 - **An external camera** set in BamBuddy's printer settings gives 15 on every model, so an A1 with one gets the entity too.
@@ -108,18 +112,19 @@ The printer's own detection, not BamBuddy's. Each is a switch the model has or d
 | A1 mini, A1, A2L | no | no | position only | no | no | no | no |
 | P1P, P1S | no | no | no | no | no | no | no |
 | X1, X1C, X1E | yes | yes | position only | no | no | no | no |
-| P2S, X2D, H2S | no | no | yes | yes | yes | yes | no |
+| P2S, X2D, H2S, H3C | no | no | yes | yes | yes | yes | no |
 | H2D, H2D Pro, H2C | no | no | yes | yes | yes | yes | yes |
 | H2D before firmware 01.01.02.08 | yes | no | yes | no | no | no | no |
 
 - ***position only*** is the entity *Build plate position detection*, *yes* in that column *Build plate detection*.
 - **The P1P and P1S have none,** so the card shows no print options for them.
 - **An H2D of unknown firmware** counts as a current one.
+- **The H3C's nozzle clumping detection** is taken from Bambu's list of its features; Bambu Studio names no clump calibration for it.
 - **Sensitivity:** where a detection has one (AI print monitoring and the spaghetti, purge chute pile-up, nozzle clumping and air printing detection), it stays as set on the printer. The build plate and first layer checks are on or off only.
 
 ## Drying from Home Assistant
 
-For an [AMS 2 Pro](glossary.md#ams-2-pro) or [AMS HT](glossary.md#ams-ht) on the printer. How to dry: [Dry filament](ams-and-filament.md#dry-filament).
+For an [AMS 2 Pro](glossary.md#ams-2-pro), [AMS HT](glossary.md#ams-ht) or [AMS 3H](glossary.md#ams-3h) on the printer. How to dry: [Dry filament](ams-and-filament.md#dry-filament).
 
 | Model | Starts drying from Home Assistant *(reported)* |
 |---|---|
@@ -132,6 +137,7 @@ For an [AMS 2 Pro](glossary.md#ams-2-pro) or [AMS HT](glossary.md#ams-ht) on the
 | X2D | On any firmware; during a print from 01.01.00.00 |
 | H2D | From firmware 01.02.30.00; during a print from 01.03.00.00 |
 | H2D Pro | On any firmware; during a print from 01.02.00.00 |
+| H3C | On any firmware; not during a print |
 
 - **On any firmware** means BamBuddy names no minimum firmware.
 - **During a print** is what BamBuddy reports by firmware. A printer that cannot dry during a print refuses, and the integration says so.
@@ -148,10 +154,11 @@ These are the printers' limits, not the integration's: it shows the units BamBud
 | X1 series, P1 series | 4 in all |
 | A1, A1 mini | 4 in all (AMS, AMS 2 Pro, AMS HT; firmware 01.07.00.00 and Bambu's A1 series AMS hub), or one AMS Lite on its own |
 | A2L | 4 AMS and one AMS Lite |
+| H3C | its AMS 3H |
 
 Source: Bambu's [AMS compatibility guide](https://wiki.bambulab.com/en/ams/manual/multi-model-AMS-compatibility-guide).
 
-An AMS HT has [one slot](entities.md#ams-units), the others four.
+An AMS HT has [one slot](entities.md#ams-units), an AMS 3H nine, the others four.
 
 ## What depends on firmware or on BamBuddy's report
 
@@ -189,6 +196,7 @@ BamBuddy may store a printer under a code. Device names then say the model, and 
 | H2D | `O1D` |
 | H2D Pro | `O1E`, `O2D` |
 | H2C | `O1C`, `O1C2` |
+| H3C | `N10` |
 
 ## See also
 

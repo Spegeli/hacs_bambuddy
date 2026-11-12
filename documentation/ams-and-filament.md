@@ -24,7 +24,7 @@ From three units on, each unit shows only its head, colors and drying at first; 
 | A second name | [The spool from BamBuddy's inventory](spool-inventory.md#what-the-card-shows) |
 
 - Without a chip the AMS cannot estimate what is left; an inventory spool brings its own figure.
-- An [AMS HT](glossary.md#ams-ht) has one slot.
+- An [AMS HT](glossary.md#ams-ht) has one slot, the H3C's [AMS 3H](glossary.md#ams-3h) nine.
 - An [AMS Lite](glossary.md#ams-lite) has no humidity or temperature.
 
 ## Load and unload
@@ -39,6 +39,7 @@ To load, the printer heats the nozzle, unloads the current filament and loads th
 | While a print runs | Pause the print first |
 | During a filament change | Wait until it is done |
 | From an AMS HT, with BamBuddy before 1.3.0 | Only BamBuddy 1.3.0 and newer load from it: update BamBuddy, or load on the printer's screen |
+| From an H3C's external input (*External 1–9*) | BamBuddy 1.3.1 does not load from them: load on the printer's screen |
 | An AMS slot through a Filament Track Switch | **Load** is refused, as the load must name its nozzle: load on the printer or in BamBuddy |
 
 On a printer with a [Filament Track Switch](glossary.md#filament-track-switch), the external spools load as usual.
@@ -70,12 +71,14 @@ What it changes:
 
 ### Why a filament is not in the list
 
-The list holds the [filament profiles](glossary.md#filament-profile) [Bambu Studio](glossary.md#bambu-studio) comes with: Bambu Lab, Generic, Polymaker, Overture, SUNLU and eSUN. It is made for this printer, its nozzle and this slot, and it comes with the integration.
+The list holds the [filament profiles](glossary.md#filament-profile) [Bambu Studio](glossary.md#bambu-studio) comes with: Bambu Lab, Generic, Polymaker, Overture, SUNLU and eSUN. It is made for this printer, its nozzle and this slot, and it comes with the integration. On an H3C it is made for the tool the slot or input feeds, whichever tool is on the toolhead.
 
 | Missing | Why | What to do |
 |---|---|---|
 | Your own profile | Only Bambu Studio's are listed | Set it on the printer or in BamBuddy |
-| TPU (all but *TPU for AMS*), or Bambu's PET-CF, in an AMS slot | Bambu Studio does not allow it in the AMS | Put it on an external spool, or use a *TPU for AMS* profile |
+| TPU (all but *TPU for AMS*) in an AMS slot | Bambu Studio does not allow it in the AMS; only the A2L's AMS Lite takes it | Put it on an external spool, or use a *TPU for AMS* profile |
+| Bambu's PET-CF, PA6-CF, PPS-CF or PPA-CF in an AMS slot | Bambu Studio does not allow them in the AMS; the H3C's AMS 3H takes all but PPA-CF | Put it on an external spool |
+| 2.85 mm TPU | Only the H3C's TPU tool takes it | Set it on the input that feeds that tool (*External 8* as delivered) |
 | A filament for another printer or nozzle size | Bambu Studio does not offer it here | Change the nozzle, or use another filament |
 | A filament on one side only | Bambu Studio allows it on the other nozzle | Use a slot that feeds that nozzle |
 | Most filaments on an H2D or H2D Pro with a TPU high-flow nozzle | That nozzle takes TPU only | Change the nozzle |
@@ -117,7 +120,7 @@ A spool with a chip shows again once the AMS reads the chip. A reset also ends t
 
 ## Dry filament
 
-The [AMS 2 Pro](glossary.md#ams-2-pro) and the AMS HT can dry; their row in the Filament tab shows it. Which printers start drying from here is in [Printers](printers.md#drying-from-home-assistant).
+The [AMS 2 Pro](glossary.md#ams-2-pro), the AMS HT and the [AMS 3H](glossary.md#ams-3h) can dry; their row in the Filament tab shows it. The AMS 3H dries two of its slots, its drying zone: the row names them, and the dialog suggests from their spools alone. Which printers start drying from here is in [Printers](printers.md#drying-from-home-assistant).
 
 1. Tap **Dry** in the unit's row.
 2. Check **Temperature** and **Duration**.
@@ -129,6 +132,7 @@ The dialog suggests the gentlest temperature among the loaded spools, as hotter 
 |---|---|---|
 | AMS 2 Pro | 45–65 °C | 1–24 h |
 | AMS HT | 45–85 °C | 1–24 h |
+| AMS 3H | 45–85 °C | 1–24 h |
 
 **Stop drying** asks first. While it dries, the row shows the time left. It shows the temperature only for a drying started through BamBuddy or Home Assistant: BamBuddy does not learn the temperature of one started on the printer.
 

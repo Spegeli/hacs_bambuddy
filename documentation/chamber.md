@@ -76,6 +76,7 @@ What the chamber and its ventilation are on each model:
 | H2S, H2D, H2C | Heater, up to 65 °C | [Exhaust fan](glossary.md#exhaust-fan) | The fan draws off a laser's fumes |
 | H2D Pro | Heater, up to 65 °C, from BamBuddy 1.3.0 | Exhaust fan | The fan draws off a laser's fumes |
 | X2D | Heater, up to 65 °C | Right [auxiliary fan](glossary.md#auxiliary-fan) and exhaust fan | The right fan filters |
+| H3C | Heater, up to 65 °C | Exhaust fan | — |
 | P2S | **Keep warm**, no heater | Auxiliary fan; with the External Exhaust Fan kit also its exhaust fan | The auxiliary fan circulates through the filter |
 
 The X2D's right auxiliary fan and the P2S's kit join once BamBuddy reports them. An H2D Pro on BamBuddy 1.2.5.7 has no chamber target or chamber temperature: see [Known limitations](troubleshooting.md#known-limitations). Until BamBuddy reports the heater, its row reads **Keep warm**, as on the P2S.

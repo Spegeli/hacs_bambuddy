@@ -24,6 +24,10 @@ An AMS with four slots that can also dry its filament. More: [Dry filament](ams-
 
 A unit with one slot that dries its filament, hotter than an AMS 2 Pro. More: [Dry filament](ams-and-filament.md#dry-filament).
 
+## AMS 3H
+
+The H3C's unit with nine slots, one for each of its tools. Two of its slots form a drying zone, which it dries up to 85 °C. More: [Dry filament](ams-and-filament.md#dry-filament).
+
 ## AMS Lite
 
 The open four-slot unit of the A series. It has no climate sensor, so no humidity or temperature entities. More: [AMS units](entities.md#ams-units).

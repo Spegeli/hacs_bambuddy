@@ -98,6 +98,7 @@ Refused:
 
 - For an empty slot.
 - From an AMS HT with BamBuddy before 1.3.0: only 1.3.0 and newer load from it.
+- From an H3C's external input: BamBuddy 1.3.1 does not load from them, and passes on its own refusal.
 - From an AMS slot on a printer with the [Filament Track Switch](glossary.md#filament-track-switch): such a load must name the nozzle, which this action does not ask. Load it on the printer or in BamBuddy. The external spools load.
 
 ### `bambuddy.unload_filament`
@@ -216,7 +217,7 @@ A `place` that is another slot has `printer_id`, `printer_name`, `ams_id`, `tray
 
 ### `bambuddy.start_drying`
 
-Dries an AMS 2 Pro's or AMS HT's filament.
+Dries an AMS 2 Pro's, AMS HT's or AMS 3H's filament. The AMS 3H dries its drying zone, and the action names the zone's filament, so BamBuddy cools it down to suit.
 
 - `device_id`: the AMS unit.
 - `temperature`: 45 to 85 °C; an AMS 2 Pro reaches at most 65 °C.
