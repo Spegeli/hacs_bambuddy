@@ -59,6 +59,36 @@ describe("the H3C's AMS 3H", () => {
     expect(find<HTMLInputElement>(card, "#dry-duration")?.value).toBe("8");
   });
 
+  it("names the zone under the drying dialog's title", async () => {
+    const { card } = await h3cCard([6, 8], "de");
+    await showView(card, "Filament");
+    findAll<HTMLButtonElement>(card, ".drying .btn")[0]?.click();
+    await card.updateComplete;
+    expect(text(find(card, "dialog h2"))).toBe("Filament in AMS 3H trocknen");
+    expect(text(find(card, "dialog .dry-zone"))).toBe("Fächer 6 und 8");
+    // A screen reader hears the zone with the title.
+    expect(find(card, "dialog")?.getAttribute("aria-describedby")).toBe("dlg-zone");
+    expect(find(card, "dialog .dry-zone")?.id).toBe("dlg-zone");
+  });
+
+  it("names a zone of one slot under the drying dialog's title", async () => {
+    const { card } = await h3cCard([6]);
+    await showView(card, "Filament");
+    findAll<HTMLButtonElement>(card, ".drying .btn")[0]?.click();
+    await card.updateComplete;
+    expect(text(find(card, "dialog .dry-zone"))).toBe("Slot 6");
+  });
+
+  it("names no zone in the drying dialog while BamBuddy reports none", async () => {
+    const { card } = await h3cCard(null);
+    await showView(card, "Filament");
+    findAll<HTMLButtonElement>(card, ".drying .btn")[0]?.click();
+    await card.updateComplete;
+    expect(find(card, "dialog h2")).not.toBeNull();
+    expect(find(card, "dialog .dry-zone")).toBeNull();
+    expect(find(card, "dialog")?.hasAttribute("aria-describedby")).toBe(false);
+  });
+
   it("shows no external inputs beside the AMS 3H, whatever they still hold", async () => {
     // With the AMS 3H connected again the inputs keep what they held before.
     const hass = makeHass({ devices: [...h3c({ externalSpools: H3C_INPUTS })] });

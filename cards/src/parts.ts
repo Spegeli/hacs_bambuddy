@@ -683,3 +683,13 @@ export const warnings = (...lines: (string | undefined)[]): { warn?: string[] } 
   const shown = lines.filter((line): line is string => line !== undefined);
   return shown.length ? { warn: shown } : {};
 };
+
+/** The AMS 3H's drying zone, "Slots 6 and 8", from its drying sensor; none
+ * where BamBuddy reports no zone (every other AMS). */
+export function dryingZone(hass: Hass, entityId: string | undefined): string | undefined {
+  const zone = entityId ? stateOf(hass, entityId)?.attributes["zone_slots"] : undefined;
+  if (!Array.isArray(zone) || !zone.length || !zone.every((slot) => typeof slot === "number")) return undefined;
+  const slots = zone as number[];
+  if (slots.length === 1) return t(hass, "dry_zone_one", { slot: slots[0] as number });
+  return t(hass, "dry_zone", { slots: slots.slice(0, -1).join(", "), last: slots.at(-1) as number });
+}

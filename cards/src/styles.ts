@@ -3126,8 +3126,10 @@ export const cardStyles = css`
   .k-hint-box > .dlg-note {
     margin-top: 6px;
   }
-  /* The nozzle that feeds the slot, quiet under the dialog's title. */
-  .nozzle-line {
+  /* The nozzle that feeds the slot, quiet under the dialog's title; so the
+     AMS 3H's drying zone. */
+  .nozzle-line,
+  .dry-zone {
     display: flex;
     flex-direction: column;
     gap: 2px;

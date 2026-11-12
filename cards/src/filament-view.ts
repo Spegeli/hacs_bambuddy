@@ -20,8 +20,8 @@ import {
 } from "./format";
 import { icon } from "./icons";
 import { t, type TextKey } from "./i18n";
-import { actionButton, AMS_2_PRO, AMS_3H, AMS_HT, amsActivity, callout, developerHint, emptyText, inputNumber, inventoryLine, note, printerTitle, resumeButton, shownExternalSpools, sideName, slotOf, slotPlace, stateWord, swatch, switchButton, unitModel, unitNozzle, type CardContext, type Slot } from "./parts";
-import type { AmsRefs, Hass } from "./types";
+import { actionButton, AMS_2_PRO, AMS_3H, AMS_HT, amsActivity, callout, developerHint, dryingZone, emptyText, inputNumber, inventoryLine, note, printerTitle, resumeButton, shownExternalSpools, sideName, slotOf, slotPlace, stateWord, swatch, switchButton, unitModel, unitNozzle, type CardContext, type Slot } from "./parts";
+import type { AmsRefs } from "./types";
 
 /** The texts of a printer's one external spool, and of its left and its
  * right one where it has two: the slot dialog's title, the load question,
@@ -183,14 +183,6 @@ const DRYING_MODELS = [AMS_2_PRO, AMS_HT, AMS_3H];
 
 /** The AMS 3H dries two of its nine slots: "Slots 6 and 8", none while
  * BamBuddy reports no zone. */
-function dryingZone(hass: Hass, entityId: string | undefined): string | undefined {
-  const zone = entityId ? stateOf(hass, entityId)?.attributes["zone_slots"] : undefined;
-  if (!Array.isArray(zone) || !zone.length || !zone.every((slot) => typeof slot === "number")) return undefined;
-  const slots = zone as number[];
-  if (slots.length === 1) return t(hass, "dry_zone_one", { slot: slots[0] as number });
-  return t(hass, "dry_zone", { slots: slots.slice(0, -1).join(", "), last: slots.at(-1) as number });
-}
-
 function dryingRow(ctx: CardContext, unit: AmsRefs): TemplateResult | typeof nothing {
   const { hass } = ctx;
   // Only the AMS 2 Pro, the AMS HT and the AMS 3H have a heater.
