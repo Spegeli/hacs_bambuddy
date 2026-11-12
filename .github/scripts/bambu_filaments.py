@@ -23,8 +23,9 @@ filaments whose presets name it in compatible_printers; a two-nozzle printer
 refuses a filament on a nozzle its preset marks as not printable there
 (DevFilaBlackList.cpp check_filaments_printable). No list is written while
 Bambu's filament blacklist holds a prohibition the integration neither checks
-(CHECKED_RULES, as they read here) nor leaves out on purpose (IGNORED_RULES),
-while a filament names a printer in a form the script cannot read, or one
+(CHECKED_RULES, as they read here), nor holds in the list itself
+(COVERED_RULES), nor leaves out on purpose (IGNORED_RULES), while the list
+no longer holds one of COVERED_RULES, while a filament names a printer in a form the script cannot read, or one
 with no machine preset of that name.
 """
 
@@ -105,6 +106,11 @@ CHECKED_RULES: dict[str, dict[str, Any]] = {
     },
 }
 
+CHECKED_RULES["PLA Galaxy through the X2D's filament track switch on 0.2 mm standard nozzles"] = {
+    "model_id": ["N6"], "has_filament_switch": True, "slot": "ams", "filament_id_vec": ["GFA15"], "nozzle_flows": ["Standard"],
+    "nozzle_diameters": [0.2], "action": "prohibition", "group": "fila_switcher", "priority": 50,
+}
+
 # The blacklist's other prohibitions, left out on purpose: why, then the rule.
 IGNORED_RULES: dict[str, dict[str, Any]] = {
     f"{name} on a P1 or X1 Carbon high-flow nozzle (BamBuddy reports no flow for their nozzles)": {
@@ -122,24 +128,49 @@ IGNORED_RULES: dict[str, dict[str, Any]] = {
 IGNORED_RULES["TPU with automatic flow calibration on the H2D and H3C (a print setting, not a slot's)"] = {
     "type": "TPU", "action": "prohibition", "calib_mode": "auto_pa", "model_id": ["O1D", "O1E", "N10"],
 }
-# The X2D's own refusals (Bambu Studio 02.09): per nozzle, on the filament
-# track switch, on its 0.2 nozzle -- not checked yet.
-IGNORED_RULES["the X2D's right nozzle (not checked yet)"] = {
+
+# The X2D's prohibitions the list itself holds (`check_covered` keeps them so):
+# its right nozzle's in the preset's printable bits ("not_on"), the AMS
+# refusal of Bambu's PA6-CF and PPA-CF in filaments.py's AMS check, and PLA
+# Glow on a 0.2 mm nozzle in Bambu Studio offering no profile for it.
+_X2D_RIGHT_NOZZLE: dict[str, Any] = {
     "model_id": ["N6"], "extruder_id": [0], "filament_id_vec": ["GFA11", "GFN06", "GFU04", "GFU03", "GFU01", "GFU00"],
     "action": "prohibition",
 }
-IGNORED_RULES["the X2D's filament track switch (not checked yet)"] = {
+_X2D_SWITCH_CF: dict[str, Any] = {
     "model_id": ["N6"], "has_filament_switch": True, "slot": "ams", "filament_id_vec": ["GFN05", "GFN06"],
     "action": "prohibition", "group": "cf_gf_ams", "priority": 10,
 }
-IGNORED_RULES["the X2D's filament track switch on a 0.2 nozzle (not checked yet)"] = {
-    "model_id": ["N6"], "has_filament_switch": True, "slot": "ams", "filament_id_vec": ["GFA15"], "nozzle_flows": ["Standard"],
-    "nozzle_diameters": [0.2], "action": "prohibition", "group": "fila_switcher", "priority": 50,
-}
-IGNORED_RULES["the X2D's 0.2 nozzle (not checked yet)"] = {
+_X2D_02_GLOW: dict[str, Any] = {
     "model_id": ["N6"], "filament_id_vec": ["GFA12"], "nozzle_flows": ["Standard"], "nozzle_diameters": [0.2],
     "action": "prohibition",
 }
+COVERED_RULES: dict[str, dict[str, Any]] = {
+    "the X2D's right nozzle (its list's not_on)": _X2D_RIGHT_NOZZLE,
+    "Bambu PA6-CF and PPA-CF on the X2D's filament track switch (refused in every AMS of the X2D)": _X2D_SWITCH_CF,
+    "PLA Glow on the X2D's 0.2 mm nozzle (no profile)": _X2D_02_GLOW,
+}
+# The AMS check of filaments.py refuses Bambu's filaments of these types in an X2D's AMS --
+# every AMS an X2D carries is of Bambu Studio's types 1-4; an AMS 3H or AMS-B (6, 7) would
+# take PA6-CF there, and the rule would need its own check.
+_REFUSED_IN_AMS = frozenset({"PA6-CF", "PPA-CF"})
+
+
+def check_covered(printers: dict[str, Any], filaments: dict[str, Any]) -> None:
+    """Stops where the list no longer holds one of the X2D's prohibitions
+    (COVERED_RULES): Bambu Studio moved a filament, and the rule needs its
+    own check in filaments.py."""
+    for diameter, nozzle in printers.get("X2D", {}).items():
+        offered = set(nozzle.get("ids", []))
+        right = set(nozzle.get("not_on", {}).get("0", []))
+        if missing := sorted((set(_X2D_RIGHT_NOZZLE["filament_id_vec"]) & offered) - right):
+            raise SystemExit(f"The X2D's {diameter} list no longer keeps {missing} off its right nozzle: check filaments.py")
+        if diameter == "0.2" and (glow := sorted(set(_X2D_02_GLOW["filament_id_vec"]) & offered)):
+            raise SystemExit(f"The X2D's 0.2 list now offers {glow}: check it in filaments.py")
+    for fid in _X2D_SWITCH_CF["filament_id_vec"]:
+        entry = filaments.get(fid)
+        if entry is not None and (entry.get("vendor") != "Bambu Lab" or entry.get("type") not in _REFUSED_IN_AMS):
+            raise SystemExit(f"{fid} is no longer a Bambu filament refused in an AMS: check the X2D's track switch rule in filaments.py")
 
 
 def _read(path: Path) -> Any:
@@ -200,7 +231,7 @@ def _check_rules(root: Path) -> None:
     for name, rule in CHECKED_RULES.items():
         if rule not in found:
             raise SystemExit(f"Bambu's filament blacklist no longer holds the rule for {name}: check filaments.py")
-    known = [*CHECKED_RULES.values(), *IGNORED_RULES.values()]
+    known = [*CHECKED_RULES.values(), *COVERED_RULES.values(), *IGNORED_RULES.values()]
     for rule in found:
         if rule.get("action") == "prohibition" and rule not in known:
             raise SystemExit(
@@ -329,6 +360,7 @@ def build(root: Path, commit: str) -> dict[str, Any]:
             nozzle["not_on"] = not_on
         printers.setdefault(key, {})[diameter] = nozzle
     _apply_corrections(printers, filaments, order)
+    check_covered(printers, filaments)
 
     return {
         "source": {"repository": REPOSITORY, "commit": commit, "profiles": version, "licence": LICENCE},

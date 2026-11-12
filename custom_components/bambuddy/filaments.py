@@ -43,9 +43,9 @@ class Slot:
     `models.model_key` gives it), the nozzle diameter (`diameter`), an AMS
     slot or an external spool, the nozzles it feeds (0 the right or only
     one, 1 the left; both on the filament track switch), their BamBuddy
-    nozzle codes ("HS01"), and the AMS unit's type as Bambu Studio counts it
+    nozzle codes ("HS01"), the AMS unit's type as Bambu Studio counts it
     (`ams_type`: 5 the A2L's AMS Lite, 6 the AMS 3H; None for the others and
-    an external spool)."""
+    an external spool), and each nozzle's diameter (`diameters`)."""
 
     model: str | None
     diameter: str
@@ -53,6 +53,9 @@ class Slot:
     extruders: frozenset[int]
     nozzle_types: Mapping[int, str]
     ams_type: int | None = None
+    # Each nozzle's diameter as Bambu Studio offers by (`diameter`): the X2D's
+    # rule for its filament track switch asks every nozzle the slot reaches.
+    diameters: Mapping[int, str] | None = None
 
 
 FILAMENTS: Final[dict[str, Filament]] = {fid: Filament(id=fid, **entry) for fid, entry in _DATA["filaments"].items()}
@@ -169,6 +172,19 @@ def _not_for_ams(item: Filament, slot: Slot) -> bool:
     return item.type == "PPA-CF" and slot.ams_type != 7
 
 
+# Bambu Studio's rule for the X2D's filament track switch: no PLA Galaxy
+# through it on 0.2 mm standard nozzles -- an external spool instead. Every
+# nozzle the slot reaches must be one, or a larger one could take it.
+_X2D_SWITCH_02 = frozenset({"GFA15"})
+
+
+def _switch_refuses(item: Filament, slot: Slot) -> bool:
+    if slot.model != "X2D" or not slot.ams or item.id not in _X2D_SWITCH_02 or slot.extruders != frozenset({0, 1}):
+        return False
+    diameters = slot.diameters or {}
+    return all(diameters.get(extruder) == "0.2" and _flow(slot.nozzle_types.get(extruder)) == "standard" for extruder in slot.extruders)
+
+
 def _nozzle_refuses(item: Filament, slot: Slot, extruder: int) -> bool:
     flow = _flow(slot.nozzle_types.get(extruder))
     if (flow == "tpu285") != (item.id in _TPU_285):
@@ -186,7 +202,7 @@ def refusal(filament_id: str, slot: Slot) -> str | None:
     item = get(filament_id)
     if item is None or filament_id not in _offered_ids(slot):
         return "filament_not_offered"
-    if _not_for_ams(item, slot):
+    if _not_for_ams(item, slot) or _switch_refuses(item, slot):
         return "filament_not_for_ams"
     not_on = _not_on(slot)
     extruders = slot.extruders or frozenset({0})

@@ -835,6 +835,7 @@ def _filament_slot(data: PrinterData, ams: int, slot: int) -> filaments.Slot:
     extruders = frozenset({0, 1}) if extruder is None else frozenset({extruder})
     nozzles = data.status.get("nozzles") or []
     codes = {index: str(nozzles[index].get("nozzle_type") or "") for index in extruders if index < len(nozzles)}
+    diameters = {index: filaments.diameter(model, nozzles[index].get("nozzle_diameter")) for index in extruders if index < len(nozzles)}
     if data.has_inputs:
         # An H3C: the tool the place feeds, not the one on the toolhead. The
         # TPU tool (TPU285) takes no AMS slot: a slot at its address is
@@ -843,7 +844,7 @@ def _filament_slot(data: PrinterData, ams: int, slot: int) -> filaments.Slot:
         code = str((tool or {}).get("nozzle_type") or "")
         codes = {0: code} if code and (ams == EXTERNAL_AMS or code[1:2].upper() != "T") else {}
     kind = studio_ams_type(_unit(data, ams)) if ams != EXTERNAL_AMS else None
-    return filaments.Slot(model, filaments.diameter(model, _nozzle_diameter(data, ams, slot)), ams != EXTERNAL_AMS, extruders, codes, kind)
+    return filaments.Slot(model, filaments.diameter(model, _nozzle_diameter(data, ams, slot)), ams != EXTERNAL_AMS, extruders, codes, kind, diameters)
 
 
 # The reasons `filaments.refusal` gives that are refusals of their own name.

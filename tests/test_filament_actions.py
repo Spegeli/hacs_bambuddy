@@ -549,6 +549,38 @@ async def test_a_switch_slot_is_offered_what_either_nozzle_takes(
     assert "GFN97" in _offered(await _get_filaments(hass, slot))
 
 
+async def test_an_x2d_on_the_switch_with_two_02_nozzles_is_not_offered_pla_galaxy(
+    hass: HomeAssistant, bambuddy_api: SimpleNamespace
+) -> None:
+    """Bambu Studio's rule for the X2D: no PLA Galaxy through the filament
+    track switch on 0.2 mm standard nozzles. With a 0.4 on one side it stays."""
+    as_model(bambuddy_api, "X2D", H2D)
+    status = bambuddy_api.statuses[H2D]
+    status["ams_extruder_map"] = {}
+    status["nozzles"] = [{"nozzle_type": "HS00", "nozzle_diameter": "0.2"}, {"nozzle_type": "HS00", "nozzle_diameter": "0.2"}]
+    # A spool without a chip: one with its chip is set by the chip alone.
+    status["ams"][0]["tray"][0] = {**status["ams"][0]["tray"][0], "tray_uuid": None, "tag_uid": None}
+    entry = await set_up(hass, H2D)
+    slot = ams_uid(entry, 0, "slot_1", H2D)
+
+    assert "GFA15" not in _offered(await _get_filaments(hass, slot))
+    with pytest.raises(ServiceValidationError) as raised:
+        await _set_filament(hass, slot, filament="GFA15")
+    assert raised.value.translation_key == "filament_not_for_ams"
+
+
+async def test_an_x2d_on_the_switch_with_a_04_nozzle_keeps_pla_galaxy(
+    hass: HomeAssistant, bambuddy_api: SimpleNamespace
+) -> None:
+    as_model(bambuddy_api, "X2D", H2D)
+    status = bambuddy_api.statuses[H2D]
+    status["ams_extruder_map"] = {}
+    status["nozzles"] = [{"nozzle_type": "HS00", "nozzle_diameter": "0.2"}, {"nozzle_type": "HS00", "nozzle_diameter": "0.4"}]
+    entry = await set_up(hass, H2D)
+
+    assert "GFA15" in _offered(await _get_filaments(hass, ams_uid(entry, 0, "slot_1", H2D)))
+
+
 @pytest.mark.parametrize(("code", "absent", "present"), [("N1", "GFB99", "GFL99"), ("O1E", "GFSNL03", "GFT98")])
 async def test_a_model_code_is_read_as_its_model(
     hass: HomeAssistant, bambuddy_api: SimpleNamespace, code: str, absent: str, present: str

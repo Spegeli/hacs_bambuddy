@@ -286,3 +286,39 @@ def test_the_list_goes_into_the_repository_wherever_the_script_runs() -> None:
 def test_the_fetched_folder_is_never_committed() -> None:
     gitignore = (Path(__file__).parents[1] / ".gitignore").read_text(encoding="utf-8").splitlines()
     assert "/.bambu-studio/" in gitignore
+
+
+def _x2d_list() -> tuple[dict[str, Any], dict[str, Any]]:
+    """The shipped list's X2D and filaments, the X2D's rules as the list holds them."""
+    shipped = json.loads((Path(__file__).parents[1] / "custom_components" / "bambuddy" / "filaments.json").read_text(encoding="utf-8"))
+    return shipped["printers"], shipped["filaments"]
+
+
+def test_the_x2ds_rules_the_list_holds_pass() -> None:
+    """Three of the X2D's prohibitions need no check of their own: its right
+    nozzle's list, the AMS refusals of Bambu's carbon-fibre filaments and no
+    PLA Glow profile on 0.2 mm cover them."""
+    printers, filaments = _x2d_list()
+    bambu_filaments.check_covered(printers, filaments)
+
+
+@pytest.mark.parametrize(
+    ("change", "match"),
+    [
+        (lambda printers, filaments: printers["X2D"]["0.4"]["not_on"]["0"].remove("GFA11"), "right nozzle"),
+        (lambda printers, filaments: filaments["GFN05"].update(type="PA6-GF"), "track switch"),
+        (lambda printers, filaments: printers["X2D"]["0.2"]["ids"].append("GFA12"), "0.2"),
+    ],
+)
+def test_a_rule_the_list_no_longer_holds_stops_it(change: Any, match: str) -> None:
+    """Bambu Studio moves a filament: the rule the list held is no longer kept."""
+    printers, filaments = _x2d_list()
+    change(printers, filaments)
+    with pytest.raises(SystemExit, match=match):
+        bambu_filaments.check_covered(printers, filaments)
+
+
+def test_the_x2ds_track_switch_rule_for_pla_galaxy_is_checked() -> None:
+    """Checked in filaments.py: it stands with the checked rules, as Bambu Studio words it."""
+    assert any("GFA15" in rule.get("filament_id_vec", []) for rule in bambu_filaments.CHECKED_RULES.values())
+    assert not any("not checked yet" in name for name in bambu_filaments.IGNORED_RULES)

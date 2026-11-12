@@ -225,3 +225,30 @@ def test_2_85_mm_tpu_needs_a_tpu285_tool() -> None:
         assert refusal(fid, replace(H3C_SPOOL, nozzle_types={0: "HT01"})) is None
     assert refusal("GFL99", replace(H3C_SPOOL, nozzle_types={0: "HT01"})) == "filament_not_for_nozzle"
     assert not {"GFU06", "GFU97"} & _ids(H3C_SPOOL)
+
+
+# An X2D's AMS on the filament track switch, both nozzles 0.2 mm standard.
+X2D_SWITCH_02 = Slot(
+    "X2D", "0.2", ams=True, extruders=frozenset({0, 1}), nozzle_types={0: "HS00", 1: "HS00"}, diameters={0: "0.2", 1: "0.2"}
+)
+
+
+def test_the_x2ds_track_switch_refuses_pla_galaxy_on_two_02_standard_nozzles() -> None:
+    """Bambu Studio: through the filament track switch, PLA Galaxy cannot be
+    used with a 0.2 mm standard nozzle -- use an external spool instead."""
+    assert refusal("GFA15", X2D_SWITCH_02) == "filament_not_for_ams"
+    assert "GFA15" not in _ids(X2D_SWITCH_02)
+    assert refusal("GFA00", X2D_SWITCH_02) is None
+
+
+def test_pla_galaxy_stays_where_the_rule_does_not_hold() -> None:
+    """Not on the switch, an external spool, one nozzle larger, a nozzle not
+    standard, another printer: PLA Galaxy is offered."""
+    for slot in (
+        replace(X2D_SWITCH_02, extruders=frozenset({1})),
+        replace(X2D_SWITCH_02, ams=False),
+        replace(X2D_SWITCH_02, diameters={0: "0.4", 1: "0.2"}),
+        replace(X2D_SWITCH_02, nozzle_types={0: "HS00", 1: "HH00"}),
+        replace(X2D_SWITCH_02, diameters={}),
+    ):
+        assert refusal("GFA15", slot) is None, slot
