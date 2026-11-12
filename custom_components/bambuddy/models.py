@@ -685,9 +685,16 @@ def find_printers(listed: list[dict[str, Any]], stored: list[dict[str, Any]]) ->
     return found
 
 
+# What the printer may send as an AMS unit's serial when it has none to
+# give, and BamBuddy passes on (an X1C's AMS 2 Pro and AMS, #26).
+NO_SERIAL = "N/A"
+
+
 def ams_serial(unit: dict[str, Any]) -> str | None:
-    """The serial number BamBuddy reports for an AMS unit, if any."""
-    return str(unit.get("serial_number") or "").strip() or None
+    """The serial number BamBuddy reports for an AMS unit, if any: "N/A" is
+    none, or two units so reported would share one device."""
+    serial = str(unit.get("serial_number") or "").strip()
+    return serial if serial and serial.upper() != NO_SERIAL else None
 
 
 def part_id(part: dict[str, Any], default: int = 0) -> int:

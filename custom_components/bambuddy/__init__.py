@@ -74,7 +74,7 @@ from .fan_ids import async_rename_x2d_fans
 from .inventory import BamBuddyInventoryCoordinator
 from .key import KeyCheck, KeyGuard
 from .live import BamBuddyLive, live_settings
-from .models import ams_key, display_model, find_printers, model_changed, stored_key, stored_printer, too_old
+from .models import NO_SERIAL, ams_key, display_model, find_printers, model_changed, stored_key, stored_printer, too_old
 from .plug_coordinator import BamBuddyPlugCoordinator
 from .plug_identity import async_secret, device_prefix, parse_unique_id
 from .rekey import async_rekey_ams_units
@@ -418,6 +418,10 @@ def _remove_stale_devices(hass: HomeAssistant, entry: ConfigEntry) -> None:
         if any(name.startswith(plug_prefix) for name in names):
             continue
         if not any(name in configured or name.startswith(units) for name in names):
+            registry.async_remove_device(device.id)
+        elif any(name.startswith(units) and name.rpartition("_ams_")[2].strip().upper() == NO_SERIAL for name in names):
+            # Made for the serial "N/A" before it counted as none: it stood
+            # for whichever unit came first. The units come by their places.
             registry.async_remove_device(device.id)
 
 

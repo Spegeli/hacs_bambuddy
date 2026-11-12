@@ -694,7 +694,7 @@ class BamBuddyPrinterCoordinator(DataUpdateCoordinator[PrinterData]):
                 if unit is not None:
                     model = ams_model(unit, data)
                     details["model"] = model
-                    details["serial_number"] = unit.get("serial_number") or None
+                    details["serial_number"] = ams_serial(unit)
                     details["sw_version"] = unit.get("sw_ver") or None
                     # Its name in BamBuddy, else the letter of the place it is
                     # plugged in now -- once the names are read in this run.

@@ -897,6 +897,43 @@ async def test_an_ams_without_serial_comes_after_a_minute(
     assert state_of(hass, "sensor", f"{entry.entry_id}_p{printer_key(X1C)}_ams0_slot_1").state == "PLA Basic"
 
 
+async def test_units_bambuddy_names_n_a_are_known_by_their_places(hass: HomeAssistant, bambuddy_api: SimpleNamespace) -> None:
+    """BamBuddy may report "N/A" as a unit's serial (an X1C with four AMS,
+    two of them so): that is no serial. Taken for one, the two units shared
+    a device and only one of them showed."""
+    status = bambuddy_api.statuses[X1C]
+    second = {**copy.deepcopy(status["ams"][0]), "id": 1}
+    status["ams"] = [{**status["ams"][0], "serial_number": "N/A"}, {**second, "serial_number": "N/A"}]
+    entry = await set_up(hass, X1C)
+
+    devices = devices_by_identifier(hass, entry)
+    unit_b = f"{printer_device(entry, X1C)}_ams_1"
+    assert f"{printer_device(entry, X1C)}_ams_0" in devices
+    assert unit_b in devices
+    assert f"{printer_device(entry, X1C)}_ams_N/A" not in devices
+    assert devices[unit_b].serial_number is None
+    assert "N/A" not in (devices[unit_b].name or "")
+    assert entity_id(hass, "sensor", f"{entry.entry_id}_p{printer_key(X1C)}_ams1_humidity") == (
+        f"sensor.ams_{printer_key(X1C).lower()}_b_humidity"
+    )
+
+
+@pytest.mark.parametrize("written", ["N/A", "n/a"])
+async def test_a_device_of_the_serial_n_a_goes(hass: HomeAssistant, bambuddy_api: SimpleNamespace, written: str) -> None:
+    """A device made for the serial "N/A" (however BamBuddy wrote it) stood
+    for whichever unit came first: the setup removes it, with its entities."""
+    entry = make_entry(hass, X1C)
+    device = dr.async_get(hass).async_get_or_create(
+        config_entry_id=entry.entry_id, identifiers={(DOMAIN, f"{printer_device(entry, X1C)}_ams_{written}")}
+    )
+    stale = f"{entry.entry_id}_p{printer_key(X1C)}_ams{written}_humidity"
+    er.async_get(hass).async_get_or_create("sensor", DOMAIN, stale, config_entry=entry, device_id=device.id)
+    await setup_integration(hass, entry)
+
+    assert f"{printer_device(entry, X1C)}_ams_{written}" not in devices_by_identifier(hass, entry)
+    assert no_entity(hass, "sensor", stale)
+
+
 async def test_an_ams_known_by_its_place_needs_no_wait(hass: HomeAssistant, bambuddy_api: SimpleNamespace) -> None:
     """A unit known by its place before has no serial to wait for: after a
     restart its entities come at once."""
