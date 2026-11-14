@@ -75,6 +75,10 @@ After a print, BamBuddy's queue waits for an empty plate. The card then says so:
 
 **Skip objects** lists the print's objects; tick those to leave out. Skipped objects cannot be printed again in this job. To skip every object, or the only one, stop the print instead.
 
+### PrintTools
+
+The H3C's nine PrintTools, above the AMS: a tile each, with the colour of the filament that feeds it and its number. The tool on the toolhead is outlined. A tile's tooltip names its nozzle, the filament size, its print time and whether it holds filament; a tap opens the tool: its nozzle, the filament it takes, what feeds it, its print time and whether it is on the toolhead. A place the printer does not report shows a dash.
+
 ## Control
 
 <img src="../.github/readme/cards/control.png" alt="The Control tab: nozzle and bed heating, the print options with the AI detections, and the jog pad with bed and extruder" width="300">
@@ -85,7 +89,7 @@ Each heater has − and + in steps of 5, and a power switch that turns it on or 
 
 Turned on, a nozzle starts at the middle of the active filament's range, else at 220 °C. On two-nozzle printers that range counts only for the active nozzle during a print; otherwise each nozzle starts at 220 °C. The bed starts at 55 °C. The switches of the nozzles and the bed are hidden while a print runs or is paused.
 
-The chamber's row, and ventilating on a printer with an airduct: [Chamber](chamber.md).
+On a printer that ventilates, the block is *Heating and ventilation* and its last row is **Ventilation**. The chamber's row and ventilating: [Chamber](chamber.md).
 
 ### Print options
 
@@ -194,7 +198,7 @@ A locked control says why beside it. All of them wait while the printer is offli
 |---|---|---|
 | Arrows, steps, homing, extruder, active nozzle | A print runs or is paused | Moving and extruding are possible once the print is done. |
 | The same | A filament change runs | Wait until the filament change is done. |
-| **Extrude**, **Retract** | The nozzle is below 170 °C | To extrude, heat the nozzle to at least 170 °C under Heating. |
+| **Extrude**, **Retract** | The nozzle is below 170 °C | To extrude, heat the nozzle to at least 170 °C under Heating (*Heating and ventilation* on a printer that ventilates). |
 | **Load**, **Unload** | A print runs (a paused print allows them) | Pause the print to change the filament. |
 | **Load**, **Unload**, the slot's ✏️ | A filament change runs | Wait until the filament change is done. |
 | **Load** on an AMS HT | BamBuddy is older than 1.3.0 (said after the tap) | Update BamBuddy, or load filament from the AMS HT on the printer's screen. |
@@ -221,7 +225,7 @@ The tabs and controls stay the same. Three things differ:
 |---|---|---|---|
 | `printer` | a device ID | none | The printer; the editor lists them |
 | `camera` | `tap`, `always`, `off` | `tap` | The live view: on a tap of its camera button, always while the dashboard is open, or never (the job's cover image then) |
-| `status_blocks` | a list of `controls`, `power`, `temperatures`, `ams`, `fans`, `speed` | all six, in this order | The Status tab's sections below the job, in the list's order; one left out is hidden |
+| `status_blocks` | a list of `controls`, `power`, `temperatures`, `tools`, `ams`, `fans`, `speed` | all seven, in this order | The Status tab's sections below the job, in the list's order; one left out is hidden |
 | `header_chips` | a list of `network`, `hms`, `firmware`, `maintenance`, `door`, `storage`, `drying`, `power` | `network`, `hms`, `firmware` | The chips below the name, in the list's order; one left out is hidden |
 | `compact_chips` | `true`, `false` | `false` | The chips with icon and value only |
 | `start_view` | `status`, `control`, `filament` | `status` | The tab the card opens on |
@@ -245,7 +249,7 @@ ams_folding: folded
 What the table leaves out:
 
 - **`printer`:** the ID is the last part of the address of the printer's device page (`…/config/devices/device/<ID>`).
-- **`status_blocks`:** the job always stays on top. Print controls and print speed show only while a print runs or is paused, power only for a printer with a smart plug.
+- **`status_blocks`:** the job always stays on top. Print controls and print speed show only while a print runs or is paused, power only for a printer with a smart plug, `tools` only on the H3C. A list saved before `tools` came does not show it: add it in the editor.
 - **`header_chips`:** door, storage and drying show only while they matter, with one chip for all drying units. Power shows only for a printer with a smart plug. Chips never cut their text: more chips take more rows, and each shows its full text as a tooltip.
 - **`compact_chips`:** *OK* instead of *HMS OK*, and *3* instead of *Maintenance: 3 due*. An update shows the version it brings, drying its time (*2×* before it for several units), and a plug its power or its state in a word. An open door and missing storage show as their icon. A tooltip shows the full text, and screen readers read it out.
 - **`start_view`:** Status where that tab is hidden; the editor warns when its options hide it.

@@ -36,7 +36,7 @@ The actions' fields are in °C, whatever unit Home Assistant uses: `temperature`
 | `bambuddy.home_axes` | `device_id` | Moves all axes to their home position |
 | `bambuddy.extrude` | `device_id`, `distance` | Extrudes, or retracts with a negative length |
 | `bambuddy.load_filament` | `entity_id` | Loads a slot's filament |
-| `bambuddy.unload_filament` | `device_id` | Unloads the filament in the nozzle |
+| `bambuddy.unload_filament` | `device_id`, or `entity_id` of an AMS 3H slot | Unloads the filament in the nozzle, or one H3C PrintTool |
 | `bambuddy.set_filament` | `entity_id`, `filament`, `color`, `k_profile` | Tells the printer what a spool without a chip holds |
 | `bambuddy.get_k_profiles` | `entity_id` | Lists the printer's K calibrations for the slot; a response only |
 | `bambuddy.get_filaments` | `entity_id` | Lists the filaments Bambu Studio offers for the slot; a response only |
@@ -104,6 +104,8 @@ Refused:
 ### `bambuddy.unload_filament`
 
 Unloads the filament in the nozzle. On a two-nozzle printer, that is the active one.
+
+With `entity_id`, the sensor of an H3C's AMS 3H slot, it unloads that slot's PrintTool instead: the printer fetches the tool, heats it and cuts the filament; the rest is pulled out at the AMS by hand. It is refused while a print runs or is paused, for a slot whose tool holds no filament, for the slot before the 2.85 mm TPU tool, and for any slot but an AMS 3H's. With both fields, they must name the same printer.
 
 ### `bambuddy.set_filament`
 
@@ -193,7 +195,7 @@ Returns the inventory's spools, read fresh, the slot's first. Read Status is eno
 | `assigned` | The number of the slot's spool, or `null` |
 | `spools` | The list below |
 
-Each spool has its `id`, `name`, `brand`, `material`, `color_name`, `remaining_g`, `remaining_pct`, `storage_location` and more, and:
+Each spool has its `id`, `name`, `brand`, `material`, `color_name`, `remaining_g`, `remaining_pct`, `storage_location`, `filament_diameter` (1.75 or 2.85, from its profile) and more, and:
 
 | Field | What it holds |
 |---|---|
@@ -207,9 +209,9 @@ A `place` that is another slot has `printer_id`, `printer_name`, `ams_id`, `tray
 
 | `fits` | Why the spool cannot go here |
 |---|---|
-| `not_for_ams` | Not for the AMS |
-| `not_for_nozzle` | Not for this nozzle |
-| `not_for_printer` | Not for this printer |
+| `not_for_ams` | Not suitable for the AMS |
+| `not_for_nozzle` | Not suitable for this nozzle |
+| `not_for_printer` | Not suitable for this printer |
 | `by_chip` | Its chip links it to another slot |
 | `printing` | It sits in a slot of another printer that is printing or paused |
 

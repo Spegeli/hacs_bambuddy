@@ -174,10 +174,13 @@ A sensitivity stays as set on the printer. The other checks are on or off only. 
 | Left external spool | Sensor | Two nozzles: the left spool holder |
 | Right external spool | Sensor | Two nozzles: the right spool holder |
 | External 1 … 9 | Sensor | H3C: the external input of each tool, numbered as on its screen |
+| PrintTool on toolhead | Sensor | H3C: the PrintTool on the toolhead (1 to 9), or *None* while all nine are in the rack |
+| PrintTool 1 … 9 | Sensor | H3C: each PrintTool's print time in hours, with its nozzle and what feeds it as attributes |
 
 - *AMS filament backup* comes with the first AMS unit. A matching spool has the same brand, material and color: [Filament backup](ams-and-filament.md#filament-backup).
 - It reads *unknown* where BamBuddy cannot read it, on the A1 and P1 series before BamBuddy 1.3.0. Switching works all the same.
 - The external spool sensors carry the attributes of an [AMS slot](#slot-attributes). They have no `nozzle`, and `remaining` stays empty.
+- A *PrintTool* sensor belongs to a place in the H3C's rack: a tool moved to another place is read there. Its attributes: `nozzle_code` (such as `HS01`), `nozzle_diameter`, `nozzle_material`, `nozzle_flow` (`standard`, `high_flow`, `tpu_high_flow`, `tpu_285`), `filament_diameter` (1.75 or 2.85), `has_filament`, `on_toolhead`, `filament_color` and `fed_by` (`ams` while the AMS 3H is reported, else `external`). A place the rack does not report reads *unknown*.
 
 ### Maintenance and messages
 
@@ -271,6 +274,7 @@ While BamBuddy's inventory can be read, a slot sensor and the external spool sen
 | `name`, `brand`, `material`, `color_name` | What BamBuddy knows of it |
 | `remaining_g`, `remaining_pct` | What is left, in grams and % |
 | `storage_location` | Where it is kept |
+| `filament_diameter` | 1.75 or 2.85, from its profile (BamBuddy keeps no diameter); empty where the profile is unknown |
 | `also_assigned` | Other slots BamBuddy holds it in |
 
 It holds a few more fields for the card, such as `rgba`. More: [Spool inventory](spool-inventory.md).

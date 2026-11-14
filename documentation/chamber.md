@@ -6,7 +6,7 @@ Heat or ventilate the chamber of a printer with an airduct, and see what locks w
 
 **Needs:** a printer with an [airduct](glossary.md#airduct): the P2S, the X2D or the H2 series. Other printers: [Chamber in Printers](printers.md#chamber).
 
-Everything here is in the card's Control tab, under **Heating** and **Ventilation** (in the card editor, the section *Heating and ventilation*).
+Everything here is in the card's Control tab, in the block **Heating and ventilation** (in the card editor, the section *Heating and ventilation*).
 
 ## Heat or ventilate
 
@@ -21,7 +21,7 @@ The two exclude each other: see [Who locks whom](#who-locks-whom).
 
 ## Heating
 
-The chamber's row under **Heating** has − and + in steps of 5 and a power switch. It starts at 40 °C.
+The chamber's row has − and + in steps of 5 and a power switch. It starts at 40 °C.
 
 - A target above 0 sets the airduct to heating first, unless a print or a filament change keeps the mode it set.
 - A running job may set the target again.
@@ -31,7 +31,7 @@ The P2S has no heater. Its row reads **Keep warm**, on or off; on puts the airdu
 
 ## Ventilating
 
-The section **Ventilation** has a row **Chamber**, on or off, in steps of 10 %. It starts at 60 %, and names the fans it runs.
+The row **Ventilation**, below the heaters, is on or off, in steps of 10 %. It starts at 60 %, and names the fans it runs.
 
 Turned on, it sets the airduct to cooling and runs [the printer's fans](#per-model) at one speed. The entity *Ventilation* does the same: 60 % unless you give a speed.
 

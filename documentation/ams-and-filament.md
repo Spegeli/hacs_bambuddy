@@ -32,6 +32,8 @@ From three units on, each unit shows only its head, colors and drying at first; 
 1. In the Filament tab, tap **Load** on a filled slot, or **Unload** on the slot in use.
 2. Confirm. On two-nozzle printers the question names the nozzle.
 
+On the H3C each AMS 3H slot feeds its own PrintTool. While no print runs or is paused, every slot whose tool holds filament has **Unload**: the printer fetches the tool, heats it and cuts the filament; pull the rest out at the top of the AMS by hand. The slot before the 2.85 mm TPU tool has no button: load it at the printer through the slot's bypass feed (**Load External**).
+
 To load, the printer heats the nozzle, unloads the current filament and loads the new one. This takes a few minutes.
 
 | You cannot load or unload | Why |
@@ -78,7 +80,7 @@ The list holds the [filament profiles](glossary.md#filament-profile) [Bambu Stud
 | Your own profile | Only Bambu Studio's are listed | Set it on the printer or in BamBuddy |
 | TPU (all but *TPU for AMS*) in an AMS slot | Bambu Studio does not allow it in the AMS; only the A2L's AMS Lite takes it | Put it on an external spool, or use a *TPU for AMS* profile |
 | Bambu's PET-CF, PA6-CF, PPS-CF or PPA-CF in an AMS slot | Bambu Studio does not allow them in the AMS; the H3C's AMS 3H takes all but PPA-CF | Put it on an external spool |
-| 2.85 mm TPU | Only the H3C's TPU tool takes it | Set it on the input that feeds that tool (*External 8* as delivered) |
+| 2.85 mm TPU | Only the H3C's TPU tool takes it | Its spool goes through the bypass feed of the slot before that tool (slot 8 as delivered), and the printer reports it on that tool's input (*External 8*). The card shows it in the slot's row, and setting or assigning it goes to the input. That place takes nothing else. |
 | A filament for another printer or nozzle size | Bambu Studio does not offer it here | Change the nozzle, or use another filament |
 | A filament on one side only | Bambu Studio allows it on the other nozzle | Use a slot that feeds that nozzle |
 | Most filaments on an H2D or H2D Pro with a TPU high-flow nozzle | That nozzle takes TPU only | Change the nozzle |

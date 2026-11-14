@@ -297,7 +297,7 @@ More: [When a unit is replaced or moved](ams-and-filament.md#when-a-unit-is-repl
 ### Until BamBuddy reports it
 
 - **AMS Lite without its serial number:** BamBuddy 1.2.5.7 does not report it ([maziggy/bambuddy#3348](https://github.com/maziggy/bambuddy/issues/3348); BamBuddy 1.3.0 does). Until yours does, the AMS Lite's entity IDs carry the printer's serial number and the unit's letter (`sensor.ams_lite_0309da000000002_a_slot_1`). Once BamBuddy reports it, they are renamed once and **Settings → Repairs** lists them: see [AMS units](entities.md#ams-units).
-- **The H3C, part of it:** it needs BamBuddy 1.3.1. Its nine tools and loading from an external input are not there yet.
+- **The H3C, part of it:** it needs BamBuddy 1.3.1. Loading from an external input is not there yet: load at the printer. The 2.85 mm TPU tool is loaded at the printer through its slot's bypass feed.
 - **H3C: the AMS 3H's spools under External 1–9:** the printer itself says the AMS 3H is not connected and lists its spools under the external inputs. BamBuddy and Home Assistant show what it reports. Check the AMS 3H's cable and restart the printer.
 - **Chamber of the H2D Pro and the X1E with BamBuddy 1.2.5.7:** it reports no chamber temperature or heater for an H2D Pro, and no chamber heater for an X1E ([maziggy/bambuddy#3335](https://github.com/maziggy/bambuddy/issues/3335); BamBuddy 1.3.0 does). Until yours does, the H2D Pro has no *Chamber temperature*, and neither has a *Chamber target temperature*. Once BamBuddy reports them, the BamBuddy entry reloads once by itself and the entities come.
 
