@@ -527,8 +527,10 @@ class BamBuddyClient:
     async def load_filament(self, printer_id: int, tray_id: int) -> None:
         await self._command(f"/printers/{printer_id}/ams/load", tray_id=tray_id)
 
-    async def unload_filament(self, printer_id: int) -> None:
-        await self._command(f"/printers/{printer_id}/ams/unload")
+    async def unload_filament(self, printer_id: int, tray_id: int | None = None) -> None:
+        """Unload what is loaded, or (BamBuddy 1.3.1) the hotend a slot feeds."""
+        params = {} if tray_id is None else {"tray_id": tray_id}
+        await self._command(f"/printers/{printer_id}/ams/unload", **params)
 
     async def start_drying(
         self, printer_id: int, ams_id: int, temperature: int, duration: int, filament: str | None = None

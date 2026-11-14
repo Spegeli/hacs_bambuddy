@@ -4,7 +4,7 @@
 // tappable piece is a button, so it works by keyboard.
 import { html, nothing, type TemplateResult } from "lit";
 
-import { filamentColor, formatGrams, formatPercent, formatState, hasValue, needsOutline, numberAttribute, numericState, stateOf, textOrUndefined } from "./format";
+import { filamentColor, formatGrams, formatNumber, formatPercent, formatState, hasValue, needsOutline, numberAttribute, numericState, stateOf, textOrUndefined } from "./format";
 import { icon, type IconName } from "./icons";
 import { placesOf, spoolBasics, type SpoolPlace } from "./actions";
 import { LANGUAGES, t, type TextKey } from "./i18n";
@@ -121,6 +121,8 @@ export interface CardContext {
   checkConnection: () => void;
   /** Opens the switch-off's settings; opened from the plugs dialog, they go back to it. */
   openAutoOff: () => void;
+  /** Opens one of the H3C's PrintTools: what it is. */
+  openTool: (number: number) => void;
 }
 
 /** A button with an icon and, unless `iconOnly`, its label. While its
@@ -490,6 +492,8 @@ export interface InventorySpool {
   assignedType: string;
   /** The slot types that match the spool for BamBuddy, upper case. */
   spoolTypes: string[];
+  /** 1.75 or 2.85, from the spool's profile. */
+  filamentMm?: number;
 }
 
 export interface Slot {
@@ -530,7 +534,11 @@ function inventorySpool(value: unknown): InventorySpool | undefined {
 }
 
 type Colored = Pick<InventorySpool, "rgba" | "extraColors">;
-type Lined = Pick<InventorySpool, "id" | "colorName" | "remainingG" | "remainingPct">;
+type Lined = Pick<InventorySpool, "id" | "colorName" | "remainingG" | "remainingPct" | "filamentMm">;
+
+/** "2,85 mm" for a thick spool (the H3C's TPU tool); none for 1.75 mm, the usual. */
+const thick = (hass: Hass, spool: { filamentMm?: number }): string | undefined =>
+  spool.filamentMm === 2.85 ? `${formatNumber(hass, 2.85, 2)}\u00a0mm` : undefined;
 
 /** An inventory spool's colours: its own first, then a multicolour
  * spool's others ("#RRGGBB"). */
@@ -558,6 +566,7 @@ export function spoolLine(hass: Hass, spool: Lined): string {
   const grams = formatGrams(hass, spool.remainingG);
   return [
     spool.colorName ?? "",
+    thick(hass, spool) ?? "",
     spool.remainingPct === undefined ? grams : `${grams} (${formatPercent(hass, spool.remainingPct)})`,
     t(hass, "inv_no", { id: spool.id }),
   ]
@@ -569,7 +578,9 @@ export function spoolLine(hass: Hass, spool: Lined): string {
 export function inventoryLine(hass: Hass, spool: InventorySpool): string {
   const grams = formatGrams(hass, spool.remainingG);
   // No line ends in the dot: it stays with what stands before it.
-  return spool.remainingPct === undefined ? grams : `${formatPercent(hass, spool.remainingPct)}\u00a0·\u00a0${grams}`;
+  const left = spool.remainingPct === undefined ? grams : `${formatPercent(hass, spool.remainingPct)}\u00a0·\u00a0${grams}`;
+  const size = thick(hass, spool);
+  return size ? `${size}\u00a0·\u00a0${left}` : left;
 }
 
 /** A slot's number in its unit: its own (the sensor's `slot`), the place
@@ -659,6 +670,8 @@ export function shownExternalSpools(ctx: CardContext): string[] {
   // An H3C's inputs: beside its AMS 3H only the one that feeds -- they keep
   // what they held while the AMS 3H was not detected --, else those with a spool.
   if (refs.inputs) {
+    // Beside a detected AMS 3H none: its slots take the settings.
+    if (ctx.ams.some((unit) => unit.model === AMS_3H)) return [];
     return refs.externalSpools.filter((entityId) => feeds(entityId) || (ctx.ams.length === 0 && !slotOf(hass, entityId).empty));
   }
   if (ctx.settings.externalSpool || ctx.ams.length === 0) return refs.externalSpools;

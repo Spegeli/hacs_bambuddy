@@ -41,6 +41,8 @@ _NAMED_TOGETHER = {
     "Slot {slot}": "a placeholder: one row names a unit's slots, as many as it has",
     # One row names an H3C's nine inputs: "External 1 … 9".
     **{f"External {tool}": "one row names an H3C's nine inputs" for tool in range(2, 10)},
+    # One row names an H3C's nine PrintTools: "PrintTool 1 … 9".
+    **{f"PrintTool {tool}": "one row names an H3C's nine PrintTools" for tool in range(2, 10)},
 }
 
 

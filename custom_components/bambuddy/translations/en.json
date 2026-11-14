@@ -670,6 +670,39 @@
           "empty": "Empty"
         }
       },
+      "print_tool_on_toolhead": {
+        "name": "PrintTool on toolhead",
+        "state": {
+          "none": "None"
+        }
+      },
+      "print_tool_1": {
+        "name": "PrintTool 1"
+      },
+      "print_tool_2": {
+        "name": "PrintTool 2"
+      },
+      "print_tool_3": {
+        "name": "PrintTool 3"
+      },
+      "print_tool_4": {
+        "name": "PrintTool 4"
+      },
+      "print_tool_5": {
+        "name": "PrintTool 5"
+      },
+      "print_tool_6": {
+        "name": "PrintTool 6"
+      },
+      "print_tool_7": {
+        "name": "PrintTool 7"
+      },
+      "print_tool_8": {
+        "name": "PrintTool 8"
+      },
+      "print_tool_9": {
+        "name": "PrintTool 9"
+      },
       "nozzle_type": {
         "name": "Nozzle type",
         "state": {
@@ -1088,6 +1121,18 @@
     },
     "spool_by_chip": {
       "message": "BamBuddy links this spool by its chip."
+    },
+    "load_tpu_285": {
+      "message": "Slot {slot} feeds a PrintTool for 2.85 mm TPU: load it at the printer through the bypass feed (“Load External”)."
+    },
+    "unload_no_tool_filament": {
+      "message": "No PrintTool is loaded from slot {slot}."
+    },
+    "unload_not_rack": {
+      "message": "Unloading a single slot works only on an AMS 3H."
+    },
+    "unload_slot_other_printer": {
+      "message": "The slot belongs to another printer than the chosen device."
     }
   },
   "issues": {
@@ -1184,11 +1229,15 @@
     },
     "unload_filament": {
       "name": "Unload filament",
-      "description": "Pulls the loaded filament out of the nozzle — on a two-nozzle printer, out of the active one. While a print is running, pause it first.",
+      "description": "Pulls the loaded filament out of the nozzle — on a two-nozzle printer, out of the active one; while a print is running, pause it first. With a slot of an H3C's AMS 3H it unloads that slot's PrintTool instead, only while no print runs or is paused: the printer fetches the tool, heats it and cuts the filament; pull the rest out at the AMS by hand.",
       "fields": {
         "device_id": {
           "name": "Printer",
-          "description": "The printer to unload."
+          "description": "The printer to unload. Not needed with a slot."
+        },
+        "entity_id": {
+          "name": "Slot",
+          "description": "The sensor of an AMS 3H slot (H3C): unloads that slot's PrintTool."
         }
       }
     },

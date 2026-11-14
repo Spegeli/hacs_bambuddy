@@ -124,8 +124,12 @@ describe("heating and ventilation in one block", () => {
 
   it("1: offers ventilation on an idle H2D with nothing on, from 60 %", async () => {
     const { card, hass } = await block(H2D_VENT, { language: "de" });
-    expect(words(part(card)?.querySelector(".section-label"))).toBe("Lüften");
-    expect(words(ventRow(card)?.querySelector(".heat-name"))).toBe("Kammer Abluftlüfter");
+    // No heading of its own: the row is „Lüften“, the block „Heizen und Lüften“.
+    expect(part(card)?.querySelector(".section-label")).toBeNull();
+    expect(words(find(card, "#heat-title"))).toBe("Heizen und Lüften");
+    expect(words(ventRow(card)?.querySelector(".heat-name"))).toBe("Lüften Abluftlüfter");
+    expect(part(card)?.getAttribute("aria-labelledby")).toBe("vent-title");
+    expect(words(find(card, "#vent-title"))).toBe("Lüften");
     expect(words(ventRow(card)?.querySelector(".heat-target"))).toBe("Lüften, Stufe: Aus");
     const [lower, raise, power] = buttonsOf(ventRow(card));
     expect([lower?.disabled, raise?.disabled, power?.disabled, power?.getAttribute("aria-label")]).toEqual([true, false, false, `Mit 60${NBSP}% lüften`]);
@@ -149,7 +153,7 @@ describe("heating and ventilation in one block", () => {
     const { card } = await block({ ...H2D_VENT, chamber: [39, 50] }, { language: "de" });
     expect(buttonsOf(ventRow(card)).every((item) => item.disabled)).toBe(true);
     expect(ventRow(card)?.querySelector(".heat-off-space")).not.toBeNull();
-    expect(notes(card)).toEqual(["Solange die Kammer heizt, lässt sie sich nicht lüften. Schalte zuerst oben unter „Heizen“ die Kammer aus."]);
+    expect(notes(card)).toEqual(["Solange die Kammer heizt, lässt sie sich nicht lüften. Schalte zuerst oben die Kammer aus."]);
   });
 
   it("3: ventilating at 60 % locks the chamber; + steps by 10, and − at 10 % switches it off", async () => {
@@ -161,7 +165,7 @@ describe("heating and ventilation in one block", () => {
     expect([power?.classList.contains("on"), power?.classList.contains("tone-vent"), power?.getAttribute("aria-label")]).toEqual([true, true, "Lüften ausschalten"]);
     expect(chamberRow(card)?.querySelector(".heat-off-space")).not.toBeNull();
     expect(buttonsOf(chamberRow(card)).every((item) => item.disabled)).toBe(true);
-    expect(notes(card)).toEqual(["Solange die Kammer gelüftet wird, lässt sie sich nicht heizen. Schalte zuerst unten unter „Lüften“ die Kammer aus."]);
+    expect(notes(card)).toEqual(["Solange die Kammer gelüftet wird, lässt sie sich nicht heizen. Schalte zuerst unten „Lüften“ aus."]);
     const raise = buttonsOf(ventRow(card))[1];
     expect(raise?.getAttribute("aria-label")).toBe(`Lüften 10${NBSP}% mehr`);
     raise?.click();
@@ -213,13 +217,13 @@ describe("heating and ventilation in one block", () => {
   it("7: keeping warm locks the P2S's ventilation", async () => {
     const { card } = await block({ ...P2S, airduct: "heating" }, { language: "de", printer: "x1c" });
     expect(buttonsOf(ventRow(card)).every((item) => item.disabled)).toBe(true);
-    expect(notes(card)).toEqual(["Solange die Kammer warm gehalten wird, lässt sie sich nicht lüften. Schalte zuerst oben unter „Heizen“ die Kammer aus."]);
+    expect(notes(card)).toEqual(["Solange die Kammer warm gehalten wird, lässt sie sich nicht lüften. Schalte zuerst oben die Kammer aus."]);
   });
 
   it("8: ventilating locks keeping warm on, not off", async () => {
     const { card } = await block({ ...P2S, ventilation: { percent: 60, fans: ["aux"] } }, { language: "de", printer: "x1c" });
     expect(findAll<HTMLButtonElement>(card, ".keep-warm [role=radio]").map((item) => item.disabled)).toEqual([false, true]);
-    expect(notes(card)).toEqual(["Solange die Kammer gelüftet wird, lässt sie sich nicht warm halten. Schalte zuerst unten unter „Lüften“ die Kammer aus."]);
+    expect(notes(card)).toEqual(["Solange die Kammer gelüftet wird, lässt sie sich nicht warm halten. Schalte zuerst unten „Lüften“ aus."]);
   });
 
   it("leaves a way off when heating and ventilation are both on", async () => {
@@ -248,7 +252,7 @@ describe("heating and ventilation in one block", () => {
     await card.updateComplete;
     expect(words(chamberRow(card)?.querySelector(".heat-target"))).toBe("Kammer, Ziel: Aus");
     expect(buttonsOf(ventRow(card)).every((item) => item.disabled)).toBe(true);
-    expect(notes(card)).toEqual(["Solange die Kammer heizt, lässt sie sich nicht lüften. Schalte zuerst oben unter „Heizen“ die Kammer aus."]);
+    expect(notes(card)).toEqual(["Solange die Kammer heizt, lässt sie sich nicht lüften. Schalte zuerst oben die Kammer aus."]);
     await update(card, hass.withState("number.h2d_chamber_target_temperature", "0"));
     expect(buttonsOf(ventRow(card))[1]?.disabled).toBe(false);
     expect(notes(card)).toEqual([]);
@@ -296,7 +300,7 @@ describe("heating and ventilation in one block", () => {
 
   it("says the heated chamber, not the laser mode, while the chamber heats in laser mode", async () => {
     const { card } = await block({ ...H2D_VENT, airduct: "laser", chamber: [39, 50] }, { language: "de" });
-    expect(notes(card)).toEqual(["Solange die Kammer heizt, lässt sie sich nicht lüften. Schalte zuerst oben unter „Heizen“ die Kammer aus."]);
+    expect(notes(card)).toEqual(["Solange die Kammer heizt, lässt sie sich nicht lüften. Schalte zuerst oben die Kammer aus."]);
     expect(buttonsOf(ventRow(card)).every((item) => item.disabled)).toBe(true);
   });
 
@@ -391,6 +395,6 @@ describe("the ventilation's explanation", () => {
     // The rule reaches it: the explanation stands right in the section.
     const hass = makeHass({ devices: h2d({ status: "idle", stage: "idle", hms: [], airduct: "cooling", chamber: [33, 0], ventilation: { percent: 0, fans: ["exhaust"] } }) });
     const card = await mountCard(hass, { printer: "dev-h2d", start_view: "control" });
-    expect(find(card, ".heating > .hint")?.textContent).toMatch(/^Heating keeps the warmth/);
+    expect(find(card, ".heating > .hint")?.textContent).toMatch(/^Heating the chamber keeps the warmth/);
   });
 });

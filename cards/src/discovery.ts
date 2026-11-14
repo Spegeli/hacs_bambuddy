@@ -258,6 +258,7 @@ export function findPrinter(hass: Hass, deviceId: string | undefined): PrinterRe
     activeFilament: one("sensor.active_filament"),
     externalSpools: externalSpools.filter((spool): spool is string => spool !== undefined),
     inputs: hasInputs,
+    tools: [1, 2, 3, 4, 5, 6, 7, 8, 9].map((tool) => one(`sensor.print_tool_${tool}`)),
     online,
     plateClearNeeded: one("binary_sensor.plate_clear_needed"),
     developerMode: one("binary_sensor.developer_mode"),

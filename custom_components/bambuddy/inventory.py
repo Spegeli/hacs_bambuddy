@@ -85,6 +85,8 @@ class Spool:
             "label_weight": self.label_weight,
             "storage_location": self.storage_location,
             "rfid": self.rfid,
+            # By its profile: BamBuddy keeps no diameter.
+            "filament_diameter": filaments.filament_mm(_filament_of(self)),
         }
 
 

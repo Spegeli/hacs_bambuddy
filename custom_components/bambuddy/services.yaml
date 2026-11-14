@@ -80,7 +80,7 @@ load_filament:
 unload_filament:
   fields:
     device_id:
-      required: true
+      required: false
       selector:
         device:
           filter:
@@ -90,6 +90,13 @@ unload_filament:
             integration: bambuddy
             domain: sensor
             device_class: enum
+    entity_id:
+      required: false
+      selector:
+        entity:
+          filter:
+            integration: bambuddy
+            domain: sensor
 start_drying:
   fields:
     device_id:

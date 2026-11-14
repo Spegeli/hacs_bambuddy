@@ -61,6 +61,7 @@ import {
 import { chamberActivity } from "./heating";
 import { offlinePower, powerSection } from "./power";
 import type { FanKey, Heater, StatusBlock } from "./types";
+import { hasTools, spoolPlace, toolsBlock } from "./tools";
 
 /** The plate to clear before BamBuddy starts the next queued print; the
  * button that confirms it where the card may control the printer -- else
@@ -304,7 +305,8 @@ function amsStrip(ctx: CardContext): TemplateResult | typeof nothing {
         humidity: numericState(hass, unit.humidity),
         temperature: numericState(hass, unit.temperature),
         temperatureUnit: temperatureUnit(hass, unit.temperature),
-        slots: unit.slots,
+        // The 2.85 mm TPU tool's slot: its input's spool.
+        slots: unit.slots.map((_, index) => spoolPlace(ctx, unit, index)),
         fill: unit.model === AMS_HT,
         ht: unit.model === AMS_HT,
         nine: unit.model === AMS_3H,
@@ -377,7 +379,8 @@ function amsStrip(ctx: CardContext): TemplateResult | typeof nothing {
         <span class="ams-slots ${group.nine ? "nine" : ""}">
           ${group.slots.map((entityId) => {
             const slot = slotOf(hass, entityId);
-            const side = sideOf(entityId);
+            // Sides and input numbers only in the external spools' group.
+            const side = group.fill && !group.ht ? sideOf(entityId) : undefined;
             return html`<span class="ams-slot" title=${side ? `${side} · ${slotTitle(hass, slot)}` : slotTitle(hass, slot)}
               >${side ? html`<span class="slot-side">${side}</span>` : nothing}${swatch(slot)}<span class="slot-type"
                 >${slotType(slot, refs.externalSpools.includes(entityId))}</span
@@ -526,6 +529,8 @@ function block(ctx: CardContext, name: StatusBlock): TemplateResult | typeof not
       return temperatures(ctx);
     case "fans":
       return fans(ctx);
+    case "tools":
+      return toolsBlock(ctx);
     case "ams":
       return amsStrip(ctx);
     case "speed":
@@ -541,7 +546,7 @@ function block(ctx: CardContext, name: StatusBlock): TemplateResult | typeof not
  * offline), the controls and the speed while a job is on the printer, the
  * others while it is online. */
 const sectionShowsNow = (ctx: CardContext, name: StatusBlock): boolean =>
-  name === "power" ? block(ctx, name) !== nothing : ctx.online && (name === "controls" || name === "speed" ? ctx.busy : true);
+  name === "power" ? block(ctx, name) !== nothing : ctx.online && (name === "controls" || name === "speed" ? ctx.busy : name === "tools" ? hasTools(ctx) : true);
 
 /** The sections in the card editor's preview: each as it is, or -- with
  * nothing to show now -- as an example of it during a print; none of a

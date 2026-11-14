@@ -501,7 +501,7 @@ describe("the inventory tab", () => {
     const card = await openInventory();
     const tpu = rows(card).find((row) => rowName(row) === "Sunlu TPU 95A") as HTMLElement;
     expect(tpu.getAttribute("aria-disabled")).toBe("true");
-    expect(where(tpu)).toBe("Nicht für das AMS");
+    expect(where(tpu)).toBe("Nicht für das AMS geeignet");
     expect(tpu.querySelector(".inv-where")?.classList.contains("off")).toBe(true);
     tpu.click();
     await settle(card);
@@ -805,7 +805,7 @@ describe("the inventory tab follows the slot", () => {
     const spools = FOUR.map((spool) => (spool["id"] === 4 ? { ...spool, place: { this_slot: true } } : spool["id"] === 1 ? { ...spool, place: null } : spool));
     const card = await openInventory(spools, { assigned: 4, spool: { ...GEEETECH, id: 4, name: "Sunlu TPU 95A" } });
     const row = rowNamed(card, "Sunlu TPU 95A");
-    expect([...row.querySelectorAll(".inv-where")].map(text)).toEqual(["Zugewiesen: dieses Fach", "Nicht für das AMS"]);
+    expect([...row.querySelectorAll(".inv-where")].map(text)).toEqual(["Zugewiesen: dieses Fach", "Nicht für das AMS geeignet"]);
   });
 
   it("a row that does not fit takes no focus", async () => {
@@ -1224,5 +1224,17 @@ describe("the inventory's styles", () => {
     const css = styleText();
     const lines = css.split("\n").filter((line) => !/^\s*--bb-(accent|on-accent):/.test(line));
     expect(lines.filter((line) => /var\(--primary-color\)|var\(--text-primary-color/.test(line))).toEqual([]);
+  });
+});
+
+describe("a spool's filament diameter", () => {
+  it("names 2.85 mm, never 1.75 mm", async () => {
+    const { spoolLine, inventoryLine } = await import("../src/parts");
+    const hass = makeHass({ devices: x1c(), language: "de" });
+    const thick = { id: 241, colorName: "Red", remainingG: 345, remainingPct: 34, filamentMm: 2.85 };
+    expect(spoolLine(hass, thick)).toBe(`Red · 2,85${NBSP}mm · 345${NBSP}g (34${NBSP}%) · Nr. 241`);
+    expect(spoolLine(hass, { ...thick, filamentMm: 1.75 })).toBe(`Red · 345${NBSP}g (34${NBSP}%) · Nr. 241`);
+    const slotSpool = { id: 241, name: "Generic TPU Basic", extraColors: [], remainingG: 345, remainingPct: 34, rfid: false, alsoAssigned: [], assignedColor: "", assignedType: "", spoolTypes: [], filamentMm: 2.85 };
+    expect(inventoryLine(hass, slotSpool)).toBe(`2,85${NBSP}mm${NBSP}·${NBSP}34${NBSP}%${NBSP}·${NBSP}345${NBSP}g`);
   });
 });

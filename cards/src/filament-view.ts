@@ -22,6 +22,7 @@ import { icon } from "./icons";
 import { t, type TextKey } from "./i18n";
 import { actionButton, AMS_2_PRO, AMS_3H, AMS_HT, amsActivity, callout, developerHint, dryingZone, emptyText, inputNumber, inventoryLine, note, printerTitle, resumeButton, shownExternalSpools, sideName, slotOf, slotPlace, stateWord, swatch, switchButton, unitModel, unitNozzle, type CardContext, type Slot } from "./parts";
 import type { AmsRefs } from "./types";
+import { isTpu285, spoolPlace, toolInfo, type ToolInfo } from "./tools";
 
 /** The texts of a printer's one external spool, and of its left and its
  * right one where it has two: the slot dialog's title, the load question,
@@ -86,6 +87,8 @@ function slotRow(
     noLoad?: boolean;
     /** Where the slot is, for the names of its buttons: "Slot 1 · AMS A". */
     place: string;
+    /** The H3C's AMS 3H: the PrintTool the slot feeds. */
+    tool?: ToolInfo;
   },
 ): TemplateResult {
   const { hass, refs } = ctx;
@@ -113,7 +116,32 @@ function slotRow(
   // In a paused print the change happens in the middle of it.
   const pauseHint = ctx.status === "paused" ? { note: t(hass, "paused_change") } : {};
   let action: TemplateResult | typeof nothing = nothing;
-  if (ctx.canControl && slot.active) {
+  const tool = options.tool;
+  if (tool && isTpu285(tool)) {
+    // Loaded at the printer through the slot's bypass feed.
+    action = ctx.canControl ? html`<span class="slot-hint">${t(hass, "load_external_hint", { n: tool.number })}</span>` : nothing;
+  } else if (ctx.canControl && tool && !ctx.busy && !slot.empty && tool.hasFilament) {
+    // Each AMS 3H slot unloads its own PrintTool -- while no print is on.
+    const key = `unload_${slot.entityId}`;
+    action = actionButton({
+      label: t(hass, "unload"),
+      aria: `${t(hass, "unload")} · ${options.place}`,
+      iconName: "unload",
+      disabled: !options.canAct,
+      pending: ctx.isPending(key),
+      onClick: () =>
+        ctx.confirm({
+          title: t(hass, "unload_title"),
+          text: t(hass, "unload_tool_text", { n: tool.number }),
+          confirm: t(hass, "unload"),
+          action: ["bambuddy", "unload_filament", { entity_id: slot.entityId }],
+          key,
+        }),
+    });
+  } else if (tool && (slot.empty || tool.hasFilament) && !slot.active) {
+    // A tool that holds filament neither loads again nor, during a print, unloads.
+    action = nothing;
+  } else if (ctx.canControl && slot.active) {
     action = actionButton({
       label: t(hass, "unload"),
       iconName: "unload",
@@ -290,8 +318,11 @@ function unitSection(ctx: CardContext, unit: AmsRefs, canAct: boolean): Template
       ? html`<div class="slots" id=${slotsId} role="region" aria-label=${unit.name}>
             ${unit.slots.map((entityId, index) => {
               const place = slotPlace(hass, unit, entityId, index);
-              return slotRow(ctx, slotOf(hass, entityId), {
+              const tool = unit.model === AMS_3H ? toolInfo(ctx, index + 1) : undefined;
+              // The 2.85 mm TPU tool's spool is reported on its input: shown and set there.
+              return slotRow(ctx, slotOf(hass, spoolPlace(ctx, unit, index)), {
                 canAct,
+                ...(tool ? { tool } : {}),
                 dialogTitle: t(hass, "filament_title", { slot: place }),
                 loadTitle: (filament) => t(hass, "load_title_from", { filament, place }),
                 loadName: t(hass, "load_from", { place }),

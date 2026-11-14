@@ -112,3 +112,18 @@ def test_a_pla_spool_is_not_for_a_tpu_nozzle() -> None:
 def test_the_refusals_read_as_a_fit(why: str | None, fit: str | None) -> None:
     with patch.object(filaments, "refusal", return_value=why):
         assert spool_fit(_spool(material="PLA"), X1C_AMS) == fit
+
+
+@pytest.mark.parametrize(
+    ("fields", "diameter"),
+    [
+        ({"material": "TPU", "slicer_filament": "GFSU97_02"}, 2.85),
+        ({"material": "TPU", "slicer_filament": "GFSU06_00"}, 2.85),
+        ({"material": "TPU", "subtype": "95A"}, 1.75),
+        ({"material": "PLA", "slicer_filament": "GFL99"}, 1.75),
+        ({"material": "Unobtainium"}, None),
+    ],
+)
+def test_a_spool_says_its_filament_diameter(fields: dict[str, Any], diameter: float | None) -> None:
+    """BamBuddy keeps no diameter: the profile says it (2.85 mm for the two TPU285 profiles)."""
+    assert _spool(**fields).attributes()["filament_diameter"] == diameter

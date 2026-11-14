@@ -174,6 +174,7 @@ async def test_a_slot_names_its_inventory_spool(hass: HomeAssistant, bambuddy_ap
         "label_weight": 1000,
         "storage_location": "Shelf 2",
         "rfid": False,
+        "filament_diameter": 1.75,
         "also_assigned": [],
         "assigned_color": "B6D648FF",
         "assigned_type": "PLA",

@@ -14,6 +14,7 @@ import { t, type TextKey } from "./i18n";
 import { actionButton, dialogNote, printerTitle, sideAt, sideName, slotOf, slotPlace, waitLine, type CardContext, type InventorySpool } from "./parts";
 import type { CameraFailure } from "./scan";
 import type { Hass } from "./types";
+import { slotTool, toolLine } from "./tools";
 
 /** The printer's default K, where a slot has no profile of its own. */
 const DEFAULT_K = 0.02;
@@ -477,6 +478,9 @@ function nozzleLines(ctx: CardContext): string[] {
  * filament track switch). */
 function slotNozzleLines(ctx: CardContext, entityId: string): string[] {
   const { hass, refs } = ctx;
+  // The H3C: the PrintTool the slot feeds, not the one on the toolhead.
+  const tool = slotTool(ctx, entityId);
+  if (tool?.known) return [t(hass, "nozzle_side", { side: t(hass, "tool_name", { n: tool.number }), nozzle: toolLine(hass, tool) })];
   if (!refs.dual) {
     const parts = nozzleOf(ctx, 0);
     return parts ? [t(hass, "nozzle_side", { side: t(hass, "nozzle"), nozzle: parts })] : [];

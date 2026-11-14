@@ -24,6 +24,7 @@ import {
 import { icon } from "./icons";
 import { t, type TextKey } from "./i18n";
 import { actionButton, connection, dialogNote, noData, sideAt, snack, stopQuestion, textAttribute, type CardContext } from "./parts";
+import { hasTools, toolLines } from "./tools";
 
 /** Bambu Lab's wiki on HMS messages: BamBuddy links every message there
  * (a page per code would need Bambu's own table). */
@@ -148,6 +149,12 @@ const chip = (tone: string, text: string): TemplateResult => html`<span class="c
  * as the tooltip) -- the lines say how many. */
 function nozzleRow(ctx: CardContext): TemplateResult | typeof nothing {
   const { hass, refs } = ctx;
+  // The H3C's nine PrintTools.
+  if (hasTools(ctx)) {
+    const lines = toolLines(ctx);
+    if (!lines.length) return nothing;
+    return specRow(t(hass, "info_nozzles"), html`${lines.map((line) => html`<span>${line}</span> `)}`, nothing, "lines");
+  }
   if (!refs.dual) {
     const parts = nozzleOf(ctx, 0);
     return parts ? specRow(t(hass, "info_nozzle"), parts) : nothing;

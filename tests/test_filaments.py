@@ -252,3 +252,12 @@ def test_pla_galaxy_stays_where_the_rule_does_not_hold() -> None:
         replace(X2D_SWITCH_02, diameters={}),
     ):
         assert refusal("GFA15", slot) is None, slot
+
+
+def test_a_tpu_285_tool_s_ams_slot_takes_its_tpu() -> None:
+    """The AMS 3H refuses TPU, but not on a slot whose tool takes 2.85 mm TPU."""
+    slot = replace(H3C_AMS, nozzle_types={0: "HT01"}, tpu_285_tool=True)
+    assert refusal("GFU97", slot) is None
+    assert refusal("GFU06", slot) is None
+    assert refusal("GFL99", slot) == "filament_not_for_nozzle"
+    assert refusal("GFU97", H3C_AMS) is not None

@@ -147,6 +147,23 @@ async def test_loading_the_ams_3h_s_ninth_slot(hass: HomeAssistant, bambuddy_api
     bambuddy_api.load_filament.assert_awaited_once_with(H3C, 36)
 
 
+@pytest.mark.parametrize("place", ["slot", "input"])
+async def test_a_tpu_tool_s_place_is_never_loaded(hass: HomeAssistant, bambuddy_api: SimpleNamespace, place: str) -> None:
+    """The TPU285 tool (place 8) is loaded at the printer through the bypass
+    feed: its AMS slot (empty, as such a slot usually is) and its input refuse
+    with that before any other check."""
+    with_h3c(bambuddy_api)
+    entry = await set_up(hass, H3C)
+    uid = ams_uid(entry, 32, "slot_8", H3C) if place == "slot" else printer_uid(entry, "external_8", H3C)
+
+    with pytest.raises(ServiceValidationError) as raised:
+        await call_action(hass, "load_filament", entity_id=entity_id(hass, "sensor", uid))
+
+    assert raised.value.translation_key == "load_tpu_285"
+    assert raised.value.translation_placeholders == {"slot": "8"}
+    bambuddy_api.load_filament.assert_not_awaited()
+
+
 async def test_a_refused_ams_3h_load_is_not_taken_for_an_ams_ht(hass: HomeAssistant, bambuddy_api: SimpleNamespace) -> None:
     """Tray 36 is no AMS HT's: BamBuddy's own refusal stands."""
     with_h3c(bambuddy_api)
@@ -235,6 +252,112 @@ async def test_unloading(hass: HomeAssistant, bambuddy_api: SimpleNamespace) -> 
     await call_action(hass, "unload_filament", device_id=printer_device_id(hass, entry, A1_MINI))
 
     bambuddy_api.unload_filament.assert_awaited_once_with(A1_MINI)
+
+
+def _h3c_rack(bambuddy_api: SimpleNamespace, filled: set[int]) -> None:
+    """The H3C's tools: those numbered in `filled` hold filament."""
+    for tool in bambuddy_api.statuses[H3C]["nozzle_rack"]:
+        tool["stat"] = 160 if tool["addr_id"] + 1 in filled else 1
+
+
+def _bay(hass: HomeAssistant, entry: Any, number: int) -> str:
+    return entity_id(hass, "sensor", ams_uid(entry, 32, f"slot_{number}", H3C))
+
+
+async def test_unloading_one_ams_3h_slot(hass: HomeAssistant, bambuddy_api: SimpleNamespace) -> None:
+    """Each AMS 3H slot feeds its own PrintTool: unloading slot 3 names tray 30."""
+    with_h3c(bambuddy_api)
+    _h3c_rack(bambuddy_api, {3})
+    entry = await set_up(hass, H3C)
+
+    await call_action(hass, "unload_filament", entity_id=_bay(hass, entry, 3))
+    bambuddy_api.unload_filament.assert_awaited_once_with(H3C, 30)
+
+    bambuddy_api.unload_filament.reset_mock()
+    await call_action(hass, "unload_filament", entity_id=_bay(hass, entry, 3), device_id=printer_device_id(hass, entry, H3C))
+    bambuddy_api.unload_filament.assert_awaited_once_with(H3C, 30)
+
+
+@pytest.mark.parametrize("state", ["RUNNING", "PAUSE"])
+async def test_unloading_a_slot_waits_for_the_print(hass: HomeAssistant, bambuddy_api: SimpleNamespace, state: str) -> None:
+    with_h3c(bambuddy_api)
+    _h3c_rack(bambuddy_api, {3})
+    bambuddy_api.statuses[H3C]["state"] = state
+    entry = await set_up(hass, H3C)
+
+    with pytest.raises(ServiceValidationError) as raised:
+        await call_action(hass, "unload_filament", entity_id=_bay(hass, entry, 3))
+    assert raised.value.translation_key in {"job_running", "pause_first"}
+    bambuddy_api.unload_filament.assert_not_awaited()
+
+
+async def test_unloading_a_slot_of_an_offline_printer_says_so(hass: HomeAssistant, bambuddy_api: SimpleNamespace) -> None:
+    with_h3c(bambuddy_api)
+    _h3c_rack(bambuddy_api, {3})
+    entry = await set_up(hass, H3C)
+    slot = _bay(hass, entry, 3)
+    bambuddy_api.statuses[H3C].update(connected=False, ams=[])
+    await reload_entry(hass, entry.entry_id)
+
+    with pytest.raises(ServiceValidationError) as raised:
+        await call_action(hass, "unload_filament", entity_id=slot)
+    assert raised.value.translation_key == "printer_offline"
+
+
+async def test_unloading_a_slot_whose_tool_holds_nothing(hass: HomeAssistant, bambuddy_api: SimpleNamespace) -> None:
+    with_h3c(bambuddy_api)
+    _h3c_rack(bambuddy_api, set())
+    entry = await set_up(hass, H3C)
+
+    with pytest.raises(ServiceValidationError) as raised:
+        await call_action(hass, "unload_filament", entity_id=_bay(hass, entry, 3))
+    assert (raised.value.translation_key, raised.value.translation_placeholders) == ("unload_no_tool_filament", {"slot": "3"})
+    bambuddy_api.unload_filament.assert_not_awaited()
+
+
+async def test_bambuddy_s_409_says_no_tool_is_loaded(hass: HomeAssistant, bambuddy_api: SimpleNamespace) -> None:
+    with_h3c(bambuddy_api)
+    _h3c_rack(bambuddy_api, {3})
+    bambuddy_api.unload_filament.side_effect = BamBuddyApiError(409, "No hotend is loaded from that slot")
+    entry = await set_up(hass, H3C)
+
+    with pytest.raises(ServiceValidationError) as raised:
+        await call_action(hass, "unload_filament", entity_id=_bay(hass, entry, 3))
+    assert raised.value.translation_key == "unload_no_tool_filament"
+
+
+async def test_the_tpu_tool_s_slot_is_not_unloaded(hass: HomeAssistant, bambuddy_api: SimpleNamespace) -> None:
+    with_h3c(bambuddy_api)
+    _h3c_rack(bambuddy_api, {8})
+    entry = await set_up(hass, H3C)
+
+    with pytest.raises(ServiceValidationError) as raised:
+        await call_action(hass, "unload_filament", entity_id=_bay(hass, entry, 8))
+    assert raised.value.translation_key == "load_tpu_285"
+
+
+async def test_only_an_ams_3h_slot_is_unloaded_alone(hass: HomeAssistant, bambuddy_api: SimpleNamespace) -> None:
+    entry = await set_up(hass, A1_MINI)
+
+    with pytest.raises(ServiceValidationError) as raised:
+        await call_action(hass, "unload_filament", entity_id=entity_id(hass, "sensor", ams_uid(entry, 0, "slot_2", A1_MINI)))
+    assert raised.value.translation_key == "unload_not_rack"
+
+
+async def test_unloading_device_and_slot_must_be_one_printer(hass: HomeAssistant, bambuddy_api: SimpleNamespace) -> None:
+    with_h3c(bambuddy_api)
+    _h3c_rack(bambuddy_api, {3})
+    entry = await set_up(hass, H3C, A1_MINI)
+
+    with pytest.raises(ServiceValidationError) as raised:
+        await call_action(hass, "unload_filament", entity_id=_bay(hass, entry, 3), device_id=printer_device_id(hass, entry, A1_MINI))
+    assert raised.value.translation_key == "unload_slot_other_printer"
+
+
+async def test_unloading_needs_a_printer_or_a_slot(hass: HomeAssistant, bambuddy_api: SimpleNamespace) -> None:
+    await set_up(hass, A1_MINI)
+    with pytest.raises(vol.Invalid):
+        await call_action(hass, "unload_filament")
 
 
 @pytest.mark.parametrize(("zone", "sent"), [([5, 7], {"filament": "PETG"}), ([], {})])

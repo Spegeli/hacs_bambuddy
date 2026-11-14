@@ -280,6 +280,36 @@
       "external_9": {
         "default": "mdi:printer-3d-nozzle-outline"
       },
+      "print_tool_on_toolhead": {
+        "default": "mdi:printer-3d-nozzle"
+      },
+      "print_tool_1": {
+        "default": "mdi:printer-3d-nozzle-outline"
+      },
+      "print_tool_2": {
+        "default": "mdi:printer-3d-nozzle-outline"
+      },
+      "print_tool_3": {
+        "default": "mdi:printer-3d-nozzle-outline"
+      },
+      "print_tool_4": {
+        "default": "mdi:printer-3d-nozzle-outline"
+      },
+      "print_tool_5": {
+        "default": "mdi:printer-3d-nozzle-outline"
+      },
+      "print_tool_6": {
+        "default": "mdi:printer-3d-nozzle-outline"
+      },
+      "print_tool_7": {
+        "default": "mdi:printer-3d-nozzle-outline"
+      },
+      "print_tool_8": {
+        "default": "mdi:printer-3d-nozzle-outline"
+      },
+      "print_tool_9": {
+        "default": "mdi:printer-3d-nozzle-outline"
+      },
       "nozzle_type": {
         "default": "mdi:printer-3d-nozzle"
       },

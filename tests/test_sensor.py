@@ -786,3 +786,84 @@ async def test_the_nozzle_diameter_stays_in_millimetres(hass: HomeAssistant, bam
 
     state = state_of(hass, "sensor", printer_uid(entry, "nozzle_diameter"))
     assert (state.state, state.attributes["unit_of_measurement"]) == ("0.4", "mm")
+
+
+_RACKS = load_fixture("h3c_racks.json")
+
+
+async def test_h3c_has_ten_print_tool_sensors(hass: HomeAssistant, bambuddy_api: SimpleNamespace) -> None:
+    """The tool sensors come by the model, also before the printer reports."""
+    with_h3c(bambuddy_api)
+    bambuddy_api.statuses[H3C]["nozzle_rack"] = []
+    entry = await set_up(hass, H3C)
+
+    assert entity_id(hass, "sensor", printer_uid(entry, "print_tool_3", H3C)) == "sensor.h3c_31b00a000000006_print_tool_3"
+    assert entity_id(hass, "sensor", printer_uid(entry, "print_tool_on_toolhead", H3C))
+    assert state_of(hass, "sensor", printer_uid(entry, "print_tool_3", H3C)).state == STATE_UNKNOWN
+    assert state_of(hass, "sensor", printer_uid(entry, "print_tool_on_toolhead", H3C)).state == STATE_UNKNOWN
+
+
+async def test_no_print_tool_sensors_on_other_printers(hass: HomeAssistant, bambuddy_api: SimpleNamespace) -> None:
+    entry = await set_up(hass, H2D)
+    assert no_entity(hass, "sensor", printer_uid(entry, "print_tool_1", H2D))
+    assert no_entity(hass, "sensor", printer_uid(entry, "print_tool_on_toolhead", H2D))
+
+
+@pytest.mark.parametrize(("rack", "state"), [("idle", "none"), ("change", "2"), ("returned", "9")])
+async def test_print_tool_on_toolhead_states(hass: HomeAssistant, bambuddy_api: SimpleNamespace, rack: str, state: str) -> None:
+    with_h3c(bambuddy_api)
+    bambuddy_api.statuses[H3C]["nozzle_rack"] = _RACKS[rack]
+    entry = await set_up(hass, H3C)
+
+    assert state_of(hass, "sensor", printer_uid(entry, "print_tool_on_toolhead", H3C)).state == state
+
+
+async def test_print_tool_hours_and_attributes(hass: HomeAssistant, bambuddy_api: SimpleNamespace) -> None:
+    with_h3c(bambuddy_api)
+    bambuddy_api.statuses[H3C]["nozzle_rack"] = _RACKS["change"]
+    entry = await set_up(hass, H3C)
+
+    second = state_of(hass, "sensor", printer_uid(entry, "print_tool_2", H3C))
+    assert float(second.state) == pytest.approx(3998 / 3600)
+    assert second.attributes["unit_of_measurement"] == "h"
+    # A place's figure, not a meter: another tool put there may have fewer hours.
+    assert second.attributes["state_class"] == "measurement"
+    assert {key: second.attributes[key] for key in ("nozzle_code", "nozzle_diameter", "nozzle_material", "nozzle_flow", "filament_diameter", "has_filament", "on_toolhead", "filament_color", "fed_by")} == {
+        "nozzle_code": "HS01", "nozzle_diameter": 0.4, "nozzle_material": "hardened_steel", "nozzle_flow": "standard",
+        "filament_diameter": 1.75, "has_filament": True, "on_toolhead": True, "filament_color": "FF0000FF", "fed_by": "ams",
+    }
+    eighth = state_of(hass, "sensor", printer_uid(entry, "print_tool_8", H3C))
+    assert (eighth.attributes["nozzle_flow"], eighth.attributes["filament_diameter"], eighth.attributes["has_filament"]) == ("tpu_285", 2.85, False)
+    assert eighth.attributes["filament_color"] is None
+
+
+async def test_print_tools_fed_by_their_inputs_without_an_ams(hass: HomeAssistant, bambuddy_api: SimpleNamespace) -> None:
+    with_h3c(bambuddy_api)
+    bambuddy_api.statuses[H3C]["ams"] = []
+    bambuddy_api.statuses[H3C]["nozzle_rack"] = _RACKS["idle"]
+    entry = await set_up(hass, H3C)
+
+    assert state_of(hass, "sensor", printer_uid(entry, "print_tool_1", H3C)).attributes["fed_by"] == "external"
+
+
+async def test_print_tool_unknown_without_its_place_or_time(hass: HomeAssistant, bambuddy_api: SimpleNamespace) -> None:
+    with_h3c(bambuddy_api)
+    rack = [dict(entry) for entry in _RACKS["idle"] if entry["addr_id"] != 3]
+    rack[0]["print_time_s"] = None
+    bambuddy_api.statuses[H3C]["nozzle_rack"] = rack
+    entry = await set_up(hass, H3C)
+
+    assert state_of(hass, "sensor", printer_uid(entry, "print_tool_4", H3C)).state == STATE_UNKNOWN
+    first = state_of(hass, "sensor", printer_uid(entry, "print_tool_1", H3C))
+    assert first.state == STATE_UNKNOWN
+    assert first.attributes["nozzle_code"] == "HS01"
+
+
+async def test_print_tools_unavailable_while_offline(hass: HomeAssistant, bambuddy_api: SimpleNamespace) -> None:
+    with_h3c(bambuddy_api)
+    bambuddy_api.statuses[H3C]["nozzle_rack"] = _RACKS["idle"]
+    bambuddy_api.statuses[H3C]["connected"] = False
+    entry = await set_up(hass, H3C)
+
+    assert state_of(hass, "sensor", printer_uid(entry, "print_tool_1", H3C)).state == STATE_UNAVAILABLE
+    assert state_of(hass, "sensor", printer_uid(entry, "print_tool_on_toolhead", H3C)).state == STATE_UNAVAILABLE

@@ -56,6 +56,9 @@ class Slot:
     # Each nozzle's diameter as Bambu Studio offers by (`diameter`): the X2D's
     # rule for its filament track switch asks every nozzle the slot reaches.
     diameters: Mapping[int, str] | None = None
+    # An AMS 3H slot before a TPU285 tool (the H3C): the AMS's TPU refusal
+    # gives way to the tool's own rule (only the 2.85 mm TPUs).
+    tpu_285_tool: bool = False
 
 
 FILAMENTS: Final[dict[str, Filament]] = {fid: Filament(id=fid, **entry) for fid, entry in _DATA["filaments"].items()}
@@ -164,7 +167,7 @@ def _not_for_ams(item: Filament, slot: Slot) -> bool:
     if not slot.ams:
         return False
     if item.type == "TPU":
-        return slot.ams_type not in _TPU_AMS_TYPES
+        return not slot.tpu_285_tool and slot.ams_type not in _TPU_AMS_TYPES
     if item.vendor != "Bambu Lab":
         return False
     if item.type in _BAMBU_CF:
@@ -241,3 +244,12 @@ def offer(slot: Slot) -> list[tuple[str, list[Filament]]]:
             item = FILAMENTS[fid]
             by_vendor.setdefault(item.vendor, []).append(item)
     return [(vendor, by_vendor[vendor]) for vendor in VENDORS if vendor in by_vendor]
+
+
+def filament_mm(filament_id: str | None) -> float | None:
+    """The filament diameter a profile is for: 2.85 mm for the two TPU285
+    profiles, 1.75 mm for every other one the list knows; None for an
+    unknown id (BamBuddy keeps no diameter of a spool)."""
+    if not filament_id or get(filament_id) is None:
+        return None
+    return 2.85 if filament_id in _TPU_285 else 1.75

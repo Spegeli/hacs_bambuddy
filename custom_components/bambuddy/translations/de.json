@@ -670,6 +670,39 @@
           "empty": "Leer"
         }
       },
+      "print_tool_on_toolhead": {
+        "name": "Druckwerkzeug am Druckkopf",
+        "state": {
+          "none": "Keins"
+        }
+      },
+      "print_tool_1": {
+        "name": "Druckwerkzeug 1"
+      },
+      "print_tool_2": {
+        "name": "Druckwerkzeug 2"
+      },
+      "print_tool_3": {
+        "name": "Druckwerkzeug 3"
+      },
+      "print_tool_4": {
+        "name": "Druckwerkzeug 4"
+      },
+      "print_tool_5": {
+        "name": "Druckwerkzeug 5"
+      },
+      "print_tool_6": {
+        "name": "Druckwerkzeug 6"
+      },
+      "print_tool_7": {
+        "name": "Druckwerkzeug 7"
+      },
+      "print_tool_8": {
+        "name": "Druckwerkzeug 8"
+      },
+      "print_tool_9": {
+        "name": "Druckwerkzeug 9"
+      },
       "nozzle_type": {
         "name": "Düsentyp",
         "state": {
@@ -1088,6 +1121,18 @@
     },
     "spool_by_chip": {
       "message": "Diese Spule verknüpft BamBuddy über ihren Chip."
+    },
+    "load_tpu_285": {
+      "message": "Fach {slot} speist ein Druckwerkzeug für 2,85-mm-TPU: Lade es am Drucker über die Durchführung („Load External“)."
+    },
+    "unload_no_tool_filament": {
+      "message": "Aus Fach {slot} ist kein Druckwerkzeug geladen."
+    },
+    "unload_not_rack": {
+      "message": "Ein einzelnes Fach entladen geht nur beim AMS 3H."
+    },
+    "unload_slot_other_printer": {
+      "message": "Das Fach gehört zu einem anderen Drucker als das gewählte Gerät."
     }
   },
   "issues": {
@@ -1184,11 +1229,15 @@
     },
     "unload_filament": {
       "name": "Filament entladen",
-      "description": "Zieht das geladene Filament aus der Düse – bei zwei Düsen aus der aktiven. Läuft ein Druck, pausiere ihn vorher.",
+      "description": "Zieht das geladene Filament aus der Düse – bei zwei Düsen aus der aktiven; läuft ein Druck, pausiere ihn vorher. Mit einem Fach des AMS 3H eines H3C entlädt es stattdessen das Druckwerkzeug dieses Fachs, nur solange kein Druck läuft oder pausiert: Der Drucker holt das Werkzeug, heizt es auf und schneidet das Filament ab; den Rest ziehst du am AMS von Hand heraus.",
       "fields": {
         "device_id": {
           "name": "Drucker",
-          "description": "Der Drucker, der entladen soll."
+          "description": "Der Drucker, der entladen soll. Mit einem Fach nicht nötig."
+        },
+        "entity_id": {
+          "name": "Fach",
+          "description": "Der Sensor eines Fachs des AMS 3H (H3C): entlädt das Druckwerkzeug dieses Fachs."
         }
       }
     },

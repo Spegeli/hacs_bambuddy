@@ -53,7 +53,7 @@ const OFFLINE = ["offline", "unavailable", "unknown"];
 
 /** The rows of 50 px each status block takes, for the masonry dashboard:
  * the head and the job take four. */
-const BLOCK_ROWS: Record<StatusBlock, number> = { controls: 1, power: 2, temperatures: 2, ams: 2, fans: 1, speed: 1 };
+const BLOCK_ROWS: Record<StatusBlock, number> = { controls: 1, power: 2, temperatures: 2, tools: 1, ams: 2, fans: 1, speed: 1 };
 
 /** The ID of the body, the panel the tabs show their view in. */
 const PANEL = "bb-view";
@@ -345,7 +345,9 @@ export class BamBuddyPrinterCard extends LitElement {
     // The plugs' block only where the card shows a plug: the printer's own, or one BamBuddy shows on its card.
     const hass = this.hass;
     const plugs = hass ? cardPlugs(hass, this.refs?.plugs ?? []) : [];
-    return this.settings.blocks.reduce((size, block) => size + (block === "power" && !plugs.length ? 0 : BLOCK_ROWS[block]), 4);
+    // The tools only on a printer with them (the H3C).
+    const tools = this.refs?.tools.some((entityId) => entityId !== undefined) === true;
+    return this.settings.blocks.reduce((size, block) => size + ((block === "power" && !plugs.length) || (block === "tools" && !tools) ? 0 : BLOCK_ROWS[block]), 4);
   }
 
   getGridOptions(): { columns: number; min_columns: number; rows: "auto" } {
@@ -809,6 +811,11 @@ export class BamBuddyPrinterCard extends LitElement {
       checkConnection: () => {
         this.dialogFromMenu = false;
         void this.flows.startCheck();
+      },
+      openTool: (number) => {
+        this.dialogBack = undefined;
+        this.dialog = { kind: "tool", number };
+        this.dialogFromMenu = false;
       },
       openAutoOff: () => {
         // The row that opened them: its label changes with the settings.

@@ -45,7 +45,12 @@ from .models import (
     EXTERNAL_RIGHT,
     JOB_STATES,
     PRINTING_STATES,
+    AMS_3H_PLACE,
     PrinterData,
+    has_tool_rack,
+    input_tool,
+    tool_is_tpu_285,
+    tools,
     active_tray,
     ams_key,
     ams_model,
@@ -119,12 +124,16 @@ def _whole(value: Any) -> int:
 
 
 _DEVICE = {vol.Required(ATTR_DEVICE_ID): cv.string}
-SCHEMAS: dict[str, vol.Schema] = {
+SCHEMAS: dict[str, vol.Schema | vol.All] = {
     "move_axis": vol.Schema({**_DEVICE, vol.Required(ATTR_AXIS): vol.In(["x", "y", "z"]), vol.Required(ATTR_DISTANCE): _distance(200)}),
     "home_axes": vol.Schema(_DEVICE),
     "extrude": vol.Schema({**_DEVICE, vol.Required(ATTR_DISTANCE): _distance(100)}),
     "load_filament": vol.Schema({vol.Required(ATTR_ENTITY_ID): cv.entity_id}),
-    "unload_filament": vol.Schema(_DEVICE),
+    # A printer, or (an H3C) one of its AMS 3H slots, whose PrintTool goes.
+    "unload_filament": vol.All(
+        vol.Schema({vol.Optional(ATTR_DEVICE_ID): cv.string, vol.Optional(ATTR_ENTITY_ID): cv.entity_id}),
+        cv.has_at_least_one_key(ATTR_DEVICE_ID, ATTR_ENTITY_ID),
+    ),
     "start_drying": vol.Schema(
         {
             **_DEVICE,
@@ -318,6 +327,11 @@ async def _extrude(hass: HomeAssistant, call: ServiceCall) -> None:
 
 
 async def _load_filament(hass: HomeAssistant, call: ServiceCall) -> None:
+    # The H3C's TPU285 tool is loaded at the printer through the bypass feed;
+    # its slot usually reads empty, so this comes first.
+    placed, ams, slot, _ = _place(hass, call.data[ATTR_ENTITY_ID])
+    if (tool := _tpu_tool(placed.data, ams, slot)) is not None:
+        raise refuse("load_tpu_285", slot=str(tool))
     coordinator, tray = _filled_slot(hass, call.data[ATTR_ENTITY_ID])
     # The Filament Track Switch binds every AMS to a switch inlet: a load must
     # name its nozzle, or the firmware drops it (BamBuddy's ams_load_filament).
@@ -342,6 +356,9 @@ async def _load_filament(hass: HomeAssistant, call: ServiceCall) -> None:
 
 
 async def _unload_filament(hass: HomeAssistant, call: ServiceCall) -> None:
+    if ATTR_ENTITY_ID in call.data:
+        await _unload_slot(hass, call)
+        return
     coordinator = _printer(hass, call.data[ATTR_DEVICE_ID])
     await async_run_command(
         coordinator,
@@ -837,14 +854,25 @@ def _filament_slot(data: PrinterData, ams: int, slot: int) -> filaments.Slot:
     codes = {index: str(nozzles[index].get("nozzle_type") or "") for index in extruders if index < len(nozzles)}
     diameters = {index: filaments.diameter(model, nozzles[index].get("nozzle_diameter")) for index in extruders if index < len(nozzles)}
     if data.has_inputs:
-        # An H3C: the tool the place feeds, not the one on the toolhead. The
-        # TPU tool (TPU285) takes no AMS slot: a slot at its address is
-        # offered as for a standard nozzle.
+        # An H3C: the tool the place feeds, not the one on the toolhead. A
+        # slot before a TPU285 tool takes that tool's rules.
         tool = _rack_tool(data, ams, slot)
         code = str((tool or {}).get("nozzle_type") or "")
-        codes = {0: code} if code and (ams == EXTERNAL_AMS or code[1:2].upper() != "T") else {}
+        codes = {0: code} if code else {}
     kind = studio_ams_type(_unit(data, ams)) if ams != EXTERNAL_AMS else None
-    return filaments.Slot(model, filaments.diameter(model, _nozzle_diameter(data, ams, slot)), ams != EXTERNAL_AMS, extruders, codes, kind, diameters)
+    return filaments.Slot(
+        model, filaments.diameter(model, _nozzle_diameter(data, ams, slot)), ams != EXTERNAL_AMS, extruders, codes, kind, diameters,
+        tpu_285_tool=ams != EXTERNAL_AMS and _tpu_tool(data, ams, slot) is not None,
+    )
+
+
+def _tpu_tool(data: PrinterData, ams: int, slot: int) -> int | None:
+    """The number of the H3C's TPU285 tool a place feeds (by the tool's code,
+    wherever it sits); None for any other place."""
+    if not has_tool_rack(data) or ams not in (EXTERNAL_AMS, AMS_3H_PLACE):
+        return None
+    number = input_tool(input_global_id(slot)) if ams == EXTERNAL_AMS else slot + 1
+    return number if tool_is_tpu_285(data, number) else None
 
 
 # The reasons `filaments.refusal` gives that are refusals of their own name.
@@ -900,6 +928,39 @@ def _temperatures(tray: dict[str, Any], tray_type: str, listed: filaments.Filame
     profile = listed or filaments.of_type(tray_type) or filaments.FILAMENTS[_GENERIC_PLA]
     return profile.temp_min, profile.temp_max
 
+
+
+async def _unload_slot(hass: HomeAssistant, call: ServiceCall) -> None:
+    """The PrintTool an H3C's AMS 3H slot feeds, unloaded: the printer fetches
+    it, heats it and cuts the filament; the rest is pulled out at the AMS by
+    hand. Only while no print runs or waits, never the TPU285 tool's slot."""
+    coordinator, ams, slot, tray = _place(hass, call.data[ATTR_ENTITY_ID])
+    if ATTR_DEVICE_ID in call.data and _printer(hass, call.data[ATTR_DEVICE_ID]) is not coordinator:
+        raise refuse("unload_slot_other_printer")
+    # Offline, the stale status may lack the AMS 3H: that comes first.
+    if not coordinator.data.connected:
+        raise refuse("printer_offline", printer=coordinator.short_name)
+    if not has_tool_rack(coordinator.data) or ams != AMS_3H_PLACE:
+        raise refuse("unload_not_rack")
+    if (tool := _tpu_tool(coordinator.data, ams, slot)) is not None:
+        raise refuse("load_tpu_285", slot=str(tool))
+    number = slot + 1
+
+    def holds_filament(data: PrinterData, _: str) -> None:
+        # BamBuddy sends the rack's unload whatever the tool holds.
+        found = tools(data).get(number)
+        if found is None or not found.has_filament:
+            raise refuse("unload_no_tool_filament", slot=str(number))
+
+    async def unload() -> None:
+        try:
+            await coordinator.client.unload_filament(coordinator.printer_id, tray)
+        except BamBuddyApiError as err:
+            if err.status == 409:
+                raise refuse("unload_no_tool_filament", slot=str(number)) from err
+            raise
+
+    await async_run_command(coordinator, unload, idle_only=True, check=holds_filament)
 
 async def _start_drying(hass: HomeAssistant, call: ServiceCall) -> None:
     coordinator, unit = _ams(hass, call.data[ATTR_DEVICE_ID])

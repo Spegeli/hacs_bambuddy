@@ -889,6 +889,105 @@ def nozzle_type(code: str) -> str:
     return code
 
 
+# A nozzle code's second letter: the flow; T is the H3C's tool for 2.85 mm TPU.
+_CODE_FLOW = {"S": "standard", "H": "high_flow", "E": "high_flow", "U": "tpu_high_flow", "T": "tpu_285"}
+_CODE = re.compile(r"^[A-Z]([SHEUT])(\d\d)(?:-(\d+(?:\.\d+)?))?$", re.IGNORECASE)
+
+
+@dataclass(frozen=True)
+class NozzleParts:
+    """What a nozzle code and its diameter say: the flow, the material and
+    the filament it takes (1.75 mm, or 2.85 mm for a TPU285 tool)."""
+
+    diameter: str | None
+    flow: str
+    material: str | None
+    filament_mm: str
+
+
+def nozzle_parts(code: str | None, diameter: Any = None) -> NozzleParts | None:
+    """A code such as `HS01` (or `HS01-0.4`, as the H3C reports while idle)
+    in its parts; None for anything else."""
+    match = _CODE.match((code or "").strip())
+    if match is None:
+        return None
+    flow = _CODE_FLOW[match.group(1).upper()]
+    size = diameter if diameter not in (None, "") else match.group(3)
+    return NozzleParts(
+        None if size in (None, "") else str(size),
+        flow,
+        _NOZZLE_MATERIALS.get(match.group(2)),
+        "2.85" if flow == "tpu_285" else "1.75",
+    )
+
+
+# Bit 0x20 of a rack entry's `stat`: the tool holds filament (empty tools
+# report 0 or 1, filled ones 160, 161, 176 or 49).
+RACK_FILAMENT = 0x20
+TOOL_PLACES = range(1, 10)
+
+
+@dataclass(frozen=True)
+class Tool:
+    """One of the H3C's PrintTools, by its place in the rack (1-9)."""
+
+    number: int
+    code: str
+    parts: NozzleParts
+    has_filament: bool
+    on_toolhead: bool
+    print_time_s: int | None
+    filament_color: str | None
+
+
+def has_tool_rack(data: PrinterData) -> bool:
+    """A printer with the H3C's rack of nine PrintTools (by its model, known
+    before the printer reports)."""
+    return model_key(data.model) == "H3C"
+
+
+def tools(data: PrinterData) -> dict[int, Tool]:
+    """The PrintTools the rack reports, by number; the first entry per
+    place counts, one without a place or with an unknown code is left out."""
+    found: dict[int, Tool] = {}
+    for entry in data.status.get("nozzle_rack") or []:
+        if not isinstance(entry, dict):
+            continue
+        address = entry.get("addr_id")
+        if not isinstance(address, int) or isinstance(address, bool) or address + 1 not in TOOL_PLACES or address + 1 in found:
+            continue
+        code = str(entry.get("nozzle_type") or "")
+        parts = nozzle_parts(code, entry.get("nozzle_diameter"))
+        if parts is None:
+            continue
+        stat = entry.get("stat")
+        seconds = entry.get("print_time_s")
+        color = entry.get("filament_color")
+        found[address + 1] = Tool(
+            address + 1,
+            code.split("-")[0].upper(),
+            parts,
+            isinstance(stat, int) and bool(stat & RACK_FILAMENT),
+            entry.get("id") == 0,
+            seconds if isinstance(seconds, int) and not isinstance(seconds, bool) else None,
+            color if isinstance(color, str) and color.upper() not in ("", "00000000") else None,
+        )
+    return found
+
+
+def mounted_tool(data: PrinterData) -> int | None:
+    """The tool on the toolhead; 0 while all are in the rack; None while no
+    rack is reported."""
+    if not data.status.get("nozzle_rack"):
+        return None
+    return next((number for number, tool in tools(data).items() if tool.on_toolhead), 0)
+
+
+def tool_is_tpu_285(data: PrinterData, number: int) -> bool:
+    """The tool at a place takes 2.85 mm TPU -- by its code, wherever it sits."""
+    tool = tools(data).get(number)
+    return tool is not None and tool.parts.flow == "tpu_285"
+
 def ams_model(unit: dict[str, Any], printer: PrinterData) -> str:
     """The kind of AMS: BamBuddy's module type, the AMS HT's ids, place 6
     (only ever the A2L's AMS Lite); without a type, an AMS Lite only where

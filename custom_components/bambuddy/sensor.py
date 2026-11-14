@@ -56,17 +56,20 @@ from .models import (
     PRINT_STATUSES,
     PrinterData,
     STAGE_OPTIONS,
+    TOOL_PLACES,
     active_tray,
     ams_model,
     ams_status,
     bambuddy_name,
     find_tray,
     has_heater,
+    has_tool_rack,
     hms_answers,
     input_tool,
     input_tray,
     maintenance_state,
     maintenance_task,
+    mounted_tool,
     nozzle_side,
     nozzle_type,
     part_id,
@@ -77,6 +80,7 @@ from .models import (
     tray_empty,
     tray_id,
     tray_label,
+    tools,
     unit_extruder,
 )
 from .plug_coordinator import BamBuddyPlugCoordinator
@@ -294,6 +298,52 @@ def _dual(data: PrinterData) -> bool:
     return data.is_dual_nozzle
 
 
+def _tool_state(number: int) -> Callable[[PrinterData], StateType]:
+    """A PrintTool's print time in hours; unknown while its place or time is not reported."""
+
+    def value(data: PrinterData) -> StateType:
+        tool = tools(data).get(number)
+        return None if tool is None or tool.print_time_s is None else tool.print_time_s / 3600
+
+    return value
+
+
+def _tool_attributes(number: int) -> Callable[[PrinterData], dict[str, Any]]:
+    """What the rack says of a PrintTool and which place feeds it: its AMS
+    3H slot while an AMS unit is reported, its external input otherwise."""
+
+    def attributes(data: PrinterData) -> dict[str, Any]:
+        tool = tools(data).get(number)
+        if tool is None:
+            return {}
+        parts = tool.parts
+        return {
+            "nozzle_code": tool.code,
+            "nozzle_diameter": _number(parts.diameter),
+            "nozzle_material": parts.material,
+            "nozzle_flow": parts.flow,
+            "filament_diameter": float(parts.filament_mm),
+            "has_filament": tool.has_filament,
+            "on_toolhead": tool.on_toolhead,
+            "filament_color": tool.filament_color,
+            "fed_by": "ams" if any(unit.get("tray") for unit in data.ams_units) else "external",
+        }
+
+    return attributes
+
+
+def _number(text: str | None) -> float | None:
+    try:
+        return None if text is None else float(text)
+    except ValueError:
+        return None
+
+
+def _mounted_state(data: PrinterData) -> StateType:
+    number = mounted_tool(data)
+    return None if number is None else str(number) if number else "none"
+
+
 def _temperature_sensor(
     key: str, translation_key: str, field: str, exists_fn: Callable[[PrinterData], bool] = lambda _: True
 ) -> BamBuddyPrinterSensorDescription:
@@ -429,6 +479,22 @@ PRINTER_SENSORS: tuple[BamBuddyPrinterSensorDescription, ...] = (
             value_fn=_external_spool_state(256 - tool), attr_fn=_external_spool_attributes(256 - tool),
         )
         for tool in INPUT_TOOLS
+    ),
+    # The H3C's nine PrintTools, by their place in its rack, and the one on the toolhead.
+    BamBuddyPrinterSensorDescription(
+        key="print_tool_on_toolhead", translation_key="print_tool_on_toolhead", exists_fn=has_tool_rack,
+        device_class=SensorDeviceClass.ENUM, options=["none", *(str(number) for number in TOOL_PLACES)],
+        value_fn=_mounted_state,
+    ),
+    *(
+        BamBuddyPrinterSensorDescription(
+            key=f"print_tool_{number}", translation_key=f"print_tool_{number}", exists_fn=has_tool_rack,
+            device_class=SensorDeviceClass.DURATION, native_unit_of_measurement=UnitOfTime.HOURS,
+            # A place's figure, not a meter: a tool put there brings its own hours.
+            state_class=SensorStateClass.MEASUREMENT, suggested_display_precision=1,
+            value_fn=_tool_state(number), attr_fn=_tool_attributes(number),
+        )
+        for number in TOOL_PLACES
     ),
     # BamBuddy's `nozzles`: 0 the only or the right nozzle, 1 the left one.
     # Known as the temperatures are: "nozzle" the only or the left one,

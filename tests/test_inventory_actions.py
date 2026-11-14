@@ -17,7 +17,7 @@ from custom_components.bambuddy.api import (
     BamBuddyPermissionError,
 )
 
-from tests.conftest import H2D, X1C, ams_uid, entity_id, load_fixture, printer_uid, set_up, state_at
+from tests.conftest import H2D, H3C, X1C, ams_uid, entity_id, load_fixture, printer_uid, set_up, state_at, with_h3c
 from tests.helpers import call_action, spool_row, timed_out, with_inventory
 
 
@@ -494,3 +494,17 @@ async def test_a_spool_on_another_two_nozzle_printer_names_its_side(hass: HomeAs
     third = next(item for item in answer["spools"] if item["id"] == 3)
     assert third["place"]["side"] == "left"
     assert "input" not in third["place"]
+
+
+async def test_a_tpu_tool_s_slot_lists_only_2_85_mm_spools_as_fitting(hass: HomeAssistant, bambuddy_api: SimpleNamespace) -> None:
+    """The AMS 3H slot before the TPU285 tool fits a 2.85 mm TPU spool, not PLA or TPU for AMS."""
+    with_h3c(bambuddy_api)
+    with_inventory(bambuddy_api, _extra(7, material="TPU", slicer_filament="GFU97"), _extra(8, material="TPU-AMS"))
+    entry = await set_up(hass, H3C)
+
+    answer = await call_action(hass, "get_spools", response=True, entity_id=entity_id(hass, "sensor", ams_uid(entry, 32, "slot_8", H3C)))
+
+    fits = {spool["id"]: spool["fits"] for spool in answer["spools"]}
+    assert fits[7] is None
+    assert fits[8] is not None
+    assert fits[1] is not None

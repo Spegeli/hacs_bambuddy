@@ -86,7 +86,7 @@ export const CAMERA_MODES: readonly CameraMode[] = ["tap", "always", "off"];
 /** The status view's blocks below the job, in their default order: the
  * print controls first, so Stop is in reach during a print; the plugs right
  * after them -- after a print the switch-off waits there. */
-export const STATUS_BLOCKS = ["controls", "power", "temperatures", "ams", "fans", "speed"] as const;
+export const STATUS_BLOCKS = ["controls", "power", "temperatures", "tools", "ams", "fans", "speed"] as const;
 export type StatusBlock = (typeof STATUS_BLOCKS)[number];
 
 /** The chips under the printer's name: every one the editor offers. */
@@ -221,6 +221,9 @@ export interface PrinterRefs {
   /** The H3C's nine external inputs, one per tool, in the tools' order
    * (`externalSpools` holds them): named by their number. */
   inputs: boolean;
+  /** The H3C's nine PrintTools in their order, a tool without its sensor
+   * keeping its place; all undefined on other printers. */
+  tools: (string | undefined)[];
   online?: string;
   plateClearNeeded?: string;
   /** On when the printer takes commands over the LAN (developer mode). */

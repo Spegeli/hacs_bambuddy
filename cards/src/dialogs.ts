@@ -20,6 +20,7 @@ import { icon } from "./icons";
 import { t, type TextKey } from "./i18n";
 import { dialogError, dialogNote, slotOf, stepControl, warnings, type CardContext, type Confirmation } from "./parts";
 import type { AmsRefs, Hass } from "./types";
+import { toolContent } from "./tools";
 
 /** Drying defaults and limits: BamBuddy's range; the AMS 2 Pro heats to 65 °C at most. */
 export const DRYING = { temperature: 55, duration: 8, minTemperature: 45, maxTemperature: 85, maxTemperatureAms2Pro: 65, minDuration: 1, maxDuration: 24 };
@@ -78,6 +79,7 @@ export type StateDialog =
   | { kind: "power" }
   | { kind: "auto_off" }
   | { kind: "camera" }
+  | { kind: "tool"; number: number }
   | InfoDialog
   | MaintenanceDialog;
 
@@ -304,6 +306,7 @@ function buttons(ctx: CardContext, dialog: Dialog): DialogButtons {
     case "power":
     case "auto_off":
     case "camera":
+    case "tool":
       return { keep: t(hass, "dismiss"), danger: false, ready: false };
     case "check":
       return { keep: t(hass, "dismiss"), ...(dialog.running ? {} : { confirm: t(hass, "check_again") }), danger: false, ready: !dialog.running };
@@ -344,6 +347,8 @@ function content(ctx: CardContext, dialog: Dialog, actions: DialogActions): Temp
       return autoOffContent(ctx);
     case "camera":
       return cameraContent(ctx);
+    case "tool":
+      return toolContent(ctx, dialog.number);
     case "maintenance":
       return maintenanceContent(ctx, dialog, actions);
     case "check":

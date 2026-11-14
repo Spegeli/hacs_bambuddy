@@ -1502,6 +1502,72 @@ export const cardStyles = css`
     grid-template-columns: repeat(5, auto);
     justify-content: start;
   }
+  /* The H3C has one AMS: its nine colours in a row where the card has room. */
+  @container (min-width: 388px) {
+    .ams-slots.nine {
+      grid-template-columns: repeat(9, auto);
+      column-gap: 6px;
+    }
+  }
+  /* The H3C's nine PrintTools: a tile each, the one on the toolhead outlined. */
+  .tools {
+    display: grid;
+    gap: 8px;
+  }
+  .tool-tiles {
+    display: grid;
+    grid-template-columns: repeat(9, minmax(0, 1fr));
+    gap: 4px;
+  }
+  .tool-tile {
+    display: grid;
+    justify-items: center;
+    gap: 2px;
+    min-width: 0;
+    padding: 6px 0 5px;
+    border-radius: 8px;
+    border: 2px solid transparent;
+    background: var(--bb-tint);
+    color: var(--primary-text-color);
+    font: inherit;
+    font-size: 12px;
+    line-height: 14px;
+    cursor: pointer;
+  }
+  .tool-tile.on-head {
+    border-color: var(--bb-accent);
+  }
+  .tool-tile.missing {
+    cursor: default;
+    color: var(--bb-muted);
+  }
+  .tool-dot {
+    width: 18px;
+    height: 18px;
+    border-radius: 50%;
+    box-sizing: border-box;
+  }
+  .tool-dot.outlined {
+    border: 1px solid var(--bb-divider);
+  }
+  .tool-dot.empty {
+    border: 1.5px dashed var(--bb-muted);
+  }
+  .tool-dot.none {
+    display: grid;
+    place-items: center;
+  }
+  .tool-number {
+    font-weight: 600;
+  }
+  /* Where a slot's PrintTool is loaded at the printer: its words instead of a button. */
+  .slot-hint {
+    max-width: 180px;
+    font-size: 12px;
+    line-height: 1.35;
+    text-align: right;
+    color: var(--bb-muted);
+  }
   .ams-slot {
     display: flex;
     flex-direction: column;
@@ -1732,7 +1798,8 @@ export const cardStyles = css`
     gap: 8px;
     min-height: 44px;
   }
-  .heat-row + .heat-row {
+  .heat-row + .heat-row,
+  .vent-part .heat-row {
     border-top: 1px solid var(--bb-divider);
   }
   .heat-name {
@@ -1769,7 +1836,6 @@ export const cardStyles = css`
     color: var(--bb-heat);
   }
   /* Ventilation in its own tone: the head always, the row while it runs. */
-  .vent-head .section-label .icon,
   .heat-name.vent.on .heat-label .icon {
     color: var(--bb-accent);
   }
@@ -3783,6 +3849,10 @@ export const cardStyles = css`
      go to the bottom, clear of the gear and the close button (chips are
      never cut). */
   @container (max-width: 260px) {
+    /* The nine PrintTools in rows of five and four. */
+    .tool-tiles {
+      grid-template-columns: repeat(5, minmax(0, 1fr));
+    }
     .live-tags {
       top: auto;
       bottom: 8px;

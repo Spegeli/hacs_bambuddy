@@ -303,6 +303,19 @@ const slotState = (spec: SlotSpec): string => spec.name ?? spec.type ?? "empty";
 
 export type Pair = [current: number, target?: number];
 
+/** One of the H3C's PrintTools, as its sensor's attributes say it. */
+export interface ToolSpec {
+  code?: string;
+  diameter?: number;
+  flow?: string;
+  material?: string;
+  filament?: number;
+  hasFilament?: boolean;
+  hours?: number | null;
+  color?: string | null;
+  fedBy?: "ams" | "external";
+}
+
 export interface PrinterSpec {
   id: string;
   slug: string;
@@ -343,6 +356,9 @@ export interface PrinterSpec {
   camera?: boolean;
   cover?: boolean;
   externalSpools: SlotSpec[];
+  /** The H3C's nine PrintTools (a place left out: not reported), and the one on the toolhead. */
+  tools?: (ToolSpec | null)[];
+  mountedTool?: number;
   /** The AI detection switches the model has, with control: on or off. */
   detectors?: { key: string; on: boolean }[];
   /** The printer's name in BamBuddy: the print status's `bambuddy_name`. */
@@ -548,6 +564,32 @@ export function printerDevice(spec: PrinterSpec): FakeDevice {
     const key = spools[index] as string;
     entities.push({ entityId: `sensor.${p}_${key}`, key, state: value(slotState(spool)), attributes: slotAttributes(spool, inputs ? index + 1 : 1, true) });
   });
+  if (spec.tools) {
+    spec.tools.forEach((tool, index) => {
+      const number = index + 1;
+      entities.push({
+        entityId: `sensor.${p}_print_tool_${number}`,
+        key: `print_tool_${number}`,
+        state: value(tool && tool.hours !== null && tool.hours !== undefined ? String(tool.hours) : "unknown"),
+        attributes: tool
+          ? {
+              unit_of_measurement: "h",
+              device_class: "duration",
+              nozzle_code: tool.code ?? "HS01",
+              nozzle_diameter: tool.diameter ?? 0.4,
+              nozzle_material: tool.material ?? "hardened_steel",
+              nozzle_flow: tool.flow ?? "standard",
+              filament_diameter: tool.filament ?? 1.75,
+              has_filament: tool.hasFilament ?? false,
+              on_toolhead: spec.mountedTool === number,
+              filament_color: tool.color ?? null,
+              fed_by: tool.fedBy ?? "ams",
+            }
+          : { unit_of_measurement: "h", device_class: "duration" },
+      });
+    });
+    entities.push({ entityId: `sensor.${p}_print_tool_on_toolhead`, key: "print_tool_on_toolhead", state: value(spec.mountedTool ? String(spec.mountedTool) : "none") });
+  }
   const active = spec.externalSpools.find((spool) => spool.active);
   entities.push({ entityId: `sensor.${p}_active_filament`, key: "active_filament", state: value(active ? slotState(active) : "none") });
   if (spec.camera !== false) {
@@ -860,6 +902,9 @@ export function h2d(overrides: Partial<PrinterSpec> = {}): FakeDevice[] {
  * chamber heater, no ventilation. */
 /** The H3C's nine inputs as the tester's printer had them with its AMS 3H
  * not connected: tools 1, 2, 5 and 9 hold PLA (input 256 - tool). */
+/** The H3C's tools' print hours, by place. */
+export const H3C_HOURS = [3.8, 1.2, 0.6, 0, 1.2, 0, 0.3, 0, 0.9];
+
 export const H3C_INPUTS: SlotSpec[] = [1, 2, 3, 4, 5, 6, 7, 8, 9].map((tool) => {
   const color = { 1: "#FFFFFF", 2: "#FF0000", 5: "#2F2E2D", 9: "#0000FF" }[tool];
   return color ? { name: "Generic PLA", type: "PLA", color, remaining: null, trayId: 256 - tool } : { trayId: 256 - tool };
@@ -897,6 +942,13 @@ export function h3c(overrides: Partial<PrinterSpec> = {}, zone: number[] | null 
     // With its AMS 3H the inputs stand empty.
     externalSpools: withAms ? H3C_INPUTS.map((input) => ({ trayId: input.trayId })) : H3C_INPUTS,
     detectors: [{ key: "build_plate_detection", on: true }],
+    // Nine 0.4 mm tools, the TPU285 one at place 8; those whose slot holds a spool hold its filament.
+    tools: H3C_HOURS.map((hours, index) => ({
+      hours,
+      hasFilament: index !== 7,
+      fedBy: withAms ? "ams" : "external",
+      ...(index === 7 ? { code: "HT01", flow: "tpu_285", filament: 2.85 } : {}),
+    })),
     ...overrides,
   });
   const colours = ["#FF6A13", "#000000", "#0A2989", "#FFFFFF", "#C12E1F", "#00AE42", "#F4EE2A", undefined, "#5E43B7"];

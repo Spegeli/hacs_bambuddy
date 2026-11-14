@@ -107,7 +107,8 @@ function motionSection(ctx: CardContext, step: Step, setStep: (step: Step) => vo
   const side = activeNozzleIndex(ctx);
   const heating = ctx.settings.sections.includes("heating");
   const coldNozzle = side === undefined ? "cold_nozzle" : (`cold_nozzle_${sideAt(side)}` as const);
-  const coldHint = heating ? coldNozzle : (`${coldNozzle}_plain` as const);
+  // The block's title as it shows: "Heating and ventilation" where it ventilates too.
+  const coldHint = heating ? (ctx.refs.ventilation ? (`${coldNozzle}_vent` as const) : coldNozzle) : (`${coldNozzle}_plain` as const);
   const extruder = (direction: 1 | -1): TemplateResult =>
     actionButton({
       label: t(hass, direction > 0 ? "extrude" : "retract"),

@@ -199,6 +199,8 @@ export function spoolBasics(record: Record<string, unknown>): {
   remainingPct?: number;
   storage?: string;
   rfid: boolean;
+  /** 1.75 or 2.85, from the spool's profile. */
+  filamentMm?: number;
 } {
   const pct = record["remaining_pct"];
   const grams = record["remaining_g"];
@@ -213,6 +215,7 @@ export function spoolBasics(record: Record<string, unknown>): {
     ...(typeof pct === "number" ? { remainingPct: pct } : {}),
     ...(storage ? { storage } : {}),
     rfid: record["rfid"] === true,
+    ...(typeof record["filament_diameter"] === "number" ? { filamentMm: record["filament_diameter"] } : {}),
   };
 }
 
