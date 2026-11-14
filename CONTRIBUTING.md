@@ -104,6 +104,7 @@ The card's modules, in `cards/src/`:
 | `live.ts` | The live view: the camera's stream through Home Assistant's proxy, and the picture full screen (the browser's own, or the window where it has none) |
 | `status-view.ts`, `control-view.ts`, `filament-view.ts` | The three tabs; `filament-view.ts` also places each slot's ✏️ |
 | `heating.ts` | Heating and ventilating |
+| `tools.ts` | The H3C's nine PrintTools: the Status block, a tool's dialog, the tool an AMS 3H slot feeds and its nozzle in words |
 | `detection.ts` | The print options |
 | `power.ts` | Smart plugs and the switch-off after the print |
 | `maintenance.ts`, `check.ts` | Maintenance; the connection check |
