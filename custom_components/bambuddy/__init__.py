@@ -177,6 +177,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: BamBuddyConfigEntry) -> 
     # And the X2D's auxiliary fans: their IDs after their side.
     async_rename_x2d_fans(hass, printers)
     grown = {key for key, pairs in renamed.items() if await renames.async_add(hass, entry.entry_id, key, pairs)}
+    # The "N/A" AMS device goes below: the renamed IDs that named its entities go first.
+    await renames.async_drop(hass, entry.entry_id, _n_a_entity_ids(hass, entry))
     names = {stored_key(printer): stored_name(hass, entry.entry_id, printer) for printer in absent}
     names.update({coordinator.key: coordinator.printer_name for coordinator in printers.values()})
     noticed = await renames.async_raise(hass, entry, names, grown)
@@ -408,7 +410,7 @@ def _remove_stale_devices(hass: HomeAssistant, entry: ConfigEntry) -> None:
     plugs' are `_follow_plug_identities`'s."""
     keys = {stored_key(printer) for printer in entry.options.get(CONF_PRINTERS, [])}
     configured = {printer_identifier(entry.entry_id, key)[1] for key in keys}
-    units = tuple(ams_identifier_prefix(entry.entry_id, key) for key in keys)
+    units = _units(entry)
     registry = dr.async_get(hass)
     plug_prefix = device_prefix(entry.entry_id)
     for device in dr.async_entries_for_config_entry(registry, entry.entry_id):
@@ -419,10 +421,30 @@ def _remove_stale_devices(hass: HomeAssistant, entry: ConfigEntry) -> None:
             continue
         if not any(name in configured or name.startswith(units) for name in names):
             registry.async_remove_device(device.id)
-        elif any(name.startswith(units) and name.rpartition("_ams_")[2].strip().upper() == NO_SERIAL for name in names):
+        elif _is_n_a(device, units):
             # Made for the serial "N/A" before it counted as none: it stood
             # for whichever unit came first. The units come by their places.
             registry.async_remove_device(device.id)
+
+
+def _units(entry: ConfigEntry) -> tuple[str, ...]:
+    return tuple(ams_identifier_prefix(entry.entry_id, stored_key(printer)) for printer in entry.options.get(CONF_PRINTERS, []))
+
+
+def _is_n_a(device: dr.DeviceEntry, units: tuple[str, ...]) -> bool:
+    """An AMS device made for BamBuddy's serial "N/A"."""
+    return any(
+        domain == DOMAIN and name.startswith(units) and name.rpartition("_ams_")[2].strip().upper() == NO_SERIAL
+        for domain, name in device.identifiers
+    )
+
+
+def _n_a_entity_ids(hass: HomeAssistant, entry: ConfigEntry) -> set[str]:
+    """The entities of the "N/A" AMS devices `_remove_stale_devices` removes."""
+    units = _units(entry)
+    devices = [device.id for device in dr.async_entries_for_config_entry(dr.async_get(hass), entry.entry_id) if _is_n_a(device, units)]
+    registry = er.async_get(hass)
+    return {entity.entity_id for device_id in devices for entity in er.async_entries_for_device(registry, device_id, include_disabled_entities=True)}
 
 
 # A 401 at setup is asked again this much later: BamBuddy also answers 401

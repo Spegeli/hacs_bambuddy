@@ -30,6 +30,7 @@ from tests.conftest import (
     H2D,
     X1C,
     entity_id,
+    make_entry,
     next_refresh,
     past_polls,
     printer_device,
@@ -877,3 +878,40 @@ def test_a_free_entity_id_uses_what_home_assistant_has() -> None:
 def test_a_free_entity_id_on_the_floor_uses_the_older_name() -> None:
     registry = SimpleNamespace(async_generate_entity_id=lambda domain, object_id: f"{domain}.{object_id}_old")
     assert free_entity_id(registry, "sensor", "slot_1") == "sensor.slot_1_old"  # type: ignore[arg-type]
+
+
+def _n_a_device(hass: HomeAssistant, entry: MockConfigEntry) -> str:
+    """A device an earlier version made for an AMS whose serial BamBuddy
+    gave as "N/A", with one sensor; that sensor's entity ID."""
+    device = dr.async_get(hass).async_get_or_create(
+        config_entry_id=entry.entry_id,
+        identifiers={(DOMAIN, f"{printer_device(entry, X1C)}_ams_N/A")},
+    )
+    return er.async_get(hass).async_get_or_create(
+        "sensor", DOMAIN, f"{entry.entry_id}_p{printer_key(X1C)}_amsN/A_humidity",
+        config_entry=entry, device_id=device.id, suggested_object_id="ams_2_pro_n_a_humidity",
+    ).entity_id
+
+
+async def test_the_n_a_device_takes_its_renames_off_the_notice(hass: HomeAssistant, bambuddy_api: SimpleNamespace) -> None:
+    """The "N/A" device goes at setup: the renamed IDs that named its
+    entities go with it; the others stay on the printer's notice."""
+    entry = make_entry(hass, X1C)
+    gone = _n_a_device(hass, entry)
+    await renames.async_add(hass, entry.entry_id, printer_key(X1C), [("sensor.ams_x1c_b_humidity", gone), ("sensor.old", "sensor.new")])
+
+    await setup_integration(hass, entry)
+
+    assert await renames.async_get(hass, entry.entry_id, printer_key(X1C)) == [("sensor.old", "sensor.new")]
+    assert _notice(hass, entry, X1C) is not None
+
+
+async def test_the_n_a_device_takes_a_notice_of_its_own_with_it(hass: HomeAssistant, bambuddy_api: SimpleNamespace) -> None:
+    entry = make_entry(hass, X1C)
+    gone = _n_a_device(hass, entry)
+    await renames.async_add(hass, entry.entry_id, printer_key(X1C), [("sensor.ams_x1c_b_humidity", gone)])
+
+    await setup_integration(hass, entry)
+
+    assert await renames.async_get(hass, entry.entry_id, printer_key(X1C)) == []
+    assert _notice(hass, entry, X1C) is None
