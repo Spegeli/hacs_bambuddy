@@ -122,7 +122,7 @@ A spool with a chip shows again once the AMS reads the chip. A reset also ends t
 
 ## Dry filament
 
-The [AMS 2 Pro](glossary.md#ams-2-pro), the AMS HT and the [AMS 3H](glossary.md#ams-3h) can dry; their row in the Filament tab shows it. The AMS 3H dries two of its slots, its drying zone: the row names them, and the dialog suggests from their spools alone. Which printers start drying from here is in [Printers](printers.md#drying-from-home-assistant).
+The [AMS 2 Pro](glossary.md#ams-2-pro), the AMS HT and the [AMS 3H](glossary.md#ams-3h) can dry; their row in the Filament tab shows it. The AMS 3H dries two of its slots, its drying zone: a line below the row names them with the zone's own humidity and temperature, and the dialog suggests from their spools alone. While the zone dries, its two slots are framed in orange in both tabs, and the Status tab shows the zone's humidity and temperature in orange beside those of the unit. Which printers start drying from here is in [Printers](printers.md#drying-from-home-assistant).
 
 1. Tap **Dry** in the unit's row.
 2. Check **Temperature** and **Duration**.
