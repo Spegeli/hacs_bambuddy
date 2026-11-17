@@ -59,6 +59,9 @@ OPTIONAL = {
     "get_spools": "inventory:read",
     "get_spool_assignments": "inventory:view_assignments",
     "get_spoolman_status": "filaments:read",
+    # Spoolman mode: BamBuddy's Spoolman inventory, its spools and their slots.
+    "get_spoolman_spools": "inventory:read",
+    "get_spoolman_assignments": "inventory:read",
     "assign_spool": "inventory:update",
     "unassign_spool": "inventory:update",
 }

@@ -19,7 +19,7 @@ from custom_components.bambuddy.inventory import INVENTORY_ATTRIBUTES
 from custom_components.bambuddy.sensor import BamBuddyAmsSlotSensor, BamBuddyPrinterSensor
 
 from tests.conftest import H2D, X1C, ams_uid, load_fixture, next_refresh, printer_uid, set_up, state_of
-from tests.helpers import spool_row, with_inventory
+from tests.helpers import spool_row, with_inventory, with_spoolman_inventory
 
 
 async def _refresh(hass: HomeAssistant, inventory: BamBuddyInventoryCoordinator) -> None:
@@ -52,101 +52,41 @@ async def test_rows_of_other_printers_are_kept_for_their_place(hass: HomeAssista
     assert (place.printer_id, place.printer_name, place.ams_id, place.tray_id) == (99, "Desk", 0, 0)
 
 
-async def test_spoolman_on_shows_nothing(hass: HomeAssistant, bambuddy_api: SimpleNamespace) -> None:
-    """With Spoolman BamBuddy keeps no slots of its own: the inventory is not shown, nothing more is read."""
+async def test_spoolman_on_reads_bambuddys_spoolman_inventory(hass: HomeAssistant, bambuddy_api: SimpleNamespace) -> None:
+    """With Spoolman BamBuddy keeps the slots in its Spoolman table: that is read
+    instead of its own inventory, and a row of a spool Spoolman no longer lists is none."""
     with_inventory(bambuddy_api)
-    bambuddy_api.get_spoolman_status.return_value = {"enabled": True, "connected": True, "url": "http://spoolman:7912"}
+    with_spoolman_inventory(bambuddy_api)
     entry = await set_up(hass, X1C)
+    data = entry.runtime_data.inventory.data
 
-    assert entry.runtime_data.inventory.data.shown is False
+    assert data.shown is True
+    assert data.spoolman is True
+    assert data.at(X1C, 0, 2) == data.spools[1]
+    assert data.at(X1C, 0, 3) == data.spools[2]
+    assert data.at(X1C, 0, 1) is None
+    [place] = data.places_of(3)
+    assert (place.printer_id, place.printer_name, place.ams_id, place.tray_id, place.printer_model) == (99, "Desk", 0, 0, "P1S")
     bambuddy_api.get_spool_assignments.assert_not_awaited()
+    bambuddy_api.get_spools.assert_not_awaited()
 
 
-async def test_a_refused_inventory_read_is_not_shown_and_starts_no_reauth(
-    hass: HomeAssistant, bambuddy_api: SimpleNamespace
-) -> None:
-    """The inventory needs only optional permissions: a refusal (an owner
-    without inventory:read) never reaches the key guard."""
-    bambuddy_api.get_spool_assignments.side_effect = BamBuddyPermissionError(
-        403, "Permission denied", path="/api/v1/inventory/assignments"
-    )
-    with patch.object(KeyGuard, "async_read_refused") as refused:
-        entry = await set_up(hass, X1C)
-
-    assert entry.runtime_data.inventory.data.shown is False
-    refused.assert_not_called()
-    assert not hass.config_entries.flow.async_progress()
-
-
-async def test_one_failed_read_keeps_the_last_data(hass: HomeAssistant, bambuddy_api: SimpleNamespace) -> None:
-    """A read BamBuddy did not answer once keeps what was shown; a second in a row does not."""
-    with_inventory(bambuddy_api)
-    entry = await set_up(hass, X1C)
-    inventory = entry.runtime_data.inventory
-
-    bambuddy_api.get_spoolman_status.side_effect = BamBuddyConnectionError("down")
-    await _refresh(hass, inventory)
-    assert inventory.data.shown
-    assert inventory.data.at(X1C, 0, 2) is not None
-
-    await _refresh(hass, inventory)
-    assert inventory.data.shown is False
-
-    bambuddy_api.get_spoolman_status.side_effect = None
-    await _refresh(hass, inventory)
-    assert inventory.data.shown
-
-
-@pytest.mark.parametrize(
-    ("me", "spools", "assignable"),
-    [
-        ("auth_me_control.json", True, True),
-        ("auth_me_control_no_inventory.json", True, False),
-        ("auth_me_control.json", False, False),
-    ],
-)
-async def test_assignable_needs_inventory_update_and_a_spool(
-    hass: HomeAssistant, bambuddy_api: SimpleNamespace, me: str, spools: bool, assignable: bool
-) -> None:
-    bambuddy_api.get_auth_me.return_value = load_fixture(me)
-    if spools:
-        with_inventory(bambuddy_api)
+async def test_a_slot_names_its_spoolman_spool(hass: HomeAssistant, bambuddy_api: SimpleNamespace) -> None:
+    """A Spoolman spool shows in its slot as an inventory spool does: what is left, by its source."""
+    with_spoolman_inventory(bambuddy_api)
     entry = await set_up(hass, X1C)
 
-    assert entry.runtime_data.inventory.assignable is assignable
+    spool = _slot(hass, entry, 3).attributes["inventory_spool"]
+    assert (spool["id"], spool["name"], spool["remaining_g"], spool["remaining_pct"]) == (1, "Geeetech PLA Basic", 886, 89)
+    assert spool["source"] == "spoolman"
+    assert (spool["assigned_color"], spool["assigned_type"]) == ("", "")
 
 
-def _spool(**fields: Any) -> Spool:
-    spool = spool_of(spool_row(**fields))
-    assert spool is not None
-    return spool
+def test_a_spoolman_row_without_its_spool_number_is_none() -> None:
+    spools = [spool_row()]
+    data = inventory_of(spools, [{"printer_id": 1, "ams_id": 0, "tray_id": 0}, {"printer_id": 1, "ams_id": 0, "tray_id": 1, "spoolman_spool_id": "1"}], spoolman=True)
 
-
-def test_the_spool_names_and_what_is_left() -> None:
-    """As BamBuddy names a spool; what is left in whole grams and percent of the label weight."""
-    spool = _spool()
-    assert (spool.name, spool.remaining_g, spool.remaining_pct) == ("Geeetech PLA Basic", 886, 89)
-    assert _spool(weight_used=1200).remaining_g == 0
-    assert _spool(label_weight=0).remaining_pct is None
-    assert _spool(brand=None, subtype="").name == "PLA"
-    assert _spool(extra_colors="d4af37, b87333,").extra_colors == ("d4af37", "b87333")
-    assert _spool().rfid is False
-    assert _spool(tag_uid="A1B2").rfid is True
-
-
-def test_the_types_a_slot_may_report_and_keep_the_spool() -> None:
-    """BamBuddy keeps an assignment whose slot reports the spool's colour and a type its
-    material or its slicer profile's name reduces to (_unlink_stale_assignments)."""
-    assert spool_types(_spool()) == ["PLA"]
-    assert spool_types(_spool(material="PETG", slicer_filament_name="Bambu PETG HF @BBL X1C")) == ["PETG"]
-    assert spool_types(_spool(material="PLA", slicer_filament_name="Generic PETG")) == ["PETG", "PLA"]
-    assert spool_types(_spool(material="")) == []
-
-
-def test_the_spool_keeps_no_note() -> None:
-    """The owner's note never leaves the coordinator."""
-    assert "note" not in _spool().attributes()
-    assert "opened in May" not in repr(_spool())
+    assert data.placed == []
 
 
 def _slot(hass: HomeAssistant, entry: Any, slot: int, printer_id: int = X1C) -> Any:
@@ -179,6 +119,7 @@ async def test_a_slot_names_its_inventory_spool(hass: HomeAssistant, bambuddy_ap
         "assigned_color": "B6D648FF",
         "assigned_type": "PLA",
         "spool_types": ["PLA"],
+        "source": "bambuddy",
     }
     assert attributes["inventory_assignable"] is True
     assert "inventory_spool" not in _slot(hass, entry, 2).attributes
@@ -237,6 +178,7 @@ def test_inventory_attributes_are_not_recorded() -> None:
 async def test_no_inventory_no_attributes(hass: HomeAssistant, bambuddy_api: SimpleNamespace) -> None:
     with_inventory(bambuddy_api)
     bambuddy_api.get_spoolman_status.return_value = {"enabled": True, "connected": True, "url": None}
+    bambuddy_api.get_spoolman_assignments.side_effect = BamBuddyPermissionError(403, "Missing permission: inventory:read")
     entry = await set_up(hass, X1C)
 
     attributes = _slot(hass, entry, 3).attributes

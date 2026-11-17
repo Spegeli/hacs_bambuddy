@@ -1,8 +1,9 @@
 """BamBuddy's spool inventory: which of its spools sits in which slot (#21).
 
-One coordinator per entry reads BamBuddy's spools, their slots and whether
-Spoolman keeps the spools instead, once a minute and at once on BamBuddy's
-live events. Every read here needs an optional permission only (Read Status
+One coordinator per entry reads BamBuddy's spools and their slots once a
+minute and at once on BamBuddy's live events. While Spoolman keeps the
+spools, BamBuddy's Spoolman inventory is read instead: the same spool shape,
+its slots in a table of their own. Every read here needs an optional permission only (Read Status
 in BamBuddy, but none of the integration's required scopes): a refused read
 makes the inventory "not shown" -- it never reaches the key guard, never
 starts a reauth.
@@ -114,11 +115,13 @@ class Placed:
 
 @dataclass(frozen=True)
 class InventoryData:
-    """What the last good read found. `shown`: Spoolman off and the slots readable."""
+    """What the last good read found. `shown`: the slots readable;
+    `spoolman`: the spools are Spoolman's (BamBuddy's Spoolman mode)."""
 
     shown: bool
     spools: dict[int, Spool] = field(default_factory=dict)
     placed: list[Placed] = field(default_factory=list)
+    spoolman: bool = False
 
     def row_at(self, slot: tuple[int, int, int]) -> Placed | None:
         """The assignment of a slot (printer, AMS, tray), if any."""
@@ -174,16 +177,22 @@ def _int(value: Any) -> int | None:
     return value if is_int(value) else None
 
 
-def inventory_of(spools: list[Any], assignments: list[Any]) -> InventoryData:
+def inventory_of(spools: list[Any], assignments: list[Any], *, spoolman: bool = False) -> InventoryData:
     """The spools by id and every slot that holds one -- rows of a deleted
     spool (BamBuddy 1.2.5.7 keeps them: "spool": null) or an archived one left
-    out; rows of every printer kept (a spool's place, and what a move takes)."""
+    out; rows of every printer kept (a spool's place, and what a move takes).
+    `spoolman`: Spoolman's rows name their spool by `spoolman_spool_id` only,
+    so a row whose spool the list lacks (archived, deleted) is left out."""
     found = {spool.id: spool for spool in map(spool_of, spools) if spool is not None}
     placed: list[Placed] = []
     for row in assignments:
         if not isinstance(row, dict):
             continue
-        spool = spool_of(row.get("spool"))
+        if spoolman:
+            spool_id = row.get("spoolman_spool_id")
+            spool = found.get(spool_id) if is_int(spool_id) else None
+        else:
+            spool = spool_of(row.get("spool"))
         numbers = [_int(row.get(key)) for key in ("printer_id", "ams_id", "tray_id")]
         if spool is None or any(number is None for number in numbers):
             continue
@@ -202,7 +211,7 @@ def inventory_of(spools: list[Any], assignments: list[Any]) -> InventoryData:
                 _text(row.get("printer_model")),
             )
         )
-    return InventoryData(shown=True, spools=found, placed=placed)
+    return InventoryData(shown=True, spools=found, placed=placed, spoolman=spoolman)
 
 
 class BamBuddyInventoryCoordinator(DataUpdateCoordinator[InventoryData]):
@@ -243,8 +252,9 @@ class BamBuddyInventoryCoordinator(DataUpdateCoordinator[InventoryData]):
         """BamBuddy's inventory now; BamBuddy's errors as they come."""
         spoolman = await self.client.get_spoolman_status()
         if isinstance(spoolman, dict) and spoolman.get("enabled") is True:
-            # Spoolman keeps the spools: BamBuddy no longer keeps its own slots up.
-            return NOT_SHOWN
+            # Spoolman keeps the spools: BamBuddy keeps their slots in its Spoolman table.
+            assignments, spools = await asyncio.gather(self.client.get_spoolman_assignments(), self.client.get_spoolman_spools())
+            return inventory_of(spools, assignments, spoolman=True)
         assignments, spools = await asyncio.gather(self.client.get_spool_assignments(), self.client.get_spools())
         return inventory_of(spools, assignments)
 
@@ -362,6 +372,7 @@ def inventory_attributes(coordinator: BamBuddyInventoryCoordinator, printer_id: 
             "assigned_color": row.color,
             "assigned_type": row.type,
             "spool_types": spool_types(spool),
+            "source": "spoolman" if data.spoolman else "bambuddy",
         }
     return attributes
 
@@ -417,6 +428,7 @@ def diagnostics(coordinator: BamBuddyInventoryCoordinator) -> dict[str, Any]:
     data = coordinator.data or NOT_SHOWN
     return {
         "shown": data.shown,
+        "spoolman": data.spoolman,
         "assignable": coordinator.assignable,
         "spools": len(data.spools),
         "assignments": [

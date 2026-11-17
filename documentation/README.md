@@ -10,7 +10,7 @@ These pages describe the latest stable release. A beta's new parts are in its [r
 | [Printers](printers.md) | What each of the 14 models has: chamber, fans, limits, camera, AI detection, drying |
 | [Dashboard card](dashboard-card.md) | Adding the card, its tabs and chips, camera, HMS messages, maintenance, options |
 | [AMS and filament](ams-and-filament.md) | Slots, loading, setting a filament, K profiles, drying, filament backup, the external spool |
-| [Spool inventory](spool-inventory.md) | BamBuddy's spools: shown, assigned, scanned by their label |
+| [Spool inventory](spool-inventory.md) | BamBuddy's spools, or Spoolman's through BamBuddy: shown, assigned, scanned by their label |
 | [Chamber](chamber.md) | Heating and ventilating, and what locks what |
 | [Smart plugs](smart-plugs.md) | Switching plugs, power and energy, turning the printer off after a print |
 | [Automations](automations.md) | Five examples to copy, and triggers that do not misfire |

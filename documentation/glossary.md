@@ -110,7 +110,7 @@ BamBuddy's own list of your spools, with what is left of each and where it is ke
 
 ## Spoolman
 
-A separate spool manager BamBuddy can use instead of its own inventory. While it does, the integration shows no inventory. More: [Not with Spoolman](spool-inventory.md#not-with-spoolman).
+A separate spool manager BamBuddy can use instead of its own inventory. While it does, the integration shows Spoolman's spools through BamBuddy. More: [With Spoolman](spool-inventory.md#with-spoolman).
 
 ## See also
 

@@ -1096,7 +1096,7 @@
       "message": "The API key may not assign spools: it lacks Manage Inventory."
     },
     "inventory_not_shown": {
-      "message": "BamBuddy's spool inventory cannot be read now, or Spoolman keeps the spools."
+      "message": "BamBuddy's spool inventory cannot be read now."
     },
     "spool_not_found": {
       "message": "BamBuddy has no spool {spool}."

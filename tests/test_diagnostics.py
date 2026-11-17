@@ -167,6 +167,7 @@ async def test_the_diagnostics_tell_the_inventory(hass: HomeAssistant, bambuddy_
 
     assert diagnostics["inventory"] == {
         "shown": True,
+        "spoolman": False,
         "assignable": True,
         "spools": 3,
         "assignments": [
