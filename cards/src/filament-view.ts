@@ -20,7 +20,7 @@ import {
 } from "./format";
 import { icon } from "./icons";
 import { t, type TextKey } from "./i18n";
-import { actionButton, AMS_2_PRO, AMS_3H, AMS_HT, amsActivity, callout, developerHint, dryingZone, emptyText, inputNumber, inventoryLine, note, printerTitle, resumeButton, shownExternalSpools, sideName, slotOf, slotPlace, stateWord, swatch, switchButton, unitModel, unitNozzle, type CardContext, type Slot } from "./parts";
+import { dryingZoneSlots, zoneReadings, actionButton, AMS_2_PRO, AMS_3H, AMS_HT, amsActivity, callout, developerHint, dryingZone, emptyText, inputNumber, inventoryLine, note, printerTitle, resumeButton, shownExternalSpools, sideName, slotOf, slotPlace, stateWord, swatch, switchButton, unitModel, unitNozzle, type CardContext, type Slot } from "./parts";
 import type { AmsRefs } from "./types";
 import { isTpu285, spoolPlace, toolInfo, type ToolInfo } from "./tools";
 
@@ -89,6 +89,8 @@ function slotRow(
     place: string;
     /** The H3C's AMS 3H: the PrintTool the slot feeds. */
     tool?: ToolInfo;
+    /** The slot dries now, in the AMS 3H's zone. */
+    zone?: boolean;
   },
 ): TemplateResult {
   const { hass, refs } = ctx;
@@ -178,7 +180,7 @@ function slotRow(
   }
   // What the button shows names it: the filament, in use, what is left.
   // Unknown, it shows a dash, which says nothing.
-  return html`<div class="slot ${slot.active ? "active" : ""}">
+  return html`<div class="slot ${slot.active ? "active" : ""} ${options.zone ? "zone" : ""}">
     <button
       class="slot-main"
       aria-label=${t(hass, "slot_named", {
@@ -236,6 +238,8 @@ function dryingRow(ctx: CardContext, unit: AmsRefs): TemplateResult | typeof not
           : t(hass, "drying_now")
       : t(hass, "not_drying");
   const zone = dryingZone(hass, unit.drying);
+  // The AMS 3H's zone dries apart from its other slots, with readings of its own.
+  const readings = zoneReadings(hass, unit.drying);
   const key = `dry_${unit.deviceId}`;
   // Where the printer dries only from its own screen (a P1S), or its
   // firmware does not let BamBuddy start it: no buttons, a word where.
@@ -251,7 +255,11 @@ function dryingRow(ctx: CardContext, unit: AmsRefs): TemplateResult | typeof not
       key,
     });
   return html`<div class="drying ${on ? "on" : ""}">
-    ${icon("heat")}<span class="drying-text">${zone ? `${text} · ${zone}` : text}</span>
+    ${icon("heat")}<span class="drying-text"
+      ><span>${text}</span>${zone
+        ? html`<span class="drying-sub">${[zone, ...(readings.humidity === undefined ? [] : [formatPercent(hass, readings.humidity)]), ...(readings.temperature === undefined ? [] : [formatTemperature(hass, readings.temperature)])].join(" · ")}</span>`
+        : nothing}</span
+    >
     ${ctx.canControl && !remote ? html`<span class="dry-where">${t(hass, "dry_at_printer")}</span>` : nothing}
     ${ctx.canControl && remote
       ? actionButton({
@@ -276,6 +284,8 @@ function unitSection(ctx: CardContext, unit: AmsRefs, canAct: boolean): Template
   const model = unitModel(ctx.ams, unit);
   const nozzle = unitNozzle(hass, unit);
   const open = ctx.amsUnfolded(unit);
+  // The AMS 3H's zone while it dries: its slots in the heat tone.
+  const drying = dryingZoneSlots(hass, unit);
   const slotsId = `slots-${unit.deviceId}`;
   return html`<section class="unit ${open ? "open" : "folded"}">
     <button
@@ -322,6 +332,7 @@ function unitSection(ctx: CardContext, unit: AmsRefs, canAct: boolean): Template
               // The 2.85 mm TPU tool's spool is reported on its input: shown and set there.
               return slotRow(ctx, slotOf(hass, spoolPlace(ctx, unit, index)), {
                 canAct,
+                ...(drying.includes(index + 1) ? { zone: true } : {}),
                 ...(tool ? { tool } : {}),
                 dialogTitle: t(hass, "filament_title", { slot: place }),
                 loadTitle: (filament) => t(hass, "load_title_from", { filament, place }),

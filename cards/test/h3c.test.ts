@@ -35,7 +35,7 @@ describe("the H3C's AMS 3H", () => {
   it("names its drying zone beside the drying row", async () => {
     const { card } = await h3cCard();
     await showView(card, "Filament");
-    expect(text(find(card, ".unit .drying"))).toBe("Not drying · Slots 6 and 8 Dry");
+    expect(text(find(card, ".unit .drying"))).toBe(`Not dryingSlots 6 and 8 · 25${NBSP}% · 56${NBSP}°C Dry`);
   });
 
   it("names no zone while BamBuddy reports none", async () => {
@@ -47,7 +47,8 @@ describe("the H3C's AMS 3H", () => {
   it("names its zone in German", async () => {
     const { card } = await h3cCard([6, 8], "de");
     await showView(card, "Filament");
-    expect(text(find(card, ".unit .drying .drying-text"))).toBe("Trocknet nicht · Fächer 6 und 8");
+    expect(text(find(card, ".unit .drying .drying-text > span:first-child"))).toBe("Trocknet nicht");
+    expect(text(find(card, ".unit .drying .drying-sub"))).toBe(`Fächer 6 und 8 · 25${NBSP}% · 56${NBSP}°C`);
   });
 
   it("sets the drying dialog from the zone's spools alone", async () => {
@@ -399,5 +400,51 @@ describe("the 2.85 mm tool's slot shows its input", () => {
     const swatches = findAll(card, ".ams-column .ams-slot .swatch");
     expect(swatches[7]?.getAttribute("style")).toContain("#FF00FF");
     expect(find(card, '.tool-tile[data-tool="8"] .tool-dot')?.getAttribute("style")).toContain("#FF00FF");
+  });
+});
+
+describe("the AMS 3H's drying zone", () => {
+  async function zoneCard(drying: boolean, language = "de") {
+    return mountCard(makeHass({ devices: h3c({}, [6, 8], true, drying), language }), { printer: "dev-h3c" });
+  }
+  const stripSlots = (card: Parameters<typeof find>[0]): Element[] => findAll(card, ".ams-column .ams-slot");
+
+  it("marks the zone's slots and names its readings in orange while it dries", async () => {
+    const card = await zoneCard(true);
+    expect(stripSlots(card).map((slot) => slot.classList.contains("zone"))).toEqual([false, false, false, false, false, true, false, true, false]);
+    const zone = find(card, ".ams-env .zone-env");
+    expect(text(zone)).toBe(`25${NBSP}%56${NBSP}°C`);
+    expect(zone?.getAttribute("title")).toBe("Fächer 6 und 8");
+    // A screen reader hears the zone's readings with its slots.
+    expect(text(find(card, "#ams-said"))).toContain(`Fächer 6 und 8: Feuchte 25${NBSP}%, Temperatur 56${NBSP}°C`);
+  });
+
+  it("marks nothing while the zone does not dry", async () => {
+    const card = await zoneCard(false);
+    expect(findAll(card, ".ams-slot.zone")).toHaveLength(0);
+    expect(find(card, ".zone-env")).toBeNull();
+  });
+
+  it("names the zone and its readings on a line of its own in the Filament tab", async () => {
+    const idle = await zoneCard(false);
+    await showView(idle, "Filament");
+    expect(text(find(idle, ".unit .drying .drying-text > span:first-child"))).toBe("Trocknet nicht");
+    expect(text(find(idle, ".unit .drying .drying-sub"))).toBe(`Fächer 6 und 8 · 25${NBSP}% · 56${NBSP}°C`);
+    expect(findAll(idle, ".unit .slot.zone")).toHaveLength(0);
+    const drying = await zoneCard(true);
+    await showView(drying, "Filament");
+    expect(findAll(drying, ".unit .slot").map((slot) => slot.classList.contains("zone"))).toEqual([false, false, false, false, false, true, false, true, false]);
+  });
+
+  it("styles the zone in the heat tone, a slot in use keeping its own", () => {
+    expect(declarations(".ams-slot.zone")).toEqual(expect.arrayContaining(["outline: 2px solid var(--bb-heat)", "outline-offset: 2px", "padding-top: 3px", "margin-top: -3px"]));
+    expect(declarations(".slot.zone")).toEqual(expect.arrayContaining(["box-shadow: inset 0 0 0 2px var(--bb-heat)"]));
+    expect(declarations(".slot.zone.active")).toEqual(expect.arrayContaining(["background: color-mix(in srgb, var(--bb-accent) 10%, transparent)"]));
+    expect(declarations(".zone-env")).toEqual(expect.arrayContaining(["color: var(--bb-heat)"]));
+    // The zone's readings stand on the line of the unit's own: icon and figure centred, as there.
+    expect(declarations(".zone-env > span")).toEqual(expect.arrayContaining(["display: inline-flex", "align-items: center", "gap: 1px"]));
+    expect(declarations(".zone-env")).toEqual(expect.arrayContaining(["gap: 6px"]));
+    // Room for that frame: below the readings and between the rows.
+    expect(declarations(".ams-slots.nine")).toEqual(expect.arrayContaining(["margin-top: 3px", "row-gap: 10px"]));
   });
 });

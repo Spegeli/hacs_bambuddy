@@ -910,7 +910,7 @@ export const H3C_INPUTS: SlotSpec[] = [1, 2, 3, 4, 5, 6, 7, 8, 9].map((tool) => 
   return color ? { name: "Generic PLA", type: "PLA", color, remaining: null, trayId: 256 - tool } : { trayId: 256 - tool };
 });
 
-export function h3c(overrides: Partial<PrinterSpec> = {}, zone: number[] | null = [6, 8], withAms = true): FakeDevice[] {
+export function h3c(overrides: Partial<PrinterSpec> = {}, zone: number[] | null = [6, 8], withAms = true, drying = false): FakeDevice[] {
   const printer = printerDevice({
     id: "dev-h3c",
     slug: "h3c",
@@ -958,7 +958,7 @@ export function h3c(overrides: Partial<PrinterSpec> = {}, zone: number[] | null 
     model: "AMS 3H",
     humidity: 33,
     temperature: 27.6,
-    drying: { on: false, remaining: 0, zone },
+    drying: drying ? { on: true, remaining: 480, target: 55, zone } : { on: false, remaining: 0, zone },
     slots: colours.map((color, index) =>
       color
         ? { name: index === 5 ? "PETG HF" : "PLA Basic", type: index === 5 ? "PETG" : "PLA", color, remaining: null, trayId: 28 + index, drying: index === 5 ? [65, 8] : [50, 12] }

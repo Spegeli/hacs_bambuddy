@@ -25,7 +25,7 @@ import {
 } from "./format";
 import { icon, type IconName } from "./icons";
 import { t, type TextKey } from "./i18n";
-import {
+import { dryingZone, dryingZoneSlots, zoneReadings,
   actionButton,
   activeNozzleIndex,
   AMS_3H,
@@ -311,6 +311,10 @@ function amsStrip(ctx: CardContext): TemplateResult | typeof nothing {
         ht: unit.model === AMS_HT,
         nine: unit.model === AMS_3H,
         sides: false,
+        // The AMS 3H while its zone dries: the zone's slots and readings.
+        zone: dryingZoneSlots(hass, unit),
+        zoneText: dryingZone(hass, unit.drying),
+        zoneReadings: zoneReadings(hass, unit.drying),
       };
     }),
     ...(spools.length
@@ -327,6 +331,9 @@ function amsStrip(ctx: CardContext): TemplateResult | typeof nothing {
             ht: false,
             nine: false,
             sides: twoSpools,
+            zone: [] as number[],
+            zoneText: undefined,
+            zoneReadings: {} as { humidity?: number; temperature?: number },
           },
         ]
       : []),
@@ -346,12 +353,38 @@ function amsStrip(ctx: CardContext): TemplateResult | typeof nothing {
     const side = twoSpools ? refs.externalSpools.indexOf(entityId) : -1;
     return `${side >= 0 ? `${sideName(hass, side)}: ` : ""}${slotTitle(hass, slot)}${slot.active ? ` · ${t(hass, "in_use")}` : ""}`;
   };
+  // The drying zone's readings, in the heat tone beside the unit's own, while it dries.
+  const zoneParts = (group: (typeof groups)[number]): { humidity?: string; temperature?: string } =>
+    group.zone.length
+      ? {
+          ...(group.zoneReadings.humidity === undefined ? {} : { humidity: formatPercent(hass, group.zoneReadings.humidity) }),
+          ...(group.zoneReadings.temperature === undefined ? {} : { temperature: formatTemperature(hass, group.zoneReadings.temperature) }),
+        }
+      : {};
+  const zoneSaid = (group: (typeof groups)[number]): string[] => {
+    const parts = zoneParts(group);
+    const said = [
+      ...(parts.humidity ? [t(hass, "strip_humidity", { humidity: parts.humidity })] : []),
+      ...(parts.temperature ? [t(hass, "strip_temperature", { temperature: parts.temperature })] : []),
+    ];
+    return said.length && group.zoneText ? [`${group.zoneText}: ${said.join(", ")}`] : [];
+  };
+  const zoneEnv = (group: (typeof groups)[number]): TemplateResult | typeof nothing => {
+    const parts = zoneParts(group);
+    if (!parts.humidity && !parts.temperature) return nothing;
+    return html`<span class="zone-sep" aria-hidden="true">·</span><span class="zone-env" title=${group.zoneText ?? ""}
+      >${parts.humidity ? html`<span class="ams-hum">${icon("humidity")}${parts.humidity}</span>` : nothing}${parts.temperature
+        ? html`<span class="ams-temp">${icon("chamber")}${parts.temperature}</span>`
+        : nothing}</span
+    >`;
+  };
   const said = [...column, ...fill].map((group) =>
     t(hass, "strip_unit", {
       name: [
         group.spoken,
         ...(group.humidity === undefined ? [] : [t(hass, "strip_humidity", { humidity: formatPercent(hass, group.humidity) })]),
         ...(group.temperature === undefined ? [] : [t(hass, "strip_temperature", { temperature: formatTemperature(hass, group.temperature, group.temperatureUnit) })]),
+        ...zoneSaid(group),
       ].join(", "),
       slots: group.slots.map(spoken).join(", "),
     }),
@@ -374,14 +407,16 @@ function amsStrip(ctx: CardContext): TemplateResult | typeof nothing {
                 ${group.temperature !== undefined
                   ? html`<span class="ams-temp" title=${t(hass, "temperature")}>${icon("chamber")}${formatTemperature(hass, group.temperature, group.temperatureUnit)}</span>`
                   : nothing}
+                ${zoneEnv(group)}
               </span>`}
         </span>
         <span class="ams-slots ${group.nine ? "nine" : ""}">
-          ${group.slots.map((entityId) => {
+          ${group.slots.map((entityId, index) => {
             const slot = slotOf(hass, entityId);
+            const zoned = group.zone.includes(index + 1);
             // Sides and input numbers only in the external spools' group.
             const side = group.fill && !group.ht ? sideOf(entityId) : undefined;
-            return html`<span class="ams-slot" title=${side ? `${side} · ${slotTitle(hass, slot)}` : slotTitle(hass, slot)}
+            return html`<span class="ams-slot ${zoned ? "zone" : ""}" title=${side ? `${side} · ${slotTitle(hass, slot)}` : slotTitle(hass, slot)}
               >${side ? html`<span class="slot-side">${side}</span>` : nothing}${swatch(slot)}<span class="slot-type"
                 >${slotType(slot, refs.externalSpools.includes(entityId))}</span
               ></span

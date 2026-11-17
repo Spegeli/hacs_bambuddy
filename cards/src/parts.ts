@@ -700,9 +700,31 @@ export const warnings = (...lines: (string | undefined)[]): { warn?: string[] } 
 /** The AMS 3H's drying zone, "Slots 6 and 8", from its drying sensor; none
  * where BamBuddy reports no zone (every other AMS). */
 export function dryingZone(hass: Hass, entityId: string | undefined): string | undefined {
-  const zone = entityId ? stateOf(hass, entityId)?.attributes["zone_slots"] : undefined;
-  if (!Array.isArray(zone) || !zone.length || !zone.every((slot) => typeof slot === "number")) return undefined;
-  const slots = zone as number[];
+  const slots = zoneSlots(hass, entityId);
+  if (!slots) return undefined;
   if (slots.length === 1) return t(hass, "dry_zone_one", { slot: slots[0] as number });
   return t(hass, "dry_zone", { slots: slots.slice(0, -1).join(", "), last: slots.at(-1) as number });
+}
+
+/** The AMS 3H's drying zone: its slots (1-based), from the drying sensor. */
+export function zoneSlots(hass: Hass, entityId: string | undefined): number[] | undefined {
+  const zone = entityId ? stateOf(hass, entityId)?.attributes["zone_slots"] : undefined;
+  if (!Array.isArray(zone) || !zone.length || !zone.every((slot) => typeof slot === "number")) return undefined;
+  return zone as number[];
+}
+
+/** The drying zone's own humidity and temperature (°C), where reported. */
+export function zoneReadings(hass: Hass, entityId: string | undefined): { humidity?: number; temperature?: number } {
+  const attributes = entityId ? (stateOf(hass, entityId)?.attributes ?? {}) : {};
+  const humidity = attributes["zone_humidity"];
+  const temperature = attributes["zone_temperature"];
+  return {
+    ...(typeof humidity === "number" ? { humidity } : {}),
+    ...(typeof temperature === "number" ? { temperature } : {}),
+  };
+}
+
+/** The zone's slots while it dries: marked in the heat tone; none otherwise. */
+export function dryingZoneSlots(hass: Hass, unit: AmsRefs): number[] {
+  return stateOf(hass, unit.drying)?.state === "on" ? (zoneSlots(hass, unit.drying) ?? []) : [];
 }

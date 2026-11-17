@@ -1501,6 +1501,9 @@ export const cardStyles = css`
     display: grid;
     grid-template-columns: repeat(5, auto);
     justify-content: start;
+    /* Room for the drying zone's frame below the readings and between the rows. */
+    margin-top: 3px;
+    row-gap: 10px;
   }
   /* The H3C has one AMS: its nine colours in a row where the card has room. */
   @container (min-width: 388px) {
@@ -1566,6 +1569,36 @@ export const cardStyles = css`
     font-size: 12px;
     line-height: 1.35;
     text-align: right;
+    color: var(--bb-muted);
+  }
+  /* Its frame 1 px clear of the ring of a slot in use, which stands 4 px
+     around the colour: 1 px beyond the slot at the sides, 3 px of room above
+     the colour (taken back outside, so the row stays put). */
+  .ams-slot.zone {
+    outline: 2px solid var(--bb-heat);
+    outline-offset: 2px;
+    border-radius: 6px;
+    background: color-mix(in srgb, var(--bb-heat) 22%, transparent);
+    padding-top: 3px;
+    margin-top: -3px;
+  }
+  .zone-env {
+    display: inline-flex;
+    gap: 6px;
+    align-items: center;
+    color: var(--bb-heat);
+  }
+  /* Its readings as the unit's own: icon and figure centred on one line. */
+  .zone-env > span {
+    display: inline-flex;
+    align-items: center;
+    gap: 1px;
+    font-variant-numeric: tabular-nums;
+  }
+  .zone-env .icon {
+    color: var(--bb-heat);
+  }
+  .zone-sep {
     color: var(--bb-muted);
   }
   .ams-slot {
@@ -2313,6 +2346,21 @@ export const cardStyles = css`
   }
   .slot.active {
     background: color-mix(in srgb, var(--bb-accent) 10%, transparent);
+  }
+  /* The AMS 3H's drying zone while it dries: the heat tone around its slots;
+     a slot in use keeps its own background. */
+  .slot.zone {
+    box-shadow: inset 0 0 0 2px var(--bb-heat);
+    background: color-mix(in srgb, var(--bb-heat) 16%, var(--bb-tint));
+  }
+  .slot.zone.active {
+    background: color-mix(in srgb, var(--bb-accent) 10%, transparent);
+  }
+  .drying-sub {
+    display: block;
+    font-size: 12px;
+    color: var(--bb-muted);
+    margin-top: 2px;
   }
   .slot-main {
     flex: 1;
