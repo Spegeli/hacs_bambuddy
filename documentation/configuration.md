@@ -8,7 +8,7 @@ Connect Home Assistant to BamBuddy, choose your printers, and change either late
 
 ## Before you start
 
-- **BamBuddy 1.2.5.7 or newer.** BamBuddy shows its version at the foot of its menu and in **Settings → General**, card **Updates**.
+- **BamBuddy 1.2.5.7 or newer** (an H3C needs 1.3.1). BamBuddy shows its version at the foot of its menu and in **Settings → General**, card **Updates**.
 - **Home Assistant must reach BamBuddy** over your network.
 - **Your printers added in BamBuddy first** ([BamBuddy's documentation](https://wiki.bambuddy.cool)). The integration shows what BamBuddy manages.
 - **An API key:** [Create an API key](../README.md#create-an-api-key) has the steps.

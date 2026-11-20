@@ -14,7 +14,7 @@ An action that cannot run says why, and sends nothing.
 |---|---|---|
 | Printer offline | Every action refuses with "… is offline" | `run_diagnostic`, `mark_maintenance_done`, `get_filaments`, `get_spools`, `unassign_spool` |
 | A print is running or paused | `move_axis`, `home_axes`, `extrude` | Skipping objects |
-| A print is running, not paused | `load_filament`, `unload_filament`, `reset_slot`, `refresh_rfid` | The same four in a pause |
+| A print is running, not paused | `load_filament`, `unload_filament`, `reset_slot`, `refresh_rfid` | The same four in a pause, but unloading one PrintTool |
 | The AMS changes filament | Moving, loading, slot tools, `assign_spool`, `start_drying` | `unassign_spool`, the reads |
 | No print running or paused | `get_print_objects`, `skip_objects` | Nothing |
 
@@ -54,7 +54,7 @@ The actions' fields are in °C, whatever unit Home Assistant uses: `temperature`
 | `bambuddy.mark_maintenance_done` | `device_id`, `task_id` | Marks a maintenance task done |
 
 - `device_id` is the printer's device, or the AMS unit's for the drying actions.
-- `entity_id` is a slot or external spool sensor, in the action's data, not as a `target`. It takes one slot.
+- `entity_id` is a slot, external spool or H3C input (*External 1* to *External 9*) sensor, in the action's data, not as a `target`. It takes one slot.
 - An action that gives only a response needs `response_variable` in an automation.
 
 ```yaml
@@ -99,6 +99,7 @@ Refused:
 - For an empty slot.
 - From an AMS HT with BamBuddy before 1.3.0: only 1.3.0 and newer load from it.
 - From an H3C's external input: BamBuddy 1.3.1 does not load from them, and passes on its own refusal.
+- For the AMS 3H slot or the external input that feeds the H3C's 2.85 mm TPU tool: load that at the printer through the bypass feed (*Load External*).
 - From an AMS slot on a printer with the [Filament Track Switch](glossary.md#filament-track-switch): such a load must name the nozzle, which this action does not ask. Load it on the printer or in BamBuddy. The external spools load.
 
 ### `bambuddy.unload_filament`
@@ -131,13 +132,13 @@ More: [Set a filament](ams-and-filament.md#set-a-filament) and [K profiles](ams-
 
 ### `bambuddy.get_k_profiles`
 
-Returns the printer's own K calibrations (flow dynamics, also called pressure advance) for the diameter of the nozzle that feeds the slot. On a two-nozzle printer it lists that nozzle's; where it has none, the other nozzle's, each with its `nozzle`. The printer is asked live, which takes up to about 16 seconds.
+Returns the printer's own K calibrations (flow dynamics, also called pressure advance) for the diameter of the nozzle that feeds the slot. On a two-nozzle printer it lists the profiles of the slot's nozzle; where that nozzle has none, it lists them all. The printer is asked live, which takes up to about 16 seconds.
 
 | Field | What it holds |
 |---|---|
 | `nozzle_diameter` | The nozzle's diameter |
 | `current` | The slot's current profile; `-1`: none |
-| `profiles` | Each with `index`, `name`, `k_value`, `filament_id`; `nozzle` on two-nozzle printers |
+| `profiles` | Each with `index`, `name`, `k_value`, `filament_id`; `nozzle` on two-nozzle printers: the slot's nozzle, `left` or `right`, or `null` for a unit on the Filament Track Switch |
 | `answered` | With an empty list: `true`, the printer has none for that diameter; `false`, it did not answer |
 
 ### `bambuddy.get_filaments`
@@ -176,7 +177,7 @@ Needs a key with **Manage Inventory**. Refused:
 - For a slot that holds a Bambu Lab spool with its chip.
 - During a filament change.
 - For a Bambu Lab spool whose chip links it to another slot.
-- For a spool in a slot of another printer that is printing or paused.
+- For a spool in a slot of another printer with a job under way (preparing, printing or paused).
 - For a spool that does not fit the slot, as Bambu Studio says.
 - For a spool BamBuddy has archived or does not have.
 
@@ -205,7 +206,7 @@ Each spool has its `id`, `name`, `brand`, `material`, `color_name`, `remaining_g
 | `fits` | `null` if it can go here, else the reason below |
 | `printing` | The printer's name, with `fits` `printing` |
 
-A `place` that is another slot has `printer_id`, `printer_name`, `ams_id`, `tray_id`, `ams_label` and `same_printer`.
+A `place` that is another slot has `printer_id`, `printer_name`, `ams_id`, `tray_id`, `ams_label` and `same_printer`; an external place also has `input` (an H3C input, by the tool it feeds) or `side` (`left` or `right` on a two-nozzle printer).
 
 | `fits` | Why the spool cannot go here |
 |---|---|
@@ -213,7 +214,7 @@ A `place` that is another slot has `printer_id`, `printer_name`, `ams_id`, `tray
 | `not_for_nozzle` | Not suitable for this nozzle |
 | `not_for_printer` | Not suitable for this printer |
 | `by_chip` | Its chip links it to another slot |
-| `printing` | It sits in a slot of another printer that is printing or paused |
+| `printing` | It sits in a slot of another printer with a job under way (preparing, printing or paused) |
 
 ## Drying
 

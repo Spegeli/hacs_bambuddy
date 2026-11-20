@@ -63,7 +63,7 @@ New to a word such as AMS, HMS or K profile? The [Glossary](https://github.com/S
 ## 📋 Requirements
 
 - Home Assistant **2025.5** or newer
-- A running [BamBuddy](https://github.com/maziggy/bambuddy) server, version **1.2.5.7** or newer, that Home Assistant can reach — with your printers added in BamBuddy first (see [BamBuddy's documentation](https://wiki.bambuddy.cool)): the integration shows what BamBuddy manages
+- A running [BamBuddy](https://github.com/maziggy/bambuddy) server, version **1.2.5.7** or newer (an H3C needs **1.3.1**), that Home Assistant can reach — with your printers added in BamBuddy first (see [BamBuddy's documentation](https://wiki.bambuddy.cool)): the integration shows what BamBuddy manages
 - A BamBuddy API key with **Read Status**, **Control Printer** and **Manage Maintenance**; **Manage Inventory** is optional (see **Create an API key** under Configuration)
 - For the controls: the printer's **developer LAN mode** on — without it the printer ignores the commands BamBuddy passes on (see [Troubleshooting](https://github.com/Spegeli/hacs_bambuddy/blob/main/documentation/troubleshooting.md#printers-and-controls))
 - For the installation: the Marketplace (formerly HACS), part of Home Assistant from 2026.11 on, or [HACS](https://hacs.xyz) on an older one
@@ -139,7 +139,7 @@ New versions show under **Settings → Updates** and take a restart of Home Assi
 **Required** — the integration refuses a key that lacks one:
 
 - **Read Status**: everything Home Assistant shows, the camera included.
-- **Control Printer**: the controls — print, speed, temperatures, fans, light, ventilation, moving the axes, filament, drying, HMS answers, the AI detection and switching smart plugs.
+- **Control Printer**: the controls — print, speed, temperatures, fans, light, ventilation, moving the axes, filament, drying, HMS answers, the AI detection, the AMS filament backup, clearing the plate and switching smart plugs.
 - **Manage Maintenance**: marking maintenance done.
 
 **Optional:**

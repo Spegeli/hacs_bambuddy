@@ -47,7 +47,7 @@ To get betas as updates:
 2. If the Marketplace offers the last stable version as an update, choose **Update**. If not, restore the backup you made before the beta; **Install another version** also works, but Home Assistant advises a backup for going back.
 3. Restart Home Assistant.
 
-The dialog for pre-releases says an installed one stays until a newer stable version is out. That holds for versions the Marketplace can compare. While 2.0.0 is the latest stable version, it cannot compare its tag `v2.0.0_redesign`, so it offers 2.0.0 at once. The Marketplace also warns: "To go back to an earlier version, restoring a backup is the safer way."
+The dialog for pre-releases says an installed one stays until a newer stable version is out. The Marketplace also warns: "To go back to an earlier version, restoring a backup is the safer way."
 
 ## With HACS, before Home Assistant 2026.11
 

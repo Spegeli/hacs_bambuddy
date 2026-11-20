@@ -10,11 +10,11 @@ The password BamBuddy uses to reach a printer; Home Assistant does not need it. 
 
 ## Airduct
 
-The flap that sets how air moves through the chamber of the P2S, the X2D and the H2 series: heating keeps the warmth in, cooling lets fresh air through. More: [Chamber](chamber.md).
+The flap that sets how air moves through the chamber of the P2S, the X2D, the H2 series and the H3C: heating keeps the warmth in, cooling lets fresh air through. More: [Chamber](chamber.md).
 
 ## AMS
 
-Bambu's Automatic Material System: a unit that feeds filament to the printer, with four slots (an AMS HT: one). The first model is called AMS, and these pages also use the word for all of them. More: [AMS and filament](ams-and-filament.md).
+Bambu's Automatic Material System: a unit that feeds filament to the printer, with four slots (an AMS HT: one, the H3C's AMS 3H: nine). The first model is called AMS, and these pages also use the word for all of them. More: [AMS and filament](ams-and-filament.md).
 
 ## AMS 2 Pro
 
@@ -50,11 +50,11 @@ A printer setting the controls need: without it the printer ignores what BamBudd
 
 ## Exhaust fan
 
-The fan that blows chamber air out. The H2 series and the X2D have one; a P2S gets it with the External Exhaust Fan kit. More: [Per model](chamber.md#per-model).
+The fan that blows chamber air out. The H2 series, the H3C and the X2D have one; a P2S gets it with the External Exhaust Fan kit. More: [Per model](chamber.md#per-model).
 
 ## External spool
 
-A spool outside the AMS, fed straight into the printer. Two-nozzle printers have a left and a right one. More: [The external spool](ams-and-filament.md#the-external-spool).
+A spool outside the AMS, fed straight into the printer. Two-nozzle printers have a left and a right one; the H3C has nine, *External 1* to *External 9*, one per tool. More: [The external spool](ams-and-filament.md#the-external-spool).
 
 ## Filament backup
 
@@ -96,13 +96,17 @@ The fan on the print head that cools the printed plastic. Every printer has one.
 
 What the printer is doing right now, such as heating the nozzle or changing filament. *Print status* is the broader state of the job. More: [Print status, stage and AMS status](entities.md#print-status-stage-and-ams-status).
 
+## PrintTool
+
+One of the H3C's nine tools, each with its own nozzle, kept in a rack and taken onto the toolhead to print. Each is fed by its own AMS 3H slot; from the factory, the one at place 8 is for 2.85 mm TPU. More: [PrintTools](dashboard-card.md#printtools).
+
 ## RFID chip
 
 The chip in a Bambu Lab spool. The AMS reads the filament from it, so such a spool needs no filament set by hand. More: [Reset a slot or read its chip](ams-and-filament.md#reset-a-slot-or-read-its-chip).
 
 ## Slot
 
-A place for one spool in an AMS unit: four in most units, one in an AMS HT. More: [The Filament tab](ams-and-filament.md#the-filament-tab).
+A place for one spool in an AMS unit: four in most units, one in an AMS HT, nine in an AMS 3H. More: [The Filament tab](ams-and-filament.md#the-filament-tab).
 
 ## Spool inventory
 

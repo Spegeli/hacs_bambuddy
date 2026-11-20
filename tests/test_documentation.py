@@ -237,16 +237,17 @@ def test_a_refused_key_is_explained() -> None:
 
 
 def test_ams_entity_ids_name_the_unit() -> None:
-    """AMS entity IDs carry the unit's model and serial; the AMS Lite's the
-    printer's serial and its letter until BamBuddy reports its own (#3348),
-    then a notice lists the renamed IDs."""
+    """AMS entity IDs carry the unit's model and serial; a unit without one
+    (the AMS Lite before #3348, a serial of "N/A") the printer's serial and
+    its letter until BamBuddy reports its own, then a notice lists the
+    renamed IDs."""
     entities, filament = page("entities.md"), page("ams-and-filament.md")
     assert "sensor.ams_2_pro_19c06a000000001_humidity" in entities
-    assert "| AMS Lite, for now | `ams_lite_<printer serial>_<letter>_<key>` | `sensor.ams_lite_0309da000000002_a_slot_1` |" in entities
+    assert "| AMS unit without a serial | `<AMS model>_<printer serial>_<letter>_<key>` | `sensor.ams_lite_0309da000000002_a_slot_1` |" in entities
     assert "maziggy/bambuddy/issues/3348" in entities
     assert "the plain entity IDs; otherwise they end in `_2`" in filament
     # A replacement AMS Lite without a serial stays the same device.
-    assert "an AMS Lite stays the same device while BamBuddy reports no serial" in filament
+    assert "stays the same device while BamBuddy reports no serial" in filament
     # Known limitations: the AMS Lite until BamBuddy reports its serial.
     limitations = page("troubleshooting.md")
     assert "**AMS Lite without its serial number:**" in limitations
