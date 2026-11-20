@@ -82,9 +82,18 @@ You need a BamBuddy API key for the setup: see **Create an API key** under Confi
 
 ### Marketplace (formerly HACS)
 
-1. In Home Assistant, open **Settings → Marketplace**. The first time, tick **I understand the risks and agree** and choose **Continue**.
-2. Choose **Add from link**, enter `Spegeli/hacs_bambuddy` or the full address under **GitHub link** and choose **Add** — or open [BamBuddy in your Marketplace](https://my.home-assistant.io/redirect/marketplace_repository/?owner=Spegeli&repository=hacs_bambuddy&category=integration). Adding a repository needs a GitHub connection: without one, the Marketplace asks for it first and gives you a code to enter on GitHub. The connection only reads public information, and you can revoke it in your GitHub settings.
-3. Open **BamBuddy** on the **Browse** tab, under **New** or **Available**, or search for it. Choose **Install**, then **Install** in the dialog that warns "You install this at your own risk".
+[![Open your Home Assistant instance and open this repository in the Marketplace (formerly HACS).](https://my.home-assistant.io/badges/marketplace_repository.svg)](https://my.home-assistant.io/redirect/marketplace_repository/?owner=Spegeli&repository=hacs_bambuddy&category=integration)
+
+The badge opens BamBuddy in your Marketplace. Without it:
+
+1. In Home Assistant, open **Settings → Marketplace**.
+2. Choose **Add from link**.
+3. Enter the repository under **GitHub link**, as `Spegeli/hacs_bambuddy` or the full address:
+   ```text
+   https://github.com/Spegeli/hacs_bambuddy
+   ```
+4. Choose **Add**.
+5. Open **BamBuddy** on the **Browse** tab, under **New** or **Available**, or search for it. Choose **Install**, then **Install** in the dialog that warns "You install this at your own risk".
 
 No restart needed: the setup opens by itself.
 

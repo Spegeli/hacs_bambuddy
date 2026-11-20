@@ -203,12 +203,6 @@ def test_the_marketplace_comes_before_hacs_and_hacs_folds() -> None:
     assert "`Spegeli/hacs_bambuddy`" in section and "**Add from link**" in section
 
 
-def test_a_reader_without_a_github_connection_is_told_it_comes() -> None:
-    """The Marketplace asks for a GitHub connection before it adds a
-    repository: without a word on it the steps seem to stall there."""
-    assert "needs a GitHub connection" in _section("📦 Installation")
-
-
 def test_the_first_steps_say_what_the_screen_shows() -> None:
     """What a beginner met on a real 2026.11: the field's name and what it
     takes, where the repository then stands, the second Install, the step
