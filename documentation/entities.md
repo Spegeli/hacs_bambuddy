@@ -259,7 +259,7 @@ How many units a printer takes: [AMS units per printer](printers.md#ams-units-pe
 
 ### Inventory attributes
 
-While BamBuddy's inventory can be read, a slot sensor and the external spool sensors have these too. With Spoolman they do not: [Not with Spoolman](spool-inventory.md#not-with-spoolman).
+While BamBuddy's inventory can be read, a slot sensor and the external spool sensors have these too. With Spoolman they come from BamBuddy's Spoolman inventory: [With Spoolman](spool-inventory.md#with-spoolman).
 
 | Attribute | What it holds |
 |---|---|
@@ -276,6 +276,7 @@ While BamBuddy's inventory can be read, a slot sensor and the external spool sen
 | `storage_location` | Where it is kept |
 | `filament_diameter` | 1.75 or 2.85, from its profile (BamBuddy keeps no diameter); empty where the profile is unknown |
 | `also_assigned` | Other slots BamBuddy holds it in |
+| `source` | Where the spool is kept: `bambuddy` or `spoolman` |
 
 It holds a few more fields for the card, such as `rgba`. More: [Spool inventory](spool-inventory.md).
 

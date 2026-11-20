@@ -654,8 +654,8 @@ def _inventory_failure(
 
 
 async def _fresh_inventory(inventory: BamBuddyInventoryCoordinator) -> InventoryData:
-    """The spools and their slots as BamBuddy has them now (Spoolman asked
-    too); the entry's view follows."""
+    """The spools and their slots as BamBuddy has them now, from Spoolman
+    where it keeps them; the entry's view follows."""
     try:
         fresh = await inventory.async_read_fresh()
     except (BamBuddyAuthError, BamBuddyPermissionError, BamBuddyNotFoundError) as err:
@@ -703,14 +703,16 @@ async def _assign_spool(hass: HomeAssistant, call: ServiceCall) -> None:
     if fit in _SPOOL_REFUSALS:
         raise refuse(_SPOOL_REFUSALS[fit])
     printer_id = coordinator.printer_id
+    spoolman = {"spoolman": True} if fresh.spoolman else {}
 
     async def assign() -> None:
         try:
-            for row in elsewhere:
+            # Spoolman's table: the move frees the other slots in BamBuddy's own commit.
+            for row in [] if fresh.spoolman else elsewhere:
                 # Gone since the read: nothing to take out.
                 with contextlib.suppress(BamBuddyNotFoundError):
                     await inventory.client.unassign_spool(row.printer_id, row.ams_id, row.tray_id)
-            await inventory.client.assign_spool(spool_id, printer_id, ams, slot, move=bool(elsewhere))
+            await inventory.client.assign_spool(spool_id, printer_id, ams, slot, move=bool(elsewhere), **spoolman)
         except BamBuddyError as err:
             raise _inventory_failure(err, spool=spool_id) from err
         finally:
@@ -725,12 +727,15 @@ async def _unassign_spool(hass: HomeAssistant, call: ServiceCall) -> None:
     coordinator, ams, slot, _tray = _place(hass, call.data[ATTR_ENTITY_ID])
     inventory, known = _inventory(coordinator, assigning=True)
     printer_id = coordinator.printer_id
-    if known.at(printer_id, ams, slot) is None:
+    spool = known.at(printer_id, ams, slot)
+    if spool is None:
         raise refuse("no_assignment")
+    # A Spoolman spool's link goes by the spool (BamBuddy frees each slot it held).
+    by_spool = {"spoolman_spool_id": spool.id} if known.spoolman else {}
 
     async def unassign() -> None:
         try:
-            await inventory.client.unassign_spool(printer_id, ams, slot)
+            await inventory.client.unassign_spool(printer_id, ams, slot, **by_spool)
         except BamBuddyError as err:
             raise _inventory_failure(err, not_found="no_assignment") from err
         finally:

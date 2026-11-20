@@ -6,9 +6,13 @@ Show and assign the spools of BamBuddy's inventory from Home Assistant.
 
 **Needs:** a key with **Manage Inventory** to assign ([which permission opens what](configuration.md#what-each-permission-opens)); without it the card still shows assigned spools.
 
-## Not with Spoolman
+## With Spoolman
 
-The inventory here is BamBuddy's own [spool inventory](glossary.md#spool-inventory). While [Spoolman](glossary.md#spoolman) keeps the spools in BamBuddy, none of this page is available: no assigned spool, no tab, and the actions refuse.
+The inventory here is BamBuddy's own [spool inventory](glossary.md#spool-inventory), or, while [Spoolman](glossary.md#spoolman) keeps the spools in BamBuddy, BamBuddy's Spoolman inventory: the same page then shows Spoolman's spools, what is left of them as Spoolman has it, and the slots BamBuddy assigned them to. The slot's sensor names where its spool comes from (`source`: `bambuddy` or `spoolman`).
+
+- **Assigning** goes to BamBuddy's Spoolman slots; a spool in another slot moves in the same step.
+- **Removing** a Spoolman spool's assignment frees every slot BamBuddy holds it in.
+- **Scanning a label** reads BamBuddy's labels, which carry the spool's number; Spoolman's own `web+spoolman:` labels are not read.
 
 ## What the card shows
 

@@ -1096,7 +1096,7 @@
       "message": "Der API-Schlüssel darf keine Spulen zuweisen: Ihm fehlt „Bestand verwalten“."
     },
     "inventory_not_shown": {
-      "message": "BamBuddys Spuleninventar lässt sich gerade nicht lesen, oder Spoolman verwaltet die Spulen."
+      "message": "BamBuddys Spuleninventar lässt sich gerade nicht lesen."
     },
     "spool_not_found": {
       "message": "BamBuddy hat keine Spule {spool}."

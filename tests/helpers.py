@@ -256,6 +256,23 @@ def with_inventory(bambuddy_api: SimpleNamespace, *extra: dict[str, Any]) -> Non
     bambuddy_api.get_spool_assignments.return_value = load_fixture("inventory_assignments.json")
 
 
+def with_spoolman_inventory(bambuddy_api: SimpleNamespace, *extra: dict[str, Any]) -> None:
+    """BamBuddy in Spoolman mode, with the spools of with_inventory as BamBuddy
+    maps Spoolman's (data_origin "spoolman"): spool 1 in the Workshop X1C's
+    AMS A slot 3, spool 2 in slot 4, spool 3 in the Desk's first slot
+    (printer 99), a row of a spool Spoolman no longer lists; `extra` spools in
+    no slot. Spoolman's rows name their spool by `spoolman_spool_id` only."""
+    spools = [{**row, "data_origin": "spoolman", "note": None} for row in load_fixture("inventory_spools.json") if not row.get("archived_at")]
+    bambuddy_api.get_spoolman_status.return_value = {"enabled": True, "connected": True, "url": "http://spoolman:7912"}
+    bambuddy_api.get_spoolman_spools.return_value = [*spools, *extra]
+    bambuddy_api.get_spoolman_assignments.return_value = [
+        {"printer_id": 1, "printer_name": "Workshop", "ams_id": 0, "tray_id": 2, "spoolman_spool_id": 1, "ams_label": None, "printer_model": "X1C"},
+        {"printer_id": 1, "printer_name": "Workshop", "ams_id": 0, "tray_id": 3, "spoolman_spool_id": 2, "ams_label": None, "printer_model": "X1C"},
+        {"printer_id": 99, "printer_name": "Desk", "ams_id": 0, "tray_id": 0, "spoolman_spool_id": 3, "ams_label": None, "printer_model": "P1S"},
+        {"printer_id": 1, "printer_name": "Workshop", "ams_id": 0, "tray_id": 1, "spoolman_spool_id": 404, "ams_label": None, "printer_model": "X1C"},
+    ]
+
+
 async def call_action(hass: HomeAssistant, name: str, /, *, response: bool = False, **data: Any) -> Any:
     """One of the integration's actions, waited for; its answer with
     `response`. `data` may hold a field named `action` (answer_hms)."""

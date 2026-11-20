@@ -562,6 +562,39 @@ async def test_a_spool_is_assigned(
     assert (method, str(called), sent) == ("POST", f"{API}/inventory/assignments", body)
 
 
+@pytest.mark.parametrize(("move", "body"), [
+    (False, {"spoolman_spool_id": 7, "printer_id": 2, "ams_id": 0, "tray_id": 1}),
+    (True, {"spoolman_spool_id": 7, "printer_id": 2, "ams_id": 0, "tray_id": 1, "move": True}),
+])
+async def test_a_spoolman_spool_is_assigned(
+    hass: HomeAssistant, aioclient_mock: AiohttpClientMocker, move: bool, body: dict[str, Any]
+) -> None:
+    """In Spoolman mode: BamBuddy's Spoolman table, the spool by its Spoolman number."""
+    aioclient_mock.post(f"{API}/spoolman/inventory/slot-assignments", json={"id": 7})
+
+    assert await _client(hass).assign_spool(7, 2, 0, 1, move=move, spoolman=True) == {"id": 7}
+    [(method, called, sent, _)] = aioclient_mock.mock_calls
+    assert (method, str(called), sent) == ("POST", f"{API}/spoolman/inventory/slot-assignments", body)
+
+
+async def test_a_spoolman_assignment_is_removed_by_its_spool(hass: HomeAssistant, aioclient_mock: AiohttpClientMocker) -> None:
+    aioclient_mock.delete(f"{API}/spoolman/inventory/slot-assignments/7", json={"id": 7})
+
+    assert await _client(hass).unassign_spool(2, 0, 1, spoolman_spool_id=7) is None
+    [(method, called, _, _)] = aioclient_mock.mock_calls
+    assert (method, str(called)) == ("DELETE", f"{API}/spoolman/inventory/slot-assignments/7")
+
+
+@pytest.mark.parametrize(("call", "url"), [
+    ("get_spoolman_spools", "spoolman/inventory/spools"),
+    ("get_spoolman_assignments", "spoolman/inventory/slot-assignments/all"),
+])
+async def test_the_spoolman_inventory_is_read(hass: HomeAssistant, aioclient_mock: AiohttpClientMocker, call: str, url: str) -> None:
+    aioclient_mock.get(f"{API}/{url}", json=[{"id": 1}])
+
+    assert await getattr(_client(hass), call)() == [{"id": 1}]
+
+
 async def test_a_spool_assignment_is_removed(hass: HomeAssistant, aioclient_mock: AiohttpClientMocker) -> None:
     """The slot by its printer, unit and place; nothing goes to the printer."""
     aioclient_mock.delete(f"{API}/inventory/assignments/2/255/1", json={"status": "deleted"})

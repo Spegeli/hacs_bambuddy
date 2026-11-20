@@ -18,7 +18,7 @@ from custom_components.bambuddy.api import (
 )
 
 from tests.conftest import H2D, H3C, X1C, ams_uid, entity_id, load_fixture, printer_uid, set_up, state_at, with_h3c
-from tests.helpers import call_action, spool_row, timed_out, with_inventory
+from tests.helpers import call_action, spool_row, timed_out, with_inventory, with_spoolman_inventory
 
 
 def _extra(spool_id: int, **fields: Any) -> dict[str, Any]:
@@ -138,7 +138,7 @@ async def test_each_listed_spool_names_its_slot_type(hass: HomeAssistant, bambud
     ("setup", "slot", "spool", "key"),
     [
         ("no_inventory_update", 3, 7, "inventory_not_allowed"),
-        ("spoolman", 3, 7, "inventory_not_shown"),
+        ("spoolman_refused", 3, 7, "inventory_not_shown"),
         ("offline", 3, 7, "printer_offline"),
         ("filament_change", 3, 7, "filament_change"),
         ("idle", 1, 7, "rfid_spool"),
@@ -153,8 +153,10 @@ async def test_an_assignment_is_refused(
     status = bambuddy_api.statuses[X1C]
     if setup == "no_inventory_update":
         bambuddy_api.get_auth_me.return_value = load_fixture("auth_me_control_no_inventory.json")
-    elif setup == "spoolman":
+    elif setup == "spoolman_refused":
+        # Spoolman on, and its inventory not readable with the key.
         bambuddy_api.get_spoolman_status.return_value = {"enabled": True, "connected": True, "url": None}
+        bambuddy_api.get_spoolman_assignments.side_effect = BamBuddyPermissionError(403, "Missing permission: inventory:read")
     elif setup == "offline":
         status["connected"] = False
     elif setup == "filament_change":
@@ -443,16 +445,15 @@ async def test_a_spool_list_bambuddy_does_not_give(
 
 
 async def test_a_spool_list_after_spoolman_came_on(hass: HomeAssistant, bambuddy_api: SimpleNamespace) -> None:
-    """The fresh read asks for Spoolman too: switched on since the last read, no list."""
+    """The fresh read asks for Spoolman too: switched on since the last read, its spools are listed."""
     with_inventory(bambuddy_api)
     entry = await set_up(hass, X1C)
-    bambuddy_api.get_spoolman_status.return_value = {"enabled": True, "connected": True, "url": None}
+    with_spoolman_inventory(bambuddy_api)
 
-    with pytest.raises(ServiceValidationError) as raised:
-        await call_action(hass, "get_spools", response=True, entity_id=_slot(hass, entry, 3))
+    response = await call_action(hass, "get_spools", response=True, entity_id=_slot(hass, entry, 3))
 
-    assert raised.value.translation_key == "inventory_not_shown"
-    assert entry.runtime_data.inventory.data.shown is False
+    assert [spool["id"] for spool in response["spools"]][0] == 1
+    assert entry.runtime_data.inventory.data.spoolman is True
 
 
 async def test_an_assignment_without_answer_says_so(hass: HomeAssistant, bambuddy_api: SimpleNamespace) -> None:
@@ -469,16 +470,41 @@ async def test_an_assignment_without_answer_says_so(hass: HomeAssistant, bambudd
     assert raised.value.translation_key == "no_answer"
 
 
-async def test_no_spool_list_with_spoolman(hass: HomeAssistant, bambuddy_api: SimpleNamespace) -> None:
-    with_inventory(bambuddy_api)
-    bambuddy_api.get_spoolman_status.return_value = {"enabled": True, "connected": True, "url": None}
+async def test_a_spool_list_with_spoolman(hass: HomeAssistant, bambuddy_api: SimpleNamespace) -> None:
+    """Spoolman's spools, listed as BamBuddy's are: each with its place."""
+    with_spoolman_inventory(bambuddy_api)
     entry = await set_up(hass, X1C)
 
-    with pytest.raises(ServiceValidationError) as raised:
-        await call_action(hass, "get_spools", response=True, entity_id=_slot(hass, entry, 3))
+    response = await call_action(hass, "get_spools", response=True, entity_id=_slot(hass, entry, 3))
 
-    assert raised.value.translation_key == "inventory_not_shown"
+    by_id = {spool["id"]: spool for spool in response["spools"]}
+    assert set(by_id) == {1, 2, 3}
+    assert by_id[1]["place"] == {"this_slot": True}
+    assert by_id[3]["place"]["printer_name"] == "Desk"
 
+
+async def test_a_spoolman_spool_is_assigned_to_a_slot(hass: HomeAssistant, bambuddy_api: SimpleNamespace) -> None:
+    """To BamBuddy's Spoolman table; a spool from another slot moves in BamBuddy's own commit."""
+    with_spoolman_inventory(bambuddy_api, _extra(7))
+    idle(bambuddy_api)
+    entry = await set_up(hass, X1C)
+
+    await call_action(hass, "assign_spool", entity_id=_slot(hass, entry, 3), spool_id=7)
+    bambuddy_api.assign_spool.assert_awaited_once_with(7, X1C, 0, 2, move=False, spoolman=True)
+
+    bambuddy_api.assign_spool.reset_mock()
+    await call_action(hass, "assign_spool", entity_id=_slot(hass, entry, 4), spool_id=1)
+    bambuddy_api.assign_spool.assert_awaited_once_with(1, X1C, 0, 3, move=True, spoolman=True)
+    bambuddy_api.unassign_spool.assert_not_awaited()
+
+
+async def test_a_spoolman_assignment_is_removed_by_its_spool(hass: HomeAssistant, bambuddy_api: SimpleNamespace) -> None:
+    with_spoolman_inventory(bambuddy_api)
+    entry = await set_up(hass, X1C)
+
+    await call_action(hass, "unassign_spool", entity_id=_slot(hass, entry, 3))
+
+    bambuddy_api.unassign_spool.assert_awaited_once_with(X1C, 0, 2, spoolman_spool_id=1)
 
 async def test_a_spool_on_another_two_nozzle_printer_names_its_side(hass: HomeAssistant, bambuddy_api: SimpleNamespace) -> None:
     """Spool 3 on the H2D's left external spool: the X1C's list says which

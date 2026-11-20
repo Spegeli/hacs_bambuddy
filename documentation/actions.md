@@ -162,7 +162,7 @@ It works only while no filament is loaded, which is BamBuddy's rule. Refused for
 
 ## Spool inventory
 
-Spools come from BamBuddy's own inventory: [Spool inventory](spool-inventory.md). None of these work while Spoolman keeps the spools: [Not with Spoolman](spool-inventory.md#not-with-spoolman).
+Spools come from BamBuddy's own inventory: [Spool inventory](spool-inventory.md). While Spoolman keeps the spools they work on BamBuddy's Spoolman inventory: [With Spoolman](spool-inventory.md#with-spoolman).
 
 ### `bambuddy.assign_spool`
 

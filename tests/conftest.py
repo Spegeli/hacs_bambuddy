@@ -247,6 +247,8 @@ def bambuddy_api() -> Iterator[SimpleNamespace]:
         "get_spools": AsyncMock(return_value=[]),
         "get_spool_assignments": AsyncMock(return_value=[]),
         "get_spoolman_status": AsyncMock(return_value={"enabled": False, "connected": False, "url": None}),
+        "get_spoolman_spools": AsyncMock(return_value=[]),
+        "get_spoolman_assignments": AsyncMock(return_value=[]),
         "assign_spool": AsyncMock(return_value={}),
         "get_plug_status": AsyncMock(side_effect=lambda plug_id, patient=True: copy.deepcopy(plug_statuses[str(plug_id)])),
         **{name: AsyncMock(return_value=None) for name in CONTROLS},

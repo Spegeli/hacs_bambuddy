@@ -384,6 +384,16 @@ class BamBuddyClient:
         """Whether Spoolman keeps the spools instead of BamBuddy's inventory."""
         return await self._object("/spoolman/status")
 
+    async def get_spoolman_spools(self) -> list[dict[str, Any]]:
+        """Spoolman's spools, as BamBuddy maps them into its own spool shape
+        (archived ones left out). A spool carries its owner's note: never logged."""
+        return await self._list("/spoolman/inventory/spools")
+
+    async def get_spoolman_assignments(self) -> list[dict[str, Any]]:
+        """Which Spoolman spool sits in which slot, for every printer at once
+        (rows name the spool by `spoolman_spool_id`, not by a nested spool)."""
+        return await self._list("/spoolman/inventory/slot-assignments/all")
+
     async def get_plug_status(self, plug_id: int, *, patient: bool = True) -> dict[str, Any]:
         """A plug's state, reachability and energy figures: BamBuddy asks the
         plug itself -- 30 s, or 5 where Home Assistant's start waits for it."""
@@ -631,19 +641,32 @@ class BamBuddyClient:
     async def set_ams_backup(self, printer_id: int, enabled: bool) -> None:
         await self._command(f"/printers/{printer_id}/ams-backup", enabled=_flag(enabled))
 
-    async def assign_spool(self, spool_id: int, printer_id: int, ams_id: int, tray_id: int, *, move: bool = False) -> dict[str, Any]:
+    async def assign_spool(
+        self, spool_id: int, printer_id: int, ams_id: int, tray_id: int, *, move: bool = False, spoolman: bool = False
+    ) -> dict[str, Any]:
         """An inventory spool to a slot (external: ams 255, tray 0/1); BamBuddy
         sets the slot from it. "move" (BamBuddy's newer line) takes the spool
         out of its other slot; 1.2.5.7 ignores the field. BamBuddy checks no
-        print."""
-        body: dict[str, Any] = {"spool_id": spool_id, "printer_id": printer_id, "ams_id": ams_id, "tray_id": tray_id}
+        print. `spoolman`: the spool is Spoolman's, and BamBuddy keeps its
+        slot in its Spoolman table."""
+        if spoolman:
+            body: dict[str, Any] = {"spoolman_spool_id": spool_id, "printer_id": printer_id, "ams_id": ams_id, "tray_id": tray_id}
+            path = "/spoolman/inventory/slot-assignments"
+        else:
+            body = {"spool_id": spool_id, "printer_id": printer_id, "ams_id": ams_id, "tray_id": tray_id}
+            path = "/inventory/assignments"
         if move:
             body["move"] = True
-        answer = await self._request("POST", "/inventory/assignments", json=body)
+        answer = await self._request("POST", path, json=body)
         return answer if isinstance(answer, dict) else {}
 
-    async def unassign_spool(self, printer_id: int, ams_id: int, tray_id: int) -> None:
-        """Drop a slot's link to its spool; nothing goes to the printer."""
+    async def unassign_spool(self, printer_id: int, ams_id: int, tray_id: int, *, spoolman_spool_id: int | None = None) -> None:
+        """Drop a slot's link to its spool; nothing goes to the printer. A
+        Spoolman spool's link goes by the spool, not by the slot: BamBuddy
+        then frees every slot it held."""
+        if spoolman_spool_id is not None:
+            await self._request("DELETE", f"/spoolman/inventory/slot-assignments/{spoolman_spool_id}")
+            return
         await self._request("DELETE", f"/inventory/assignments/{printer_id}/{ams_id}/{tray_id}")
 
     async def control_plug(self, plug_id: int, on: bool) -> None:
