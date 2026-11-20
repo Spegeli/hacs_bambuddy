@@ -27,6 +27,7 @@ body:
         - Live updates
         - Printer sensors and binary sensors
         - AMS units and filament
+        - Spool inventory (assign, label scan)
         - Camera or cover image
         - Print controls (buttons, print speed, chamber light, temperatures, fans)
         - Actions

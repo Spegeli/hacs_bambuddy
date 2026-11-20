@@ -63,7 +63,7 @@ The entry's [diagnostics](troubleshooting.md#report-a-bug) are made to be shared
 | Left out | Stays in |
 |---|---|
 | The API key, tokens, BamBuddy's address | BamBuddy's version |
-| The printers' network addresses, access codes, camera addresses, serial numbers | Printer names, models, status |
+| The printers' network addresses, access codes, camera and WLED light addresses, serial numbers | Printer names, models, status |
 | Chip IDs of spools | Filament types and colors |
 | A smart plug's address, login and URLs | A plug's name and settings |
 | The print job's file name, a printer's location | The figures of the print |

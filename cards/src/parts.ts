@@ -667,8 +667,8 @@ export function slotTitle(hass: Hass, slot: Slot): string {
 export function shownExternalSpools(ctx: CardContext): string[] {
   const { hass, refs } = ctx;
   const feeds = (entityId: string): boolean => slotOf(hass, entityId).active || ctx.jobSpools?.has(entityId) === true;
-  // An H3C's inputs: beside its AMS 3H only the one that feeds -- they keep
-  // what they held while the AMS 3H was not detected --, else those with a spool.
+  // An H3C's inputs: beside its AMS 3H none -- they keep what they held
+  // while the AMS 3H was not detected --, else those that feed or hold a spool.
   if (refs.inputs) {
     // Beside a detected AMS 3H none: its slots take the settings.
     if (ctx.ams.some((unit) => unit.model === AMS_3H)) return [];

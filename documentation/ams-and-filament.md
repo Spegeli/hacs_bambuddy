@@ -58,7 +58,7 @@ If the printer paused for a fault, deal with its message first. Its [HMS message
 
 Set a filament for a spool without an [RFID chip](glossary.md#rfid-chip), as the printer's screen asks you to after a spool goes in. A Bambu Lab spool with its chip tells the printer by itself.
 
-1. Tap the ✏️ on the slot. Below the title the dialog names the nozzle that feeds the slot.
+1. Tap the ✏️ on the slot. Below the title the dialog names the nozzle that feeds the slot; on the H3C, the PrintTool the slot feeds, with its filament diameter.
 2. Choose the **Vendor**, then the **Filament**.
 3. Choose a **Color**, or **Other color …**.
 4. Leave the [K profile](#k-profiles) as it is if unsure.
@@ -164,11 +164,13 @@ The spool holder outside the AMS shows below the units; two-nozzle printers have
 
 The option `show_external_spool` hides it on a printer with an AMS. One the printer or its running job feeds from shows all the same.
 
+**The H3C** has nine external inputs, *External 1* to *External 9*, one per PrintTool. They show only while no AMS 3H is detected, and then only those that feed or hold a spool. Beside an AMS 3H, its slots take the settings. They have no **Load**; `show_external_spool` does not apply.
+
 ## When a unit is replaced or moved
 
 Each unit is a device known by its serial number. It keeps its device, entities and history wherever on the printer it is plugged in.
 
-**Replaced:** a replacement unit with a serial of its own is a new device with its own IDs (an AMS Lite stays the same device while BamBuddy reports no serial). The old one stays with unavailable entities until you delete it; its device page offers Delete once the printer no longer reports it.
+**Replaced:** a replacement unit with a serial of its own is a new device with its own IDs (an AMS Lite, or a unit BamBuddy reports with the serial "N/A", stays the same device while BamBuddy reports no serial). The old one stays with unavailable entities until you delete it; its device page offers Delete once the printer no longer reports it.
 
 **Moved to another printer:** the unit is a new device there. Delete its old device first, and it gets the plain entity IDs; otherwise they end in `_2`.
 

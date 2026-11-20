@@ -7,7 +7,7 @@ These pages describe the latest stable release. A beta's new parts are in its [r
 | Page | Find here |
 |---|---|
 | [Configuration](configuration.md) | What each permission opens, setup, adding printers, another address, key problems, live updates |
-| [Printers](printers.md) | What each of the 14 models has: chamber, fans, limits, camera, AI detection, drying |
+| [Printers](printers.md) | What each of the 15 models has: chamber, fans, limits, camera, AI detection, drying |
 | [Dashboard card](dashboard-card.md) | Adding the card, its tabs and chips, camera, HMS messages, maintenance, options |
 | [AMS and filament](ams-and-filament.md) | Slots, loading, setting a filament, K profiles, drying, filament backup, the external spool |
 | [Spool inventory](spool-inventory.md) | BamBuddy's spools: shown, assigned, scanned by their label |
@@ -19,7 +19,7 @@ These pages describe the latest stable release. A beta's new parts are in its [r
 | [Glossary](glossary.md) | AMS, HMS, K profile, airduct and the other terms |
 | [How it works](how-it-works.md) | What is read when, what stays local, privacy |
 | [Troubleshooting](troubleshooting.md) | Problems in the words on the screen, the connection check, Repairs notices, known limitations |
-| [Updating](updating.md) | Updates, beta versions, upgrading from a date version |
+| [Updating](updating.md) | Updates and beta versions |
 
 ## How the devices fit together
 

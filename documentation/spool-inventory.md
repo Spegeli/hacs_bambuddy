@@ -12,7 +12,7 @@ The inventory here is BamBuddy's own [spool inventory](glossary.md#spool-invento
 
 ## What the card shows
 
-A slot with a spool from the inventory names it below the slot's filament, with what is left of it, such as *89 % · 886 g*. The filled part of the slot's color follows that figure.
+A slot with a spool from the inventory names it below the slot's filament, with what is left of it, such as *89 % · 886 g*. A spool for 2.85 mm filament (the H3C's TPU tool) says so first: *2.85 mm · 89 % · 886 g*. The filled part of the slot's color follows that figure.
 
 | You see | Meaning |
 |---|---|
@@ -39,7 +39,7 @@ The same figures are attributes of the slot's sensor; see [AMS units](entities.m
 
 BamBuddy then sets the slot from the spool: its material, color, profile and K value.
 
-- **List:** spools are grouped by material, the slot's own first in its group. Each shows its color, what is left, its number, its storage location and where it is assigned.
+- **List:** spools are grouped by material, the slot's own first in its group. Each shows its color, its filament diameter where it is 2.85 mm, what is left, its number, its storage location and where it is assigned.
 - **A spool in another slot** moves: the dialog says so, and it leaves that slot.
 - **A slot with a Bambu Lab chip spool** has no tab: BamBuddy links that spool itself.
 - **No tab at all:** the key lacks **Manage Inventory**, or the inventory has no spools.

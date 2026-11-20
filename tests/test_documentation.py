@@ -237,16 +237,17 @@ def test_a_refused_key_is_explained() -> None:
 
 
 def test_ams_entity_ids_name_the_unit() -> None:
-    """AMS entity IDs carry the unit's model and serial; the AMS Lite's the
-    printer's serial and its letter until BamBuddy reports its own (#3348),
-    then a notice lists the renamed IDs."""
+    """AMS entity IDs carry the unit's model and serial; a unit without one
+    (the AMS Lite before #3348, a serial of "N/A") the printer's serial and
+    its letter until BamBuddy reports its own, then a notice lists the
+    renamed IDs."""
     entities, filament = page("entities.md"), page("ams-and-filament.md")
     assert "sensor.ams_2_pro_19c06a000000001_humidity" in entities
-    assert "| AMS Lite, for now | `ams_lite_<printer serial>_<letter>_<key>` | `sensor.ams_lite_0309da000000002_a_slot_1` |" in entities
+    assert "| AMS unit without a serial | `<AMS model>_<printer serial>_<letter>_<key>` | `sensor.ams_lite_0309da000000002_a_slot_1` |" in entities
     assert "maziggy/bambuddy/issues/3348" in entities
     assert "the plain entity IDs; otherwise they end in `_2`" in filament
     # A replacement AMS Lite without a serial stays the same device.
-    assert "an AMS Lite stays the same device while BamBuddy reports no serial" in filament
+    assert "stays the same device while BamBuddy reports no serial" in filament
     # Known limitations: the AMS Lite until BamBuddy reports its serial.
     limitations = page("troubleshooting.md")
     assert "**AMS Lite without its serial number:**" in limitations
@@ -294,17 +295,6 @@ def test_the_pages_say_how_plugs_are_known() -> None:
         assert line in configuration, line
 
 
-def test_a_date_version_is_told_the_one_way_up() -> None:
-    """The Marketplace compares versions: `v2.1.0` ranks below a date, and
-    only `v2.0.0_redesign`, which it cannot compare, is offered. Once a newer
-    stable is out, a date version gets no update and has to pick one."""
-    updating = page("updating.md")
-    assert "`v2.1.0` compares below `2026.05.17`" in updating
-    assert "**Install another version** is the one way" in updating
-    assert "(https://www.home-assistant.io/integrations/marketplace/)" in updating
-    assert "in our test" not in updating
-
-
 def _action_rows() -> dict[str, str]:
     text = page("actions.md")
     return {line.split(" | ")[0]: line for line in text.splitlines() if line.startswith("| `bambuddy.")}
@@ -341,11 +331,9 @@ def test_the_card_page_names_the_camera_modes_as_the_editor_does() -> None:
 
 def test_the_four_anchors_stay() -> None:
     """Links out of our reach lead here: released cards to the card's
-    section, the live forum and Reddit posts to the upgrade, released issue
-    forms to the troubleshooting and the API key."""
+    section, released issue forms to the troubleshooting and the API key."""
     assert {
         "-dashboard-card",
-        "%EF%B8%8F-upgrading-from-a-date-version",
         "-troubleshooting",
         "create-an-api-key",
     } <= _anchors(_README)

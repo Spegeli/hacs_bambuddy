@@ -27,9 +27,6 @@ A custom <a href="https://www.home-assistant.io/">Home Assistant</a> integration
 
 📚 Everything in detail, for the latest release: the [documentation](https://github.com/Spegeli/hacs_bambuddy/blob/main/documentation/README.md).
 
-> [!IMPORTANT]
-> **Updating from a date version (2026.05.17 or older)?** Read [Upgrading from a date version](https://github.com/Spegeli/hacs_bambuddy/blob/main/documentation/updating.md#upgrading-from-a-date-version) first — it may need a new API key and cannot be undone.
-
 ---
 
 ## ✨ Features
@@ -63,7 +60,7 @@ New to a word such as AMS, HMS or K profile? The [Glossary](https://github.com/S
 ## 📋 Requirements
 
 - Home Assistant **2025.5** or newer
-- A running [BamBuddy](https://github.com/maziggy/bambuddy) server, version **1.2.5.7** or newer, that Home Assistant can reach — with your printers added in BamBuddy first (see [BamBuddy's documentation](https://wiki.bambuddy.cool)): the integration shows what BamBuddy manages
+- A running [BamBuddy](https://github.com/maziggy/bambuddy) server, version **1.2.5.7** or newer (an H3C needs **1.3.1**), that Home Assistant can reach — with your printers added in BamBuddy first (see [BamBuddy's documentation](https://wiki.bambuddy.cool)): the integration shows what BamBuddy manages
 - A BamBuddy API key with **Read Status**, **Control Printer** and **Manage Maintenance**; **Manage Inventory** is optional (see **Create an API key** under Configuration)
 - For the controls: the printer's **developer LAN mode** on — without it the printer ignores the commands BamBuddy passes on (see [Troubleshooting](https://github.com/Spegeli/hacs_bambuddy/blob/main/documentation/troubleshooting.md#printers-and-controls))
 - For the installation: the Marketplace (formerly HACS), part of Home Assistant from 2026.11 on, or [HACS](https://hacs.xyz) on an older one
@@ -82,9 +79,18 @@ You need a BamBuddy API key for the setup: see **Create an API key** under Confi
 
 ### Marketplace (formerly HACS)
 
-1. In Home Assistant, open **Settings → Marketplace**. The first time, tick **I understand the risks and agree** and choose **Continue**.
-2. Choose **Add from link**, enter `Spegeli/hacs_bambuddy` or the full address under **GitHub link** and choose **Add** — or open [BamBuddy in your Marketplace](https://my.home-assistant.io/redirect/marketplace_repository/?owner=Spegeli&repository=hacs_bambuddy&category=integration). Adding a repository needs a GitHub connection: without one, the Marketplace asks for it first and gives you a code to enter on GitHub. The connection only reads public information, and you can revoke it in your GitHub settings.
-3. Open **BamBuddy** on the **Browse** tab, under **New** or **Available**, or search for it. Choose **Install**, then **Install** in the dialog that warns "You install this at your own risk".
+[![Open your Home Assistant instance and open this repository in the Marketplace (formerly HACS).](https://my.home-assistant.io/badges/marketplace_repository.svg)](https://my.home-assistant.io/redirect/marketplace_repository/?owner=Spegeli&repository=hacs_bambuddy&category=integration)
+
+The badge opens BamBuddy in your Marketplace. Without it:
+
+1. In Home Assistant, open **Settings → Marketplace**.
+2. Choose **Add from link**.
+3. Enter the repository under **GitHub link**, as `Spegeli/hacs_bambuddy` or the full address:
+   ```text
+   https://github.com/Spegeli/hacs_bambuddy
+   ```
+4. Choose **Add**.
+5. Open **BamBuddy** on the **Browse** tab, under **New** or **Available**, or search for it. Choose **Install**, then **Install** in the dialog that warns "You install this at your own risk".
 
 No restart needed: the setup opens by itself.
 
@@ -130,7 +136,7 @@ New versions show under **Settings → Updates** and take a restart of Home Assi
 **Required** — the integration refuses a key that lacks one:
 
 - **Read Status**: everything Home Assistant shows, the camera included.
-- **Control Printer**: the controls — print, speed, temperatures, fans, light, ventilation, moving the axes, filament, drying, HMS answers, the AI detection and switching smart plugs.
+- **Control Printer**: the controls — print, speed, temperatures, fans, light, ventilation, moving the axes, filament, drying, HMS answers, the AI detection, the AMS filament backup, clearing the plate and switching smart plugs.
 - **Manage Maintenance**: marking maintenance done.
 
 **Optional:**
@@ -222,12 +228,6 @@ Reload the page (twice), or reset the companion app's frontend cache. The card n
 With *Print status* `offline`, BamBuddy lost the printer: the card's *Check connection* says why. If *Print status* is unavailable too, BamBuddy does not answer or no longer accepts the key: look under **Settings → Repairs**.
 
 More, and what to add to a bug report (**⋮ → Download diagnostics** on the BamBuddy entry): [Troubleshooting](https://github.com/Spegeli/hacs_bambuddy/blob/main/documentation/troubleshooting.md).
-
----
-
-## ⬆️ Upgrading from a date version
-
-2.0.0 is a new integration under the old name. It needs a new API key where the stored one lacks a permission or BamBuddy does not know it; a 1.x key usually has Read Status only. It also changes values your automations may compare. Read [Upgrading from a date version](https://github.com/Spegeli/hacs_bambuddy/blob/main/documentation/updating.md#upgrading-from-a-date-version) before you update.
 
 ---
 

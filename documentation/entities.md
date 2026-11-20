@@ -19,14 +19,14 @@ An entity ID does not depend on what the printer is called, or on the language.
 | Printer | `<model>_<serial>_<key>` | `sensor.x1c_00m00a000000001_print_status` |
 | Printer without a model | `printer_<serial>_<key>` | `sensor.printer_00m00a000000001_print_status` |
 | AMS unit | `<AMS model>_<serial>_<key>` | `sensor.ams_2_pro_19c06a000000001_humidity` |
-| AMS Lite, for now | `ams_lite_<printer serial>_<letter>_<key>` | `sensor.ams_lite_0309da000000002_a_slot_1` |
+| AMS unit without a serial | `<AMS model>_<printer serial>_<letter>_<key>` | `sensor.ams_lite_0309da000000002_a_slot_1` |
 | BamBuddy server | `bambuddy_<key>` | `sensor.bambuddy_total_prints` |
 | Smart plug itself | `bambuddy_smart_plug_<code>` | `switch.bambuddy_smart_plug_3f9a2c` |
 | Smart plug's other entities | `bambuddy_smart_plug_<code>_<key>` | `sensor.bambuddy_smart_plug_3f9a2c_power` |
 | Switch-off after the print | `<model>_<serial>_<key>`, as the printer's | `switch.x1c_00m00a000000001_auto_off` |
 
 - **Yours** carry the model and serial of your printer or AMS unit. The device page shows the serial.
-- **The AMS Lite** carries the printer's serial and its letter until BamBuddy reports its own serial ([AMS units](#ams-units)). The A2L's AMS Lite has no letter.
+- **A unit without a serial** — the AMS Lite on BamBuddy 1.2.5.7, or a unit BamBuddy reports as "N/A" — carries the printer's serial and its letter until BamBuddy reports its own ([AMS units](#ams-units)). The A2L's AMS Lite and the AMS 3H have no letter.
 - **A second BamBuddy server's** own entities end in `_2`, such as `sensor.bambuddy_total_prints_2`. Its printers' IDs carry their own serials; a printer set up in both entries gets `_2` in the second.
 - **A smart plug's** code is made from what the plug switches. Its IDs stay when the plug is renamed or moved to another printer, and go with what it switches ([Smart plugs](#smart-plugs)).
 - **A Tasmota plug's** code comes from its IP address: if that changes, the plug gets new entities and entity IDs. Give it a fixed address ([How a plug is known](smart-plugs.md#how-a-plug-is-known)).
@@ -102,7 +102,7 @@ The buttons act at once; only the dashboard card asks before it stops a print. P
 | Bed target temperature | Number | Sets the bed |
 | Chamber target temperature | Number | Sets the chamber heater, where BamBuddy reports one |
 
-- A target goes as high as [Temperature limits](printers.md#temperature-limits) says for the model. On the H2 series the entity stops at 320 °C, BamBuddy's limit, though the printer reaches 350 °C.
+- A target goes as high as [Temperature limits](printers.md#temperature-limits) says for the model. On the H2 series and the H3C the entity stops at 320 °C, BamBuddy's limit, though the printer reaches 350 °C.
 - The lowest value (0 °C, 32 °F) turns a heater off.
 - A running job may set a target again.
 - The chamber's target has rules of its own: [Who locks whom](chamber.md#who-locks-whom).
@@ -113,10 +113,10 @@ The buttons act at once; only the dashboard card asks before it stops a print. P
 |---|---|---|
 | Part cooling fan | Fan | Every printer |
 | Auxiliary fan | Fan | Most printers; the stock X1 and the P1P have it disabled at first |
-| Left auxiliary fan | Fan | The X2D, and a P2S with that fan |
+| Left auxiliary fan | Fan | The X2D, and a P2S or H3C that reports it |
 | Right auxiliary fan | Fan | The X2D |
 | Chamber fan | Fan | The X1 series and the P1S; the P1P has it disabled at first |
-| Exhaust fan | Fan | The H2 series, the X2D, a P2S with the External Exhaust Fan kit |
+| Exhaust fan | Fan | The H2 series, the H3C, the X2D, a P2S with the External Exhaust Fan kit |
 | Hotend fan | Sensor | Its speed in % (Diagnostic) |
 | Airduct mode | Select | Cooling or Heating; *Laser mode* while the printer set it for its laser module (Configuration) |
 | Ventilation | Fan | Printers with an airduct: draws air through the chamber |
@@ -170,7 +170,7 @@ A sensitivity stays as set on the printer. The other checks are on or off only. 
 | AMS filament backup | Switch | With a spool out, the printer continues with a matching one (Configuration) |
 | AMS status | Sensor | What a filament change is doing: [the states](#print-status-stage-and-ams-status) |
 | Active filament | Sensor | The filament in use, or *None*; attributes as a [slot's](#slot-attributes) |
-| External spool | Sensor | The filament on the spool holder, or *Empty* |
+| External spool | Sensor | The filament on the spool holder, or *Empty*; not on two-nozzle printers or the H3C (see below) |
 | Left external spool | Sensor | Two nozzles: the left spool holder |
 | Right external spool | Sensor | Two nozzles: the right spool holder |
 | External 1 … 9 | Sensor | H3C: the external input of each tool, numbered as on its screen |
@@ -213,7 +213,7 @@ A sensitivity stays as set on the printer. The other checks are on or off only. 
 | Online | Binary sensor | Whether BamBuddy is connected to the printer |
 | Developer mode | Binary sensor | Whether the printer's [developer LAN mode](glossary.md#developer-lan-mode) is on |
 | SD card | Binary sensor | Whether a card is in |
-| USB drive | Binary sensor | Whether a drive is in; the P2S, X2D and H2 series have it instead of the SD card |
+| USB drive | Binary sensor | Whether a drive is in; the P2S, X2D, H2 series and H3C have it instead of the SD card |
 | Wired network | Binary sensor | Only the X1E and the H2D Pro, the printers with a port |
 | Wi-Fi signal | Sensor | In dBm; disabled at first on a printer that is on a cable at setup |
 | IP address | Sensor | The printer's address in BamBuddy |
@@ -230,7 +230,7 @@ Each [AMS](glossary.md#ams) unit is a device under its printer: **AMS**, **AMS 2
 
 Its IDs carry its model and serial, such as `sensor.ams_2_pro_19c06a000000001_slot_1`.
 
-BamBuddy 1.2.5.7 reports no serial for the [AMS Lite](glossary.md#ams-lite) ([maziggy/bambuddy#3348](https://github.com/maziggy/bambuddy/issues/3348); BamBuddy 1.3.0 does). Until yours does, its IDs carry the printer's serial and the unit's letter, such as `sensor.ams_lite_0309da000000002_a_slot_1`. What happens once it reports the serial, and to a replaced or moved unit: [When a unit is replaced or moved](ams-and-filament.md#when-a-unit-is-replaced-or-moved).
+BamBuddy 1.2.5.7 reports no serial for the [AMS Lite](glossary.md#ams-lite) ([maziggy/bambuddy#3348](https://github.com/maziggy/bambuddy/issues/3348); BamBuddy 1.3.0 does). A unit BamBuddy reports with the serial "N/A" counts as one without. Until yours reports one, its IDs carry the printer's serial and the unit's letter, such as `sensor.ams_lite_0309da000000002_a_slot_1`. What happens once it reports the serial, and to a replaced or moved unit: [When a unit is replaced or moved](ams-and-filament.md#when-a-unit-is-replaced-or-moved).
 
 | Entity | Type | What it shows |
 |---|---|---|

@@ -4,7 +4,7 @@ Heat or ventilate the chamber of a printer with an airduct, and see what locks w
 
 [← Documentation](README.md)
 
-**Needs:** a printer with an [airduct](glossary.md#airduct): the P2S, the X2D or the H2 series. Other printers: [Chamber in Printers](printers.md#chamber).
+**Needs:** a printer with an [airduct](glossary.md#airduct): the P2S, the X2D, the H2 series or the H3C. Other printers: [Chamber in Printers](printers.md#chamber).
 
 Everything here is in the card's Control tab, in the block **Heating and ventilation** (in the card editor, the section *Heating and ventilation*).
 

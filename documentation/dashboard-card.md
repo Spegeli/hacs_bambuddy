@@ -21,7 +21,7 @@ The other options can stay as they are. The groups **General**, **Status**, **Co
 
 ## Head and chips
 
-The head shows the printer's name in BamBuddy, its model, nozzle and print hours, and a button for the light.
+The head shows the printer's name in BamBuddy, its model, nozzle and print hours (on the H3C no nozzle: **Printer information** lists its nine PrintTools), and a button for the light.
 
 The ⋮ menu holds **Printer information**, **Maintenance**, **Refresh status** and **Check connection**. For admins it also holds **Open device page**.
 
@@ -61,6 +61,7 @@ These sections follow, in the order you choose:
 | Print controls | **Pause print** or **Resume print**, **Stop print**, **Skip objects**; only during a print |
 | Power | The printer's [smart plugs](smart-plugs.md#in-the-card) and the switch-off after the print |
 | Temperatures | Each heater with its target; a tap sets it |
+| PrintTools | The H3C's nine PrintTools; see [PrintTools](#printtools). Only on the H3C |
 | AMS and filament | Each unit's colors, what is left, model, humidity and temperature; a tap opens the Filament tab |
 | Fans | Each fan's speed; a tap sets it |
 | Print speed | Silent, Standard, Sport or Ludicrous; only during a print |
@@ -77,7 +78,7 @@ After a print, BamBuddy's queue waits for an empty plate. The card then says so:
 
 ### PrintTools
 
-The H3C's nine PrintTools, above the AMS: a tile each, with the colour of the filament that feeds it and its number. The tool on the toolhead is outlined. A tile's tooltip names its nozzle, the filament size, its print time and whether it holds filament; a tap opens the tool: its nozzle, the filament it takes, what feeds it, its print time and whether it is on the toolhead. A place the printer does not report shows a dash.
+The H3C's nine PrintTools, above the AMS: a tile each, with the color of the filament that feeds it and its number. The tool on the toolhead is outlined. A tile's tooltip names its nozzle, the filament size, its print time and whether it holds filament; a tap opens the tool: its nozzle, the filament it takes, what feeds it, its print time and whether it is on the toolhead. A place the printer does not report shows a dash.
 
 ## Control
 
@@ -253,7 +254,7 @@ What the table leaves out:
 - **`header_chips`:** door, storage and drying show only while they matter, with one chip for all drying units. Power shows only for a printer with a smart plug. Chips never cut their text: more chips take more rows, and each shows its full text as a tooltip.
 - **`compact_chips`:** *OK* instead of *HMS OK*, and *3* instead of *Maintenance: 3 due*. An update shows the version it brings, drying its time (*2×* before it for several units), and a plug its power or its state in a word. An open door and missing storage show as their icon. A tooltip shows the full text, and screen readers read it out.
 - **`start_view`:** Status where that tab is hidden; the editor warns when its options hide it.
-- **`show_external_spool`:** one the printer or its running job feeds from shows all the same.
+- **`show_external_spool`:** one the printer or its running job feeds from shows all the same. On the H3C see [The external spool](ams-and-filament.md#the-external-spool).
 - **`assign_scanned_spool`:** not where the dialog warns, the spool is in another slot, or a running print feeds the slot.
 
 ### The editor
