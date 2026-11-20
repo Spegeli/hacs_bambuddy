@@ -3,10 +3,11 @@
 BamBuddy's answers come from tests/fixtures/, one file per answer, built
 from the shapes BamBuddy 1.2.5.7 returns. The field names are BamBuddy's own;
 the values are invented -- addresses from the documentation range
-192.0.2.0/24, made-up serial numbers. Five printers: an X1C printing with an
+192.0.2.0/24, made-up serial numbers. Six printers: an X1C printing with an
 AMS (1), an A1 Mini idle with an AMS Lite (2), a P1S paused with HMS errors
-(3), an H2D with two nozzles, an AMS 2 Pro and an AMS HT (4), and an X1E
-BamBuddy never reached (5).
+(3), an H2D with two nozzles, an AMS 2 Pro and an AMS HT (4), an X1E
+BamBuddy never reached (5), and an H3C with its AMS 3H as BamBuddy 1.3.1
+reports it (6).
 """
 from __future__ import annotations
 
@@ -46,13 +47,14 @@ STREAM_TOKEN = "stream-token-123"
 # The live connection's token; no test holds a socket unless it opens one itself.
 WS_TOKEN = "ws-token-for-tests"
 
-X1C, A1_MINI, P1S, H2D, X1E = 1, 2, 3, 4, 5
+X1C, A1_MINI, P1S, H2D, X1E, H3C = 1, 2, 3, 4, 5, 6
 _STATUSES = {
     X1C: "status_x1c.json",
     A1_MINI: "status_a1mini.json",
     P1S: "status_p1s.json",
     H2D: "status_h2d.json",
     X1E: "status_never.json",
+    H3C: "status_h3c.json",
 }
 
 # Keys that lack a permission, by their /auth/me answer, with each scope's mark.
@@ -103,8 +105,14 @@ def _status_of(statuses: dict[int, Any], printer_id: int) -> Any:
 
 
 def printer_info(printer_id: int) -> dict[str, Any]:
-    """BamBuddy's answer for one printer of tests/fixtures/printers.json."""
-    return next(p for p in load_fixture("printers.json") if p["id"] == printer_id)
+    """BamBuddy's answer for one printer of tests/fixtures/printers.json (the
+    H3C of tests/fixtures/printers_h3c.json)."""
+    return next(p for p in load_fixture("printers.json") + load_fixture("printers_h3c.json") if p["id"] == printer_id)
+
+
+def with_h3c(api: SimpleNamespace) -> None:
+    """BamBuddy lists the H3C too (BamBuddy 1.3.1 knows it)."""
+    api.get_printers.return_value = load_fixture("printers.json") + load_fixture("printers_h3c.json")
 
 
 def status_never(printer_id: int, **fields: Any) -> dict[str, Any]:

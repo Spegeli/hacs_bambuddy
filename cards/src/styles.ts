@@ -1496,6 +1496,111 @@ export const cardStyles = css`
     display: flex;
     gap: 8px;
   }
+  /* The AMS 3H's nine colours: five a row, then four. */
+  .ams-slots.nine {
+    display: grid;
+    grid-template-columns: repeat(5, auto);
+    justify-content: start;
+    /* Room for the drying zone's frame below the readings and between the rows. */
+    margin-top: 3px;
+    row-gap: 10px;
+  }
+  /* The H3C has one AMS: its nine colours in a row where the card has room. */
+  @container (min-width: 388px) {
+    .ams-slots.nine {
+      grid-template-columns: repeat(9, auto);
+      column-gap: 6px;
+    }
+  }
+  /* The H3C's nine PrintTools: a tile each, the one on the toolhead outlined. */
+  .tools {
+    display: grid;
+    gap: 8px;
+  }
+  .tool-tiles {
+    display: grid;
+    grid-template-columns: repeat(9, minmax(0, 1fr));
+    gap: 4px;
+  }
+  .tool-tile {
+    display: grid;
+    justify-items: center;
+    gap: 2px;
+    min-width: 0;
+    padding: 6px 0 5px;
+    border-radius: 8px;
+    border: 2px solid transparent;
+    background: var(--bb-tint);
+    color: var(--primary-text-color);
+    font: inherit;
+    font-size: 12px;
+    line-height: 14px;
+    cursor: pointer;
+  }
+  .tool-tile.on-head {
+    border-color: var(--bb-accent);
+  }
+  .tool-tile.missing {
+    cursor: default;
+    color: var(--bb-muted);
+  }
+  .tool-dot {
+    width: 18px;
+    height: 18px;
+    border-radius: 50%;
+    box-sizing: border-box;
+  }
+  .tool-dot.outlined {
+    border: 1px solid var(--bb-divider);
+  }
+  .tool-dot.empty {
+    border: 1.5px dashed var(--bb-muted);
+  }
+  .tool-dot.none {
+    display: grid;
+    place-items: center;
+  }
+  .tool-number {
+    font-weight: 600;
+  }
+  /* Where a slot's PrintTool is loaded at the printer: its words instead of a button. */
+  .slot-hint {
+    max-width: 180px;
+    font-size: 12px;
+    line-height: 1.35;
+    text-align: right;
+    color: var(--bb-muted);
+  }
+  /* Its frame 1 px clear of the ring of a slot in use, which stands 4 px
+     around the colour: 1 px beyond the slot at the sides, 3 px of room above
+     the colour (taken back outside, so the row stays put). */
+  .ams-slot.zone {
+    outline: 2px solid var(--bb-heat);
+    outline-offset: 2px;
+    border-radius: 6px;
+    background: color-mix(in srgb, var(--bb-heat) 22%, transparent);
+    padding-top: 3px;
+    margin-top: -3px;
+  }
+  .zone-env {
+    display: inline-flex;
+    gap: 6px;
+    align-items: center;
+    color: var(--bb-heat);
+  }
+  /* Its readings as the unit's own: icon and figure centred on one line. */
+  .zone-env > span {
+    display: inline-flex;
+    align-items: center;
+    gap: 1px;
+    font-variant-numeric: tabular-nums;
+  }
+  .zone-env .icon {
+    color: var(--bb-heat);
+  }
+  .zone-sep {
+    color: var(--bb-muted);
+  }
   .ams-slot {
     display: flex;
     flex-direction: column;
@@ -1726,7 +1831,8 @@ export const cardStyles = css`
     gap: 8px;
     min-height: 44px;
   }
-  .heat-row + .heat-row {
+  .heat-row + .heat-row,
+  .vent-part .heat-row {
     border-top: 1px solid var(--bb-divider);
   }
   .heat-name {
@@ -1763,7 +1869,6 @@ export const cardStyles = css`
     color: var(--bb-heat);
   }
   /* Ventilation in its own tone: the head always, the row while it runs. */
-  .vent-head .section-label .icon,
   .heat-name.vent.on .heat-label .icon {
     color: var(--bb-accent);
   }
@@ -2241,6 +2346,21 @@ export const cardStyles = css`
   }
   .slot.active {
     background: color-mix(in srgb, var(--bb-accent) 10%, transparent);
+  }
+  /* The AMS 3H's drying zone while it dries: the heat tone around its slots;
+     a slot in use keeps its own background. */
+  .slot.zone {
+    box-shadow: inset 0 0 0 2px var(--bb-heat);
+    background: color-mix(in srgb, var(--bb-heat) 16%, var(--bb-tint));
+  }
+  .slot.zone.active {
+    background: color-mix(in srgb, var(--bb-accent) 10%, transparent);
+  }
+  .drying-sub {
+    display: block;
+    font-size: 12px;
+    color: var(--bb-muted);
+    margin-top: 2px;
   }
   .slot-main {
     flex: 1;
@@ -3120,8 +3240,10 @@ export const cardStyles = css`
   .k-hint-box > .dlg-note {
     margin-top: 6px;
   }
-  /* The nozzle that feeds the slot, quiet under the dialog's title. */
-  .nozzle-line {
+  /* The nozzle that feeds the slot, quiet under the dialog's title; so the
+     AMS 3H's drying zone. */
+  .nozzle-line,
+  .dry-zone {
     display: flex;
     flex-direction: column;
     gap: 2px;
@@ -3775,6 +3897,10 @@ export const cardStyles = css`
      go to the bottom, clear of the gear and the close button (chips are
      never cut). */
   @container (max-width: 260px) {
+    /* The nine PrintTools in rows of five and four. */
+    .tool-tiles {
+      grid-template-columns: repeat(5, minmax(0, 1fr));
+    }
     .live-tags {
       top: auto;
       bottom: 8px;
@@ -3885,6 +4011,9 @@ export const cardStyles = css`
       display: grid;
       grid-template-columns: repeat(2, auto);
       justify-content: start;
+    }
+    .ams-slots.nine {
+      grid-template-columns: repeat(3, auto);
     }
     button.ams-strip {
       padding-right: 28px;

@@ -15,6 +15,7 @@ from custom_components.bambuddy.models import (
     ams_letter,
     ams_model,
     ams_object_id,
+    ams_type_by_place,
     ams_name,
     ams_number,
     by_code,
@@ -33,6 +34,7 @@ from custom_components.bambuddy.models import (
     slot_attributes,
     slot_state,
     tray_id,
+    ventilation_fans,
     tray_label,
     ventilating,
 )
@@ -122,6 +124,10 @@ def test_every_stage_is_an_option() -> None:
         ({"id": 1, "module_type": ""}, "A1", "AMS"),
         ({"id": 2, "module_type": ""}, "A2L", "AMS"),
         ({"id": 0, "module_type": ""}, "A2L", "AMS"),
+        # The H3C's AMS 3H: BamBuddy's module, its type, or its place 32 alone.
+        ({"id": 32, "module_type": "n10a"}, "H3C", "AMS 3H"),
+        ({"id": 32, "module_type": "", "ams_type": 6}, "H3C", "AMS 3H"),
+        ({"id": 32}, None, "AMS 3H"),
     ],
 )
 def test_ams_model(unit: dict[str, Any], model: str | None, expected: str) -> None:
@@ -129,7 +135,7 @@ def test_ams_model(unit: dict[str, Any], model: str | None, expected: str) -> No
     assert expected in AMS_MODELS
 
 
-@pytest.mark.parametrize(("unit_id", "letter"), [(0, "a"), (3, "d"), (128, "a"), (135, "h"), (6, None)])
+@pytest.mark.parametrize(("unit_id", "letter"), [(0, "a"), (3, "d"), (128, "a"), (135, "h"), (6, None), (32, None)])
 def test_ams_letter(unit_id: int, letter: str | None) -> None:
     """The place's letter as on the printer; the A2L's AMS Lite has none."""
     assert ams_letter(unit_id) == letter
@@ -146,13 +152,25 @@ def test_ams_letter(unit_id: int, letter: str | None) -> None:
         ("AMS Lite", "26A19A500700555", 6, None, "slot_1", "ams_lite_26a19a500700555_slot_1"),
         ("AMS HT", "id7", 128, None, "humidity", "ams_ht_id7_a_humidity"),
         ("AMS", "00M09A350500654", 2, "", "drying", "ams_00m09a350500654_c_drying"),
+        ("AMS 3H", "31B00A000000006", 32, "0A3H0A000000006", "slot_9", "ams_3h_0a3h0a000000006_slot_9"),
+        ("AMS 3H", "31B00A000000006", 32, None, "slot_9", "ams_3h_31b00a000000006_slot_9"),
     ],
 )
 def test_ams_object_id(model: str, printer_key: str, unit_id: int, serial: str | None, key: str, expected: str) -> None:
     assert ams_object_id(model, printer_key, unit_id, serial, key) == expected
 
 
-@pytest.mark.parametrize(("unit_id", "number"), [(0, 1), (3, 4), (6, 1), (128, 1), (130, 3)])
+@pytest.mark.parametrize(
+    ("unit", "known"),
+    [({"id": 128}, True), ({"id": 6}, True), ({"id": 32}, True), ({"id": 0, "ams_type": 6}, True), ({"id": 0}, False), ({"id": 1, "ams_type": 1}, False)],
+)
+def test_a_place_or_type_that_tells_the_unit(unit: dict[str, Any], known: bool) -> None:
+    """The AMS 3H is known by its place or BamBuddy's type, without its
+    module (BamBuddy reads that only when the printer connects)."""
+    assert ams_type_by_place(unit) is known
+
+
+@pytest.mark.parametrize(("unit_id", "number"), [(0, 1), (3, 4), (6, 1), (128, 1), (130, 3), (32, 1)])
 def test_ams_number(unit_id: int, number: int) -> None:
     assert ams_number(unit_id) == number
 
@@ -161,7 +179,30 @@ def test_ams_number(unit_id: int, number: int) -> None:
     ("unit_id", "slot", "global_id"), [(0, 0, 0), (0, 3, 3), (1, 2, 6), (3, 3, 15), (6, 1, 25), (128, 0, 128)]
 )
 def test_tray_id(unit_id: int, slot: int, global_id: int) -> None:
-    assert tray_id(unit_id, slot) == global_id
+    # BamBuddy 1.2.5.7 and 1.3.0 report no ams_type: the place tells it.
+    assert tray_id({"id": unit_id}, slot) == global_id
+
+
+@pytest.mark.parametrize(
+    ("unit", "slot", "global_id"),
+    [
+        # BamBuddy 1.3.1 names each unit's type: Bambu Studio's global tray ids.
+        ({"id": 0, "ams_type": 1}, 3, 3),
+        ({"id": 2, "ams_type": 3}, 1, 9),
+        ({"id": 129, "ams_type": 4}, 0, 129),
+        ({"id": 6, "ams_type": 5}, 2, 26),
+        ({"id": 32, "ams_type": 6}, 0, 28),
+        ({"id": 32, "ams_type": 6}, 8, 36),
+        ({"id": 33, "ams_type": 7}, 1, 38),
+        # A type BamBuddy does not know (0) or a later one: the place's rule.
+        ({"id": 1, "ams_type": 0}, 2, 6),
+        ({"id": 1, "ams_type": 9}, 2, 6),
+        # The AMS 3H by its place alone.
+        ({"id": 32}, 0, 28),
+    ],
+)
+def test_tray_id_by_ams_type(unit: dict[str, Any], slot: int, global_id: int) -> None:
+    assert tray_id(unit, slot) == global_id
 
 
 _TRAY = {
@@ -219,6 +260,9 @@ def test_slot_attributes() -> None:
 def test_the_external_spool_has_no_remaining_amount() -> None:
     """The printer reports 0 % for every spool on the holder."""
     assert slot_attributes({**_TRAY, "id": 254, "remain": 0}, 1, 254, None)["remaining"] is None
+    # An H3C's inputs 247-253 too, whatever they report.
+    chip = {"tag_uid": "3B9E01AA22CC44EE", "tray_uuid": "0F1E2D3C4B5A69788796A5B4C3D2E1F0"}
+    assert slot_attributes({**_TRAY, **chip, "id": 247, "remain": 80}, 9, 247, None)["remaining"] is None
 
 
 # A Bambu spool's chip: BamBuddy names both its ids (null without a chip).
@@ -280,6 +324,44 @@ def test_find_tray() -> None:
     assert find_tray(printer, 5) == ({"id": 1, "tray_type": "PETG"}, 2)
     assert find_tray(printer, 254) == ({"id": 254, "tray_type": "TPU"}, 1)
     assert find_tray(printer, 9) is None
+
+
+def test_find_tray_on_an_h3c() -> None:
+    # The AMS 3H's slots by its global ids; the nine external inputs in the
+    # printer's order, 254 counted as the first (hotend 1, BamBuddy's slot 0).
+    printer = _printer(
+        {
+            "ams": [{"id": 32, "ams_type": 6, "tray": [{"id": k} for k in range(9)]}],
+            "vt_tray": [{"id": v, "tray_type": "PLA"} for v in range(247, 256)],
+        },
+        "H3C",
+    )
+    assert find_tray(printer, 36) == ({"id": 8}, 9)
+    assert find_tray(printer, 28) == ({"id": 0}, 1)
+    # The inputs by the tool they feed: 255 tool 1, 254 tool 2, 247 tool 9.
+    assert find_tray(printer, 255) == ({"id": 255, "tray_type": "PLA"}, 1)
+    assert find_tray(printer, 254) == ({"id": 254, "tray_type": "PLA"}, 2)
+    assert find_tray(printer, 247) == ({"id": 247, "tray_type": "PLA"}, 9)
+
+
+@pytest.mark.parametrize(
+    ("status", "expected"),
+    [
+        # The tester's H3C with its AMS 3H not connected: tray_now says 28, the
+        # toolhead holds tool 2 (rack address 1), fed from input 254.
+        ({"tray_now": 28, "ams": [], "extruder_slots": {"0": {"ams_id": 254, "slot_id": 0, "has_filament": True}},
+          "nozzle_rack": [{"id": 0, "addr_id": 1}, {"id": 16, "addr_id": 0}]}, 254),
+        # No tool on the toolhead: nothing feeds.
+        ({"tray_now": 28, "ams": [], "extruder_slots": {"0": {"ams_id": 254, "slot_id": 0, "has_filament": True}},
+          "nozzle_rack": [{"id": 16, "addr_id": 0}]}, None),
+        # Fed from the AMS 3H: tray_now tells the slot.
+        ({"tray_now": 30, "extruder_slots": {"0": {"ams_id": 32, "slot_id": 2, "has_filament": True}},
+          "nozzle_rack": [{"id": 0, "addr_id": 2}]}, 30),
+    ],
+)
+def test_the_h3c_s_active_input(status: dict[str, Any], expected: int | None) -> None:
+    status["vt_tray"] = [{"id": v} for v in range(247, 256)]
+    assert active_tray(_printer(status, "H3C")) == expected
 
 
 @pytest.mark.parametrize(
@@ -406,6 +488,8 @@ def test_job_running(status: dict[str, Any], running: bool) -> None:
         ("HE01", "hardened_steel_high_flow"),
         # Bambu Lab names no material for its TPU high-flow nozzle.
         ("HU01", "tpu_high_flow"),
+        # The H3C's tool for 2.85 mm TPU.
+        ("HT01", "tpu_285"),
         ("HS09", "HS09"),
     ],
 )
@@ -453,6 +537,7 @@ def test_a_spool_with_a_chip_describes_itself() -> None:
             ["buildplate_marker_detector", "spaghetti_detector", "pileup_detector", "clump_detector", "airprint_detector"],
         ),
         ("X2D", None, ["buildplate_marker_detector", "spaghetti_detector", "pileup_detector", "clump_detector"]),
+        ("H3C", None, ["buildplate_marker_detector", "spaghetti_detector", "pileup_detector", "clump_detector"]),
         # A firmware that is no version counts as a current one.
         (
             "H2D",
@@ -506,6 +591,10 @@ def test_the_names_trim_bambuddys_blanks() -> None:
         # Named in BamBuddy: its name in place of the place.
         (1, "AMS", "00600A3B0000012", "Silk", "Studio Silk (AMS / 00600A3B0000012)"),
         (6, "AMS Lite", "", "Silk", "Studio Silk (AMS Lite)"),
+        # The H3C's AMS 3H: one per printer, "AMS 3H" without a letter, as BamBuddy labels it.
+        (32, "AMS 3H", "0A3H0A000000006", None, "Studio AMS 3H (0A3H0A000000006)"),
+        (32, "AMS 3H", "", None, "Studio AMS 3H"),
+        (32, "AMS 3H", "0A3H0A000000006", "Dryer", "Studio Dryer (AMS 3H / 0A3H0A000000006)"),
     ],
 )
 def test_ams_names(unit_id: int, model: str, serial: str, label: str | None, name: str) -> None:
@@ -534,6 +623,8 @@ def test_ams_names(unit_id: int, model: str, serial: str, label: str | None, nam
         ("P1S", 5),
         ("P1P", 5),
         ("A2L", 5),
+        ("H3C", 30),
+        ("N10", 30),
         ("", 5),
     ],
 )
@@ -578,6 +669,18 @@ def test_the_chamber_and_the_exhaust_fan(model: str, status: dict[str, Any], cha
     assert (printer.has_chamber_fan(), printer.has_exhaust_fan()) == (chamber, exhaust)
 
 
+def test_the_h3c_against_the_h2s() -> None:
+    """The H3C has what the H2S has: door, airduct, USB storage, auxiliary
+    fans, the exhaust fan on its back wall and ventilation through it."""
+    h3c, h2s = _printer({}, "H3C"), _printer({}, "H2S")
+    assert (h3c.has_door(), h3c.has_airduct(), h3c.stores_on_usb(), h3c.has_aux_fans(), h3c.has_ethernet()) == (
+        h2s.has_door(), h2s.has_airduct(), h2s.stores_on_usb(), h2s.has_aux_fans(), h2s.has_ethernet()
+    )
+    assert (h3c.has_chamber_fan(), h3c.has_exhaust_fan(), ventilation_fans(h3c), h3c.swapped_aux_fans()) == (
+        h2s.has_chamber_fan(), h2s.has_exhaust_fan(), ventilation_fans(h2s), h2s.swapped_aux_fans()
+    )
+
+
 @pytest.mark.parametrize(
     ("model", "aux", "chamber"),
     [("X1", False, True), ("BL-P002", False, True), ("P1P", False, False), ("C11", False, False), ("X1C", True, True),
@@ -594,7 +697,7 @@ def test_fans_the_stock_printer_lacks(model: str, aux: bool, chamber: bool) -> N
 _CODES = {
     "BL-P001": "X1C", "BL-P002": "X1", "BL-P003": "X1E", "C13": "X1E", "C11": "P1P", "C12": "P1S", "N7": "P2S",
     "N6": "X2D", "N9": "A2L", "A11": "A1", "A12": "A1 Mini", "N1": "A1 Mini", "N2S": "A1", "A04": "A1 Mini",
-    "O1D": "H2D", "O1E": "H2D Pro", "O2D": "H2D Pro", "O1C": "H2C", "O1C2": "H2C", "O1S": "H2S",
+    "O1D": "H2D", "O1E": "H2D Pro", "O2D": "H2D Pro", "O1C": "H2C", "O1C2": "H2C", "O1S": "H2S", "N10": "H3C",
 }
 
 
@@ -649,6 +752,7 @@ def test_which_printers_have_a_chamber(model: str, enclosed: bool) -> None:
         ("H2D Pro", 350, 120),
         ("H2C", 350, 120),
         ("H2S", 350, 120),
+        ("H3C", 350, 120),
         # A model nobody knows: BamBuddy's limits alone.
         ("", None, None),
         ("Z9", None, None),

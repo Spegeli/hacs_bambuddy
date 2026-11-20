@@ -21,6 +21,7 @@ from custom_components.bambuddy.coordinator import find_device, missing_issue, n
 from tests.conftest import (
     A1_MINI,
     H2D,
+    H3C,
     P1S,
     X1C,
     ams_device,
@@ -43,6 +44,7 @@ from tests.conftest import (
     printers_but,
     set_up,
     setup_integration,
+    with_h3c,
 )
 from tests.helpers import as_model, call_action, details_are, devices_by_identifier, reload_entry, renamed_in_bambuddy, with_plugs
 
@@ -123,6 +125,20 @@ async def test_the_device_name_follows_bambuddy(
     printer = devices[printer_device(entry, X1C)]
     assert (printer.name, printer.name_by_user) == ("Lab (X1C / 00M00A000000001)", None)
     assert devices[ams_device(entry, X1C, 0)].name == "Lab AMS A (AMS / 00600A3B0000001)"
+
+
+async def test_the_h3c_s_ams_3h(hass: HomeAssistant, bambuddy_api: SimpleNamespace) -> None:
+    """One AMS 3H per H3C: named without a letter, its entity IDs after its
+    model and serial, its humidity and temperature measured."""
+    with_h3c(bambuddy_api)
+
+    entry = await set_up(hass, H3C)
+
+    device = devices_by_identifier(hass, entry)[ams_device(entry, H3C, 32)]
+    assert (device.name, device.model) == ("Lab AMS 3H (0A3H0A000000006)", "AMS 3H")
+    assert entity_id(hass, "sensor", ams_uid(entry, 32, "slot_9", H3C)) == "sensor.ams_3h_0a3h0a000000006_slot_9"
+    assert entity_id(hass, "sensor", ams_uid(entry, 32, "humidity", H3C)) == "sensor.ams_3h_0a3h0a000000006_humidity"
+    assert entity_id(hass, "sensor", ams_uid(entry, 32, "temperature", H3C)) == "sensor.ams_3h_0a3h0a000000006_temperature"
 
 
 async def test_an_ams_unit_is_named_after_its_bambuddy_label_from_the_setup_on(

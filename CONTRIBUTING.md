@@ -104,6 +104,7 @@ The card's modules, in `cards/src/`:
 | `live.ts` | The live view: the camera's stream through Home Assistant's proxy, and the picture full screen (the browser's own, or the window where it has none) |
 | `status-view.ts`, `control-view.ts`, `filament-view.ts` | The three tabs; `filament-view.ts` also places each slot's ✏️ |
 | `heating.ts` | Heating and ventilating |
+| `tools.ts` | The H3C's nine PrintTools: the Status block, a tool's dialog, the tool an AMS 3H slot feeds and its nozzle in words |
 | `detection.ts` | The print options |
 | `power.ts` | Smart plugs and the switch-off after the print |
 | `maintenance.ts`, `check.ts` | Maintenance; the connection check |
@@ -220,7 +221,7 @@ python .github/scripts/bambu_filaments.py --fetch
 
 - `--fetch` fetches only what the script reads (`resources/profiles/BBL` and `resources/printers`) into `.bambu-studio/`: a sparse clone in Bambu Studio's own layout, which git ignores and the next run brings up to date — a file changed there by hand goes back to Bambu Studio's, and a folder that is no clone of Bambu Studio is refused. It needs git. `--ref` makes the list of a given commit (its full id) or tag; a checkout of your own works with `<checkout> --commit <sha>`.
 - Make it anew when Bambu Studio's profiles change (the `version` in `resources/profiles/BBL.json`), and name the change in the commit.
-- The script writes no list while Bambu's filament blacklist holds a prohibition that `filaments.py` does not check as the script's `CHECKED_RULES` read and that `IGNORED_RULES` does not leave out with its reason, or while a filament names a printer in a form the script cannot read or one without a machine preset of that name: decide, then change `filaments.py` and the script together.
+- The script writes no list while Bambu's filament blacklist holds a prohibition that `filaments.py` does not check as the script's `CHECKED_RULES` read, that the list does not hold by itself (`COVERED_RULES`, kept so by `check_covered`) and that `IGNORED_RULES` does not leave out with its reason, while the list no longer holds a rule of `COVERED_RULES`, or while a filament names a printer in a form the script cannot read or one without a machine preset of that name: decide, then change `filaments.py` and the script together.
 - The `filament` choices of `set_filament` in `services.yaml` are written by hand from the list (by vendor, then type, then name); `tests/test_card_tables.py` names any it lacks or holds too many.
 - A printer whose own screen lists otherwise than Bambu Studio is corrected in the script's `MODEL_CORRECTIONS` and `EXTRA_FILAMENTS`, never in the JSON.
 

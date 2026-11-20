@@ -283,12 +283,12 @@ class BamBuddyAmsEntity(BamBuddyPrinterEntity):
             identifiers={identifier},
             manufacturer="Bambu Lab",
             model=model,
-            serial_number=unit.get("serial_number") or None,
+            serial_number=ams_serial(unit),
             sw_version=unit.get("sw_ver") or None,
         )
         labels = coordinator.ams_labels
         if labels is not None or find_device(self.hass, entry_id, identifier) is None:
-            device["name"] = ams_name(coordinator.info, self.ams_id, model, unit.get("serial_number"), (labels or {}).get(self.ams_id))
+            device["name"] = ams_name(coordinator.info, self.ams_id, model, ams_serial(unit), (labels or {}).get(self.ams_id))
         return _with_parent(self.hass, entry_id, device, coordinator.identifier)
 
 

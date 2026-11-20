@@ -435,7 +435,7 @@ describe("the inventory tab", () => {
       { id: 12, name: "B", material: "PLA", place: place(0, 1, { ams_label: "Werkstatt Silk" }) },
       { id: 13, name: "C", material: "PLA", place: place(255, 0) },
       { id: 14, name: "D", material: "PLA", place: other(0, 1) },
-      { id: 15, name: "E", material: "PLA", place: other(255, 1) },
+      { id: 15, name: "E", material: "PLA", place: { ...other(255, 1), side: "right" } },
       { id: 16, name: "F", material: "PLA", place: other(128, 0) },
       { id: 17, name: "G", material: "PLA", place: other(6, 1) },
       { id: 18, name: "H", material: "PLA", place: other(255, 0) },
@@ -452,6 +452,34 @@ describe("the inventory tab", () => {
       "Zugewiesen: Desk, externe Spule",
     ]);
     expect(rows(card).every((row) => row.querySelector(".inv-where")?.classList.contains("elsewhere"))).toBe(true);
+  });
+
+  it("names another printer's inputs and external spools as the integration tells them", async () => {
+    const other = (tray_id: number, extra: Record<string, unknown> = {}) => ({ printer_id: 99, printer_name: "Desk", ams_id: 255, tray_id, ams_label: null, same_printer: false, ...extra });
+    const spools = [
+      { id: 11, name: "A", material: "PLA", place: other(1, { input: 1 }) },
+      { id: 12, name: "B", material: "PLA", place: other(5, { input: 6 }) },
+      { id: 13, name: "C", material: "PLA", place: other(0, { side: "left" }) },
+      { id: 14, name: "D", material: "PLA", place: other(1, { side: "right" }) },
+      { id: 15, name: "E", material: "PLA", place: other(0) },
+    ].map(listed);
+    const card = await openInventory(spools, { assigned: null, spool: null });
+    expect(rows(card).map(where)).toEqual([
+      "Zugewiesen: Desk, Extern 1",
+      "Zugewiesen: Desk, Extern 6",
+      "Zugewiesen: Desk, externe Spule (links)",
+      "Zugewiesen: Desk, externe Spule (rechts)",
+      "Zugewiesen: Desk, externe Spule",
+    ]);
+    rows(card)[1]?.click();
+    await settle(card);
+    expect(text(find(card, "dialog"))).toContain("Zuweisen nimmt die Spule aus dem Drucker Desk, Extern 6.");
+  });
+
+  it("the box names another printer's input", async () => {
+    const also = [{ printer_id: 99, printer_name: "Desk", ams_id: 255, tray_id: 5, ams_label: null, same_printer: false, input: 6 }];
+    const card = await openSlot3({ ...GEEETECH, also_assigned: also }, true);
+    expect(findAll(card, "dialog .inv-card .inv-also").map(text)).toEqual(["Auch zugewiesen: Desk, Extern 6"]);
   });
 
   it("names the external spools of a two-nozzle printer by side", async () => {
@@ -473,7 +501,7 @@ describe("the inventory tab", () => {
     const card = await openInventory();
     const tpu = rows(card).find((row) => rowName(row) === "Sunlu TPU 95A") as HTMLElement;
     expect(tpu.getAttribute("aria-disabled")).toBe("true");
-    expect(where(tpu)).toBe("Nicht für das AMS");
+    expect(where(tpu)).toBe("Nicht für das AMS geeignet");
     expect(tpu.querySelector(".inv-where")?.classList.contains("off")).toBe(true);
     tpu.click();
     await settle(card);
@@ -777,7 +805,7 @@ describe("the inventory tab follows the slot", () => {
     const spools = FOUR.map((spool) => (spool["id"] === 4 ? { ...spool, place: { this_slot: true } } : spool["id"] === 1 ? { ...spool, place: null } : spool));
     const card = await openInventory(spools, { assigned: 4, spool: { ...GEEETECH, id: 4, name: "Sunlu TPU 95A" } });
     const row = rowNamed(card, "Sunlu TPU 95A");
-    expect([...row.querySelectorAll(".inv-where")].map(text)).toEqual(["Zugewiesen: dieses Fach", "Nicht für das AMS"]);
+    expect([...row.querySelectorAll(".inv-where")].map(text)).toEqual(["Zugewiesen: dieses Fach", "Nicht für das AMS geeignet"]);
   });
 
   it("a row that does not fit takes no focus", async () => {
@@ -1196,5 +1224,17 @@ describe("the inventory's styles", () => {
     const css = styleText();
     const lines = css.split("\n").filter((line) => !/^\s*--bb-(accent|on-accent):/.test(line));
     expect(lines.filter((line) => /var\(--primary-color\)|var\(--text-primary-color/.test(line))).toEqual([]);
+  });
+});
+
+describe("a spool's filament diameter", () => {
+  it("names 2.85 mm, never 1.75 mm", async () => {
+    const { spoolLine, inventoryLine } = await import("../src/parts");
+    const hass = makeHass({ devices: x1c(), language: "de" });
+    const thick = { id: 241, colorName: "Red", remainingG: 345, remainingPct: 34, filamentMm: 2.85 };
+    expect(spoolLine(hass, thick)).toBe(`Red · 2,85${NBSP}mm · 345${NBSP}g (34${NBSP}%) · Nr. 241`);
+    expect(spoolLine(hass, { ...thick, filamentMm: 1.75 })).toBe(`Red · 345${NBSP}g (34${NBSP}%) · Nr. 241`);
+    const slotSpool = { id: 241, name: "Generic TPU Basic", extraColors: [], remainingG: 345, remainingPct: 34, rfid: false, alsoAssigned: [], assignedColor: "", assignedType: "", spoolTypes: [], filamentMm: 2.85 };
+    expect(inventoryLine(hass, slotSpool)).toBe(`2,85${NBSP}mm${NBSP}·${NBSP}34${NBSP}%${NBSP}·${NBSP}345${NBSP}g`);
   });
 });

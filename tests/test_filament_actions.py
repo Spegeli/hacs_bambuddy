@@ -15,6 +15,7 @@ from custom_components.bambuddy import services
 from tests.conftest import (
     A1_MINI,
     H2D,
+    H3C,
     P1S,
     X1C,
     ams_uid,
@@ -23,6 +24,7 @@ from tests.conftest import (
     next_refresh,
     printer_uid,
     set_up,
+    with_h3c,
 )
 from tests.helpers import as_model, call_action
 
@@ -536,15 +538,47 @@ async def test_a_switch_slot_is_offered_what_either_nozzle_takes(
     hass: HomeAssistant, bambuddy_api: SimpleNamespace, freezer: FrozenDateTimeFactory
 ) -> None:
     """The H2D's AMS on the filament track switch (BamBuddy leaves it out of
-    its map): Bambu PPA-CF goes through the left nozzle."""
+    its map): Generic PPA-CF goes through the left nozzle."""
     entry = await set_up(hass, H2D)
     slot = ams_uid(entry, 0, "slot_1", H2D)
-    assert "GFN06" not in _offered(await _get_filaments(hass, slot))  # unit 0 feeds the right nozzle
+    assert "GFN97" not in _offered(await _get_filaments(hass, slot))  # unit 0 feeds the right nozzle
 
     bambuddy_api.statuses[H2D]["ams_extruder_map"] = {"128": 1}
     await next_refresh(hass, freezer)
 
-    assert "GFN06" in _offered(await _get_filaments(hass, slot))
+    assert "GFN97" in _offered(await _get_filaments(hass, slot))
+
+
+async def test_an_x2d_on_the_switch_with_two_02_nozzles_is_not_offered_pla_galaxy(
+    hass: HomeAssistant, bambuddy_api: SimpleNamespace
+) -> None:
+    """Bambu Studio's rule for the X2D: no PLA Galaxy through the filament
+    track switch on 0.2 mm standard nozzles. With a 0.4 on one side it stays."""
+    as_model(bambuddy_api, "X2D", H2D)
+    status = bambuddy_api.statuses[H2D]
+    status["ams_extruder_map"] = {}
+    status["nozzles"] = [{"nozzle_type": "HS00", "nozzle_diameter": "0.2"}, {"nozzle_type": "HS00", "nozzle_diameter": "0.2"}]
+    # A spool without a chip: one with its chip is set by the chip alone.
+    status["ams"][0]["tray"][0] = {**status["ams"][0]["tray"][0], "tray_uuid": None, "tag_uid": None}
+    entry = await set_up(hass, H2D)
+    slot = ams_uid(entry, 0, "slot_1", H2D)
+
+    assert "GFA15" not in _offered(await _get_filaments(hass, slot))
+    with pytest.raises(ServiceValidationError) as raised:
+        await _set_filament(hass, slot, filament="GFA15")
+    assert raised.value.translation_key == "filament_not_for_ams"
+
+
+async def test_an_x2d_on_the_switch_with_a_04_nozzle_keeps_pla_galaxy(
+    hass: HomeAssistant, bambuddy_api: SimpleNamespace
+) -> None:
+    as_model(bambuddy_api, "X2D", H2D)
+    status = bambuddy_api.statuses[H2D]
+    status["ams_extruder_map"] = {}
+    status["nozzles"] = [{"nozzle_type": "HS00", "nozzle_diameter": "0.2"}, {"nozzle_type": "HS00", "nozzle_diameter": "0.4"}]
+    entry = await set_up(hass, H2D)
+
+    assert "GFA15" in _offered(await _get_filaments(hass, ams_uid(entry, 0, "slot_1", H2D)))
 
 
 @pytest.mark.parametrize(("code", "absent", "present"), [("N1", "GFB99", "GFL99"), ("O1E", "GFSNL03", "GFT98")])
@@ -636,6 +670,42 @@ async def test_a_foreign_profile_without_a_range_takes_its_type_s(
 
     kwargs = bambuddy_api.configure_slot.await_args.kwargs
     assert (kwargs["tray_info_idx"], kwargs["temp_min"], kwargs["temp_max"]) == ("P4d64437", *nozzle_range)
+
+
+async def test_an_h3c_place_is_offered_for_the_tool_it_feeds(hass: HomeAssistant, bambuddy_api: SimpleNamespace) -> None:
+    """On an H3C the toolhead holds one of nine tools: a slot or an input is
+    offered for its own tool, not for the one mounted. Here the TPU tool
+    (rack address 7) is on the toolhead and tool 2 carries a 0.6 mm nozzle."""
+    with_h3c(bambuddy_api)
+    status = bambuddy_api.statuses[H3C]
+    status["nozzles"] = [{"nozzle_type": "HT01", "nozzle_diameter": "0.4"}]
+    for tool in status["nozzle_rack"]:
+        tool["id"] = 0 if tool["addr_id"] == 7 else 16 + tool["addr_id"]
+    status["nozzle_rack"][1]["nozzle_diameter"] = "0.6"
+    entry = await set_up(hass, H3C)
+
+    # AMS 3H slot 1 feeds tool 1, a standard nozzle.
+    offered = _offered(await _get_filaments(hass, ams_uid(entry, 32, "slot_1", H3C)))
+    assert "GFL99" in offered and "GFU06" not in offered
+    # Slot 8 and External 8 feed the TPU tool: 2.85 mm TPU only.
+    for place in (ams_uid(entry, 32, "slot_8", H3C), printer_uid(entry, "external_8", H3C)):
+        assert _offered(await _get_filaments(hass, place)) == {"GFU06", "GFU97"}
+    # External 2 feeds tool 2 and its 0.6 mm nozzle.
+    offered = _offered(await _get_filaments(hass, printer_uid(entry, "external_2", H3C)))
+    assert "GFL99" in offered and "GFU06" not in offered
+    assert (await _get_k_profiles(hass, printer_uid(entry, "external_2", H3C)))["nozzle_diameter"] == 0.6
+
+
+@pytest.mark.parametrize(("tool", "tray"), [(1, 1), (2, 0), (5, 6), (9, 2)])
+async def test_an_h3c_input_gets_its_filament(hass: HomeAssistant, bambuddy_api: SimpleNamespace, tool: int, tray: int) -> None:
+    """BamBuddy keeps an H3C's inputs as AMS 255, tray 0 (input 254), 1
+    (255) and 2-8 (247-253): tool 5's input 251 is tray 6."""
+    with_h3c(bambuddy_api)
+    entry = await set_up(hass, H3C)
+
+    await _set_filament(hass, printer_uid(entry, f"external_{tool}", H3C), filament="GFL99", color=[255, 106, 19])
+
+    assert bambuddy_api.configure_slot.await_args.args == (H3C, 255, tray)
 
 
 @pytest.mark.parametrize(("printer_id", "tray", "diameter"), [(X1C, 0, "0.4"), (H2D, 0, "0.6"), (H2D, 1, "0.4")])
@@ -868,3 +938,28 @@ async def test_a_slot_tool_on_an_offline_printer_says_offline(
 
     assert raised.value.translation_key == "printer_offline"
     getattr(bambuddy_api, service).assert_not_awaited()
+
+
+async def test_the_tpu_tool_s_rules_follow_its_code(hass: HomeAssistant, bambuddy_api: SimpleNamespace) -> None:
+    """A TPU285 tool moved to place 3: slot 3 takes its rules, slot 8 the standard offer."""
+    with_h3c(bambuddy_api)
+    for tool in bambuddy_api.statuses[H3C]["nozzle_rack"]:
+        tool["nozzle_type"] = "HT01" if tool["addr_id"] == 2 else "HS01"
+    entry = await set_up(hass, H3C)
+
+    assert _offered(await _get_filaments(hass, ams_uid(entry, 32, "slot_3", H3C))) == {"GFU06", "GFU97"}
+    offered = _offered(await _get_filaments(hass, ams_uid(entry, 32, "slot_8", H3C)))
+    assert "GFL99" in offered and "GFU97" not in offered
+
+
+async def test_a_tpu_tool_s_slot_takes_2_85_mm_tpu(hass: HomeAssistant, bambuddy_api: SimpleNamespace) -> None:
+    with_h3c(bambuddy_api)
+    bambuddy_api.statuses[H3C]["ams"][0]["tray"][7].update(tray_type="TPU", tray_color="FFFFFFFF", state=11, exists=True)
+    entry = await set_up(hass, H3C)
+
+    await _set_filament(hass, ams_uid(entry, 32, "slot_8", H3C), filament="GFU97", color=[255, 255, 255])
+
+    assert bambuddy_api.configure_slot.await_args.args == (H3C, 32, 7)
+    with pytest.raises(ServiceValidationError) as refused:
+        await _set_filament(hass, ams_uid(entry, 32, "slot_8", H3C), filament="GFL99", color=[255, 255, 255])
+    assert refused.value.translation_key == "filament_not_for_nozzle"

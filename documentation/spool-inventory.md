@@ -82,9 +82,9 @@ A spool that cannot go into this slot stays in the list, grayed out, with the re
 
 | The list says | Why | What to do |
 |---|---|---|
-| Not for the AMS | Its filament may not go into an AMS | Use an external spool |
-| Not for this nozzle | Its filament does not fit the nozzle that feeds the slot | Use a slot on the other nozzle, or change the nozzle |
-| Not for this printer | Bambu Studio does not offer its filament here | Use another printer |
+| Not suitable for the AMS | Its filament may not go into an AMS | Use an external spool |
+| Not suitable for this nozzle | Its filament does not fit the nozzle that feeds the slot | Use a slot on the other nozzle, or change the nozzle |
+| Not suitable for this printer | Bambu Studio does not offer its filament here | Use another printer |
 | Linked to that slot by its chip | A Bambu Lab spool with its chip, read in another slot | Move the spool itself |
 | Locked while … is printing. | It sits in a slot of another printer that prints, or whose print is paused | Wait, or change the assignment there |
 

@@ -51,7 +51,7 @@ describe("the configuration check", () => {
     expect(() => validateConfig({ read_only: "yes" })).toThrowError("Invalid value for “read_only”: \"yes\". Allowed: true, false.");
     expect(() => validateConfig({ printer: 5 })).toThrowError("Invalid value for “printer”: 5. Allowed: the ID of a printer device.");
     expect(() => validateConfig({ status_blocks: ["fans", "camera"] })).toThrowError(
-      "Invalid value for “status_blocks”: [\"fans\",\"camera\"]. Allowed: a list of controls, power, temperatures, ams, fans, speed.",
+      "Invalid value for “status_blocks”: [\"fans\",\"camera\"]. Allowed: a list of controls, power, temperatures, tools, ams, fans, speed.",
     );
     expect(() => validateConfig({ header_chips: "hms" })).toThrowError("Invalid value for “header_chips”: \"hms\". Allowed: a list of network, hms, firmware, maintenance, door, storage, drying, power.");
     expect(() => validateConfig({ control_sections: [1] })).toThrowError(/Allowed: a list of heating, options, motion\./);
@@ -67,7 +67,7 @@ describe("the configuration check", () => {
     root.hass = makeHass({ language: "de" });
     document.body.append(root);
     expect(() => validateConfig({ camera: "x" })).toThrowError("Ungültiger Wert für „camera“: \"x\". Erlaubt: tap, always, off.");
-    expect(() => validateConfig({ status_blocks: ["x"] })).toThrowError(/Erlaubt: eine Liste aus controls, power, temperatures, ams, fans, speed\./);
+    expect(() => validateConfig({ status_blocks: ["x"] })).toThrowError(/Erlaubt: eine Liste aus controls, power, temperatures, tools, ams, fans, speed\./);
   });
 });
 
@@ -75,7 +75,7 @@ describe("the settings", () => {
   it("fill in what the configuration leaves out", () => {
     expect(settingsOf({ type: TYPE })).toEqual({
       camera: "tap",
-      blocks: ["controls", "power", "temperatures", "ams", "fans", "speed"],
+      blocks: ["controls", "power", "temperatures", "tools", "ams", "fans", "speed"],
       chips: ["network", "hms", "firmware"],
       startView: "status",
       controlTab: true,
@@ -88,7 +88,7 @@ describe("the settings", () => {
       showAutoOff: true,
       compactChips: false,
     });
-    expect(DEFAULTS.blocks).toEqual(["controls", "power", "temperatures", "ams", "fans", "speed"]);
+    expect(DEFAULTS.blocks).toEqual(["controls", "power", "temperatures", "tools", "ams", "fans", "speed"]);
   });
 
   it("take what the configuration says, an empty list included", () => {
@@ -107,7 +107,7 @@ describe("what the editor shows and writes", () => {
       type: TYPE,
       printer: "dev-x1c",
       camera: "off",
-      status_blocks: ["controls", "power", "temperatures", "ams", "fans", "speed"],
+      status_blocks: ["controls", "power", "temperatures", "tools", "ams", "fans", "speed"],
       header_chips: [],
       start_view: "status",
       show_control_tab: true,
@@ -226,6 +226,7 @@ describe("the visual editor", () => {
             { value: "controls", label: "Print controls" },
             { value: "power", label: "Power" },
             { value: "temperatures", label: "Temperatures" },
+            { value: "tools", label: "PrintTools" },
             { value: "ams", label: "AMS and filament" },
             { value: "fans", label: "Fans" },
             { value: "speed", label: "Print speed" },

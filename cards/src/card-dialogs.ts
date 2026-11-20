@@ -6,7 +6,7 @@ import { callAction, errorText, printObjects } from "./actions";
 import { runCheck, type CheckDialog } from "./check";
 import { DRYING, type Dialog, type DryingField, type DryingSpool } from "./dialogs";
 import { stateOf } from "./format";
-import { AMS_2_PRO, slotOf, type Slot } from "./parts";
+import { AMS_2_PRO, dryingZone, slotOf, type Slot } from "./parts";
 import type { AmsRefs, Hass, HassEntityState, PrinterRefs } from "./types";
 
 /** How long "Copied" shows. */
@@ -63,8 +63,12 @@ export class DialogFlows {
    * spools want different temperatures, the dialog names them. */
   openDrying(unit: AmsRefs): void {
     const hass = this.host.hass();
+    const zoneText = dryingZone(hass, unit.drying);
     const maxTemperature = unit.model === AMS_2_PRO ? DRYING.maxTemperatureAms2Pro : DRYING.maxTemperature;
-    const loaded = unit.slots.map((entityId) => slotOf(hass, entityId)).filter((slot) => !slot.empty && !slot.unknown);
+    // The AMS 3H dries only its zone: two of its slots, numbered from 1.
+    const zone = unit.drying ? stateOf(hass, unit.drying)?.attributes["zone_slots"] : undefined;
+    const dried = Array.isArray(zone) ? unit.slots.filter((_, index) => zone.includes(index + 1)) : unit.slots;
+    const loaded = dried.map((entityId) => slotOf(hass, entityId)).filter((slot) => !slot.empty && !slot.unknown);
     const recommended = (slot: Slot, name: string): number | undefined => {
       const value = (stateOf(hass, slot.entityId) as HassEntityState).attributes[name];
       return typeof value === "number" && value > 0 ? Math.round(value) : undefined;
@@ -88,6 +92,7 @@ export class DialogFlows {
       suggested: temperatures.length > 0 || durations.length > 0,
       ...(listed.length ? { suggestedFor: [...new Set(listed.map((spool) => spool.material))].join(", ") } : {}),
       differing: new Set(temperatures).size > 1 ? listed : [],
+      ...(zoneText ? { zone: zoneText } : {}),
     });
   }
 

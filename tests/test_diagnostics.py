@@ -29,6 +29,7 @@ from tests.conftest import (
     make_entry,
     past_the_minute,
     printer_device_id,
+    printer_info,
     printer_serial,
     printers_but,
     set_up,
@@ -73,6 +74,19 @@ async def test_no_secret_reaches_the_diagnostics(hass: HomeAssistant, bambuddy_a
     )
     assert key["last_check"]
     assert diagnostics["printers"]["1"]["status"]["state"] == "RUNNING"
+
+
+async def test_no_wled_address_reaches_the_diagnostics(hass: HomeAssistant, bambuddy_api: SimpleNamespace) -> None:
+    """BamBuddy 1.3.1 names a printer's WLED controller by its address."""
+    wled = {"wled_config": {"enabled": True, "base_url": "http://192.0.2.60"}}
+    bambuddy_api.get_printers.return_value = [{**printer, **wled} for printer in load_fixture("printers.json")]
+    bambuddy_api.get_printer.side_effect = lambda printer_id: {**printer_info(printer_id), **wled}
+    entry = await set_up(hass, X1C)
+
+    dumped = json.dumps(await async_get_config_entry_diagnostics(hass, entry))
+
+    assert "192.0.2.60" not in dumped
+    assert '"enabled": true' in dumped
 
 
 async def test_no_job_name_reaches_the_diagnostics(hass: HomeAssistant, bambuddy_api: SimpleNamespace) -> None:

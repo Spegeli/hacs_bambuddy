@@ -173,10 +173,14 @@ A sensitivity stays as set on the printer. The other checks are on or off only. 
 | External spool | Sensor | The filament on the spool holder, or *Empty* |
 | Left external spool | Sensor | Two nozzles: the left spool holder |
 | Right external spool | Sensor | Two nozzles: the right spool holder |
+| External 1 … 9 | Sensor | H3C: the external input of each tool, numbered as on its screen |
+| PrintTool on toolhead | Sensor | H3C: the PrintTool on the toolhead (1 to 9), or *None* while all nine are in the rack |
+| PrintTool 1 … 9 | Sensor | H3C: each PrintTool's print time in hours, with its nozzle and what feeds it as attributes |
 
 - *AMS filament backup* comes with the first AMS unit. A matching spool has the same brand, material and color: [Filament backup](ams-and-filament.md#filament-backup).
 - It reads *unknown* where BamBuddy cannot read it, on the A1 and P1 series before BamBuddy 1.3.0. Switching works all the same.
 - The external spool sensors carry the attributes of an [AMS slot](#slot-attributes). They have no `nozzle`, and `remaining` stays empty.
+- A *PrintTool* sensor belongs to a place in the H3C's rack: a tool moved to another place is read there. Its attributes: `nozzle_code` (such as `HS01`), `nozzle_diameter`, `nozzle_material`, `nozzle_flow` (`standard`, `high_flow`, `tpu_high_flow`, `tpu_285`), `filament_diameter` (1.75 or 2.85), `has_filament`, `on_toolhead`, `filament_color` and `fed_by` (`ams` while the AMS 3H is reported, else `external`). A place the rack does not report reads *unknown*.
 
 ### Maintenance and messages
 
@@ -222,7 +226,7 @@ A sensitivity stays as set on the printer. The other checks are on or off only. 
 
 ## AMS units
 
-Each [AMS](glossary.md#ams) unit is a device under its printer: **AMS**, **AMS 2 Pro**, **AMS HT** or **AMS Lite**. A unit is known by its serial number, which its device page shows. It keeps its device, entities and history wherever on the printer it is plugged in.
+Each [AMS](glossary.md#ams) unit is a device under its printer: **AMS**, **AMS 2 Pro**, **AMS HT**, **AMS Lite** or the H3C's **AMS 3H**. A unit is known by its serial number, which its device page shows. It keeps its device, entities and history wherever on the printer it is plugged in.
 
 Its IDs carry its model and serial, such as `sensor.ams_2_pro_19c06a000000001_slot_1`.
 
@@ -230,11 +234,11 @@ BamBuddy 1.2.5.7 reports no serial for the [AMS Lite](glossary.md#ams-lite) ([ma
 
 | Entity | Type | What it shows |
 |---|---|---|
-| Slot 1 … 4 | Sensor | The filament in the slot, or *Empty*. An AMS HT has one slot: *Slot 1* |
+| Slot 1 … 4 | Sensor | The filament in the slot, or *Empty*. An AMS HT has one slot: *Slot 1*; an AMS 3H nine: *Slot 1 … 9* |
 | Humidity | Sensor | Inside the unit; not the AMS Lite |
 | Temperature | Sensor | Inside the unit; not the AMS Lite |
-| Drying | Binary sensor | AMS 2 Pro and AMS HT: *Drying* or *Not drying* |
-| Drying time left | Sensor | AMS 2 Pro and AMS HT: in minutes |
+| Drying | Binary sensor | AMS 2 Pro, AMS HT and AMS 3H: *Drying* or *Not drying* |
+| Drying time left | Sensor | AMS 2 Pro, AMS HT and AMS 3H: in minutes |
 
 How many units a printer takes: [AMS units per printer](printers.md#ams-units-per-printer).
 
@@ -270,6 +274,7 @@ While BamBuddy's inventory can be read, a slot sensor and the external spool sen
 | `name`, `brand`, `material`, `color_name` | What BamBuddy knows of it |
 | `remaining_g`, `remaining_pct` | What is left, in grams and % |
 | `storage_location` | Where it is kept |
+| `filament_diameter` | 1.75 or 2.85, from its profile (BamBuddy keeps no diameter); empty where the profile is unknown |
 | `also_assigned` | Other slots BamBuddy holds it in |
 
 It holds a few more fields for the card, such as `rgba`. More: [Spool inventory](spool-inventory.md).
@@ -280,6 +285,8 @@ It holds a few more fields for the card, such as `rgba`. More: [Spool inventory]
 |---|---|
 | `remote_start` | Whether Home Assistant can start drying |
 | `target_temperature` | The temperature it dries at, while it dries |
+| `zone_slots` | AMS 3H: the two slots of its drying zone, such as `[6, 8]`; none while BamBuddy reports no zone |
+| `zone_humidity`, `zone_temperature` | AMS 3H: the drying zone's own humidity and temperature. *Humidity* and *Temperature* are the other slots' |
 
 - A P1P, P1S, A1 or A1 mini dries only from its own screen, and older firmware not from here at all: [Drying from Home Assistant](printers.md#drying-from-home-assistant).
 - BamBuddy knows `target_temperature` only for a drying started through BamBuddy or Home Assistant, not for one started on the printer.

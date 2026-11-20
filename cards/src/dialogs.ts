@@ -20,6 +20,7 @@ import { icon } from "./icons";
 import { t, type TextKey } from "./i18n";
 import { dialogError, dialogNote, slotOf, stepControl, warnings, type CardContext, type Confirmation } from "./parts";
 import type { AmsRefs, Hass } from "./types";
+import { toolContent } from "./tools";
 
 /** Drying defaults and limits: BamBuddy's range; the AMS 2 Pro heats to 65 °C at most. */
 export const DRYING = { temperature: 55, duration: 8, minTemperature: 45, maxTemperature: 85, maxTemperatureAms2Pro: 65, minDuration: 1, maxDuration: 24 };
@@ -51,6 +52,8 @@ export interface DryingDialog {
   /** The loaded spools' temperatures, coolest first, where they differ;
    * else none. */
   differing: DryingSpool[];
+  /** The slots an AMS 3H dries ("Slots 6 and 8"); none for every other AMS. */
+  zone?: string;
 }
 
 export interface SkipDialog {
@@ -76,6 +79,7 @@ export type StateDialog =
   | { kind: "power" }
   | { kind: "auto_off" }
   | { kind: "camera" }
+  | { kind: "tool"; number: number }
   | InfoDialog
   | MaintenanceDialog;
 
@@ -180,6 +184,7 @@ function dryingSource(hass: Hass, dialog: DryingDialog): TemplateResult | typeof
 
 function dryingContent(hass: Hass, dialog: DryingDialog, actions: DialogActions): TemplateResult {
   return html`<h2 id="dlg-title">${t(hass, "dry_title", { unit: dialog.unit.name })}</h2>
+    ${dialog.zone ? html`<div class="dry-zone" id="dlg-zone">${dialog.zone}</div>` : nothing}
     ${stepper(hass, actions, {
       label: t(hass, "dry_temperature"),
       field: "temperature",
@@ -301,6 +306,7 @@ function buttons(ctx: CardContext, dialog: Dialog): DialogButtons {
     case "power":
     case "auto_off":
     case "camera":
+    case "tool":
       return { keep: t(hass, "dismiss"), danger: false, ready: false };
     case "check":
       return { keep: t(hass, "dismiss"), ...(dialog.running ? {} : { confirm: t(hass, "check_again") }), danger: false, ready: !dialog.running };
@@ -341,6 +347,8 @@ function content(ctx: CardContext, dialog: Dialog, actions: DialogActions): Temp
       return autoOffContent(ctx);
     case "camera":
       return cameraContent(ctx);
+    case "tool":
+      return toolContent(ctx, dialog.number);
     case "maintenance":
       return maintenanceContent(ctx, dialog, actions);
     case "check":
@@ -392,7 +400,8 @@ export function dialogView(ctx: CardContext, dialog: Dialog, actions: DialogActi
   };
   // A question is read out whole; one that ends something is an alert.
   const question = dialog.kind === "confirm";
-  const described = question ? (dialog.note ? "dlg-text dlg-note" : "dlg-text") : undefined;
+  // The AMS 3H's drying zone belongs to the title: read with it.
+  const described = question ? (dialog.note ? "dlg-text dlg-note" : "dlg-text") : dialog.kind === "drying" && dialog.zone ? "dlg-zone" : undefined;
   return html`<dialog
     role=${question && danger ? "alertdialog" : nothing}
     aria-labelledby="dlg-title"

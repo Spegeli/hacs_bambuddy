@@ -17,7 +17,7 @@ from custom_components.bambuddy.api import (
     BamBuddyPermissionError,
 )
 
-from tests.conftest import H2D, X1C, ams_uid, entity_id, load_fixture, printer_uid, set_up, state_at
+from tests.conftest import H2D, H3C, X1C, ams_uid, entity_id, load_fixture, printer_uid, set_up, state_at, with_h3c
 from tests.helpers import call_action, spool_row, timed_out, with_inventory
 
 
@@ -478,3 +478,33 @@ async def test_no_spool_list_with_spoolman(hass: HomeAssistant, bambuddy_api: Si
         await call_action(hass, "get_spools", response=True, entity_id=_slot(hass, entry, 3))
 
     assert raised.value.translation_key == "inventory_not_shown"
+
+
+async def test_a_spool_on_another_two_nozzle_printer_names_its_side(hass: HomeAssistant, bambuddy_api: SimpleNamespace) -> None:
+    """Spool 3 on the H2D's left external spool: the X1C's list says which
+    side -- the H2D reports two external spools."""
+    with_inventory(bambuddy_api)
+    rows = load_fixture("inventory_assignments.json")
+    rows[2] = {**rows[2], "printer_id": H2D, "printer_name": "Studio", "ams_id": 255, "tray_id": 0}
+    bambuddy_api.get_spool_assignments.return_value = rows
+    entry = await set_up(hass, X1C, H2D)
+
+    answer = await call_action(hass, "get_spools", response=True, entity_id=_slot(hass, entry, 3))
+
+    third = next(item for item in answer["spools"] if item["id"] == 3)
+    assert third["place"]["side"] == "left"
+    assert "input" not in third["place"]
+
+
+async def test_a_tpu_tool_s_slot_lists_only_2_85_mm_spools_as_fitting(hass: HomeAssistant, bambuddy_api: SimpleNamespace) -> None:
+    """The AMS 3H slot before the TPU285 tool fits a 2.85 mm TPU spool, not PLA or TPU for AMS."""
+    with_h3c(bambuddy_api)
+    with_inventory(bambuddy_api, _extra(7, material="TPU", slicer_filament="GFU97"), _extra(8, material="TPU-AMS"))
+    entry = await set_up(hass, H3C)
+
+    answer = await call_action(hass, "get_spools", response=True, entity_id=entity_id(hass, "sensor", ams_uid(entry, 32, "slot_8", H3C)))
+
+    fits = {spool["id"]: spool["fits"] for spool in answer["spools"]}
+    assert fits[7] is None
+    assert fits[8] is not None
+    assert fits[1] is not None

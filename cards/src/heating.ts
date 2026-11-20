@@ -317,16 +317,13 @@ function ventilationPart(ctx: CardContext, lock: Locks): TemplateResult | typeof
   const value = available ? ctx.targetOf(entity) : undefined;
   const on = (value ?? 0) > 0;
   const subtitle = VENT_FANS[fansOf(ctx).join(" ")];
-  const label = t(hass, "chamber");
+  // The row itself is „Lüften“, its fans below; no heading of its own.
+  const label = t(hass, "ventilation");
   const shown = value === undefined ? "—" : on ? formatPercent(hass, value) : t(hass, "heater_off");
-  const name = heatNameCell({ iconName: "fan", title: html`<span class="heat-text">${label}</span>`, now: subtitle ? t(hass, subtitle) : nothing, on, extraClass: "vent" });
+  const name = heatNameCell({ iconName: "fan", title: html`<span class="heat-text" id="vent-title">${label}</span>`, now: subtitle ? t(hass, subtitle) : nothing, on, extraClass: "vent" });
   const said = html`<span class="sr-only">${t(hass, "vent_said")} </span>`;
-  const head = html`<div class="heat-head vent-head">
-    <span class="section-label" id="vent-title">${icon("fan")}${t(hass, "ventilation")}</span>
-  </div>`;
   if (ctx.viewOnly) {
     return html`<div class="vent-part" role="group" aria-labelledby="vent-title">
-      ${head}
       <div class="heat-rows"><div class="heat-row view">${name}<span class="heat-target ${on ? "" : "off"}">${said}${shown}</span></div></div>
     </div>`;
   }
@@ -336,7 +333,6 @@ function ventilationPart(ctx: CardContext, lock: Locks): TemplateResult | typeof
   const startText = formatPercent(hass, VENT_START);
   const why = available ? (lock.vent ?? lock.hint) : undefined;
   return html`<div class="vent-part" role="group" aria-labelledby="vent-title">
-    ${head}
     <div class="heat-rows">
       <div class="heat-row">
         ${name}
@@ -385,7 +381,7 @@ export function heatingSection(ctx: CardContext): TemplateResult | typeof nothin
   const lock = airduct ? locks(ctx) : {};
   return html`<section class="heating" aria-labelledby="heat-title">
     <div class="heat-head">
-      <span class="section-label" id="heat-title">${icon("heat")}${t(hass, "heating")}</span>
+      <span class="section-label" id="heat-title">${icon("heat")}${t(hass, refs.ventilation ? "section_heating" : "heating")}</span>
     </div>
     <div class="heat-rows">
       ${heaterRows.map((row) =>

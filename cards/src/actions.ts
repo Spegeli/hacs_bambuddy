@@ -115,7 +115,19 @@ export async function filamentOffer(hass: Hass, entityId: string): Promise<Filam
  * printer or another of the BamBuddy), or none. */
 export type SpoolPlace =
   | { here: true }
-  | { here: false; printerId: number; printerName: string; amsId: number; trayId: number; amsLabel?: string; samePrinter: boolean };
+  | {
+      here: false;
+      printerId: number;
+      printerName: string;
+      amsId: number;
+      trayId: number;
+      amsLabel?: string;
+      samePrinter: boolean;
+      /** An H3C's input: the tool it feeds. */
+      input?: number;
+      /** A two-nozzle printer's external spool: its side. */
+      side?: "left" | "right";
+    };
 
 const FITS = ["not_for_ams", "not_for_nozzle", "not_for_printer", "by_chip", "printing"] as const;
 type Fits = (typeof FITS)[number];
@@ -167,6 +179,8 @@ function placeOf(value: unknown): SpoolPlace | undefined {
     trayId,
     ...(typeof place["ams_label"] === "string" && place["ams_label"] ? { amsLabel: place["ams_label"] } : {}),
     samePrinter: place["same_printer"] === true,
+    ...(typeof place["input"] === "number" ? { input: place["input"] } : {}),
+    ...(place["side"] === "left" || place["side"] === "right" ? { side: place["side"] } : {}),
   };
 }
 
@@ -185,6 +199,8 @@ export function spoolBasics(record: Record<string, unknown>): {
   remainingPct?: number;
   storage?: string;
   rfid: boolean;
+  /** 1.75 or 2.85, from the spool's profile. */
+  filamentMm?: number;
 } {
   const pct = record["remaining_pct"];
   const grams = record["remaining_g"];
@@ -199,6 +215,7 @@ export function spoolBasics(record: Record<string, unknown>): {
     ...(typeof pct === "number" ? { remainingPct: pct } : {}),
     ...(storage ? { storage } : {}),
     rfid: record["rfid"] === true,
+    ...(typeof record["filament_diameter"] === "number" ? { filamentMm: record["filament_diameter"] } : {}),
   };
 }
 

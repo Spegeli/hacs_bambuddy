@@ -20,8 +20,9 @@ import {
 } from "./format";
 import { icon } from "./icons";
 import { t, type TextKey } from "./i18n";
-import { actionButton, AMS_2_PRO, AMS_HT, amsActivity, callout, developerHint, emptyText, inventoryLine, note, printerTitle, resumeButton, shownExternalSpools, sideName, slotOf, slotPlace, stateWord, swatch, switchButton, unitModel, unitNozzle, type CardContext, type Slot } from "./parts";
+import { dryingZoneSlots, zoneReadings, actionButton, AMS_2_PRO, AMS_3H, AMS_HT, amsActivity, callout, developerHint, dryingZone, emptyText, inputNumber, inventoryLine, note, printerTitle, resumeButton, shownExternalSpools, sideName, slotOf, slotPlace, stateWord, swatch, switchButton, unitModel, unitNozzle, type CardContext, type Slot } from "./parts";
 import type { AmsRefs } from "./types";
+import { isTpu285, spoolPlace, toolInfo, type ToolInfo } from "./tools";
 
 /** The texts of a printer's one external spool, and of its left and its
  * right one where it has two: the slot dialog's title, the load question,
@@ -82,8 +83,14 @@ function slotRow(
     loadTitle: (filament: string) => string;
     /** The load button's name: what it loads from. */
     loadName: string;
+    /** BamBuddy cannot load from it (the H3C's external input). */
+    noLoad?: boolean;
     /** Where the slot is, for the names of its buttons: "Slot 1 · AMS A". */
     place: string;
+    /** The H3C's AMS 3H: the PrintTool the slot feeds. */
+    tool?: ToolInfo;
+    /** The slot dries now, in the AMS 3H's zone. */
+    zone?: boolean;
   },
 ): TemplateResult {
   const { hass, refs } = ctx;
@@ -111,7 +118,32 @@ function slotRow(
   // In a paused print the change happens in the middle of it.
   const pauseHint = ctx.status === "paused" ? { note: t(hass, "paused_change") } : {};
   let action: TemplateResult | typeof nothing = nothing;
-  if (ctx.canControl && slot.active) {
+  const tool = options.tool;
+  if (tool && isTpu285(tool)) {
+    // Loaded at the printer through the slot's bypass feed.
+    action = ctx.canControl ? html`<span class="slot-hint">${t(hass, "load_external_hint", { n: tool.number })}</span>` : nothing;
+  } else if (ctx.canControl && tool && !ctx.busy && !slot.empty && tool.hasFilament) {
+    // Each AMS 3H slot unloads its own PrintTool -- while no print is on.
+    const key = `unload_${slot.entityId}`;
+    action = actionButton({
+      label: t(hass, "unload"),
+      aria: `${t(hass, "unload")} · ${options.place}`,
+      iconName: "unload",
+      disabled: !options.canAct,
+      pending: ctx.isPending(key),
+      onClick: () =>
+        ctx.confirm({
+          title: t(hass, "unload_title"),
+          text: t(hass, "unload_tool_text", { n: tool.number }),
+          confirm: t(hass, "unload"),
+          action: ["bambuddy", "unload_filament", { entity_id: slot.entityId }],
+          key,
+        }),
+    });
+  } else if (tool && (slot.empty || tool.hasFilament) && !slot.active) {
+    // A tool that holds filament neither loads again nor, during a print, unloads.
+    action = nothing;
+  } else if (ctx.canControl && slot.active) {
     action = actionButton({
       label: t(hass, "unload"),
       iconName: "unload",
@@ -127,7 +159,7 @@ function slotRow(
           key: "unload",
         }),
     });
-  } else if (ctx.canControl && !slot.empty && !slot.unknown) {
+  } else if (ctx.canControl && !slot.empty && !slot.unknown && !options.noLoad) {
     action = actionButton({
       label: t(hass, "load"),
       aria: options.loadName,
@@ -148,7 +180,7 @@ function slotRow(
   }
   // What the button shows names it: the filament, in use, what is left.
   // Unknown, it shows a dash, which says nothing.
-  return html`<div class="slot ${slot.active ? "active" : ""}">
+  return html`<div class="slot ${slot.active ? "active" : ""} ${options.zone ? "zone" : ""}">
     <button
       class="slot-main"
       aria-label=${t(hass, "slot_named", {
@@ -177,11 +209,13 @@ function slotRow(
   </div>`;
 }
 
-const DRYING_MODELS = [AMS_2_PRO, AMS_HT];
+const DRYING_MODELS = [AMS_2_PRO, AMS_HT, AMS_3H];
 
+/** The AMS 3H dries two of its nine slots: "Slots 6 and 8", none while
+ * BamBuddy reports no zone. */
 function dryingRow(ctx: CardContext, unit: AmsRefs): TemplateResult | typeof nothing {
   const { hass } = ctx;
-  // Only the AMS 2 Pro and the AMS HT have a heater.
+  // Only the AMS 2 Pro, the AMS HT and the AMS 3H have a heater.
   if (!unit.drying || !DRYING_MODELS.includes(unit.model)) return nothing;
   const drying = stateOf(hass, unit.drying);
   const on = drying?.state === "on";
@@ -203,6 +237,9 @@ function dryingRow(ctx: CardContext, unit: AmsRefs): TemplateResult | typeof not
           ? t(hass, "drying", { time })
           : t(hass, "drying_now")
       : t(hass, "not_drying");
+  const zone = dryingZone(hass, unit.drying);
+  // The AMS 3H's zone dries apart from its other slots, with readings of its own.
+  const readings = zoneReadings(hass, unit.drying);
   const key = `dry_${unit.deviceId}`;
   // Where the printer dries only from its own screen (a P1S), or its
   // firmware does not let BamBuddy start it: no buttons, a word where.
@@ -218,7 +255,11 @@ function dryingRow(ctx: CardContext, unit: AmsRefs): TemplateResult | typeof not
       key,
     });
   return html`<div class="drying ${on ? "on" : ""}">
-    ${icon("heat")}<span class="drying-text">${text}</span>
+    ${icon("heat")}<span class="drying-text"
+      ><span>${text}</span>${zone
+        ? html`<span class="drying-sub">${[zone, ...(readings.humidity === undefined ? [] : [formatPercent(hass, readings.humidity)]), ...(readings.temperature === undefined ? [] : [formatTemperature(hass, readings.temperature)])].join(" · ")}</span>`
+        : nothing}</span
+    >
     ${ctx.canControl && !remote ? html`<span class="dry-where">${t(hass, "dry_at_printer")}</span>` : nothing}
     ${ctx.canControl && remote
       ? actionButton({
@@ -243,6 +284,8 @@ function unitSection(ctx: CardContext, unit: AmsRefs, canAct: boolean): Template
   const model = unitModel(ctx.ams, unit);
   const nozzle = unitNozzle(hass, unit);
   const open = ctx.amsUnfolded(unit);
+  // The AMS 3H's zone while it dries: its slots in the heat tone.
+  const drying = dryingZoneSlots(hass, unit);
   const slotsId = `slots-${unit.deviceId}`;
   return html`<section class="unit ${open ? "open" : "folded"}">
     <button
@@ -285,8 +328,12 @@ function unitSection(ctx: CardContext, unit: AmsRefs, canAct: boolean): Template
       ? html`<div class="slots" id=${slotsId} role="region" aria-label=${unit.name}>
             ${unit.slots.map((entityId, index) => {
               const place = slotPlace(hass, unit, entityId, index);
-              return slotRow(ctx, slotOf(hass, entityId), {
+              const tool = unit.model === AMS_3H ? toolInfo(ctx, index + 1) : undefined;
+              // The 2.85 mm TPU tool's spool is reported on its input: shown and set there.
+              return slotRow(ctx, slotOf(hass, spoolPlace(ctx, unit, index)), {
                 canAct,
+                ...(drying.includes(index + 1) ? { zone: true } : {}),
+                ...(tool ? { tool } : {}),
                 dialogTitle: t(hass, "filament_title", { slot: place }),
                 loadTitle: (filament) => t(hass, "load_title_from", { filament, place }),
                 loadName: t(hass, "load_from", { place }),
@@ -376,7 +423,7 @@ export function filamentView(ctx: CardContext): TemplateResult {
           ? [ctx.status === "paused" ? "changing_paused" : "changing_reason", "info"]
           : undefined;
   const canAct = ctx.canControl && ctx.online && !ctx.running && !ctx.changing;
-  const twoSpools = refs.externalSpools.length === 2;
+  const twoSpools = !refs.inputs && refs.externalSpools.length === 2;
   // The sides from all spools, what shows from those shown.
   const spools = shownExternalSpools(ctx);
   const activity = amsActivity(ctx);
@@ -396,15 +443,20 @@ export function filamentView(ctx: CardContext): TemplateResult {
               const index = refs.externalSpools.indexOf(entityId);
               const side = twoSpools ? SIDE_SPOOLS[index === 0 ? 0 : 1] : undefined;
               const texts = side ?? ONE_SPOOL;
+              // An H3C's input by its tool's number; BamBuddy 1.3.1 loads none of them.
+              const number = refs.inputs ? inputNumber(hass, entityId) : undefined;
               return slotRow(ctx, slotOf(hass, entityId), {
                 canAct,
-                dialogTitle: t(hass, texts.title),
+                dialogTitle: number ? t(hass, "filament_title_input", { number }) : t(hass, texts.title),
                 loadTitle: (filament) => t(hass, texts.load, { filament }),
                 loadName: t(hass, texts.loadName),
-                place: t(hass, texts.place),
-                editLabel: t(hass, texts.edit),
+                noLoad: refs.inputs || refs.model === "H3C",
+                place: number ? t(hass, "input_place", { number }) : t(hass, texts.place),
+                editLabel: number ? t(hass, "edit_input", { number }) : t(hass, texts.edit),
                 ...(side ? { nozzle: side.nozzle } : {}),
                 ...(side ? { side: sideName(hass, index) } : {}),
+                // An H3C's input: its name under the filament, as the side is.
+                ...(number ? { side: t(hass, "input_place", { number }) } : {}),
               });
             })}
           </div>

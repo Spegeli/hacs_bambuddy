@@ -14,6 +14,7 @@ import { t, type TextKey } from "./i18n";
 import { actionButton, dialogNote, printerTitle, sideAt, sideName, slotOf, slotPlace, waitLine, type CardContext, type InventorySpool } from "./parts";
 import type { CameraFailure } from "./scan";
 import type { Hass } from "./types";
+import { slotTool, toolLine } from "./tools";
 
 /** The printer's default K, where a slot has no profile of its own. */
 const DEFAULT_K = 0.02;
@@ -387,7 +388,7 @@ function slotTools(ctx: CardContext, dialog: FilamentDialog, actions: DialogActi
     ? t(hass, "rfid_unload_hint", { slots: slot })
     : spool < 0
       ? undefined
-      : t(hass, refs.externalSpools.length > 1 ? `rfid_unload_hint_${sideAt(spool)}` : "rfid_unload_hint_external");
+      : t(hass, refs.externalSpools.length === 2 ? `rfid_unload_hint_${sideAt(spool)}` : "rfid_unload_hint_external");
   return html`<div class="slot-tools">
       ${dialog.ams ? actionButton({ label: t(hass, "rfid_read"), iconName: "sync", disabled: running || unloadFirst !== undefined, onClick: actions.refreshRfid }) : nothing}
       ${dialog.empty
@@ -477,6 +478,9 @@ function nozzleLines(ctx: CardContext): string[] {
  * filament track switch). */
 function slotNozzleLines(ctx: CardContext, entityId: string): string[] {
   const { hass, refs } = ctx;
+  // The H3C: the PrintTool the slot feeds, not the one on the toolhead.
+  const tool = slotTool(ctx, entityId);
+  if (tool?.known) return [t(hass, "nozzle_side", { side: t(hass, "tool_name", { n: tool.number }), nozzle: toolLine(hass, tool) })];
   if (!refs.dual) {
     const parts = nozzleOf(ctx, 0);
     return parts ? [t(hass, "nozzle_side", { side: t(hass, "nozzle"), nozzle: parts })] : [];

@@ -25,10 +25,12 @@ import {
 } from "./format";
 import { icon, type IconName } from "./icons";
 import { t, type TextKey } from "./i18n";
-import {
+import { dryingZone, dryingZoneSlots, zoneReadings,
   actionButton,
   activeNozzleIndex,
+  AMS_3H,
   AMS_HT,
+  inputNumber,
   amsActivity,
   asOnline,
   callout,
@@ -59,6 +61,7 @@ import {
 import { chamberActivity } from "./heating";
 import { offlinePower, powerSection } from "./power";
 import type { FanKey, Heater, StatusBlock } from "./types";
+import { hasTools, spoolPlace, toolsBlock } from "./tools";
 
 /** The plate to clear before BamBuddy starts the next queued print; the
  * button that confirms it where the card may control the printer -- else
@@ -286,7 +289,7 @@ const slotType = (slot: Slot, external: boolean): string =>
  * and R of two external spools --, so a row's colours stand level. */
 function amsStrip(ctx: CardContext): TemplateResult | typeof nothing {
   const { hass, refs } = ctx;
-  const twoSpools = refs.externalSpools.length === 2;
+  const twoSpools = !refs.inputs && refs.externalSpools.length === 2;
   // The sides from all spools, what shows from those shown.
   const spools = shownExternalSpools(ctx);
   const groups = [
@@ -302,10 +305,16 @@ function amsStrip(ctx: CardContext): TemplateResult | typeof nothing {
         humidity: numericState(hass, unit.humidity),
         temperature: numericState(hass, unit.temperature),
         temperatureUnit: temperatureUnit(hass, unit.temperature),
-        slots: unit.slots,
+        // The 2.85 mm TPU tool's slot: its input's spool.
+        slots: unit.slots.map((_, index) => spoolPlace(ctx, unit, index)),
         fill: unit.model === AMS_HT,
         ht: unit.model === AMS_HT,
+        nine: unit.model === AMS_3H,
         sides: false,
+        // The AMS 3H while its zone dries: the zone's slots and readings.
+        zone: dryingZoneSlots(hass, unit),
+        zoneText: dryingZone(hass, unit.drying),
+        zoneReadings: zoneReadings(hass, unit.drying),
       };
     }),
     ...(spools.length
@@ -320,7 +329,11 @@ function amsStrip(ctx: CardContext): TemplateResult | typeof nothing {
             slots: spools,
             fill: true,
             ht: false,
+            nine: false,
             sides: twoSpools,
+            zone: [] as number[],
+            zoneText: undefined,
+            zoneReadings: {} as { humidity?: number; temperature?: number },
           },
         ]
       : []),
@@ -330,7 +343,9 @@ function amsStrip(ctx: CardContext): TemplateResult | typeof nothing {
   const fill = groups.filter((group) => group.fill);
   // Two external spools: left and right, in that order.
   const sides = twoSpools ? [t(hass, "side_left_short"), t(hass, "side_right_short")] : [];
-  const sideOf = (entityId: string): string | undefined => sides[refs.externalSpools.indexOf(entityId)];
+  // An H3C's inputs by their tool's number, two external spools by their side.
+  const sideOf = (entityId: string): string | undefined =>
+    refs.inputs && refs.externalSpools.includes(entityId) ? String(inputNumber(hass, entityId)) : sides[refs.externalSpools.indexOf(entityId)];
   // A screen reader hears what the strip shows -- each slot as its title
   // says it, the one in use named -- and where a tap goes.
   const spoken = (entityId: string): string => {
@@ -338,12 +353,38 @@ function amsStrip(ctx: CardContext): TemplateResult | typeof nothing {
     const side = twoSpools ? refs.externalSpools.indexOf(entityId) : -1;
     return `${side >= 0 ? `${sideName(hass, side)}: ` : ""}${slotTitle(hass, slot)}${slot.active ? ` · ${t(hass, "in_use")}` : ""}`;
   };
+  // The drying zone's readings, in the heat tone beside the unit's own, while it dries.
+  const zoneParts = (group: (typeof groups)[number]): { humidity?: string; temperature?: string } =>
+    group.zone.length
+      ? {
+          ...(group.zoneReadings.humidity === undefined ? {} : { humidity: formatPercent(hass, group.zoneReadings.humidity) }),
+          ...(group.zoneReadings.temperature === undefined ? {} : { temperature: formatTemperature(hass, group.zoneReadings.temperature) }),
+        }
+      : {};
+  const zoneSaid = (group: (typeof groups)[number]): string[] => {
+    const parts = zoneParts(group);
+    const said = [
+      ...(parts.humidity ? [t(hass, "strip_humidity", { humidity: parts.humidity })] : []),
+      ...(parts.temperature ? [t(hass, "strip_temperature", { temperature: parts.temperature })] : []),
+    ];
+    return said.length && group.zoneText ? [`${group.zoneText}: ${said.join(", ")}`] : [];
+  };
+  const zoneEnv = (group: (typeof groups)[number]): TemplateResult | typeof nothing => {
+    const parts = zoneParts(group);
+    if (!parts.humidity && !parts.temperature) return nothing;
+    return html`<span class="zone-sep" aria-hidden="true">·</span><span class="zone-env" title=${group.zoneText ?? ""}
+      >${parts.humidity ? html`<span class="ams-hum">${icon("humidity")}${parts.humidity}</span>` : nothing}${parts.temperature
+        ? html`<span class="ams-temp">${icon("chamber")}${parts.temperature}</span>`
+        : nothing}</span
+    >`;
+  };
   const said = [...column, ...fill].map((group) =>
     t(hass, "strip_unit", {
       name: [
         group.spoken,
         ...(group.humidity === undefined ? [] : [t(hass, "strip_humidity", { humidity: formatPercent(hass, group.humidity) })]),
         ...(group.temperature === undefined ? [] : [t(hass, "strip_temperature", { temperature: formatTemperature(hass, group.temperature, group.temperatureUnit) })]),
+        ...zoneSaid(group),
       ].join(", "),
       slots: group.slots.map(spoken).join(", "),
     }),
@@ -366,13 +407,16 @@ function amsStrip(ctx: CardContext): TemplateResult | typeof nothing {
                 ${group.temperature !== undefined
                   ? html`<span class="ams-temp" title=${t(hass, "temperature")}>${icon("chamber")}${formatTemperature(hass, group.temperature, group.temperatureUnit)}</span>`
                   : nothing}
+                ${zoneEnv(group)}
               </span>`}
         </span>
-        <span class="ams-slots">
-          ${group.slots.map((entityId) => {
+        <span class="ams-slots ${group.nine ? "nine" : ""}">
+          ${group.slots.map((entityId, index) => {
             const slot = slotOf(hass, entityId);
-            const side = sideOf(entityId);
-            return html`<span class="ams-slot" title=${side ? `${side} · ${slotTitle(hass, slot)}` : slotTitle(hass, slot)}
+            const zoned = group.zone.includes(index + 1);
+            // Sides and input numbers only in the external spools' group.
+            const side = group.fill && !group.ht ? sideOf(entityId) : undefined;
+            return html`<span class="ams-slot ${zoned ? "zone" : ""}" title=${side ? `${side} · ${slotTitle(hass, slot)}` : slotTitle(hass, slot)}
               >${side ? html`<span class="slot-side">${side}</span>` : nothing}${swatch(slot)}<span class="slot-type"
                 >${slotType(slot, refs.externalSpools.includes(entityId))}</span
               ></span
@@ -520,6 +564,8 @@ function block(ctx: CardContext, name: StatusBlock): TemplateResult | typeof not
       return temperatures(ctx);
     case "fans":
       return fans(ctx);
+    case "tools":
+      return toolsBlock(ctx);
     case "ams":
       return amsStrip(ctx);
     case "speed":
@@ -535,7 +581,7 @@ function block(ctx: CardContext, name: StatusBlock): TemplateResult | typeof not
  * offline), the controls and the speed while a job is on the printer, the
  * others while it is online. */
 const sectionShowsNow = (ctx: CardContext, name: StatusBlock): boolean =>
-  name === "power" ? block(ctx, name) !== nothing : ctx.online && (name === "controls" || name === "speed" ? ctx.busy : true);
+  name === "power" ? block(ctx, name) !== nothing : ctx.online && (name === "controls" || name === "speed" ? ctx.busy : name === "tools" ? hasTools(ctx) : true);
 
 /** The sections in the card editor's preview: each as it is, or -- with
  * nothing to show now -- as an example of it during a print; none of a

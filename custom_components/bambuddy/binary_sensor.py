@@ -32,7 +32,7 @@ from .entity import (
     async_add_ams_entities,
     async_add_plug_entities,
 )
-from .models import PrinterData, can_dry, has_heater, is_drying, part_id
+from .models import PrinterData, ams_model, can_dry, drying_zone, has_heater, is_drying, part_id
 from .plug_coordinator import BamBuddyPlugCoordinator
 from .plugs import Plug
 
@@ -197,7 +197,10 @@ class BamBuddyDryingSensor(BamBuddyAmsEntity, BinarySensorEntity):
     def extra_state_attributes(self) -> dict[str, Any]:
         unit: dict[str, Any] = self.unit or {}
         target = unit.get("dry_target_temp")
+        # The AMS 3H dries only its zone: two of its nine slots.
+        zone = drying_zone(unit) if ams_model(unit, self.data) == "AMS 3H" else {}
         return {
+            **zone,
             "remote_start": can_dry(unit, self.data),
             # What it dries at, while it dries -- BamBuddy knows it only for a
             # drying it started itself.

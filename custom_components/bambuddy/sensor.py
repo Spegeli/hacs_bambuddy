@@ -52,18 +52,24 @@ from .models import (
     EXTERNAL_AMS,
     EXTERNAL_LEFT,
     EXTERNAL_RIGHT,
+    INPUT_TOOLS,
     PRINT_STATUSES,
     PrinterData,
     STAGE_OPTIONS,
+    TOOL_PLACES,
     active_tray,
     ams_model,
     ams_status,
     bambuddy_name,
     find_tray,
     has_heater,
+    has_tool_rack,
     hms_answers,
+    input_tool,
+    input_tray,
     maintenance_state,
     maintenance_task,
+    mounted_tool,
     nozzle_side,
     nozzle_type,
     part_id,
@@ -74,6 +80,7 @@ from .models import (
     tray_empty,
     tray_id,
     tray_label,
+    tools,
     unit_extruder,
 )
 from .plug_coordinator import BamBuddyPlugCoordinator
@@ -249,8 +256,9 @@ def _external_spool_attributes(tray: int | None) -> Callable[[PrinterData], dict
         spool = _external_spool(data, tray)
         if spool is None:
             return {}
-        number = 2 if spool.get("id") == EXTERNAL_RIGHT else 1
-        return slot_attributes(spool, number, part_id(spool, EXTERNAL_LEFT), active_tray(data))
+        global_id = part_id(spool, EXTERNAL_LEFT)
+        number = input_tool(global_id) if data.has_inputs else 2 if global_id == EXTERNAL_RIGHT else 1
+        return slot_attributes(spool, number, global_id, active_tray(data))
 
     return attributes
 
@@ -277,8 +285,63 @@ def _single(data: PrinterData) -> bool:
     return not data.is_dual_nozzle
 
 
+def _single_spool(data: PrinterData) -> bool:
+    """One external spool: not two nozzles' two, nor an H3C's nine inputs."""
+    return not data.is_dual_nozzle and not data.has_inputs
+
+
+def _inputs(data: PrinterData) -> bool:
+    return data.has_inputs
+
+
 def _dual(data: PrinterData) -> bool:
     return data.is_dual_nozzle
+
+
+def _tool_state(number: int) -> Callable[[PrinterData], StateType]:
+    """A PrintTool's print time in hours; unknown while its place or time is not reported."""
+
+    def value(data: PrinterData) -> StateType:
+        tool = tools(data).get(number)
+        return None if tool is None or tool.print_time_s is None else tool.print_time_s / 3600
+
+    return value
+
+
+def _tool_attributes(number: int) -> Callable[[PrinterData], dict[str, Any]]:
+    """What the rack says of a PrintTool and which place feeds it: its AMS
+    3H slot while an AMS unit is reported, its external input otherwise."""
+
+    def attributes(data: PrinterData) -> dict[str, Any]:
+        tool = tools(data).get(number)
+        if tool is None:
+            return {}
+        parts = tool.parts
+        return {
+            "nozzle_code": tool.code,
+            "nozzle_diameter": _number(parts.diameter),
+            "nozzle_material": parts.material,
+            "nozzle_flow": parts.flow,
+            "filament_diameter": float(parts.filament_mm),
+            "has_filament": tool.has_filament,
+            "on_toolhead": tool.on_toolhead,
+            "filament_color": tool.filament_color,
+            "fed_by": "ams" if any(unit.get("tray") for unit in data.ams_units) else "external",
+        }
+
+    return attributes
+
+
+def _number(text: str | None) -> float | None:
+    try:
+        return None if text is None else float(text)
+    except ValueError:
+        return None
+
+
+def _mounted_state(data: PrinterData) -> StateType:
+    number = mounted_tool(data)
+    return None if number is None else str(number) if number else "none"
 
 
 def _temperature_sensor(
@@ -398,7 +461,7 @@ PRINTER_SENSORS: tuple[BamBuddyPrinterSensorDescription, ...] = (
         attr_fn=_active_filament_attributes,
     ),
     BamBuddyPrinterSensorDescription(
-        key="external_spool", translation_key="external_spool", exists_fn=_single,
+        key="external_spool", translation_key="external_spool", exists_fn=_single_spool,
         value_fn=_external_spool_state(None), attr_fn=_external_spool_attributes(None),
     ),
     BamBuddyPrinterSensorDescription(
@@ -408,6 +471,30 @@ PRINTER_SENSORS: tuple[BamBuddyPrinterSensorDescription, ...] = (
     BamBuddyPrinterSensorDescription(
         key="external_spool_2", translation_key="right_external_spool", exists_fn=_dual,
         value_fn=_external_spool_state(EXTERNAL_RIGHT), attr_fn=_external_spool_attributes(EXTERNAL_RIGHT),
+    ),
+    # An H3C's nine inputs, by the tool each feeds (input 256 - n).
+    *(
+        BamBuddyPrinterSensorDescription(
+            key=f"external_{tool}", translation_key=f"external_{tool}", exists_fn=_inputs,
+            value_fn=_external_spool_state(256 - tool), attr_fn=_external_spool_attributes(256 - tool),
+        )
+        for tool in INPUT_TOOLS
+    ),
+    # The H3C's nine PrintTools, by their place in its rack, and the one on the toolhead.
+    BamBuddyPrinterSensorDescription(
+        key="print_tool_on_toolhead", translation_key="print_tool_on_toolhead", exists_fn=has_tool_rack,
+        device_class=SensorDeviceClass.ENUM, options=["none", *(str(number) for number in TOOL_PLACES)],
+        value_fn=_mounted_state,
+    ),
+    *(
+        BamBuddyPrinterSensorDescription(
+            key=f"print_tool_{number}", translation_key=f"print_tool_{number}", exists_fn=has_tool_rack,
+            device_class=SensorDeviceClass.DURATION, native_unit_of_measurement=UnitOfTime.HOURS,
+            # A place's figure, not a meter: a tool put there brings its own hours.
+            state_class=SensorStateClass.MEASUREMENT, suggested_display_precision=1,
+            value_fn=_tool_state(number), attr_fn=_tool_attributes(number),
+        )
+        for number in TOOL_PLACES
     ),
     # BamBuddy's `nozzles`: 0 the only or the right nozzle, 1 the left one.
     # Known as the temperatures are: "nozzle" the only or the left one,
@@ -535,7 +622,7 @@ class BamBuddyInstanceSensor(BamBuddyInstanceEntity, SensorEntity):
 
 # The external spools in BamBuddy's inventory's numbers (AMS 255, tray 0 left
 # or the only one, 1 right).
-_EXTERNAL_TRAYS = {"external_spool": 0, "external_spool_2": 1}
+_EXTERNAL_TRAYS = {"external_spool": 0, "external_spool_2": 1, **{f"external_{tool}": input_tray(tool) for tool in INPUT_TOOLS}}
 
 
 def _follow_inventory(entity: CoordinatorEntity[BamBuddyPrinterCoordinator]) -> None:
@@ -681,7 +768,7 @@ class BamBuddyAmsSlotSensor(BamBuddyAmsEntity, SensorEntity):
         tray = self.tray
         if tray is None:
             return None
-        attributes = slot_attributes(tray, self.slot + 1, tray_id(self.ams_id, self.slot), active_tray(self.data))
+        attributes = slot_attributes(tray, self.slot + 1, tray_id(self.unit or {"id": self.ams_id}, self.slot), active_tray(self.data))
         fed = unit_extruder(self.data, self.ams_id)
         if self.data.is_dual_nozzle and fed is not None:
             # The nozzle the unit feeds; a unit on the filament track switch reaches both and has none.

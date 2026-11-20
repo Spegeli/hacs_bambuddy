@@ -160,7 +160,7 @@ describe("keeping the chamber warm (an airduct printer without a chamber heater,
     ]);
     expect(find(card, ".airduct")).toBeNull();
     expect(text(section(card))).toContain(
-      "Heating keeps the warmth in the chamber (ABS, ASA, PC, PA), ventilation draws fresh air in (PLA, TPU). The printer sets this itself at every print start.",
+      "Heating the chamber keeps the warmth in (ABS, ASA, PC, PA), ventilation draws fresh air in (PLA, TPU). The printer sets this itself at every print start.",
     );
     radios(card)[1]?.click();
     await settle(card);
@@ -175,9 +175,9 @@ describe("keeping the chamber warm (an airduct printer without a chamber heater,
       ["Off", false],
       ["On", true],
     ]);
-    expect(text(section(card))).toContain("While the chamber is ventilated, it cannot be kept warm. First turn off the chamber under Ventilation below.");
+    expect(text(section(card))).toContain("While the chamber is ventilated, it cannot be kept warm. First turn off Ventilation below.");
     const german = await withX1c(ventilated, { start_view: "control" }, "de");
-    expect(text(section(german.card))).toContain("Solange die Kammer gelüftet wird, lässt sie sich nicht warm halten. Schalte zuerst unten unter „Lüften“ die Kammer aus.");
+    expect(text(section(german.card))).toContain("Solange die Kammer gelüftet wird, lässt sie sich nicht warm halten. Schalte zuerst unten „Lüften“ aus.");
     // The keyboard comes in on the choice it has.
     expect(radios(card).map((item) => item.getAttribute("tabindex"))).toEqual(["0", "-1"]);
   });

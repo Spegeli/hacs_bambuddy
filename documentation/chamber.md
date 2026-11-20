@@ -6,7 +6,7 @@ Heat or ventilate the chamber of a printer with an airduct, and see what locks w
 
 **Needs:** a printer with an [airduct](glossary.md#airduct): the P2S, the X2D or the H2 series. Other printers: [Chamber in Printers](printers.md#chamber).
 
-Everything here is in the card's Control tab, under **Heating** and **Ventilation** (in the card editor, the section *Heating and ventilation*).
+Everything here is in the card's Control tab, in the block **Heating and ventilation** (in the card editor, the section *Heating and ventilation*).
 
 ## Heat or ventilate
 
@@ -21,7 +21,7 @@ The two exclude each other: see [Who locks whom](#who-locks-whom).
 
 ## Heating
 
-The chamber's row under **Heating** has − and + in steps of 5 and a power switch. It starts at 40 °C.
+The chamber's row has − and + in steps of 5 and a power switch. It starts at 40 °C.
 
 - A target above 0 sets the airduct to heating first, unless a print or a filament change keeps the mode it set.
 - A running job may set the target again.
@@ -31,7 +31,7 @@ The P2S has no heater. Its row reads **Keep warm**, on or off; on puts the airdu
 
 ## Ventilating
 
-The section **Ventilation** has a row **Chamber**, on or off, in steps of 10 %. It starts at 60 %, and names the fans it runs.
+The row **Ventilation**, below the heaters, is on or off, in steps of 10 %. It starts at 60 %, and names the fans it runs.
 
 Turned on, it sets the airduct to cooling and runs [the printer's fans](#per-model) at one speed. The entity *Ventilation* does the same: 60 % unless you give a speed.
 
@@ -76,6 +76,7 @@ What the chamber and its ventilation are on each model:
 | H2S, H2D, H2C | Heater, up to 65 °C | [Exhaust fan](glossary.md#exhaust-fan) | The fan draws off a laser's fumes |
 | H2D Pro | Heater, up to 65 °C, from BamBuddy 1.3.0 | Exhaust fan | The fan draws off a laser's fumes |
 | X2D | Heater, up to 65 °C | Right [auxiliary fan](glossary.md#auxiliary-fan) and exhaust fan | The right fan filters |
+| H3C | Heater, up to 65 °C | Exhaust fan | — |
 | P2S | **Keep warm**, no heater | Auxiliary fan; with the External Exhaust Fan kit also its exhaust fan | The auxiliary fan circulates through the filter |
 
 The X2D's right auxiliary fan and the P2S's kit join once BamBuddy reports them. An H2D Pro on BamBuddy 1.2.5.7 has no chamber target or chamber temperature: see [Known limitations](troubleshooting.md#known-limitations). Until BamBuddy reports the heater, its row reads **Keep warm**, as on the P2S.

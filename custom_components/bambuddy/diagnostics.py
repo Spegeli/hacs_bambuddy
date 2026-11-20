@@ -26,6 +26,8 @@ TO_REDACT = {
     "access_code",
     "external_camera_url",
     "external_camera_snapshot_url",
+    # BamBuddy 1.3.1's WLED controller of a printer, by its address.
+    "base_url",
     "serial_number",
     "tag_uid",
     "tray_uuid",

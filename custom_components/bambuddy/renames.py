@@ -66,6 +66,28 @@ async def async_clear(hass: HomeAssistant, entry_id: str, printer_key: str | Non
         await store.async_save(data)
 
 
+
+async def async_drop(hass: HomeAssistant, entry_id: str, entity_ids: set[str]) -> None:
+    """Pairs that name an entity about to go (the "N/A" AMS device's): a
+    printer's list left empty goes, and with it its notice."""
+    if not entity_ids:
+        return
+    store, data = await _loaded(hass)
+    lists = data.get(entry_id, {})
+    changed = False
+    for printer_key, pairs in list(lists.items()):
+        kept = [pair for pair in pairs if not set(pair) & entity_ids]
+        if len(kept) != len(pairs):
+            changed = True
+            if kept:
+                lists[printer_key] = kept
+            else:
+                del lists[printer_key]
+    if entry_id in data and not data[entry_id]:
+        del data[entry_id]
+    if changed:
+        await store.async_save(data)
+
 async def async_keep(hass: HomeAssistant, entry_id: str, printer_keys: set[str]) -> None:
     """Only the lists of printers the entry still has."""
     _, data = await _loaded(hass)

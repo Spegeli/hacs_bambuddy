@@ -13,6 +13,7 @@ import { maintenanceChip } from "./maintenance";
 import { powerChip } from "./power";
 import { compactWords, textAttribute, type CardContext } from "./parts";
 import type { HassEntityState, HeaderChip } from "./types";
+import { hasTools } from "./tools";
 
 // --- Title ------------------------------------------------------------------
 
@@ -33,6 +34,8 @@ export function nozzleOf(ctx: CardContext, index: number): string {
 /** "0.4 mm", or "L 0.4 / R 0.6 mm" where two nozzles differ. */
 function nozzleText(ctx: CardContext): string | undefined {
   const { hass, refs } = ctx;
+  // The H3C's nine PrintTools may differ: the printer information names them.
+  if (hasTools(ctx)) return undefined;
   const sizes = refs.nozzleDiameters.map((entityId) => diameter(ctx, entityId));
   const known = sizes.filter((value): value is string => value !== undefined);
   if (!known.length) return undefined;
