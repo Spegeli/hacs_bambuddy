@@ -162,7 +162,7 @@ export interface AmsRefs {
   deviceId: string;
   /** "AMS A", "AMS HT A": the device's name without the printer's. */
   name: string;
-  /** AMS, AMS 2 Pro, AMS HT or AMS Lite. */
+  /** AMS, AMS 2 Pro, AMS HT, AMS Lite or AMS 3H. */
   model: string;
   humidity?: string;
   temperature?: string;

@@ -569,7 +569,7 @@ class PrinterData:
         return bool(self.status.get("supports_chamber_heater"))
 
     def has_chamber_fan(self) -> bool:
-        """A chamber fan Bambu calls so (on the P2S, the X2D and the H2 series it is the exhaust fan)."""
+        """A chamber fan Bambu calls so (on the P2S, the X2D, the H2 series and the H3C it is the exhaust fan)."""
         return self.has_aux_fans() and model_key(self.model) not in _EXHAUST_FAN
 
     def has_exhaust_fan(self) -> bool:
@@ -873,8 +873,9 @@ _NOZZLE_MATERIALS = {"00": "stainless_steel", "01": "hardened_steel", "05": "tun
 
 def nozzle_type(code: str) -> str:
     """The nozzle's material: written out by most printers; the H2 series
-    reports a code -- its second letter the flow (H or E high flow, U the
-    TPU high-flow nozzle, which names no material), its last two digits the
+    and the H3C report a code -- its second letter the flow (H or E high
+    flow, U the TPU high-flow nozzle, which names no material; T the H3C's
+    2.85 mm TPU tool), its last two digits the
     material (00 stainless steel, 01 hardened steel, 05 tungsten carbide)."""
     for material in _NOZZLE_MATERIALS.values():
         if material.split("_")[0] in code:

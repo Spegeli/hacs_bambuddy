@@ -33,6 +33,7 @@ body:
         - Live updates
         - Printer sensors and binary sensors
         - AMS units and filament
+        - Spool inventory (assign, label scan)
         - Camera or cover image
         - Print controls (buttons, print speed, chamber light, temperatures, fans)
         - Actions
@@ -164,7 +165,7 @@ body:
     id: diagnostics
     attributes:
       label: Diagnostics
-      description: Settings → Devices & services → BamBuddy → ⋮ on your BamBuddy entry (named `BamBuddy (<host>)` unless you renamed it) → Download diagnostics. The API key, addresses and serial numbers are left out automatically; the names of printers, plugs and print jobs stay in. Use the entry's, not a device's (a device's file is named after the device, serial number included). If the field refuses it as too long, leave it empty and attach the file, zipped, to a comment once the issue is open.
+      description: Settings → Devices & services → BamBuddy → ⋮ on your BamBuddy entry (named `BamBuddy (<host>)` unless you renamed it) → Download diagnostics. The API key, addresses, serial numbers, access codes and the names of print jobs are left out automatically; the names of printers and plugs stay in. Use the entry's, not a device's (a device's file is named after the device, serial number included). If the field refuses it as too long, leave it empty and attach the file, zipped, to a comment once the issue is open.
       render: json
     validations:
       required: false
