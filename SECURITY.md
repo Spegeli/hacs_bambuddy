@@ -32,4 +32,4 @@ Only the latest stable release receives security fixes; a beta gets them with th
 |---|---|
 | Latest stable release | ✅ |
 | Betas of the next version | with the next beta |
-| Older releases, including the date versions (2026.05.17 or older) | ❌ |
+| Older releases | ❌ |
