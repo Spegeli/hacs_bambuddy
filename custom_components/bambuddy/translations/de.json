@@ -1009,7 +1009,7 @@
       "message": "Die Strecke darf nicht 0 sein."
     },
     "cannot_dry": {
-      "message": "Diese AMS-Einheit kann nicht trocknen. Trocknen können das AMS 2 Pro und das AMS HT."
+      "message": "Diese AMS-Einheit kann nicht trocknen. Trocknen können das AMS 2 Pro, das AMS HT und das AMS 3H."
     },
     "drying_too_hot": {
       "message": "Das {model} trocknet mit höchstens {maximum} °C."
@@ -1219,7 +1219,7 @@
     },
     "load_filament": {
       "name": "Filament laden",
-      "description": "Lädt das Filament eines AMS-Fachs oder der externen Spule in die Düse (aus einem AMS HT erst ab BamBuddy 1.3.0; und nicht aus einem AMS-Fach an einem Drucker mit Filament Track Switch: Dort muss feststehen, welche Düse versorgt wird – lade es am Drucker oder in BamBuddy). Läuft ein Druck, pausiere ihn vorher.",
+      "description": "Lädt das Filament eines AMS-Fachs oder der externen Spule in die Düse (aus einem AMS HT erst ab BamBuddy 1.3.0; und nicht aus einem AMS-Fach an einem Drucker mit Filament Track Switch: Dort muss feststehen, welche Düse versorgt wird – lade es am Drucker oder in BamBuddy; auch nicht für das Fach oder den Eingang des 2,85-mm-TPU-Druckwerkzeugs eines H3C: das lädst du am Drucker). Läuft ein Druck, pausiere ihn vorher.",
       "fields": {
         "entity_id": {
           "name": "Fach",
@@ -1243,7 +1243,7 @@
     },
     "start_drying": {
       "name": "Trocknen starten",
-      "description": "Trocknet das Filament in einer AMS-Einheit, die trocknen kann, etwa dem AMS 2 Pro oder dem AMS HT.",
+      "description": "Trocknet das Filament in einer AMS-Einheit, die trocknen kann, etwa dem AMS 2 Pro, dem AMS HT oder dem AMS 3H.",
       "fields": {
         "device_id": {
           "name": "AMS-Einheit",

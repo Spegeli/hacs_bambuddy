@@ -108,6 +108,8 @@ start_drying:
               model: AMS 2 Pro
             - integration: bambuddy
               model: AMS HT
+            - integration: bambuddy
+              model: AMS 3H
     temperature:
       required: true
       default: 55
@@ -137,6 +139,8 @@ stop_drying:
               model: AMS 2 Pro
             - integration: bambuddy
               model: AMS HT
+            - integration: bambuddy
+              model: AMS 3H
 get_print_objects:
   fields:
     device_id:
