@@ -114,16 +114,13 @@ def test_the_key_needs_all_three_permissions() -> None:
 _APP = "https://github.com/Spegeli/homeassistant-app-bambuddy"
 
 
-def test_the_head_sends_date_version_users_to_the_upgrade_and_names_the_app() -> None:
+def test_the_head_names_the_app() -> None:
     """No development warning any more: before the first section the README
     says it is the integration, not the BamBuddy app -- as the app's README
-    says the other way round -- and sends users of a date version to the
-    upgrade first (as hacs_bitpanda does), by the page's full address: a link
-    to a section does nothing in the Marketplace."""
+    says the other way round."""
     head = _README[: _README.index("## ✨ Features")]
     assert "[!WARNING]" not in head and "active development" not in head
     assert "This is the integration, not the app" in head and _APP in head
-    assert "> [!IMPORTANT]" in head and "/blob/main/documentation/updating.md#upgrading-from-a-date-version)" in head
 
 
 def test_the_head_links_where_people_ask_and_talk() -> None:
@@ -179,7 +176,6 @@ def test_the_card_and_the_examples_come_before_the_reference() -> None:
         "🤖 Automation examples",
         "📚 Documentation",
         "🔧 Troubleshooting",
-        "⬆️ Upgrading from a date version",
     ]
     assert [_HEADINGS.index(heading) for heading in order] == sorted(_HEADINGS.index(heading) for heading in order)
 

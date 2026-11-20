@@ -1,6 +1,6 @@
 # Updating
 
-Install new versions, try a beta and go back, or move up from a date version.
+Install new versions, try a beta and go back.
 
 [← Documentation](README.md)
 
@@ -62,70 +62,6 @@ The dialog for pre-releases says an installed one stays until a newer stable ver
 ## Installed by hand
 
 Copy the `custom_components/bambuddy` folder of the new [release](https://github.com/Spegeli/hacs_bambuddy/releases) over the old one, and restart Home Assistant.
-
-## Upgrading from a date version
-
-2.0.0 is a new integration under the old name. Home Assistant migrates the BamBuddy entry by itself; still, plan a few minutes. The upgrade cannot be undone, so make a backup first.
-
-1. **Create a new API key** in BamBuddy, with **Read Status**, **Control Printer** and **Manage Maintenance** ([Create an API key](../README.md#create-an-api-key)). A 1.x key usually has Read Status only.
-2. **Install the new version:** on BamBuddy's page in the Marketplace, choose **⋮ → Install another version**, pick the latest stable version under **Version**, choose **Update** and restart.
-3. **Enter the new key** if Home Assistant asks for it under **Settings → Repairs**.
-4. **Check dashboards and automations** against the tables below.
-
-**Why Install another version?** The Marketplace cannot compare `v2.0.0_redesign` with a date. So it offers 2.0.0 as an update only while 2.0.0 is the latest stable version and pre-releases are excluded. `v2.1.0` compares below `2026.05.17`, and so does a beta. Once a newer stable version is out, or with pre-releases included, a date version gets no update: **Install another version** is the one way. Neither the Marketplace nor HACS then offers anything: no update appears, and the repository page still shows the README of the installed 2026.05.17.
-
-With HACS, before Home Assistant 2026.11, the same holds: HACS offers 2.0.0 as an update while it is the latest stable version and the *Pre-release* switch is off, and nothing once a newer stable version is out. Then choose the version under **⋮ → Redownload**.
-
-### What changes
-
-| What | From 2.0.0 |
-|---|---|
-| The API key | Needs the three permissions. 1.x worked with Read Status alone, and with BamBuddy's authentication off with any text |
-| The connection | A single address (`http://host:port`); nothing to do |
-| Device names | *BamBuddy name (model / serial number)*, following BamBuddy from then on |
-| Entity names | New and translated |
-| Entity IDs | Stay where the entity stayed |
-| New entities | IDs of model, serial number and English key; an AMS unit's: its own model and serial |
-| Printers and AMS units | Known by their serial numbers |
-| Pause, resume and stop buttons | No longer under *Configuration* on the device page |
-
-- **The new key:** where the stored key lacks a permission or BamBuddy does not know it, Home Assistant asks for a new one after the update.
-- **A name you gave a device** in Home Assistant is replaced by BamBuddy's, and Repairs tells you once. Rename the printer or its AMS units in BamBuddy instead. Entity names in a dashboard card show the longer device name in front.
-- **Serial numbers:** a new BamBuddy, a restored database, or an AMS plugged in at another place on the same printer keeps their devices, entities and history.
-
-### Values that changed
-
-Check automations that compare these values.
-
-| Entity | In 1.x | From 2.0.0 |
-|---|---|---|
-| *Print status* | *Status*, with BamBuddy's `RUNNING`, `FINISH`, … | `idle`, `preparing`, `slicing`, `printing`, `paused`, `finished`, `failed`, `offline`, `unknown` |
-| *Print speed* | Not there | The options `silent`, `standard`, `sport`, `ludicrous` |
-| *HMS errors* | The *HMS Status* sensor | A number |
-| *Current print* on an idle printer | Empty | Unknown |
-
-### Gone or changed
-
-Replace these in dashboards and automations.
-
-| In 1.x | From 2.0.0 |
-|---|---|
-| *Subtask*, *GCode File* | *Current print* |
-| The target temperature sensors | Numbers you can set |
-| The fan sensors | Fans, except the hotend fan |
-| *HMS Errors* as binary sensor | The *HMS errors* count |
-| The *Chamber Light* switch | A light |
-| *Version*, *Health Status*, *Uptime*, *Archive Count*, *Model*, *Firmware Version* | The update entities and the device page show them |
-
-### New
-
-- AMS devices
-- Smart plug devices with the switch-off after the print
-- Numbers, fans and a light
-- The ventilation of printers with an airduct
-- The AI detection and AMS filament backup switches
-- The *Maintenance* sensor, the active nozzle and airduct selects, update entities
-- Actions and the dashboard card
 
 ## See also
 

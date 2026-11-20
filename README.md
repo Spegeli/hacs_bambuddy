@@ -27,9 +27,6 @@ A custom <a href="https://www.home-assistant.io/">Home Assistant</a> integration
 
 📚 Everything in detail, for the latest release: the [documentation](https://github.com/Spegeli/hacs_bambuddy/blob/main/documentation/README.md).
 
-> [!IMPORTANT]
-> **Updating from a date version (2026.05.17 or older)?** Read [Upgrading from a date version](https://github.com/Spegeli/hacs_bambuddy/blob/main/documentation/updating.md#upgrading-from-a-date-version) first — it may need a new API key and cannot be undone.
-
 ---
 
 ## ✨ Features
@@ -231,12 +228,6 @@ Reload the page (twice), or reset the companion app's frontend cache. The card n
 With *Print status* `offline`, BamBuddy lost the printer: the card's *Check connection* says why. If *Print status* is unavailable too, BamBuddy does not answer or no longer accepts the key: look under **Settings → Repairs**.
 
 More, and what to add to a bug report (**⋮ → Download diagnostics** on the BamBuddy entry): [Troubleshooting](https://github.com/Spegeli/hacs_bambuddy/blob/main/documentation/troubleshooting.md).
-
----
-
-## ⬆️ Upgrading from a date version
-
-2.0.0 is a new integration under the old name. It needs a new API key where the stored one lacks a permission or BamBuddy does not know it; a 1.x key usually has Read Status only. It also changes values your automations may compare. Read [Upgrading from a date version](https://github.com/Spegeli/hacs_bambuddy/blob/main/documentation/updating.md#upgrading-from-a-date-version) before you update.
 
 ---
 

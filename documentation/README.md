@@ -19,7 +19,7 @@ These pages describe the latest stable release. A beta's new parts are in its [r
 | [Glossary](glossary.md) | AMS, HMS, K profile, airduct and the other terms |
 | [How it works](how-it-works.md) | What is read when, what stays local, privacy |
 | [Troubleshooting](troubleshooting.md) | Problems in the words on the screen, the connection check, Repairs notices, known limitations |
-| [Updating](updating.md) | Updates, beta versions, upgrading from a date version |
+| [Updating](updating.md) | Updates and beta versions |
 
 ## How the devices fit together
 

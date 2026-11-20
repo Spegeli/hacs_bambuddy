@@ -295,17 +295,6 @@ def test_the_pages_say_how_plugs_are_known() -> None:
         assert line in configuration, line
 
 
-def test_a_date_version_is_told_the_one_way_up() -> None:
-    """The Marketplace compares versions: `v2.1.0` ranks below a date, and
-    only `v2.0.0_redesign`, which it cannot compare, is offered. Once a newer
-    stable is out, a date version gets no update and has to pick one."""
-    updating = page("updating.md")
-    assert "`v2.1.0` compares below `2026.05.17`" in updating
-    assert "**Install another version** is the one way" in updating
-    assert "(https://www.home-assistant.io/integrations/marketplace/)" in updating
-    assert "in our test" not in updating
-
-
 def _action_rows() -> dict[str, str]:
     text = page("actions.md")
     return {line.split(" | ")[0]: line for line in text.splitlines() if line.startswith("| `bambuddy.")}
@@ -342,11 +331,9 @@ def test_the_card_page_names_the_camera_modes_as_the_editor_does() -> None:
 
 def test_the_four_anchors_stay() -> None:
     """Links out of our reach lead here: released cards to the card's
-    section, the live forum and Reddit posts to the upgrade, released issue
-    forms to the troubleshooting and the API key."""
+    section, released issue forms to the troubleshooting and the API key."""
     assert {
         "-dashboard-card",
-        "%EF%B8%8F-upgrading-from-a-date-version",
         "-troubleshooting",
         "create-an-api-key",
     } <= _anchors(_README)
